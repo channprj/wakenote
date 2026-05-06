@@ -89,19 +89,20 @@ impl CaptureController {
     ) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
         let was_recording = self.processor.is_recording();
         let should_stop = settings.pause_all || !settings.recording_enabled;
+        let mut events = Vec::new();
 
-        if was_recording && should_stop {
+        if was_recording {
             self.processor.flush()?;
+            events.extend(self.drain_new_events());
         }
 
         self.config.settings = settings;
         if should_stop {
-            return Ok(self.drain_new_events());
+            return Ok(events);
         }
 
-        self.processor = CaptureProcessor::new(processor_config(&self.config));
-        self.emitted_chunks = 0;
-        Ok(Vec::new())
+        self.processor.reconfigure(processor_config(&self.config));
+        Ok(events)
     }
 
     pub fn flush(&mut self) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
@@ -226,6 +227,22 @@ impl CaptureProcessor {
 
     pub fn is_recording(&self) -> bool {
         self.gate.is_recording()
+    }
+
+    fn reconfigure(&mut self, config: CaptureProcessorConfig) {
+        self.config = config;
+        self.gate = SpeechGate::new(GateConfig {
+            threshold_dbfs: self.config.settings.threshold_dbfs,
+            attack_ms: self.config.settings.attack_ms,
+            release_ms: self.config.settings.release_ms,
+            pre_roll_ms: self.config.settings.pre_roll_ms,
+            post_roll_ms: self.config.settings.post_roll_ms,
+            min_chunk_ms: self.config.settings.min_chunk_ms,
+            max_chunk_ms: self.config.settings.max_chunk_ms,
+        });
+        self.pre_roll.clear();
+        self.active_samples.clear();
+        self.active_started_at_ms = None;
     }
 
     fn push_pre_roll(&mut self, frame: BufferedFrame) {

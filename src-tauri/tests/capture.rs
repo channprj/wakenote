@@ -155,3 +155,37 @@ fn capture_controller_flushes_active_chunk_when_paused() {
     assert_eq!(events.len(), 1);
     assert!(controller.completed_chunks()[0].audio_path.exists());
 }
+
+#[test]
+fn capture_controller_flushes_active_chunk_before_threshold_settings_change() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut controller = CaptureController::new(CaptureControllerConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: settings(),
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..5 {
+        controller.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+    assert!(controller.is_recording());
+
+    let mut changed = settings();
+    changed.threshold_dbfs = -35.0;
+    let events = controller
+        .update_settings(changed)
+        .expect("change threshold");
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0],
+        CaptureControllerEvent::ChunkCompleted { .. }
+    ));
+    assert!(!controller.is_recording());
+    assert!(controller.completed_chunks()[0].audio_path.exists());
+}
