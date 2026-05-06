@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use thiserror::Error;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -18,6 +19,8 @@ pub enum TranscriptionError {
     ModelMissing(PathBuf),
     #[error("unsupported audio format: {0}")]
     UnsupportedAudioFormat(String),
+    #[error("m4a decode error: {0}")]
+    M4a(String),
     #[error("wav decode error: {0}")]
     Wav(String),
     #[error("transcription engine error: {0}")]
@@ -156,24 +159,12 @@ impl WhisperTranscriber {
 
 impl Transcriber for WhisperTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
-        if request
-            .audio_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| extension.eq_ignore_ascii_case("m4a"))
-            .unwrap_or(false)
-        {
-            return Err(TranscriptionError::UnsupportedAudioFormat(
-                "m4a decoding requires the native macOS decoder bridge".to_string(),
-            ));
-        }
-
         let model_path = self.model_path(request.model_id);
         if !model_path.exists() {
             return Err(TranscriptionError::ModelMissing(model_path));
         }
 
-        let samples = read_wav_as_whisper_audio(request.audio_path)?;
+        let samples = decode_audio_for_whisper(request.audio_path)?;
         run_whisper(&model_path, &samples)
     }
 }
@@ -203,6 +194,19 @@ fn run_whisper(model_path: &Path, samples: &[f32]) -> Result<String, Transcripti
         .trim()
         .to_string();
     Ok(transcript)
+}
+
+pub fn decode_audio_for_whisper(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("m4a"))
+        .unwrap_or(false)
+    {
+        return read_m4a_as_whisper_audio(path);
+    }
+
+    read_wav_as_whisper_audio(path)
 }
 
 fn read_wav_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
@@ -238,6 +242,32 @@ fn read_wav_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError
 
     let mono = downmix_to_mono(&samples, channels);
     Ok(resample_linear(&mono, spec.sample_rate, 16_000))
+}
+
+fn read_m4a_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
+    let wav_path = path.with_extension("decode.wav");
+    let output = Command::new("/usr/bin/afconvert")
+        .arg("-f")
+        .arg("WAVE")
+        .arg("-d")
+        .arg("LEI16@16000")
+        .arg(path)
+        .arg(&wav_path)
+        .output()
+        .map_err(|error| TranscriptionError::M4a(error.to_string()))?;
+
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(TranscriptionError::M4a(if message.is_empty() {
+            format!("afconvert exited with status {}", output.status)
+        } else {
+            message
+        }));
+    }
+
+    let decoded = read_wav_as_whisper_audio(&wav_path);
+    let _ = std::fs::remove_file(&wav_path);
+    decoded
 }
 
 fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {

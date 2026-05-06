@@ -12,6 +12,46 @@ fn wav_settings() -> AppSettings {
 }
 
 #[test]
+fn recorder_writes_m4a_with_native_encoder_bridge() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = AppSettings {
+        audio_format: AudioFormat::M4a,
+        ..AppSettings::default()
+    };
+    let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 8, 12).unwrap();
+    let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 8, 14).unwrap();
+
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at,
+        device_id: "builtin-input",
+        device_name: "Built-in Microphone",
+        used_fallback_device: false,
+        transcription_enabled: false,
+        app_version: "0.1.0",
+    })
+    .expect("record m4a chunk");
+
+    assert!(chunk.audio_path.ends_with("20260506/230812.m4a"));
+    assert!(chunk.audio_path.exists());
+    assert!(chunk.metadata_path.exists());
+    assert!(!chunk.audio_path.with_extension("wav").exists());
+
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(metadata.sample_rate, 16_000);
+    assert_eq!(
+        metadata.transcription_status,
+        TranscriptionStatus::NotRequested
+    );
+}
+
+#[test]
 fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = wav_settings();

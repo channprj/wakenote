@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,8 @@ impl RecordedChunk {
 pub enum RecorderError {
     #[error("m4a encoding requires the native macOS encoder bridge")]
     M4aRequiresNativeBridge,
+    #[error("native m4a encoder failed: {0}")]
+    M4aEncoder(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("wav error: {0}")]
@@ -84,10 +87,6 @@ pub struct Recorder;
 
 impl Recorder {
     pub fn write_chunk(request: RecordingRequest<'_>) -> Result<RecordedChunk, RecorderError> {
-        if request.settings.audio_format == AudioFormat::M4a {
-            return Err(RecorderError::M4aRequiresNativeBridge);
-        }
-
         let target = next_available_output(
             request.save_root,
             request.started_at,
@@ -97,7 +96,14 @@ impl Recorder {
             fs::create_dir_all(parent)?;
         }
 
-        write_wav(&target.audio_path, request.samples, request.sample_rate)?;
+        match request.settings.audio_format {
+            AudioFormat::Wav => {
+                write_wav(&target.audio_path, request.samples, request.sample_rate)?;
+            }
+            AudioFormat::M4a => {
+                write_m4a(&target.audio_path, request.samples, request.sample_rate)?;
+            }
+        }
 
         let metadata = ChunkMetadata {
             model_id: request.settings.selected_model.clone(),
@@ -164,6 +170,31 @@ fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), Recor
         writer.write_sample((clamped * i16::MAX as f32) as i16)?;
     }
     writer.finalize()?;
+    Ok(())
+}
+
+fn write_m4a(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
+    let temp_wav_path = path.with_extension("encoding.wav");
+    write_wav(&temp_wav_path, samples, sample_rate)?;
+    let output = Command::new("/usr/bin/afconvert")
+        .arg("-f")
+        .arg("m4af")
+        .arg("-d")
+        .arg("aac")
+        .arg(&temp_wav_path)
+        .arg(path)
+        .output()?;
+
+    let _ = fs::remove_file(&temp_wav_path);
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(RecorderError::M4aEncoder(if message.is_empty() {
+            format!("afconvert exited with status {}", output.status)
+        } else {
+            message
+        }));
+    }
+
     Ok(())
 }
 

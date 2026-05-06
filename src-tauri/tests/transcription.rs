@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
 use sagwan::transcription::{
     Transcriber, TranscriptionError, TranscriptionRequest, TranscriptionWorker, WhisperTranscriber,
+    decode_audio_for_whisper,
 };
 
 #[derive(Clone)]
@@ -104,4 +105,45 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
             tmp.path().join("models/whisper-medium.bin")
         ))
     );
+}
+
+#[test]
+fn m4a_audio_is_decoded_through_native_bridge_for_whisper() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wav_path = tmp.path().join("source.wav");
+    let m4a_path = tmp.path().join("source.m4a");
+    write_test_wav(&wav_path);
+    let output = std::process::Command::new("/usr/bin/afconvert")
+        .arg("-f")
+        .arg("m4af")
+        .arg("-d")
+        .arg("aac")
+        .arg(&wav_path)
+        .arg(&m4a_path)
+        .output()
+        .expect("afconvert");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let decoded = decode_audio_for_whisper(&m4a_path).expect("decode m4a");
+
+    assert!(!decoded.is_empty());
+}
+
+fn write_test_wav(path: &std::path::Path) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).expect("wav writer");
+    for index in 0..16_000 {
+        let sample = if index % 2 == 0 { 1200_i16 } else { -1200_i16 };
+        writer.write_sample(sample).expect("sample");
+    }
+    writer.finalize().expect("finalize");
 }
