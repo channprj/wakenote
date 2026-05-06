@@ -7,7 +7,7 @@ use std::thread;
 
 use sagwan::commands::{
     AppBackend, AppStatus, MicrophoneDevice, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state,
+    tray_presentation_for_state, tray_runtime_presentation,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
@@ -488,12 +488,16 @@ fn setup_tray(
         ],
     )?;
 
-    let presentation = initial_status
-        .map(|status| tray_presentation_for_state(status.tray_state))
-        .unwrap_or_else(|| tray_presentation_for_state(sagwan::commands::TrayState::Listening));
-    let icon = Image::new_owned(presentation.rgba.to_vec(), 1, 1);
-    TrayIconBuilder::with_id("sagwan")
-        .tooltip(presentation.tooltip)
+    let presentation = initial_settings
+        .zip(initial_status)
+        .map(|(settings, status)| tray_runtime_presentation(settings, status))
+        .unwrap_or_else(|| sagwan::commands::TrayRuntimePresentation {
+            icon: tray_presentation_for_state(sagwan::commands::TrayState::Listening),
+            visible: true,
+        });
+    let icon = Image::new_owned(presentation.icon.rgba.to_vec(), 1, 1);
+    let tray = TrayIconBuilder::with_id("sagwan")
+        .tooltip(presentation.icon.tooltip)
         .icon(icon)
         .icon_as_template(false)
         .menu(&menu)
@@ -502,6 +506,7 @@ fn setup_tray(
             handle_tray_menu(app, event.id().as_ref());
         })
         .build(app)?;
+    tray.set_visible(presentation.visible)?;
 
     Ok(TrayMenuItems {
         recording,
@@ -517,9 +522,14 @@ fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, stat
     let Some(tray) = app.tray_by_id("sagwan") else {
         return;
     };
-    let presentation = tray_presentation_for_state(status.tray_state);
-    let _ = tray.set_icon(Some(Image::new_owned(presentation.rgba.to_vec(), 1, 1)));
-    let _ = tray.set_tooltip(Some(presentation.tooltip));
+    let presentation = tray_runtime_presentation(settings, status);
+    let _ = tray.set_icon(Some(Image::new_owned(
+        presentation.icon.rgba.to_vec(),
+        1,
+        1,
+    )));
+    let _ = tray.set_tooltip(Some(presentation.icon.tooltip));
+    let _ = tray.set_visible(presentation.visible);
 
     if let Some(items) = app.try_state::<TrayMenuItems>() {
         let menu = tray_menu_presentation(settings, status);

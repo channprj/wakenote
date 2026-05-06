@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::commands::{
     AppBackend, AppMode, TrayState, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state,
+    tray_presentation_for_state, tray_runtime_presentation,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -392,6 +392,24 @@ fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
         tray_presentation_for_state(TrayState::Recording).tooltip,
         "Sagwan: Recording"
     );
+}
+
+#[test]
+fn tray_runtime_presentation_respects_show_tray_icon_setting() {
+    let mut backend = AppBackend::default();
+
+    let visible = tray_runtime_presentation(&backend.settings(), &backend.app_status());
+    assert!(visible.visible);
+    assert_eq!(visible.icon.tooltip, "Sagwan: Listening");
+
+    backend.update_settings(SettingsPatch {
+        show_tray_icon: Some(false),
+        ..SettingsPatch::default()
+    });
+
+    let hidden = tray_runtime_presentation(&backend.settings(), &backend.app_status());
+    assert!(!hidden.visible);
+    assert_eq!(hidden.icon.tooltip, "Sagwan: Listening");
 }
 
 #[test]

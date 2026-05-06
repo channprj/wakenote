@@ -38,6 +38,12 @@ pub struct TrayPresentation {
     pub tooltip: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrayRuntimePresentation {
+    pub icon: TrayPresentation,
+    pub visible: bool,
+}
+
 pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
     match state {
         TrayState::Idle => TrayPresentation {
@@ -64,6 +70,16 @@ pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
             rgba: [220, 38, 38, 255],
             tooltip: "Sagwan: Error",
         },
+    }
+}
+
+pub fn tray_runtime_presentation(
+    settings: &AppSettings,
+    status: &AppStatus,
+) -> TrayRuntimePresentation {
+    TrayRuntimePresentation {
+        icon: tray_presentation_for_state(status.tray_state),
+        visible: settings.show_tray_icon,
     }
 }
 
