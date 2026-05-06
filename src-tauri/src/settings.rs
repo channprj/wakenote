@@ -57,6 +57,24 @@ pub struct SettingsPatch {
     pub theme_primary_color: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchAtLoginAction {
+    Enable,
+    Disable,
+    Unchanged,
+}
+
+pub fn launch_at_login_action_for_patch(
+    settings: &AppSettings,
+    patch: &SettingsPatch,
+) -> LaunchAtLoginAction {
+    match patch.launch_at_login {
+        Some(true) if !settings.launch_at_login => LaunchAtLoginAction::Enable,
+        Some(false) if settings.launch_at_login => LaunchAtLoginAction::Disable,
+        _ => LaunchAtLoginAction::Unchanged,
+    }
+}
+
 impl AppSettings {
     pub fn apply_patch(&mut self, patch: SettingsPatch) {
         if let Some(value) = patch.recording_enabled {

@@ -12,7 +12,9 @@ use sagwan::commands::{
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
 use sagwan::queue::QueueSnapshot;
-use sagwan::settings::{AppSettings, SettingsPatch};
+use sagwan::settings::{
+    AppSettings, LaunchAtLoginAction, SettingsPatch, launch_at_login_action_for_patch,
+};
 use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -41,10 +43,17 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 
 #[tauri::command]
 fn update_settings(
+    app: AppHandle,
     state: State<'_, BackendState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
+    let launch_at_login_action = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        launch_at_login_action_for_patch(&backend.settings(), &patch)
+    };
+    apply_launch_at_login_action(&app, launch_at_login_action)?;
+
     let settings = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.update_settings(patch)
@@ -326,10 +335,45 @@ fn kick_transcription_worker(
     });
 }
 
+fn apply_launch_at_login_action(
+    app: &AppHandle,
+    action: LaunchAtLoginAction,
+) -> Result<(), String> {
+    match action {
+        LaunchAtLoginAction::Enable => apply_launch_at_login_preference(app, true),
+        LaunchAtLoginAction::Disable => apply_launch_at_login_preference(app, false),
+        LaunchAtLoginAction::Unchanged => Ok(()),
+    }
+}
+
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn apply_launch_at_login_preference(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    }
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+fn apply_launch_at_login_preference(_app: &AppHandle, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+            app.handle().plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                None,
+            ))?;
+
             let backend = app
                 .path()
                 .app_data_dir()
@@ -351,6 +395,9 @@ fn main() {
             };
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
+            if let Some(settings) = initial_settings.as_ref() {
+                let _ = apply_launch_at_login_preference(app.handle(), settings.launch_at_login);
+            }
             app.manage(tray_menu_items);
             kick_transcription_worker_if_needed(backend_state, transcription_state);
             Ok(())

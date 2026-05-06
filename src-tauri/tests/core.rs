@@ -1,7 +1,9 @@
 use chrono::{TimeZone, Utc};
 use sagwan::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
 use sagwan::models::{ModelStatus, default_model_registry};
-use sagwan::settings::{AppSettings, AudioFormat};
+use sagwan::settings::{
+    AppSettings, AudioFormat, LaunchAtLoginAction, SettingsPatch, launch_at_login_action_for_patch,
+};
 use sagwan::storage::{OutputBasename, next_available_output};
 
 #[test]
@@ -120,6 +122,42 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.post_roll_ms, 300);
     assert_eq!(settings.selected_model, "whisper-medium");
     assert_eq!(settings.theme_primary_color, "#0047AB");
+}
+
+#[test]
+fn launch_at_login_action_follows_explicit_settings_patch() {
+    let settings = AppSettings::default();
+
+    assert_eq!(
+        launch_at_login_action_for_patch(&settings, &SettingsPatch::default()),
+        LaunchAtLoginAction::Unchanged
+    );
+    assert_eq!(
+        launch_at_login_action_for_patch(
+            &settings,
+            &SettingsPatch {
+                launch_at_login: Some(true),
+                ..SettingsPatch::default()
+            }
+        ),
+        LaunchAtLoginAction::Enable
+    );
+
+    let enabled = AppSettings {
+        launch_at_login: true,
+        ..AppSettings::default()
+    };
+
+    assert_eq!(
+        launch_at_login_action_for_patch(
+            &enabled,
+            &SettingsPatch {
+                launch_at_login: Some(false),
+                ..SettingsPatch::default()
+            }
+        ),
+        LaunchAtLoginAction::Disable
+    );
 }
 
 #[test]
