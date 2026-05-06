@@ -4,7 +4,7 @@ use std::sync::{
 };
 use std::thread;
 
-use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice};
+use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice, tray_presentation_for_state};
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
 use sagwan::queue::QueueSnapshot;
@@ -13,7 +13,7 @@ use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, Whispe
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
@@ -40,9 +40,11 @@ fn update_settings(
 }
 
 #[tauri::command]
-fn app_status(state: State<'_, BackendState>) -> Result<AppStatus, String> {
+fn app_status(app: AppHandle, state: State<'_, BackendState>) -> Result<AppStatus, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.app_status())
+    let status = backend.app_status();
+    update_tray_presentation(&app, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -324,7 +326,11 @@ fn main() {
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
-            setup_tray(app)?;
+            let initial_status = backend_state
+                .lock()
+                .ok()
+                .map(|backend| backend.app_status());
+            setup_tray(app, initial_status.as_ref())?;
             kick_transcription_worker_if_needed(backend_state, transcription_state);
             Ok(())
         })
@@ -352,7 +358,7 @@ fn main() {
         .expect("failed to run Sagwan");
 }
 
-fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
+fn setup_tray(app: &mut tauri::App, initial_status: Option<&AppStatus>) -> tauri::Result<()> {
     let recording = CheckMenuItem::with_id(
         app,
         "toggle-recording",
@@ -425,9 +431,12 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         ],
     )?;
 
-    let icon = Image::new(&[0, 71, 171, 255], 1, 1);
+    let presentation = initial_status
+        .map(|status| tray_presentation_for_state(status.tray_state))
+        .unwrap_or_else(|| tray_presentation_for_state(sagwan::commands::TrayState::Listening));
+    let icon = Image::new_owned(presentation.rgba.to_vec(), 1, 1);
     TrayIconBuilder::with_id("sagwan")
-        .tooltip("Sagwan")
+        .tooltip(presentation.tooltip)
         .icon(icon)
         .icon_as_template(false)
         .menu(&menu)
@@ -438,6 +447,15 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+fn update_tray_presentation(app: &tauri::AppHandle, status: &AppStatus) {
+    let Some(tray) = app.tray_by_id("sagwan") else {
+        return;
+    };
+    let presentation = tray_presentation_for_state(status.tray_state);
+    let _ = tray.set_icon(Some(Image::new_owned(presentation.rgba.to_vec(), 1, 1)));
+    let _ = tray.set_tooltip(Some(presentation.tooltip));
 }
 
 fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
@@ -458,6 +476,7 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             let state = app.state::<BackendState>();
             if let Ok(mut backend) = state.lock() {
                 let _ = backend.cancel_current_transcription();
+                update_tray_presentation(app, &backend.app_status());
             }
         }
         "open-settings" => {
@@ -476,5 +495,6 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     if let Ok(mut backend) = state.lock() {
         let current = backend.settings();
         backend.update_settings(patch(current));
+        update_tray_presentation(app, &backend.app_status());
     }
 }

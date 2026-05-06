@@ -1,4 +1,6 @@
-use sagwan::commands::{AppBackend, AppMode, TrayState};
+use std::collections::HashSet;
+
+use sagwan::commands::{AppBackend, AppMode, TrayState, tray_presentation_for_state};
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{AudioFormat, SettingsPatch};
@@ -334,4 +336,30 @@ fn backend_cancel_model_download_marks_model_as_recoverable_error() {
         .expect("whisper medium");
     assert_eq!(model.status, ModelStatus::Error);
     assert_eq!(model.download_error.as_deref(), Some("cancelled by user"));
+}
+
+#[test]
+fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
+    let states = [
+        TrayState::Idle,
+        TrayState::Listening,
+        TrayState::Recording,
+        TrayState::Transcribing,
+        TrayState::Paused,
+        TrayState::Error,
+    ];
+    let colors = states
+        .iter()
+        .map(|state| tray_presentation_for_state(*state).rgba)
+        .collect::<HashSet<_>>();
+
+    assert_eq!(colors.len(), states.len());
+    assert_eq!(
+        tray_presentation_for_state(TrayState::Listening).rgba,
+        [0, 71, 171, 255]
+    );
+    assert_eq!(
+        tray_presentation_for_state(TrayState::Recording).tooltip,
+        "Sagwan: Recording"
+    );
 }

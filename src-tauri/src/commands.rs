@@ -31,6 +31,41 @@ pub enum TrayState {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrayPresentation {
+    pub rgba: [u8; 4],
+    pub tooltip: &'static str,
+}
+
+pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
+    match state {
+        TrayState::Idle => TrayPresentation {
+            rgba: [100, 116, 139, 255],
+            tooltip: "Sagwan: Idle",
+        },
+        TrayState::Listening => TrayPresentation {
+            rgba: [0, 71, 171, 255],
+            tooltip: "Sagwan: Listening",
+        },
+        TrayState::Recording => TrayPresentation {
+            rgba: [22, 163, 74, 255],
+            tooltip: "Sagwan: Recording",
+        },
+        TrayState::Transcribing => TrayPresentation {
+            rgba: [217, 119, 6, 255],
+            tooltip: "Sagwan: Transcribing",
+        },
+        TrayState::Paused => TrayPresentation {
+            rgba: [71, 85, 105, 255],
+            tooltip: "Sagwan: Paused",
+        },
+        TrayState::Error => TrayPresentation {
+            rgba: [220, 38, 38, 255],
+            tooltip: "Sagwan: Error",
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MicrophoneDevice {
     pub id: String,
