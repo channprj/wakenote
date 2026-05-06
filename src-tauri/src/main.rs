@@ -296,6 +296,7 @@ fn kick_transcription_worker(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let backend = app
                 .path()

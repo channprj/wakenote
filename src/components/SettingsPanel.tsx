@@ -22,6 +22,7 @@ export function SettingsPanel({
   onRefresh,
   onStartLiveCapture,
   onStopLiveCapture,
+  onChooseSaveRoot,
   onEnqueueBacklog,
   onCancelCurrent,
   onProcessNextTranscription,
@@ -37,6 +38,7 @@ export function SettingsPanel({
   onRefresh: () => void;
   onStartLiveCapture: () => void;
   onStopLiveCapture: () => void;
+  onChooseSaveRoot: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
   onProcessNextTranscription: () => void;
@@ -106,9 +108,9 @@ export function SettingsPanel({
         title="Storage"
         eyebrow="Local archive"
         actions={
-          <Button type="button" variant="secondary">
+          <Button type="button" variant="secondary" onClick={onChooseSaveRoot}>
             <FolderOpen data-icon="inline-start" />
-            Reveal Folder
+            Choose Folder
           </Button>
         }
       >

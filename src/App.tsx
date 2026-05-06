@@ -15,6 +15,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { Badge } from "./components/ui/primitives";
 import {
   cancelCurrentTranscription,
+  chooseSaveRoot,
   deleteModel,
   downloadModel,
   enqueueBacklog,
@@ -171,6 +172,7 @@ export default function App() {
           onRefresh={() => void refresh()}
           onStartLiveCapture={() => void runAction(startLiveCapture)}
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
+          onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
           onProcessNextTranscription={() => void runAction(processNextTranscription)}

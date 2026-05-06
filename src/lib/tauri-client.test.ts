@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "./app-state";
-import { downloadModel, processNextTranscription, startLiveCapture, stopLiveCapture } from "./tauri-client";
+import {
+  chooseSaveRoot,
+  downloadModel,
+  processNextTranscription,
+  startLiveCapture,
+  stopLiveCapture,
+} from "./tauri-client";
 
 describe("tauri live capture client", () => {
   it("returns browser-safe snapshots for live capture actions outside Tauri", async () => {
@@ -10,5 +16,6 @@ describe("tauri live capture client", () => {
     await expect(stopLiveCapture()).resolves.toEqual(expected);
     await expect(processNextTranscription()).resolves.toEqual(expected);
     await expect(downloadModel("whisper-tiny")).resolves.toEqual(expected);
+    await expect(chooseSaveRoot()).resolves.toEqual(expected);
   });
 });

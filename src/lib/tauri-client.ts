@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   defaultSettings,
   defaultLevelSnapshot,
@@ -140,6 +141,26 @@ export async function stopLiveCapture(): Promise<AppSnapshot> {
   }
 
   await invoke<AppStatus>("stop_live_capture");
+  return loadSnapshot();
+}
+
+export async function chooseSaveRoot(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose Sagwan Save Folder",
+  });
+  if (typeof selected !== "string") {
+    return loadSnapshot();
+  }
+
+  await invoke<AppSettings>("update_settings", {
+    patch: { save_root: selected },
+  });
   return loadSnapshot();
 }
 
