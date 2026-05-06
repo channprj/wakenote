@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +18,14 @@ pub struct GateConfig {
     pub post_roll_ms: u64,
     pub min_chunk_ms: u64,
     pub max_chunk_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LevelSnapshot {
+    pub current_dbfs: f32,
+    pub peak_dbfs: f32,
+    pub noise_floor_dbfs: f32,
+    pub suggested_threshold_dbfs: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,12 +53,42 @@ pub struct SpeechGate {
     recording: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct LevelMonitor {
+    recent_dbfs: VecDeque<f32>,
+    snapshot: LevelSnapshot,
+}
+
+impl Default for LevelSnapshot {
+    fn default() -> Self {
+        Self {
+            current_dbfs: -120.0,
+            peak_dbfs: -120.0,
+            noise_floor_dbfs: -120.0,
+            suggested_threshold_dbfs: -90.0,
+        }
+    }
+}
+
+impl Default for LevelMonitor {
+    fn default() -> Self {
+        Self {
+            recent_dbfs: VecDeque::new(),
+            snapshot: LevelSnapshot::default(),
+        }
+    }
+}
+
 pub fn dbfs_from_rms(rms: f32) -> f32 {
     if rms <= 0.0 {
         return -120.0;
     }
 
     (20.0 * rms.log10()).max(-120.0)
+}
+
+pub fn dbfs_from_samples(samples: &[f32]) -> f32 {
+    dbfs_from_rms(rms_from_samples(samples))
 }
 
 pub fn list_input_devices() -> Vec<InputDevice> {
@@ -93,6 +133,29 @@ fn slugify_device_label(label: &str) -> String {
         })
         .collect::<String>();
     slug.trim_matches('-').to_string()
+}
+
+impl LevelMonitor {
+    pub fn observe_samples(&mut self, samples: &[f32]) -> LevelSnapshot {
+        let current_dbfs = dbfs_from_samples(samples);
+        self.recent_dbfs.push_back(current_dbfs);
+        while self.recent_dbfs.len() > 300 {
+            self.recent_dbfs.pop_front();
+        }
+
+        let noise_floor_dbfs = percentile(&self.recent_dbfs, 0.2).unwrap_or(-120.0);
+        self.snapshot = LevelSnapshot {
+            current_dbfs,
+            peak_dbfs: self.snapshot.peak_dbfs.max(current_dbfs),
+            noise_floor_dbfs,
+            suggested_threshold_dbfs: (noise_floor_dbfs + 12.0).clamp(-90.0, -10.0),
+        };
+        self.snapshot
+    }
+
+    pub fn snapshot(&self) -> LevelSnapshot {
+        self.snapshot
+    }
 }
 
 impl SpeechGate {
@@ -163,4 +226,24 @@ impl SpeechGate {
     pub fn is_recording(&self) -> bool {
         self.recording
     }
+}
+
+fn rms_from_samples(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let energy = samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    energy.sqrt()
+}
+
+fn percentile(samples: &VecDeque<f32>, percentile: f32) -> Option<f32> {
+    if samples.is_empty() {
+        return None;
+    }
+
+    let mut sorted = samples.iter().copied().collect::<Vec<_>>();
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    let index = ((sorted.len() - 1) as f32 * percentile).round() as usize;
+    sorted.get(index).copied()
 }

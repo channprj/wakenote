@@ -1,5 +1,4 @@
 import { Activity, Gauge } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
 import { Badge } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
@@ -14,25 +13,11 @@ export function LevelMeter({
   settings: AppSettings;
   status: AppStatus;
 }) {
-  const [tick, setTick] = useState(0);
-  const active = status.tray_state === "listening" || status.tray_state === "recording";
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const currentDb = useMemo(() => {
-    if (!active) {
-      return -120;
-    }
-    const speechPulse = Math.sin(tick / 4) * 12;
-    const room = Math.sin(tick / 11) * 5;
-    return Math.round(-52 + speechPulse + room);
-  }, [active, tick]);
-  const peakDb = Math.max(currentDb, settings.threshold_dbfs + 4);
-  const noiseFloor = -62;
-  const suggestedThreshold = noiseFloor + 12;
+  const active = settings.recording_enabled && !settings.pause_all;
+  const currentDb = active ? status.level.current_dbfs : -120;
+  const peakDb = status.level.peak_dbfs;
+  const noiseFloor = status.level.noise_floor_dbfs;
+  const suggestedThreshold = status.level.suggested_threshold_dbfs;
   const bars = Array.from({ length: 28 }, (_, index) => {
     const barDb = -90 + index * 3.2;
     return barDb <= currentDb;
@@ -43,11 +28,11 @@ export function LevelMeter({
       <div className="level-meter__readout">
         <div>
           <span>Current</span>
-          <strong>{currentDb} dBFS</strong>
+          <strong>{Math.round(currentDb)} dBFS</strong>
         </div>
         <div>
           <span>Peak</span>
-          <strong>{peakDb} dBFS</strong>
+          <strong>{Math.round(peakDb)} dBFS</strong>
         </div>
         <Badge tone={active ? "success" : "neutral"}>{status.tray_state}</Badge>
       </div>
@@ -61,12 +46,12 @@ export function LevelMeter({
         <div>
           <Gauge />
           <span>Noise floor</span>
-          <strong>{noiseFloor} dBFS</strong>
+          <strong>{Math.round(noiseFloor)} dBFS</strong>
         </div>
         <div>
           <Activity />
           <span>Suggested</span>
-          <strong>{suggestedThreshold} dBFS</strong>
+          <strong>{Math.round(suggestedThreshold)} dBFS</strong>
         </div>
         <div>
           <span>Threshold</span>

@@ -95,12 +95,20 @@ export interface QueueSnapshot {
   failed_count: number;
 }
 
+export interface LevelSnapshot {
+  current_dbfs: number;
+  peak_dbfs: number;
+  noise_floor_dbfs: number;
+  suggested_threshold_dbfs: number;
+}
+
 export interface AppStatus {
   mode: AppMode;
   tray_state: TrayState;
   active_model: string;
   active_microphone: string;
   threshold_dbfs: number;
+  level: LevelSnapshot;
   queue: QueueSnapshot;
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::audio::list_input_devices;
+use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
@@ -44,6 +44,7 @@ pub struct AppStatus {
     pub active_model: String,
     pub active_microphone: String,
     pub threshold_dbfs: f32,
+    pub level: LevelSnapshot,
     pub queue: QueueSnapshot,
 }
 
@@ -52,6 +53,7 @@ pub struct AppBackend {
     settings: AppSettings,
     queue: TranscriptionQueue,
     capture: Option<CaptureController>,
+    level_monitor: LevelMonitor,
     persistence: Option<AppPersistence>,
 }
 
@@ -61,6 +63,7 @@ impl Default for AppBackend {
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
             capture: None,
+            level_monitor: LevelMonitor::default(),
             persistence: None,
         }
     }
@@ -73,6 +76,7 @@ impl AppBackend {
             settings: persistence.load_settings()?.unwrap_or_default(),
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
+            level_monitor: LevelMonitor::default(),
             persistence: Some(persistence),
         })
     }
@@ -120,6 +124,7 @@ impl AppBackend {
         sample_rate: u32,
         base_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<AppStatus, String> {
+        self.level_monitor = LevelMonitor::default();
         self.capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: std::path::PathBuf::from(&self.settings.save_root),
             settings: self.settings.clone(),
@@ -148,6 +153,7 @@ impl AppBackend {
     }
 
     pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
+        self.level_monitor.observe_samples(&frame.samples);
         let events = self
             .capture
             .as_mut()
@@ -258,6 +264,7 @@ impl AppBackend {
             active_model: self.settings.selected_model.clone(),
             active_microphone: self.settings.selected_microphone_label.clone(),
             threshold_dbfs: self.settings.threshold_dbfs,
+            level: self.level_monitor.snapshot(),
             queue,
         }
     }

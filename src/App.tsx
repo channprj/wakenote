@@ -62,6 +62,29 @@ export default function App() {
     void refresh();
   }, []);
 
+  async function refreshQuietly() {
+    try {
+      setSnapshot(await loadSnapshot());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  useEffect(() => {
+    const active =
+      snapshot.status.tray_state === "listening" ||
+      snapshot.status.tray_state === "recording" ||
+      snapshot.status.tray_state === "transcribing";
+    if (!active) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshQuietly();
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [snapshot.status.tray_state]);
+
   async function patchSettings(patch: Partial<AppSettings>) {
     setBusy(true);
     setError(null);

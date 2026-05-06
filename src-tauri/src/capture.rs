@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
+use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_samples};
 use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
 use crate::settings::AppSettings;
 
@@ -172,7 +172,7 @@ impl CaptureProcessor {
         };
         let frame_start_ms = self.elapsed_ms;
         let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
-        let dbfs = dbfs_from_rms(rms(samples));
+        let dbfs = dbfs_from_samples(samples);
         let decision = self.gate.observe(dbfs, frame_end_ms);
 
         match decision {
@@ -299,13 +299,4 @@ fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig 
         base_time: config.base_time,
         app_version: config.app_version.clone(),
     }
-}
-
-fn rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-
-    let energy = samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
-    energy.sqrt()
 }

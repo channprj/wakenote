@@ -103,6 +103,30 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
 }
 
 #[test]
+fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+
+    let silent_status = backend
+        .process_audio_samples_for_test(&[0.0; 1], 100)
+        .expect("silence");
+    assert_eq!(silent_status.level.current_dbfs, -120.0);
+    assert_eq!(silent_status.level.peak_dbfs, -120.0);
+
+    let speech_status = backend
+        .process_audio_samples_for_test(&[0.5; 1], 100)
+        .expect("speech");
+    assert!((speech_status.level.current_dbfs - -6.0206).abs() < 0.001);
+    assert!((speech_status.level.peak_dbfs - -6.0206).abs() < 0.001);
+    assert_eq!(speech_status.level.noise_floor_dbfs, -120.0);
+    assert_eq!(speech_status.level.suggested_threshold_dbfs, -90.0);
+}
+
+#[test]
 fn backend_flushes_active_capture_when_recording_is_disabled() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();

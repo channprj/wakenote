@@ -2,6 +2,7 @@ import type {
   AppMode,
   AppSettings,
   AppSnapshot,
+  LevelSnapshot,
   ModelDescriptor,
   QueueSnapshot,
   TrayState,
@@ -119,6 +120,15 @@ export function emptyQueue(): QueueSnapshot {
   };
 }
 
+export function defaultLevelSnapshot(): LevelSnapshot {
+  return {
+    current_dbfs: -120,
+    peak_dbfs: -120,
+    noise_floor_dbfs: -120,
+    suggested_threshold_dbfs: -90,
+  };
+}
+
 export function mockSnapshot(): AppSnapshot {
   const settings = defaultSettings();
   const queue = emptyQueue();
@@ -133,6 +143,7 @@ export function mockSnapshot(): AppSnapshot {
       active_model: settings.selected_model,
       active_microphone: settings.selected_microphone_label,
       threshold_dbfs: settings.threshold_dbfs,
+      level: defaultLevelSnapshot(),
       queue,
     },
     microphones: [
