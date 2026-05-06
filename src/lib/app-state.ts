@@ -67,11 +67,16 @@ export function shouldShowFloatingOverlay(
   );
 }
 
-export function shouldPollSnapshot(status: AppStatus, queue: QueueSnapshot) {
+export function shouldPollSnapshot(
+  status: AppStatus,
+  queue: QueueSnapshot,
+  models: ModelDescriptor[] = [],
+) {
   return (
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
     queue.pending_count > 0 ||
-    queue.running_count > 0
+    queue.running_count > 0 ||
+    models.some((model) => ["downloading", "verifying", "extracting"].includes(model.status))
   );
 }
 

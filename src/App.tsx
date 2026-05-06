@@ -76,7 +76,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!shouldPollSnapshot(snapshot.status, snapshot.queue)) {
+    if (!shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models)) {
       return;
     }
 
@@ -84,7 +84,14 @@ export default function App() {
       void refreshQuietly();
     }, 100);
     return () => window.clearInterval(timer);
-  }, [snapshot.status.tray_state, snapshot.queue.pending_count, snapshot.queue.running_count]);
+  }, [
+    snapshot.status.tray_state,
+    snapshot.queue.pending_count,
+    snapshot.queue.running_count,
+    snapshot.models
+      .map((model) => `${model.id}:${model.status}:${model.download_progress ?? ""}`)
+      .join("|"),
+  ]);
 
   async function patchSettings(patch: Partial<AppSettings>) {
     setBusy(true);

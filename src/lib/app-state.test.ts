@@ -52,6 +52,23 @@ describe("app state derivation", () => {
     expect(shouldPollSnapshot(idleStatus, snapshot.queue)).toBe(false);
   });
 
+  it("keeps polling while model download or verification state is active", () => {
+    const snapshot = mockSnapshot();
+    const idleStatus = { ...snapshot.status, tray_state: "idle" as const };
+    const downloadingModels = snapshot.models.map((model) =>
+      model.id === "whisper-medium"
+        ? { ...model, status: "downloading" as const, download_progress: 24 }
+        : model,
+    );
+    const verifyingModels = snapshot.models.map((model) =>
+      model.id === "whisper-medium" ? { ...model, status: "verifying" as const } : model,
+    );
+
+    expect(shouldPollSnapshot(idleStatus, snapshot.queue, downloadingModels)).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, snapshot.queue, verifyingModels)).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, snapshot.queue, snapshot.models)).toBe(false);
+  });
+
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 
