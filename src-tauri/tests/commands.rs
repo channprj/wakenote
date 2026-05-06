@@ -308,6 +308,7 @@ fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
         snapshot.jobs[0].status,
         sagwan::queue::QueueJobStatus::Failed
     );
+    assert_eq!(backend.app_status().tray_state, TrayState::Error);
     assert!(audio_path.exists());
     assert!(
         std::fs::read_to_string(audio_path.with_extension("error.txt"))

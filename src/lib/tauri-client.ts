@@ -35,7 +35,7 @@ function statusFrom(settings: AppSettings, queue: QueueSnapshot): AppStatus {
   const mode = deriveProductMode(settings);
   return {
     mode,
-    tray_state: deriveTrayState(mode, queue.running_count > 0),
+    tray_state: deriveTrayState(mode, queue.running_count > 0, queue.failed_count > 0),
     active_model: settings.selected_model,
     active_microphone: settings.selected_microphone_label,
     microphone_warning: browserSnapshot.status?.microphone_warning ?? null,

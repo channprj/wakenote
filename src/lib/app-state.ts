@@ -33,9 +33,17 @@ export function deriveProductMode(settings: ModeInput): AppMode {
   return "transcription_only";
 }
 
-export function deriveTrayState(mode: AppMode, hasRunningTranscription: boolean): TrayState {
+export function deriveTrayState(
+  mode: AppMode,
+  hasRunningTranscription: boolean,
+  hasError = false,
+): TrayState {
   if (hasRunningTranscription) {
     return "transcribing";
+  }
+
+  if (hasError) {
+    return "error";
   }
 
   switch (mode) {

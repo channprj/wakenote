@@ -32,6 +32,7 @@ describe("app state derivation", () => {
     expect(deriveTrayState("transcription_only", false)).toBe("idle");
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");
+    expect(deriveTrayState("recording_only", false, true)).toBe("error");
   });
 
   it("shows the floating overlay only for active capture or transcription states", () => {
