@@ -1,5 +1,13 @@
 import { Brain, CheckCircle2, Folder, Gauge, Mic } from "lucide-react";
+import { deriveOnboardingSteps, type OnboardingStepId } from "../lib/onboarding";
 import type { AppSettings, ModelDescriptor } from "../lib/types";
+
+const stepIcons: Record<OnboardingStepId, typeof Mic> = {
+  microphone: Mic,
+  save_root: Folder,
+  model: Brain,
+  calibration: Gauge,
+};
 
 export function Onboarding({
   settings,
@@ -8,20 +16,14 @@ export function Onboarding({
   settings: AppSettings;
   models: ModelDescriptor[];
 }) {
-  const selectedModel = models.find((model) => model.id === settings.selected_model);
-  const steps = [
-    { icon: Mic, label: "Microphone", complete: Boolean(settings.selected_microphone) },
-    { icon: Folder, label: "Save Root", complete: Boolean(settings.save_root) },
-    { icon: Brain, label: "Model", complete: Boolean(selectedModel) },
-    { icon: Gauge, label: "Calibration", complete: settings.threshold_dbfs < 0 },
-  ];
+  const steps = deriveOnboardingSteps(settings, models);
 
   return (
     <div className="onboarding-strip">
       {steps.map((step) => {
-        const Icon = step.icon;
+        const Icon = stepIcons[step.id];
         return (
-          <div key={step.label} data-complete={step.complete}>
+          <div key={step.id} data-complete={step.complete}>
             <Icon />
             <span>{step.label}</span>
             <CheckCircle2 />
