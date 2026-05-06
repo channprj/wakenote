@@ -78,6 +78,8 @@ export interface ModelDescriptor {
   accuracy_score: number;
   offline: boolean;
   status: ModelStatus;
+  download_progress?: number | null;
+  download_error?: string | null;
 }
 
 export interface QueueJob {

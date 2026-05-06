@@ -18,8 +18,12 @@ function statusTone(status: ModelStatus) {
   }
 }
 
-function statusProgress(status: ModelStatus) {
-  switch (status) {
+function statusProgress(model: ModelDescriptor) {
+  if (typeof model.download_progress === "number") {
+    return model.download_progress;
+  }
+
+  switch (model.status) {
     case "downloading":
       return 42;
     case "verifying":
@@ -53,7 +57,7 @@ export function ModelManager({
     <div className="model-list">
       {models.map((model) => {
         const selected = settings.selected_model === model.id;
-        const progress = statusProgress(model.status);
+        const progress = statusProgress(model);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -72,6 +76,7 @@ export function ModelManager({
                 <span>Accuracy {model.accuracy_score}/10</span>
                 <span>{model.languages.join(", ")}</span>
                 <span>{model.offline ? "Offline" : "Cloud/API"}</span>
+                {model.download_error ? <span>{model.download_error}</span> : null}
               </div>
             </div>
             <div className="model-row__actions">

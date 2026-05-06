@@ -33,6 +33,28 @@ pub struct ModelDescriptor {
     pub accuracy_score: u8,
     pub offline: bool,
     pub status: ModelStatus,
+    pub download_progress: Option<u8>,
+    pub download_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelDownloadRecord {
+    pub model_id: String,
+    pub status: ModelStatus,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelDownloadState {
+    pub downloads: BTreeMap<String, ModelDownloadRecord>,
+}
+
+impl ModelDownloadRecord {
+    pub fn download_progress_percent(&self) -> Option<u8> {
+        download_progress_percent(self)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,12 +87,52 @@ impl ModelStore {
         self.model_directory.join(format!("{model_id}.bin"))
     }
 
+    pub fn download_state_path(&self) -> PathBuf {
+        self.model_directory.join("model-downloads.json")
+    }
+
+    pub fn load_download_state(&self) -> Result<ModelDownloadState, ModelStoreError> {
+        let path = self.download_state_path();
+        if !path.exists() {
+            return Ok(ModelDownloadState::default());
+        }
+
+        serde_json::from_slice(&std::fs::read(path)?)
+            .map_err(|error| ModelStoreError::Download(error.to_string()))
+    }
+
     pub fn refresh_statuses(
         &self,
         registry: &mut [ModelDescriptor],
     ) -> Result<(), ModelStoreError> {
+        let download_state = self.load_download_state()?;
         for model in registry {
-            model.status = self.verify_model(model)?;
+            let verified_status = self.verify_model(model)?;
+            model.download_progress = None;
+            model.download_error = None;
+            match (verified_status, download_state.downloads.get(&model.id)) {
+                (ModelStatus::Ready, _) => {
+                    model.status = ModelStatus::Ready;
+                    model.download_progress = Some(100);
+                }
+                (_, Some(record))
+                    if matches!(
+                        record.status,
+                        ModelStatus::Downloading
+                            | ModelStatus::Verifying
+                            | ModelStatus::Extracting
+                            | ModelStatus::Error
+                            | ModelStatus::Ready
+                    ) =>
+                {
+                    model.status = record.status;
+                    model.download_progress = download_progress_percent(record);
+                    model.download_error = record.error.clone();
+                }
+                _ => {
+                    model.status = verified_status;
+                }
+            };
         }
 
         Ok(())
@@ -116,14 +178,30 @@ impl ModelStore {
     pub fn install_model_reader(
         &self,
         model: &ModelDescriptor,
-        mut reader: impl Read,
+        reader: impl Read,
     ) -> Result<(), ModelStoreError> {
+        self.install_model_reader_inner(model, reader, None, false)
+            .map(|_| ())
+    }
+
+    fn install_model_reader_inner(
+        &self,
+        model: &ModelDescriptor,
+        mut reader: impl Read,
+        total_bytes: Option<u64>,
+        track_progress: bool,
+    ) -> Result<u64, ModelStoreError> {
         std::fs::create_dir_all(&self.model_directory)?;
         let path = self.model_path(&model.id);
         let temp_path = self.model_directory.join(format!("{}.download", model.id));
         let mut file = std::fs::File::create(&temp_path)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
+        let mut downloaded_bytes = 0_u64;
+        let mut last_recorded_bytes = 0_u64;
+        if track_progress {
+            self.record_download_progress(&model.id, 0, total_bytes)?;
+        }
 
         loop {
             let read = reader.read(&mut buffer)?;
@@ -132,8 +210,16 @@ impl ModelStore {
             }
             hasher.update(&buffer[..read]);
             std::io::Write::write_all(&mut file, &buffer[..read])?;
+            downloaded_bytes += read as u64;
+            if track_progress && downloaded_bytes.saturating_sub(last_recorded_bytes) >= 5_242_880 {
+                self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
+                last_recorded_bytes = downloaded_bytes;
+            }
         }
         std::io::Write::flush(&mut file)?;
+        if track_progress && downloaded_bytes != last_recorded_bytes {
+            self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
+        }
 
         let actual = hex_digest(hasher.finalize());
         if let Some(expected) = &model.checksum_sha256 {
@@ -147,7 +233,33 @@ impl ModelStore {
         }
 
         std::fs::rename(temp_path, path)?;
-        Ok(())
+        Ok(downloaded_bytes)
+    }
+
+    pub fn record_download_progress(
+        &self,
+        model_id: impl Into<String>,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+    ) -> Result<ModelDownloadRecord, ModelStoreError> {
+        self.record_download(
+            model_id,
+            ModelStatus::Downloading,
+            downloaded_bytes,
+            total_bytes,
+            None,
+        )
+    }
+
+    pub fn record_download_status(
+        &self,
+        model_id: impl Into<String>,
+        status: ModelStatus,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        error: Option<String>,
+    ) -> Result<ModelDownloadRecord, ModelStoreError> {
+        self.record_download(model_id, status, downloaded_bytes, total_bytes, error)
     }
 
     pub fn download_model_with<R: Read>(
@@ -156,8 +268,7 @@ impl ModelStore {
         fetch: impl FnOnce(&ModelDescriptor) -> Result<R, ModelStoreError>,
     ) -> Result<ModelStatus, ModelStoreError> {
         let reader = fetch(model)?;
-        self.install_model_reader(model, reader)?;
-        self.verify_model(model)
+        self.download_model_reader(model, reader, None)
     }
 
     pub fn download_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
@@ -165,12 +276,88 @@ impl ModelStore {
             .download_url
             .as_ref()
             .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
-        self.download_model_with(model, |_| {
-            let response = ureq::get(url)
-                .call()
-                .map_err(|error| ModelStoreError::Download(error.to_string()))?;
-            Ok(response.into_reader())
-        })
+        let response = ureq::get(url)
+            .call()
+            .map_err(|error| ModelStoreError::Download(error.to_string()))?;
+        let total_bytes = response
+            .header("Content-Length")
+            .and_then(|value| value.parse::<u64>().ok());
+        self.download_model_reader(model, response.into_reader(), total_bytes)
+    }
+
+    fn download_model_reader(
+        &self,
+        model: &ModelDescriptor,
+        reader: impl Read,
+        total_bytes: Option<u64>,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        match self.install_model_reader_inner(model, reader, total_bytes, true) {
+            Ok(downloaded_bytes) => {
+                let final_total = total_bytes.or(Some(downloaded_bytes));
+                self.record_download_status(
+                    &model.id,
+                    ModelStatus::Verifying,
+                    downloaded_bytes,
+                    final_total,
+                    None,
+                )?;
+                let status = self.verify_model(model)?;
+                self.record_download_status(
+                    &model.id,
+                    status,
+                    downloaded_bytes,
+                    final_total,
+                    if status == ModelStatus::Error {
+                        Some("model verification failed".to_string())
+                    } else {
+                        None
+                    },
+                )?;
+                Ok(status)
+            }
+            Err(error) => {
+                let _ = self.record_download_status(
+                    &model.id,
+                    ModelStatus::Error,
+                    0,
+                    total_bytes,
+                    Some(error.to_string()),
+                );
+                Err(error)
+            }
+        }
+    }
+}
+
+impl ModelStore {
+    fn save_download_state(&self, state: &ModelDownloadState) -> Result<(), ModelStoreError> {
+        std::fs::create_dir_all(&self.model_directory)?;
+        let bytes = serde_json::to_vec_pretty(state)
+            .map_err(|error| ModelStoreError::Download(error.to_string()))?;
+        std::fs::write(self.download_state_path(), bytes)?;
+        Ok(())
+    }
+
+    fn record_download(
+        &self,
+        model_id: impl Into<String>,
+        status: ModelStatus,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        error: Option<String>,
+    ) -> Result<ModelDownloadRecord, ModelStoreError> {
+        let model_id = model_id.into();
+        let mut state = self.load_download_state()?;
+        let record = ModelDownloadRecord {
+            model_id: model_id.clone(),
+            status,
+            downloaded_bytes,
+            total_bytes,
+            error,
+        };
+        state.downloads.insert(model_id, record.clone());
+        self.save_download_state(&state)?;
+        Ok(record)
     }
 }
 
@@ -185,6 +372,15 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>()
+}
+
+fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
+    let total = record.total_bytes?;
+    if total == 0 {
+        return Some(0);
+    }
+
+    Some(((record.downloaded_bytes as f64 / total as f64) * 100.0).round() as u8)
 }
 
 pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
@@ -210,6 +406,8 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             accuracy_score: 8,
             offline: true,
             status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
         },
     );
 
@@ -233,6 +431,8 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             accuracy_score: 4,
             offline: true,
             status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
         },
     );
 

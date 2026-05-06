@@ -91,6 +91,8 @@ export function mockModels(): ModelDescriptor[] {
       accuracy_score: 8,
       offline: true,
       status: "missing",
+      download_progress: null,
+      download_error: null,
     },
     {
       id: "whisper-tiny",
@@ -107,6 +109,8 @@ export function mockModels(): ModelDescriptor[] {
       accuracy_score: 4,
       offline: true,
       status: "missing",
+      download_progress: null,
+      download_error: null,
     },
   ];
 }

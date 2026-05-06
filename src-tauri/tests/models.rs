@@ -1,4 +1,4 @@
-use sagwan::models::{ModelDescriptor, ModelStatus, ModelStore};
+use sagwan::models::{ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore};
 
 fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
     ModelDescriptor {
@@ -14,6 +14,8 @@ fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
         accuracy_score: 5,
         offline: true,
         status: ModelStatus::Missing,
+        download_progress: None,
+        download_error: None,
     }
 }
 
@@ -110,4 +112,65 @@ fn model_store_downloads_with_fetcher_and_installs_ready_model() {
         std::fs::read(store.model_path("whisper-test")).expect("installed model"),
         b"hello"
     );
+    assert_eq!(
+        store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .get("whisper-test")
+            .map(|record| (record.status, record.download_progress_percent())),
+        Some((ModelStatus::Ready, Some(100)))
+    );
+}
+
+#[test]
+fn model_store_persists_download_progress_across_instances() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+
+    let record = store
+        .record_download_progress("whisper-test", 512, Some(1024))
+        .expect("record progress");
+
+    assert_eq!(
+        record,
+        ModelDownloadRecord {
+            model_id: "whisper-test".to_string(),
+            status: ModelStatus::Downloading,
+            downloaded_bytes: 512,
+            total_bytes: Some(1024),
+            error: None,
+        }
+    );
+
+    let reloaded = ModelStore::new(tmp.path());
+    let state = reloaded.load_download_state().expect("download state");
+
+    assert_eq!(
+        state.downloads.get("whisper-test"),
+        Some(&ModelDownloadRecord {
+            model_id: "whisper-test".to_string(),
+            status: ModelStatus::Downloading,
+            downloaded_bytes: 512,
+            total_bytes: Some(1024),
+            error: None,
+        })
+    );
+}
+
+#[test]
+fn model_store_overlays_download_progress_on_model_registry_status() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let mut registry = vec![descriptor("whisper-test", None)];
+    store
+        .record_download_progress("whisper-test", 512, Some(1024))
+        .expect("record progress");
+
+    store
+        .refresh_statuses(&mut registry)
+        .expect("refresh statuses");
+
+    assert_eq!(registry[0].status, ModelStatus::Downloading);
+    assert_eq!(registry[0].download_progress, Some(50));
 }
