@@ -325,6 +325,24 @@ impl ModelStore {
         )
     }
 
+    pub fn cancel_active_download(&self) -> Result<Option<ModelDownloadRecord>, ModelStoreError> {
+        let state = self.load_download_state()?;
+        let active_model_id = state
+            .downloads
+            .iter()
+            .find(|(_, record)| {
+                matches!(
+                    record.status,
+                    ModelStatus::Downloading | ModelStatus::Verifying | ModelStatus::Extracting
+                )
+            })
+            .map(|(model_id, _)| model_id.clone());
+
+        active_model_id
+            .map(|model_id| self.cancel_download(&model_id))
+            .transpose()
+    }
+
     pub fn download_model_with<R: Read>(
         &self,
         model: &ModelDescriptor,

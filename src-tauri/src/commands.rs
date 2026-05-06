@@ -355,6 +355,26 @@ impl AppBackend {
         Ok(self.queue.snapshot())
     }
 
+    pub fn cancel_current_operation(&mut self) -> Result<(), String> {
+        let store = ModelStore::new(&self.settings.model_directory);
+        if store
+            .cancel_active_download()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        match self.queue.cancel_current("cancelled by user") {
+            Ok(()) => {
+                self.persist_queue();
+                Ok(())
+            }
+            Err(error) if error == "no running job" => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
         let transcriber = WhisperTranscriber::new(&self.settings.model_directory);
         self.process_next_transcription_with(transcriber)

@@ -556,7 +556,7 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
         "cancel-current-operation" => {
             let state = app.state::<BackendState>();
             if let Ok(mut backend) = state.lock() {
-                let _ = backend.cancel_current_transcription();
+                let _ = backend.cancel_current_operation();
                 update_tray_presentation(app, &backend.settings(), &backend.app_status());
             }
         }

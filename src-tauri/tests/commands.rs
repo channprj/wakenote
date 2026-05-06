@@ -342,6 +342,33 @@ fn backend_cancel_model_download_marks_model_as_recoverable_error() {
 }
 
 #[test]
+fn backend_cancel_current_operation_cancels_active_model_download() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    let store = ModelStore::new(&model_directory);
+    store
+        .record_download_progress("whisper-medium", 512, Some(1024))
+        .expect("record download progress");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    backend
+        .cancel_current_operation()
+        .expect("cancel current operation");
+
+    let model = backend
+        .model_registry()
+        .into_iter()
+        .find(|model| model.id == "whisper-medium")
+        .expect("whisper medium");
+    assert_eq!(model.status, ModelStatus::Error);
+    assert_eq!(model.download_error.as_deref(), Some("cancelled by user"));
+}
+
+#[test]
 fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
     let states = [
         TrayState::Idle,
