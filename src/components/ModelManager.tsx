@@ -39,12 +39,14 @@ export function ModelManager({
   settings,
   onPatch,
   onVerify,
+  onDownload,
   onDelete,
 }: {
   models: ModelDescriptor[];
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => void;
   onVerify: (modelId: string) => void;
+  onDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
   return (
@@ -82,7 +84,14 @@ export function ModelManager({
                 <CheckCircle2 data-icon="inline-start" />
                 {selected ? "Active" : "Switch"}
               </Button>
-              <Button type="button" variant="secondary" size="icon" title="Download">
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                title="Download"
+                onClick={() => onDownload(model.id)}
+                disabled={!model.download_url || model.status === "ready"}
+              >
                 <Download />
               </Button>
               <Button
@@ -94,7 +103,14 @@ export function ModelManager({
               >
                 <ShieldCheck />
               </Button>
-              <Button type="button" variant="secondary" size="icon" title="Retry">
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                title="Retry"
+                onClick={() => onDownload(model.id)}
+                disabled={model.status !== "error"}
+              >
                 <RotateCw />
               </Button>
               <Button

@@ -28,6 +28,7 @@ export function SettingsPanel({
   onRetry,
   onSkip,
   onVerifyModel,
+  onDownloadModel,
   onDeleteModel,
 }: {
   activeSection: string;
@@ -42,6 +43,7 @@ export function SettingsPanel({
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
   onVerifyModel: (modelId: string) => void;
+  onDownloadModel: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
@@ -59,6 +61,7 @@ export function SettingsPanel({
           settings={settings}
           onPatch={onPatch}
           onVerify={onVerifyModel}
+          onDownload={onDownloadModel}
           onDelete={onDeleteModel}
         />
       </Section>

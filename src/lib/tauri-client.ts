@@ -158,6 +158,15 @@ export async function verifyModel(modelId: string): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function downloadModel(modelId: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  await invoke("download_model", { modelId });
+  return loadSnapshot();
+}
+
 export async function deleteModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     browserSnapshot = {

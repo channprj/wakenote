@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,12 @@ pub struct ModelStore {
 pub enum ModelStoreError {
     #[error("model {0} not found")]
     NotFound(String),
+    #[error("model {0} has no download URL")]
+    MissingDownloadUrl(String),
+    #[error("model download error: {0}")]
+    Download(String),
+    #[error("model checksum mismatch: expected {expected}, got {actual}")]
+    ChecksumMismatch { expected: String, actual: String },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -97,11 +104,84 @@ impl ModelStore {
 
         Err(ModelStoreError::NotFound(model_id.to_string()))
     }
+
+    pub fn install_model_bytes(
+        &self,
+        model: &ModelDescriptor,
+        bytes: &[u8],
+    ) -> Result<(), ModelStoreError> {
+        self.install_model_reader(model, bytes)
+    }
+
+    pub fn install_model_reader(
+        &self,
+        model: &ModelDescriptor,
+        mut reader: impl Read,
+    ) -> Result<(), ModelStoreError> {
+        std::fs::create_dir_all(&self.model_directory)?;
+        let path = self.model_path(&model.id);
+        let temp_path = self.model_directory.join(format!("{}.download", model.id));
+        let mut file = std::fs::File::create(&temp_path)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 64 * 1024];
+
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            std::io::Write::write_all(&mut file, &buffer[..read])?;
+        }
+        std::io::Write::flush(&mut file)?;
+
+        let actual = hex_digest(hasher.finalize());
+        if let Some(expected) = &model.checksum_sha256 {
+            if !actual.eq_ignore_ascii_case(expected) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(ModelStoreError::ChecksumMismatch {
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+        }
+
+        std::fs::rename(temp_path, path)?;
+        Ok(())
+    }
+
+    pub fn download_model_with<R: Read>(
+        &self,
+        model: &ModelDescriptor,
+        fetch: impl FnOnce(&ModelDescriptor) -> Result<R, ModelStoreError>,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        let reader = fetch(model)?;
+        self.install_model_reader(model, reader)?;
+        self.verify_model(model)
+    }
+
+    pub fn download_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
+        let url = model
+            .download_url
+            .as_ref()
+            .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
+        self.download_model_with(model, |_| {
+            let response = ureq::get(url)
+                .call()
+                .map_err(|error| ModelStoreError::Download(error.to_string()))?;
+            Ok(response.into_reader())
+        })
+    }
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
+    hex_digest(digest)
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
     digest
+        .as_ref()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>()

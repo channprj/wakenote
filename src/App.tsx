@@ -16,6 +16,7 @@ import { Badge } from "./components/ui/primitives";
 import {
   cancelCurrentTranscription,
   deleteModel,
+  downloadModel,
   enqueueBacklog,
   loadSnapshot,
   processNextTranscription,
@@ -176,6 +177,7 @@ export default function App() {
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
           onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}
+          onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />
       </main>

@@ -6,7 +6,7 @@ use std::thread;
 
 use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice};
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
-use sagwan::models::ModelDescriptor;
+use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{AppSettings, SettingsPatch};
 use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
@@ -64,6 +64,28 @@ fn verify_model(
 ) -> Result<Vec<ModelDescriptor>, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     backend.verify_model(&model_id)
+}
+
+#[tauri::command]
+fn download_model(
+    state: State<'_, BackendState>,
+    model_id: String,
+) -> Result<Vec<ModelDescriptor>, String> {
+    let model_directory = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.settings().model_directory
+    };
+    let registry = default_model_registry();
+    let model = registry
+        .get(&model_id)
+        .ok_or_else(|| format!("unknown model {model_id}"))?;
+    let store = ModelStore::new(model_directory);
+    store
+        .download_model(model)
+        .map_err(|error| error.to_string())?;
+
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(backend.model_registry())
 }
 
 #[tauri::command]
@@ -297,6 +319,7 @@ fn main() {
             list_microphones,
             list_models,
             verify_model,
+            download_model,
             delete_model,
             queue_snapshot,
             enqueue_audio_file,

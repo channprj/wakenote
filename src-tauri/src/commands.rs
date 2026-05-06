@@ -115,6 +115,18 @@ impl AppBackend {
         Ok(self.model_registry())
     }
 
+    pub fn download_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
+        let registry = default_model_registry();
+        let model = registry
+            .get(model_id)
+            .ok_or_else(|| format!("unknown model {model_id}"))?;
+        let store = ModelStore::new(&self.settings.model_directory);
+        store
+            .download_model(model)
+            .map_err(|error| error.to_string())?;
+        Ok(self.model_registry())
+    }
+
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
         let store = ModelStore::new(&self.settings.model_directory);
         store
