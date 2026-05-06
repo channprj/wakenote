@@ -45,6 +45,34 @@ pub enum TranscriptionWorkerError {
     Queue(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptionJobStatus {
+    Completed,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptionJobOutcome {
+    pub id: u64,
+    pub status: TranscriptionJobStatus,
+}
+
+impl TranscriptionJobOutcome {
+    pub fn completed(id: u64) -> Self {
+        Self {
+            id,
+            status: TranscriptionJobStatus::Completed,
+        }
+    }
+
+    pub fn failed(id: u64, error: impl Into<String>) -> Self {
+        Self {
+            id,
+            status: TranscriptionJobStatus::Failed(error.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TranscriptionWorker<T> {
     transcriber: T,
@@ -57,14 +85,10 @@ impl<T> TranscriptionWorker<T> {
 }
 
 impl<T: Transcriber> TranscriptionWorker<T> {
-    pub fn process_next(
+    pub fn process_started_job(
         &self,
-        queue: &mut TranscriptionQueue,
-    ) -> Result<Option<u64>, TranscriptionWorkerError> {
-        let Some(job) = queue.start_next() else {
-            return Ok(None);
-        };
-
+        job: &crate::queue::QueueJob,
+    ) -> Result<TranscriptionJobOutcome, TranscriptionWorkerError> {
         let chunk = RecordedChunk::from_audio_path(job.audio_path.clone());
         let request = TranscriptionRequest {
             audio_path: &job.audio_path,
@@ -74,20 +98,42 @@ impl<T: Transcriber> TranscriptionWorker<T> {
         match self.transcriber.transcribe(request) {
             Ok(transcript) => {
                 TranscriptionSidecar::write_success(&chunk, &transcript)?;
-                queue
-                    .mark_completed(job.id)
-                    .map_err(TranscriptionWorkerError::Queue)?;
+                Ok(TranscriptionJobOutcome::completed(job.id))
             }
             Err(error) => {
                 let message = error.recoverable_message();
                 TranscriptionSidecar::write_error(&chunk, &message)?;
-                queue
-                    .mark_failed(job.id, message)
-                    .map_err(TranscriptionWorkerError::Queue)?;
+                Ok(TranscriptionJobOutcome::failed(job.id, message))
             }
         }
+    }
+
+    pub fn process_next(
+        &self,
+        queue: &mut TranscriptionQueue,
+    ) -> Result<Option<u64>, TranscriptionWorkerError> {
+        let Some(job) = queue.start_next() else {
+            return Ok(None);
+        };
+
+        let outcome = self.process_started_job(&job)?;
+        apply_outcome(queue, outcome)?;
 
         Ok(Some(job.id))
+    }
+}
+
+pub fn apply_outcome(
+    queue: &mut TranscriptionQueue,
+    outcome: TranscriptionJobOutcome,
+) -> Result<(), TranscriptionWorkerError> {
+    match outcome.status {
+        TranscriptionJobStatus::Completed => queue
+            .mark_completed(outcome.id)
+            .map_err(TranscriptionWorkerError::Queue),
+        TranscriptionJobStatus::Failed(error) => queue
+            .mark_failed(outcome.id, error)
+            .map_err(TranscriptionWorkerError::Queue),
     }
 }
 

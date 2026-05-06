@@ -2,6 +2,7 @@ use sagwan::commands::{AppBackend, AppMode, TrayState};
 use sagwan::settings::{AudioFormat, SettingsPatch};
 use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
+#[derive(Clone)]
 struct StaticTranscriber;
 
 impl Transcriber for StaticTranscriber {
@@ -173,6 +174,65 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
         "queued transcript\n"
     );
+}
+
+#[test]
+fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let first_audio = tmp.path().join("20260506").join("231114.wav");
+    let second_audio = tmp.path().join("20260506").join("231115.wav");
+    std::fs::create_dir_all(first_audio.parent().unwrap()).expect("audio dir");
+    std::fs::write(&first_audio, b"wav bytes").expect("first audio");
+    std::fs::write(&second_audio, b"wav bytes").expect("second audio");
+    let mut backend = AppBackend::default();
+    backend.enqueue_audio_file(&first_audio, Some("whisper-medium".to_string()));
+    backend.enqueue_audio_file(&second_audio, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_pending_transcriptions_with(StaticTranscriber)
+        .expect("process pending transcriptions");
+
+    assert_eq!(snapshot.pending_count, 0);
+    assert_eq!(snapshot.failed_count, 0);
+    assert!(
+        snapshot
+            .jobs
+            .iter()
+            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
+    );
+    assert_eq!(
+        std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
+        "queued transcript\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(second_audio.with_extension("txt")).expect("second transcript"),
+        "queued transcript\n"
+    );
+}
+
+#[test]
+fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("231216.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_pending_transcriptions_with(StaticTranscriber)
+        .expect("process pending transcriptions");
+
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(
+        snapshot.jobs[0].status,
+        sagwan::queue::QueueJobStatus::Pending
+    );
+    assert!(!audio_path.with_extension("txt").exists());
 }
 
 #[test]

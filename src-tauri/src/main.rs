@@ -1,10 +1,15 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 
 use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice};
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::ModelDescriptor;
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{AppSettings, SettingsPatch};
+use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -12,6 +17,7 @@ use tauri::{Manager, State};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
+type AutoTranscriptionState = Arc<AtomicBool>;
 
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
@@ -22,10 +28,15 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 #[tauri::command]
 fn update_settings(
     state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
-    let mut backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.update_settings(patch))
+    let settings = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.update_settings(patch)
+    };
+    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -73,28 +84,46 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 #[tauri::command]
 fn enqueue_audio_file(
     state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
     audio_path: String,
     model_id: Option<String>,
 ) -> Result<QueueSnapshot, String> {
-    let mut backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.enqueue_audio_file(audio_path, model_id))
+    let snapshot = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.enqueue_audio_file(audio_path, model_id)
+    };
+    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
 fn enqueue_backlog(
     state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
     save_root: String,
 ) -> Result<QueueSnapshot, String> {
-    let mut backend = state.lock().map_err(|error| error.to_string())?;
-    backend
-        .enqueue_backlog(save_root)
-        .map_err(|error| error.to_string())
+    let snapshot = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend
+            .enqueue_backlog(save_root)
+            .map_err(|error| error.to_string())?
+    };
+    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
-fn retry_job(state: State<'_, BackendState>, id: u64) -> Result<QueueSnapshot, String> {
-    let mut backend = state.lock().map_err(|error| error.to_string())?;
-    backend.retry_job(id)
+fn retry_job(
+    state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
+    id: u64,
+) -> Result<QueueSnapshot, String> {
+    let snapshot = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.retry_job(id)?
+    };
+    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -119,6 +148,7 @@ fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSna
 fn start_live_capture(
     backend_state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
     let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
     if live_capture.is_running() {
@@ -139,14 +169,24 @@ fn start_live_capture(
     };
 
     let backend_arc = backend_state.inner().clone();
+    let callback_backend = backend_arc.clone();
+    let callback_transcription = transcription_state.inner().clone();
     let start_result = live_capture.start(
         AudioInputConfig {
             device_id,
             sample_rate: Some(sample_rate),
         },
         move |frame| {
-            if let Ok(mut backend) = backend_arc.lock() {
-                let _ = backend.process_audio_frame(frame);
+            let should_kick = if let Ok(mut backend) = callback_backend.lock() {
+                backend
+                    .process_audio_frame(frame)
+                    .map(|_| backend.should_process_transcriptions())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if should_kick {
+                kick_transcription_worker(callback_backend.clone(), callback_transcription.clone());
             }
         },
     );
@@ -165,10 +205,71 @@ fn start_live_capture(
 fn stop_live_capture(
     backend_state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
     live_state.lock().map_err(|error| error.to_string())?.stop();
-    let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-    backend.stop_capture_session()
+    let status = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        backend.stop_capture_session()?
+    };
+    kick_transcription_worker_if_needed(
+        backend_state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+    Ok(status)
+}
+
+fn kick_transcription_worker_if_needed(
+    backend_state: BackendState,
+    transcription_state: AutoTranscriptionState,
+) {
+    let should_process = backend_state
+        .lock()
+        .map(|backend| backend.should_process_transcriptions())
+        .unwrap_or(false);
+    if should_process {
+        kick_transcription_worker(backend_state, transcription_state);
+    }
+}
+
+fn kick_transcription_worker(
+    backend_state: BackendState,
+    transcription_state: AutoTranscriptionState,
+) {
+    if transcription_state
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    thread::spawn(move || {
+        loop {
+            let Some(started) = (match backend_state.lock() {
+                Ok(mut backend) => backend.start_next_transcription_job(),
+                Err(_) => break,
+            }) else {
+                break;
+            };
+
+            let worker = TranscriptionWorker::new(WhisperTranscriber::new(started.model_directory));
+            let outcome = worker
+                .process_started_job(&started.job)
+                .unwrap_or_else(|error| {
+                    TranscriptionJobOutcome::failed(started.job.id, error.to_string())
+                });
+
+            match backend_state.lock() {
+                Ok(mut backend) => {
+                    let _ = backend.finish_transcription_job(outcome);
+                }
+                Err(_) => break,
+            }
+        }
+
+        transcription_state.store(false, Ordering::Release);
+        kick_transcription_worker_if_needed(backend_state, transcription_state);
+    });
 }
 
 fn main() {
@@ -180,9 +281,13 @@ fn main() {
                 .ok()
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
-            app.manage(Arc::new(Mutex::new(backend)));
+            let backend_state = Arc::new(Mutex::new(backend));
+            let transcription_state = Arc::new(AtomicBool::new(false));
+            app.manage(backend_state.clone());
+            app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             setup_tray(app)?;
+            kick_transcription_worker_if_needed(backend_state, transcription_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

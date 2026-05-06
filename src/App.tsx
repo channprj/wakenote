@@ -74,7 +74,9 @@ export default function App() {
     const active =
       snapshot.status.tray_state === "listening" ||
       snapshot.status.tray_state === "recording" ||
-      snapshot.status.tray_state === "transcribing";
+      snapshot.status.tray_state === "transcribing" ||
+      snapshot.queue.pending_count > 0 ||
+      snapshot.queue.running_count > 0;
     if (!active) {
       return;
     }

@@ -7,7 +7,9 @@ use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
 use crate::settings::{AppSettings, SettingsPatch};
-use crate::transcription::{Transcriber, TranscriptionWorker, WhisperTranscriber};
+use crate::transcription::{
+    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +48,12 @@ pub struct AppStatus {
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
     pub queue: QueueSnapshot,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartedTranscriptionJob {
+    pub job: crate::queue::QueueJob,
+    pub model_directory: std::path::PathBuf,
 }
 
 #[derive(Debug)]
@@ -232,6 +240,49 @@ impl AppBackend {
         worker
             .process_next(&mut self.queue)
             .map_err(|error| error.to_string())?;
+        self.persist_queue();
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn process_pending_transcriptions_with<T: Clone + Transcriber>(
+        &mut self,
+        transcriber: T,
+    ) -> Result<QueueSnapshot, String> {
+        while let Some(started) = self.start_next_transcription_job() {
+            let worker = TranscriptionWorker::new(transcriber.clone());
+            let outcome = worker
+                .process_started_job(&started.job)
+                .map_err(|error| error.to_string())?;
+            self.finish_transcription_job(outcome)?;
+        }
+
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn should_process_transcriptions(&self) -> bool {
+        !self.settings.pause_all
+            && self.settings.transcription_enabled
+            && self.queue.snapshot().pending_count > 0
+    }
+
+    pub fn start_next_transcription_job(&mut self) -> Option<StartedTranscriptionJob> {
+        if self.settings.pause_all || !self.settings.transcription_enabled {
+            return None;
+        }
+
+        let job = self.queue.start_next()?;
+        self.persist_queue();
+        Some(StartedTranscriptionJob {
+            job,
+            model_directory: std::path::PathBuf::from(&self.settings.model_directory),
+        })
+    }
+
+    pub fn finish_transcription_job(
+        &mut self,
+        outcome: TranscriptionJobOutcome,
+    ) -> Result<QueueSnapshot, String> {
+        apply_outcome(&mut self.queue, outcome).map_err(|error| error.to_string())?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }
