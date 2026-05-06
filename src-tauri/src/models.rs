@@ -219,12 +219,24 @@ impl ModelStore {
 
     pub fn delete_model(&self, model_id: &str) -> Result<(), ModelStoreError> {
         let path = self.model_path(model_id);
+        let temp_path = self.temp_download_path(model_id);
+        let had_download_record = self.clear_download_record(model_id)?;
+        let mut removed_anything = had_download_record;
+
         if path.exists() {
             std::fs::remove_file(path)?;
-            return Ok(());
+            removed_anything = true;
+        }
+        if temp_path.exists() {
+            std::fs::remove_file(temp_path)?;
+            removed_anything = true;
         }
 
-        Err(ModelStoreError::NotFound(model_id.to_string()))
+        if removed_anything {
+            Ok(())
+        } else {
+            Err(ModelStoreError::NotFound(model_id.to_string()))
+        }
     }
 
     pub fn install_model_bytes(
@@ -524,6 +536,15 @@ impl ModelStore {
             .map_err(|error| ModelStoreError::Download(error.to_string()))?;
         std::fs::write(self.download_state_path(), bytes)?;
         Ok(())
+    }
+
+    fn clear_download_record(&self, model_id: &str) -> Result<bool, ModelStoreError> {
+        let mut state = self.load_download_state()?;
+        let removed = state.downloads.remove(model_id).is_some();
+        if removed {
+            self.save_download_state(&state)?;
+        }
+        Ok(removed)
     }
 
     fn record_download(

@@ -106,10 +106,49 @@ fn model_store_delete_removes_model_file() {
     let path = store.model_path("whisper-tiny");
     std::fs::create_dir_all(path.parent().unwrap()).expect("models dir");
     std::fs::write(&path, b"model").expect("model file");
+    store
+        .record_download_status("whisper-tiny", ModelStatus::Ready, 5, Some(5), None)
+        .expect("ready record");
 
     store.delete_model("whisper-tiny").expect("delete");
 
     assert!(!path.exists());
+    assert!(
+        !store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .contains_key("whisper-tiny")
+    );
+}
+
+#[test]
+fn model_store_delete_clears_stale_download_error_without_model_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    std::fs::write(tmp.path().join("whisper-test.download"), b"partial").expect("partial download");
+    store
+        .record_download_status(
+            "whisper-test",
+            ModelStatus::Error,
+            7,
+            Some(42),
+            Some("cancelled by user".to_string()),
+        )
+        .expect("error record");
+
+    store
+        .delete_model("whisper-test")
+        .expect("delete stale state");
+
+    assert!(!tmp.path().join("whisper-test.download").exists());
+    assert!(
+        !store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .contains_key("whisper-test")
+    );
 }
 
 #[test]
