@@ -1,4 +1,6 @@
-use sagwan::models::{ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore};
+use sagwan::models::{
+    ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore, ModelStoreError,
+};
 
 fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
     ModelDescriptor {
@@ -173,4 +175,18 @@ fn model_store_overlays_download_progress_on_model_registry_status() {
 
     assert_eq!(registry[0].status, ModelStatus::Downloading);
     assert_eq!(registry[0].download_progress, Some(50));
+}
+
+#[test]
+fn model_store_rejects_download_when_available_disk_space_is_too_low() {
+    let error = ModelStore::validate_download_space(2_048, 1_024)
+        .expect_err("insufficient disk space should fail");
+
+    assert!(matches!(
+        error,
+        ModelStoreError::InsufficientDiskSpace {
+            required_bytes: 2_048,
+            available_bytes: 1_024,
+        }
+    ));
 }

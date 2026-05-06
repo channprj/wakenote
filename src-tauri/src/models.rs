@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -72,6 +73,13 @@ pub enum ModelStoreError {
     Download(String),
     #[error("model checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
+    #[error(
+        "not enough disk space for model download: need {required_bytes} bytes, have {available_bytes} bytes"
+    )]
+    InsufficientDiskSpace {
+        required_bytes: u64,
+        available_bytes: u64,
+    },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -85,6 +93,20 @@ impl ModelStore {
 
     pub fn model_path(&self, model_id: &str) -> PathBuf {
         self.model_directory.join(format!("{model_id}.bin"))
+    }
+
+    pub fn validate_download_space(
+        required_bytes: u64,
+        available_bytes: u64,
+    ) -> Result<(), ModelStoreError> {
+        if available_bytes < required_bytes {
+            return Err(ModelStoreError::InsufficientDiskSpace {
+                required_bytes,
+                available_bytes,
+            });
+        }
+
+        Ok(())
     }
 
     pub fn download_state_path(&self) -> PathBuf {
@@ -291,6 +313,20 @@ impl ModelStore {
         reader: impl Read,
         total_bytes: Option<u64>,
     ) -> Result<ModelStatus, ModelStoreError> {
+        let required_bytes =
+            total_bytes.unwrap_or_else(|| model.size_mb.saturating_mul(1024 * 1024));
+        let available_bytes = self.available_disk_space()?;
+        if let Err(error) = Self::validate_download_space(required_bytes, available_bytes) {
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                0,
+                total_bytes,
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+
         match self.install_model_reader_inner(model, reader, total_bytes, true) {
             Ok(downloaded_bytes) => {
                 let final_total = total_bytes.or(Some(downloaded_bytes));
@@ -330,6 +366,32 @@ impl ModelStore {
 }
 
 impl ModelStore {
+    fn available_disk_space(&self) -> Result<u64, ModelStoreError> {
+        std::fs::create_dir_all(&self.model_directory)?;
+        let output = Command::new("/bin/df")
+            .arg("-Pk")
+            .arg(&self.model_directory)
+            .output()?;
+        if !output.status.success() {
+            return Err(ModelStoreError::Download(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let line = stdout
+            .lines()
+            .nth(1)
+            .ok_or_else(|| ModelStoreError::Download("unable to parse df output".to_string()))?;
+        let available_kib = line
+            .split_whitespace()
+            .nth(3)
+            .ok_or_else(|| ModelStoreError::Download("unable to parse df output".to_string()))?
+            .parse::<u64>()
+            .map_err(|error| ModelStoreError::Download(error.to_string()))?;
+        Ok(available_kib.saturating_mul(1024))
+    }
+
     fn save_download_state(&self, state: &ModelDownloadState) -> Result<(), ModelStoreError> {
         std::fs::create_dir_all(&self.model_directory)?;
         let bytes = serde_json::to_vec_pretty(state)
