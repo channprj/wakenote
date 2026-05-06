@@ -25,7 +25,7 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "icon": [],
     "targets": ["app"],
     "category": "Productivity",
