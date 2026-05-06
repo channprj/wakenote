@@ -44,6 +44,40 @@ fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
 }
 
 #[test]
+fn model_store_loads_metadata_only_json_registry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    std::fs::write(
+        tmp.path().join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+
+    let registry = store.load_model_registry().expect("load registry");
+    let model = registry.get("custom-local").expect("custom model");
+
+    assert_eq!(model.display_name, "Custom Local");
+    assert_eq!(model.engine, "whisper.cpp");
+    assert_eq!(model.status, ModelStatus::Missing);
+    assert_eq!(model.download_progress, None);
+    assert_eq!(model.download_error, None);
+}
+
+#[test]
 fn model_store_marks_missing_ready_and_error_states_from_local_files() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());

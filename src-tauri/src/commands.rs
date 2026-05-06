@@ -208,14 +208,22 @@ impl AppBackend {
     }
 
     pub fn model_registry(&self) -> Vec<ModelDescriptor> {
-        let mut models: Vec<ModelDescriptor> = default_model_registry().into_values().collect();
         let store = ModelStore::new(&self.settings.model_directory);
+        let mut models: Vec<ModelDescriptor> = store
+            .load_model_registry()
+            .unwrap_or_else(|_| default_model_registry())
+            .into_values()
+            .collect();
         let _ = store.refresh_statuses(&mut models);
         models
     }
 
     pub fn verify_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        if !default_model_registry().contains_key(model_id) {
+        let store = ModelStore::new(&self.settings.model_directory);
+        let registry = store
+            .load_model_registry()
+            .map_err(|error| error.to_string())?;
+        if !registry.contains_key(model_id) {
             return Err(format!("unknown model {model_id}"));
         }
 
@@ -223,11 +231,13 @@ impl AppBackend {
     }
 
     pub fn download_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let registry = default_model_registry();
+        let store = ModelStore::new(&self.settings.model_directory);
+        let registry = store
+            .load_model_registry()
+            .map_err(|error| error.to_string())?;
         let model = registry
             .get(model_id)
             .ok_or_else(|| format!("unknown model {model_id}"))?;
-        let store = ModelStore::new(&self.settings.model_directory);
         store
             .download_model(model)
             .map_err(|error| error.to_string())?;
@@ -235,11 +245,14 @@ impl AppBackend {
     }
 
     pub fn cancel_model_download(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        if !default_model_registry().contains_key(model_id) {
+        let store = ModelStore::new(&self.settings.model_directory);
+        let registry = store
+            .load_model_registry()
+            .map_err(|error| error.to_string())?;
+        if !registry.contains_key(model_id) {
             return Err(format!("unknown model {model_id}"));
         }
 
-        let store = ModelStore::new(&self.settings.model_directory);
         store
             .cancel_download(model_id)
             .map_err(|error| error.to_string())?;

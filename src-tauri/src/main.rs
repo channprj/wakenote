@@ -11,7 +11,7 @@ use sagwan::commands::{
     tray_runtime_presentation,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
-use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
+use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
     AppSettings, LaunchAtLoginAction, SettingsPatch, launch_at_login_action_for_patch,
@@ -102,11 +102,13 @@ fn download_model(
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.settings().model_directory
     };
-    let registry = default_model_registry();
+    let store = ModelStore::new(model_directory);
+    let registry = store
+        .load_model_registry()
+        .map_err(|error| error.to_string())?;
     let model = registry
         .get(&model_id)
         .ok_or_else(|| format!("unknown model {model_id}"))?;
-    let store = ModelStore::new(model_directory);
     store
         .download_model(model)
         .map_err(|error| error.to_string())?;

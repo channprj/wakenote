@@ -38,6 +38,21 @@ pub struct ModelDescriptor {
     pub download_error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ModelRegistryEntry {
+    pub id: String,
+    pub display_name: String,
+    pub engine: String,
+    pub provider_runtime: String,
+    pub download_url: Option<String>,
+    pub checksum_sha256: Option<String>,
+    pub size_mb: u64,
+    pub languages: Vec<String>,
+    pub speed_score: u8,
+    pub accuracy_score: u8,
+    pub offline: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelDownloadRecord {
     pub model_id: String,
@@ -82,6 +97,8 @@ pub enum ModelStoreError {
     },
     #[error("model download cancelled: {model_id}")]
     Cancelled { model_id: String },
+    #[error("model registry error: {0}")]
+    Registry(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -117,6 +134,21 @@ impl ModelStore {
 
     pub fn download_state_path(&self) -> PathBuf {
         self.model_directory.join("model-downloads.json")
+    }
+
+    pub fn registry_path(&self) -> PathBuf {
+        self.model_directory.join("model-registry.json")
+    }
+
+    pub fn load_model_registry(
+        &self,
+    ) -> Result<BTreeMap<String, ModelDescriptor>, ModelStoreError> {
+        let path = self.registry_path();
+        if !path.exists() {
+            return Ok(default_model_registry());
+        }
+
+        parse_model_registry_json(&std::fs::read_to_string(path)?)
     }
 
     pub fn load_download_state(&self) -> Result<ModelDownloadState, ModelStoreError> {
@@ -537,6 +569,37 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
     }
 
     Some(((record.downloaded_bytes as f64 / total as f64) * 100.0).round() as u8)
+}
+
+pub fn parse_model_registry_json(
+    json: &str,
+) -> Result<BTreeMap<String, ModelDescriptor>, ModelStoreError> {
+    let entries: Vec<ModelRegistryEntry> =
+        serde_json::from_str(json).map_err(|error| ModelStoreError::Registry(error.to_string()))?;
+    let mut registry = BTreeMap::new();
+    for entry in entries {
+        registry.insert(entry.id.clone(), descriptor_from_registry_entry(entry));
+    }
+    Ok(registry)
+}
+
+fn descriptor_from_registry_entry(entry: ModelRegistryEntry) -> ModelDescriptor {
+    ModelDescriptor {
+        id: entry.id,
+        display_name: entry.display_name,
+        engine: entry.engine,
+        provider_runtime: entry.provider_runtime,
+        download_url: entry.download_url,
+        checksum_sha256: entry.checksum_sha256,
+        size_mb: entry.size_mb,
+        languages: entry.languages,
+        speed_score: entry.speed_score,
+        accuracy_score: entry.accuracy_score,
+        offline: entry.offline,
+        status: ModelStatus::Missing,
+        download_progress: None,
+        download_error: None,
+    }
 }
 
 pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
