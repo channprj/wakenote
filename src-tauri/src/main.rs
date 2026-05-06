@@ -14,7 +14,7 @@ use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime}
 use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
-    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
+    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch, expand_user_path,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run,
 };
@@ -115,7 +115,7 @@ fn download_model(
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.settings().model_directory
     };
-    let store = ModelStore::new(model_directory);
+    let store = ModelStore::new(expand_user_path(&model_directory));
     let registry = store
         .load_model_registry()
         .map_err(|error| error.to_string())?;

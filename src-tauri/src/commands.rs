@@ -7,7 +7,7 @@ use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
-use crate::settings::{AppSettings, SettingsPatch};
+use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
 use crate::transcription::{
     Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
 };
@@ -127,7 +127,7 @@ pub fn main_window_close_action(window_label: &str) -> MainWindowCloseAction {
 pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderRequest {
     RevealSaveFolderRequest {
         program: PathBuf::from("/usr/bin/open"),
-        path: PathBuf::from(&settings.save_root),
+        path: expand_user_path(&settings.save_root),
     }
 }
 
@@ -207,8 +207,20 @@ impl AppBackend {
         self.settings.clone()
     }
 
+    fn save_root_path(&self) -> PathBuf {
+        expand_user_path(&self.settings.save_root)
+    }
+
+    fn model_directory_path(&self) -> PathBuf {
+        expand_user_path(&self.settings.model_directory)
+    }
+
+    fn model_store(&self) -> ModelStore {
+        ModelStore::new(self.model_directory_path())
+    }
+
     pub fn model_registry(&self) -> Vec<ModelDescriptor> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         let mut models: Vec<ModelDescriptor> = store
             .load_model_registry()
             .unwrap_or_else(|_| default_model_registry())
@@ -219,7 +231,7 @@ impl AppBackend {
     }
 
     pub fn verify_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         let registry = store
             .load_model_registry()
             .map_err(|error| error.to_string())?;
@@ -231,7 +243,7 @@ impl AppBackend {
     }
 
     pub fn download_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         let registry = store
             .load_model_registry()
             .map_err(|error| error.to_string())?;
@@ -245,7 +257,7 @@ impl AppBackend {
     }
 
     pub fn cancel_model_download(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         let registry = store
             .load_model_registry()
             .map_err(|error| error.to_string())?;
@@ -260,7 +272,7 @@ impl AppBackend {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         store
             .delete_model(model_id)
             .map_err(|error| error.to_string())?;
@@ -308,7 +320,7 @@ impl AppBackend {
             None
         };
         self.capture = Some(CaptureController::new(CaptureControllerConfig {
-            save_root: std::path::PathBuf::from(&self.settings.save_root),
+            save_root: self.save_root_path(),
             settings: self.settings.clone(),
             sample_rate,
             device_id,
@@ -373,7 +385,8 @@ impl AppBackend {
         &mut self,
         save_root: impl AsRef<std::path::Path>,
     ) -> std::io::Result<QueueSnapshot> {
-        let scan = BacklogScan::scan(save_root.as_ref())?;
+        let save_root = expand_user_path(save_root.as_ref().to_string_lossy());
+        let scan = BacklogScan::scan(&save_root)?;
         self.queue
             .enqueue_backlog(scan, self.settings.selected_model.clone());
         self.persist_queue();
@@ -399,7 +412,7 @@ impl AppBackend {
     }
 
     pub fn cancel_current_operation(&mut self) -> Result<(), String> {
-        let store = ModelStore::new(&self.settings.model_directory);
+        let store = self.model_store();
         if store
             .cancel_active_download()
             .map_err(|error| error.to_string())?
@@ -469,7 +482,7 @@ impl AppBackend {
         self.persist_queue();
         Some(StartedTranscriptionJob {
             job,
-            model_directory: std::path::PathBuf::from(&self.settings.model_directory),
+            model_directory: self.model_directory_path(),
         })
     }
 

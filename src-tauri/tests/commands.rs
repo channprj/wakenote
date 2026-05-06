@@ -438,6 +438,7 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
 #[test]
 fn reveal_save_folder_request_uses_current_save_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
+    let home = std::env::var_os("HOME").expect("HOME should be set for path expansion tests");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         save_root: Some(tmp.path().to_string_lossy().to_string()),
@@ -448,6 +449,14 @@ fn reveal_save_folder_request_uses_current_save_root() {
 
     assert_eq!(request.program, PathBuf::from("/usr/bin/open"));
     assert_eq!(request.path, tmp.path());
+
+    backend.update_settings(SettingsPatch {
+        save_root: Some("~/Documents/Sagwan".to_string()),
+        ..SettingsPatch::default()
+    });
+    let request = reveal_save_folder_request(&backend.settings());
+
+    assert_eq!(request.path, PathBuf::from(home).join("Documents/Sagwan"));
 }
 
 #[test]

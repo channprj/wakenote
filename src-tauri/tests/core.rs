@@ -3,7 +3,7 @@ use sagwan::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
 use sagwan::models::{ModelStatus, default_model_registry};
 use sagwan::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run,
 };
 use sagwan::storage::{OutputBasename, next_available_output};
@@ -107,6 +107,29 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("second path");
     assert_eq!(second.basename, OutputBasename::new("230709-001"));
     assert!(second.audio_path.ends_with("20260506/230709-001.m4a"));
+}
+
+#[test]
+fn user_paths_expand_current_home_tilde_without_rewriting_other_paths() {
+    let home = std::env::var_os("HOME").expect("HOME should be set for path expansion tests");
+
+    assert_eq!(
+        expand_user_path("~/Documents/Sagwan"),
+        std::path::PathBuf::from(&home).join("Documents/Sagwan")
+    );
+    assert_eq!(expand_user_path("~"), std::path::PathBuf::from(&home));
+    assert_eq!(
+        expand_user_path("/tmp/sagwan"),
+        std::path::PathBuf::from("/tmp/sagwan")
+    );
+    assert_eq!(
+        expand_user_path("relative/sagwan"),
+        std::path::PathBuf::from("relative/sagwan")
+    );
+    assert_eq!(
+        expand_user_path("~other/sagwan"),
+        std::path::PathBuf::from("~other/sagwan")
+    );
 }
 
 #[test]

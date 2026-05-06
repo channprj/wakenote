@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +110,23 @@ pub fn live_capture_runtime_action_for_patch(
 
 pub fn live_capture_should_run(settings: &AppSettings) -> bool {
     settings.recording_enabled && !settings.pause_all
+}
+
+pub fn expand_user_path(path: impl AsRef<str>) -> PathBuf {
+    let path = path.as_ref();
+    let Some(home) = std::env::var_os("HOME") else {
+        return PathBuf::from(path);
+    };
+
+    if path == "~" {
+        return PathBuf::from(home);
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        return PathBuf::from(home).join(rest);
+    }
+
+    PathBuf::from(path)
 }
 
 impl AppSettings {
