@@ -14,7 +14,7 @@ use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime}
 use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
-    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch, expand_user_path,
+    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run,
 };
@@ -111,23 +111,18 @@ fn download_model(
     state: State<'_, BackendState>,
     model_id: String,
 ) -> Result<Vec<ModelDescriptor>, String> {
-    let model_directory = {
+    let prepared = {
         let backend = state.lock().map_err(|error| error.to_string())?;
-        backend.settings().model_directory
+        backend.prepare_model_download(&model_id)?
     };
-    let store = ModelStore::new(expand_user_path(&model_directory));
-    let registry = store
-        .load_model_registry()
-        .map_err(|error| error.to_string())?;
-    let model = registry
-        .get(&model_id)
-        .ok_or_else(|| format!("unknown model {model_id}"))?;
-    store
-        .download_model(model)
-        .map_err(|error| error.to_string())?;
+    let model_directory = prepared.model_directory.clone();
+    let model = prepared.model.clone();
+    thread::spawn(move || {
+        let store = ModelStore::new(model_directory);
+        let _ = store.download_model(&model);
+    });
 
-    let backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.model_registry())
+    Ok(prepared.registry)
 }
 
 #[tauri::command]

@@ -344,6 +344,53 @@ fn backend_cancel_model_download_marks_model_as_recoverable_error() {
 }
 
 #[test]
+fn backend_prepare_model_download_marks_model_downloading_before_fetch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": "https://example.invalid/custom-local.bin",
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let prepared = backend
+        .prepare_model_download("custom-local")
+        .expect("prepare download");
+
+    assert_eq!(prepared.model.id, "custom-local");
+    assert_eq!(prepared.model_directory, model_directory);
+    let model = prepared
+        .registry
+        .iter()
+        .find(|model| model.id == "custom-local")
+        .expect("custom model");
+    assert_eq!(model.status, ModelStatus::Downloading);
+    assert_eq!(model.download_progress, Some(0));
+    assert!(!model_directory.join("custom-local.bin").exists());
+}
+
+#[test]
 fn backend_cancel_current_operation_cancels_active_model_download() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

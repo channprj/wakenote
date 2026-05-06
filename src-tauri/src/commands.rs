@@ -157,6 +157,13 @@ pub struct StartedTranscriptionJob {
     pub model_directory: std::path::PathBuf,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedModelDownload {
+    pub model_directory: std::path::PathBuf,
+    pub model: ModelDescriptor,
+    pub registry: Vec<ModelDescriptor>,
+}
+
 #[derive(Debug)]
 pub struct AppBackend {
     settings: AppSettings,
@@ -254,6 +261,34 @@ impl AppBackend {
             .download_model(model)
             .map_err(|error| error.to_string())?;
         Ok(self.model_registry())
+    }
+
+    pub fn prepare_model_download(&self, model_id: &str) -> Result<PreparedModelDownload, String> {
+        let store = self.model_store();
+        let registry = store
+            .load_model_registry()
+            .map_err(|error| error.to_string())?;
+        let model = registry
+            .get(model_id)
+            .ok_or_else(|| format!("unknown model {model_id}"))?
+            .clone();
+        if model.download_url.is_none() {
+            return Err(format!("model {model_id} has no download URL"));
+        }
+
+        store
+            .record_download_progress(
+                &model.id,
+                0,
+                Some(model.size_mb.saturating_mul(1024 * 1024)),
+            )
+            .map_err(|error| error.to_string())?;
+
+        Ok(PreparedModelDownload {
+            model_directory: self.model_directory_path(),
+            model,
+            registry: self.model_registry(),
+        })
     }
 
     pub fn cancel_model_download(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
