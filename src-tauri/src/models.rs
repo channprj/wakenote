@@ -97,6 +97,10 @@ impl ModelStore {
         self.model_directory.join(format!("{model_id}.bin"))
     }
 
+    fn temp_download_path(&self, model_id: &str) -> PathBuf {
+        self.model_directory.join(format!("{model_id}.download"))
+    }
+
     pub fn validate_download_space(
         required_bytes: u64,
         available_bytes: u64,
@@ -216,15 +220,32 @@ impl ModelStore {
         track_progress: bool,
     ) -> Result<u64, ModelStoreError> {
         std::fs::create_dir_all(&self.model_directory)?;
-        let path = self.model_path(&model.id);
-        let temp_path = self.model_directory.join(format!("{}.download", model.id));
-        let mut file = std::fs::File::create(&temp_path)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
+        let path = self.model_path(&model.id);
+        let temp_path = self.temp_download_path(&model.id);
+        let resume_download = track_progress && temp_path.exists();
         let mut downloaded_bytes = 0_u64;
-        let mut last_recorded_bytes = 0_u64;
+        if resume_download {
+            let mut existing = std::fs::File::open(&temp_path)?;
+            loop {
+                let read = existing.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+                downloaded_bytes += read as u64;
+            }
+        }
+
+        let mut file = if resume_download {
+            std::fs::OpenOptions::new().append(true).open(&temp_path)?
+        } else {
+            std::fs::File::create(&temp_path)?
+        };
+        let mut last_recorded_bytes = downloaded_bytes;
         if track_progress {
-            self.record_download_progress(&model.id, 0, total_bytes)?;
+            self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
         }
 
         loop {
@@ -318,12 +339,26 @@ impl ModelStore {
             .download_url
             .as_ref()
             .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
-        let response = ureq::get(url)
+        let resume_from = self.partial_download_bytes(&model.id)?;
+        let mut request = ureq::get(url);
+        if resume_from > 0 {
+            request = request.set("Range", &format!("bytes={resume_from}-"));
+        }
+        let response = request
             .call()
             .map_err(|error| ModelStoreError::Download(error.to_string()))?;
-        let total_bytes = response
+        let status = response.status();
+        let content_length = response
             .header("Content-Length")
             .and_then(|value| value.parse::<u64>().ok());
+        let total_bytes = if resume_from > 0 && status == 206 {
+            content_length.map(|value| value.saturating_add(resume_from))
+        } else {
+            if resume_from > 0 {
+                let _ = std::fs::remove_file(self.temp_download_path(&model.id));
+            }
+            content_length
+        };
         self.download_model_reader(model, response.into_reader(), total_bytes)
     }
 
@@ -422,6 +457,15 @@ impl ModelStore {
             .downloads
             .get(model_id)
             .is_some_and(|record| record.error.as_deref() == Some("cancelled by user")))
+    }
+
+    fn partial_download_bytes(&self, model_id: &str) -> Result<u64, ModelStoreError> {
+        let path = self.temp_download_path(model_id);
+        if !path.exists() {
+            return Ok(0);
+        }
+
+        Ok(std::fs::metadata(path)?.len())
     }
 
     fn save_download_state(&self, state: &ModelDownloadState) -> Result<(), ModelStoreError> {

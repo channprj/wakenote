@@ -148,6 +148,40 @@ fn model_store_downloads_with_fetcher_and_installs_ready_model() {
 }
 
 #[test]
+fn model_store_resumes_partial_download_from_temp_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let model = descriptor(
+        "whisper-test",
+        Some("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"),
+    );
+    std::fs::write(tmp.path().join("whisper-test.download"), b"hello ").expect("partial model");
+    store
+        .record_download_progress("whisper-test", 6, Some(11))
+        .expect("record partial progress");
+
+    let status = store
+        .download_model_with(&model, |_| Ok(Cursor::new(b"world".to_vec())))
+        .expect("resume model download");
+
+    assert_eq!(status, ModelStatus::Ready);
+    assert_eq!(
+        std::fs::read(store.model_path("whisper-test")).expect("installed model"),
+        b"hello world"
+    );
+    assert!(!tmp.path().join("whisper-test.download").exists());
+    assert_eq!(
+        store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .get("whisper-test")
+            .map(|record| (record.status, record.download_progress_percent())),
+        Some((ModelStatus::Ready, Some(100)))
+    );
+}
+
+#[test]
 fn model_store_persists_download_progress_across_instances() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());
