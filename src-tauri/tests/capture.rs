@@ -1,5 +1,8 @@
 use chrono::{TimeZone, Utc};
-use sagwan::capture::{CaptureProcessor, CaptureProcessorConfig};
+use sagwan::capture::{
+    CaptureController, CaptureControllerConfig, CaptureControllerEvent, CaptureProcessor,
+    CaptureProcessorConfig,
+};
 use sagwan::settings::{AppSettings, AudioFormat};
 
 fn settings() -> AppSettings {
@@ -91,4 +94,64 @@ fn capture_processor_rolls_over_at_max_chunk_without_dropping_stream() {
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 2);
     assert!(processor.is_recording());
+}
+
+#[test]
+fn capture_controller_flushes_active_chunk_when_recording_is_disabled() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut controller = CaptureController::new(CaptureControllerConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: settings(),
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..5 {
+        controller.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+    assert!(controller.is_recording());
+
+    let mut disabled = settings();
+    disabled.recording_enabled = false;
+    let events = controller.update_settings(disabled).expect("disable");
+
+    assert!(!controller.is_listening());
+    assert!(!controller.is_recording());
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0],
+        CaptureControllerEvent::ChunkCompleted { .. }
+    ));
+    assert!(controller.completed_chunks()[0].audio_path.exists());
+}
+
+#[test]
+fn capture_controller_flushes_active_chunk_when_paused() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut controller = CaptureController::new(CaptureControllerConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: settings(),
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..5 {
+        controller.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+
+    let mut paused = settings();
+    paused.pause_all = true;
+    let events = controller.update_settings(paused).expect("pause");
+
+    assert!(!controller.is_listening());
+    assert_eq!(events.len(), 1);
+    assert!(controller.completed_chunks()[0].audio_path.exists());
 }

@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod capture;
 pub mod commands;
+pub mod live_capture;
 pub mod models;
 pub mod persistence;
 pub mod queue;

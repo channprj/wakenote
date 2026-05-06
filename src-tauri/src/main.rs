@@ -1,6 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice};
+use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::ModelDescriptor;
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{AppSettings, SettingsPatch};
@@ -9,7 +10,8 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State};
 
-type BackendState = Mutex<AppBackend>;
+type BackendState = Arc<Mutex<AppBackend>>;
+type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
 
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
@@ -107,6 +109,62 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
     backend.cancel_current_transcription()
 }
 
+#[tauri::command]
+fn start_live_capture(
+    backend_state: State<'_, BackendState>,
+    live_state: State<'_, LiveCaptureState>,
+) -> Result<AppStatus, String> {
+    let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
+    if live_capture.is_running() {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        return Ok(backend.app_status());
+    }
+
+    let (device_id, sample_rate) = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
+        if settings.pause_all || !settings.recording_enabled {
+            return Ok(backend.app_status());
+        }
+        let sample_rate = CpalAudioInput::default_sample_rate(&settings.selected_microphone)
+            .map_err(|error| error.to_string())?;
+        backend.start_capture_session(sample_rate, chrono::Utc::now())?;
+        (settings.selected_microphone, sample_rate)
+    };
+
+    let backend_arc = backend_state.inner().clone();
+    let start_result = live_capture.start(
+        AudioInputConfig {
+            device_id,
+            sample_rate: Some(sample_rate),
+        },
+        move |frame| {
+            if let Ok(mut backend) = backend_arc.lock() {
+                let _ = backend.process_audio_frame(frame);
+            }
+        },
+    );
+
+    if let Err(error) = start_result {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        let _ = backend.stop_capture_session();
+        return Err(error.to_string());
+    }
+
+    let backend = backend_state.lock().map_err(|error| error.to_string())?;
+    Ok(backend.app_status())
+}
+
+#[tauri::command]
+fn stop_live_capture(
+    backend_state: State<'_, BackendState>,
+    live_state: State<'_, LiveCaptureState>,
+) -> Result<AppStatus, String> {
+    live_state.lock().map_err(|error| error.to_string())?.stop();
+    let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+    backend.stop_capture_session()
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -116,7 +174,8 @@ fn main() {
                 .ok()
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
-            app.manage(Mutex::new(backend));
+            app.manage(Arc::new(Mutex::new(backend)));
+            app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             setup_tray(app)?;
             Ok(())
         })
@@ -133,7 +192,9 @@ fn main() {
             enqueue_backlog,
             retry_job,
             skip_job,
-            cancel_current_transcription
+            cancel_current_transcription,
+            start_live_capture,
+            stop_live_capture
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Sagwan");

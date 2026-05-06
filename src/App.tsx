@@ -21,6 +21,8 @@ import {
   retryJob,
   saveSettingsPatch,
   skipJob,
+  startLiveCapture,
+  stopLiveCapture,
   verifyModel,
 } from "./lib/tauri-client";
 import type { AppSnapshot, AppSettings } from "./lib/types";
@@ -140,6 +142,8 @@ export default function App() {
           snapshot={snapshot}
           onPatch={(patch) => void patchSettings(patch)}
           onRefresh={() => void refresh()}
+          onStartLiveCapture={() => void runAction(startLiveCapture)}
+          onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}

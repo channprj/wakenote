@@ -20,6 +20,30 @@ pub struct CaptureProcessorConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct CaptureControllerConfig {
+    pub save_root: PathBuf,
+    pub settings: AppSettings,
+    pub sample_rate: u32,
+    pub device_id: String,
+    pub device_name: String,
+    pub used_fallback_device: bool,
+    pub base_time: DateTime<Utc>,
+    pub app_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureControllerEvent {
+    ChunkCompleted { chunk: RecordedChunk },
+}
+
+#[derive(Debug)]
+pub struct CaptureController {
+    config: CaptureControllerConfig,
+    processor: CaptureProcessor,
+    emitted_chunks: usize,
+}
+
+#[derive(Debug, Clone)]
 struct BufferedFrame {
     samples: Vec<f32>,
     duration_ms: u64,
@@ -34,6 +58,79 @@ pub struct CaptureProcessor {
     active_samples: Vec<f32>,
     active_started_at_ms: Option<u64>,
     completed_chunks: Vec<RecordedChunk>,
+}
+
+impl CaptureController {
+    pub fn new(config: CaptureControllerConfig) -> Self {
+        let processor = CaptureProcessor::new(processor_config(&config));
+        Self {
+            config,
+            processor,
+            emitted_chunks: 0,
+        }
+    }
+
+    pub fn process_samples(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+    ) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
+        if !self.is_listening() {
+            return Ok(Vec::new());
+        }
+
+        self.processor.process_samples(samples, duration_ms)?;
+        Ok(self.drain_new_events())
+    }
+
+    pub fn update_settings(
+        &mut self,
+        settings: AppSettings,
+    ) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
+        let was_recording = self.processor.is_recording();
+        let should_stop = settings.pause_all || !settings.recording_enabled;
+
+        if was_recording && should_stop {
+            self.processor.flush()?;
+        }
+
+        self.config.settings = settings;
+        if should_stop {
+            return Ok(self.drain_new_events());
+        }
+
+        self.processor = CaptureProcessor::new(processor_config(&self.config));
+        self.emitted_chunks = 0;
+        Ok(Vec::new())
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
+        self.processor.flush()?;
+        Ok(self.drain_new_events())
+    }
+
+    pub fn is_listening(&self) -> bool {
+        self.config.settings.recording_enabled && !self.config.settings.pause_all
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.is_listening() && self.processor.is_recording()
+    }
+
+    pub fn completed_chunks(&self) -> &[RecordedChunk] {
+        self.processor.completed_chunks()
+    }
+
+    fn drain_new_events(&mut self) -> Vec<CaptureControllerEvent> {
+        let chunks = self.processor.completed_chunks();
+        let events = chunks[self.emitted_chunks..]
+            .iter()
+            .cloned()
+            .map(|chunk| CaptureControllerEvent::ChunkCompleted { chunk })
+            .collect::<Vec<_>>();
+        self.emitted_chunks = chunks.len();
+        events
+    }
 }
 
 impl CaptureProcessor {
@@ -188,6 +285,19 @@ impl CaptureProcessor {
 
     fn time_at(&self, offset_ms: u64) -> DateTime<Utc> {
         self.config.base_time + Duration::milliseconds(offset_ms as i64)
+    }
+}
+
+fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
+    CaptureProcessorConfig {
+        save_root: config.save_root.clone(),
+        settings: config.settings.clone(),
+        sample_rate: config.sample_rate,
+        device_id: config.device_id.clone(),
+        device_name: config.device_name.clone(),
+        used_fallback_device: config.used_fallback_device,
+        base_time: config.base_time,
+        app_version: config.app_version.clone(),
     }
 }
 

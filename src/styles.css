@@ -307,6 +307,11 @@ svg {
   white-space: nowrap;
 }
 
+.ui-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .ui-button--md {
   min-height: 36px;
   padding: 8px 12px;

@@ -1,4 +1,4 @@
-import { FolderOpen, RefreshCw } from "lucide-react";
+import { FolderOpen, Play, RefreshCw, Square } from "lucide-react";
 import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
@@ -20,6 +20,8 @@ export function SettingsPanel({
   snapshot,
   onPatch,
   onRefresh,
+  onStartLiveCapture,
+  onStopLiveCapture,
   onEnqueueBacklog,
   onCancelCurrent,
   onRetry,
@@ -31,6 +33,8 @@ export function SettingsPanel({
   snapshot: AppSnapshot;
   onPatch: (patch: Partial<AppSettings>) => void;
   onRefresh: () => void;
+  onStartLiveCapture: () => void;
+  onStopLiveCapture: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
   onRetry: (id: number) => void;
@@ -39,6 +43,7 @@ export function SettingsPanel({
   onDeleteModel: (modelId: string) => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
+  const liveCaptureDisabled = settings.pause_all || !settings.recording_enabled;
 
   if (activeSection === "models") {
     return (
@@ -222,10 +227,26 @@ export function SettingsPanel({
         title="General"
         eyebrow="Capture mode"
         actions={
-          <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
-            <RefreshCw data-icon="inline-start" />
-            Refresh
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={onStartLiveCapture}
+              disabled={liveCaptureDisabled}
+            >
+              <Play data-icon="inline-start" />
+              Start Input
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={onStopLiveCapture}>
+              <Square data-icon="inline-start" />
+              Stop Input
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
+              <RefreshCw data-icon="inline-start" />
+              Refresh
+            </Button>
+          </>
         }
       >
         <div className="settings-list">

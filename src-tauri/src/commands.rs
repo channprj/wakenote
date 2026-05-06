@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::audio::list_input_devices;
+use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
+use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
@@ -48,6 +50,7 @@ pub struct AppStatus {
 pub struct AppBackend {
     settings: AppSettings,
     queue: TranscriptionQueue,
+    capture: Option<CaptureController>,
     persistence: Option<AppPersistence>,
 }
 
@@ -56,6 +59,7 @@ impl Default for AppBackend {
         Self {
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
+            capture: None,
             persistence: None,
         }
     }
@@ -67,6 +71,7 @@ impl AppBackend {
         Ok(Self {
             settings: persistence.load_settings()?.unwrap_or_default(),
             queue: persistence.load_queue()?.unwrap_or_default(),
+            capture: None,
             persistence: Some(persistence),
         })
     }
@@ -77,6 +82,7 @@ impl AppBackend {
 
     pub fn update_settings(&mut self, patch: SettingsPatch) -> AppSettings {
         self.settings.apply_patch(patch);
+        self.sync_capture_settings();
         self.persist_settings();
         self.settings.clone()
     }
@@ -106,6 +112,60 @@ impl AppBackend {
 
     pub fn queue_snapshot(&self) -> QueueSnapshot {
         self.queue.snapshot()
+    }
+
+    pub fn start_capture_session(
+        &mut self,
+        sample_rate: u32,
+        base_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<AppStatus, String> {
+        self.capture = Some(CaptureController::new(CaptureControllerConfig {
+            save_root: std::path::PathBuf::from(&self.settings.save_root),
+            settings: self.settings.clone(),
+            sample_rate,
+            device_id: self.settings.selected_microphone.clone(),
+            device_name: self.settings.selected_microphone_label.clone(),
+            used_fallback_device: false,
+            base_time,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+        }));
+        Ok(self.app_status())
+    }
+
+    pub fn start_capture_session_for_test(&mut self, sample_rate: u32) -> Result<(), String> {
+        self.start_capture_session(sample_rate, chrono::DateTime::<chrono::Utc>::UNIX_EPOCH)?;
+        Ok(())
+    }
+
+    pub fn stop_capture_session(&mut self) -> Result<AppStatus, String> {
+        if let Some(capture) = self.capture.as_mut() {
+            let events = capture.flush().map_err(|error| error.to_string())?;
+            self.handle_capture_events(events);
+        }
+        self.capture = None;
+        Ok(self.app_status())
+    }
+
+    pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
+        let events = self
+            .capture
+            .as_mut()
+            .ok_or_else(|| "capture session is not running".to_string())?
+            .process_samples(&frame.samples, frame.duration_ms)
+            .map_err(|error| error.to_string())?;
+        self.handle_capture_events(events);
+        Ok(self.app_status())
+    }
+
+    pub fn process_audio_samples_for_test(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+    ) -> Result<AppStatus, String> {
+        self.process_audio_frame(AudioFrame {
+            samples: samples.to_vec(),
+            duration_ms,
+        })
     }
 
     pub fn enqueue_audio_file(
@@ -163,7 +223,12 @@ impl AppBackend {
     pub fn app_status(&self) -> AppStatus {
         let queue = self.queue.snapshot();
         let mode = derive_mode(&self.settings);
-        let tray_state = derive_tray_state(mode, queue.running_count > 0);
+        let is_recording = self
+            .capture
+            .as_ref()
+            .map(|capture| capture.is_recording())
+            .unwrap_or(false);
+        let tray_state = derive_tray_state(mode, queue.running_count > 0, is_recording);
 
         AppStatus {
             mode,
@@ -186,6 +251,31 @@ impl AppBackend {
             let _ = persistence.save_queue(&self.queue);
         }
     }
+
+    fn sync_capture_settings(&mut self) {
+        let Some(capture) = self.capture.as_mut() else {
+            return;
+        };
+
+        if let Ok(events) = capture.update_settings(self.settings.clone()) {
+            self.handle_capture_events(events);
+        }
+    }
+
+    fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
+        for event in events {
+            match event {
+                CaptureControllerEvent::ChunkCompleted { chunk } => {
+                    if self.settings.transcription_enabled {
+                        self.queue
+                            .enqueue_file(chunk.audio_path, self.settings.selected_model.clone());
+                    }
+                }
+            }
+        }
+
+        self.persist_queue();
+    }
 }
 
 pub fn derive_mode(settings: &AppSettings) -> AppMode {
@@ -201,9 +291,13 @@ pub fn derive_mode(settings: &AppSettings) -> AppMode {
     }
 }
 
-fn derive_tray_state(mode: AppMode, transcribing: bool) -> TrayState {
+fn derive_tray_state(mode: AppMode, transcribing: bool, recording: bool) -> TrayState {
     if transcribing {
         return TrayState::Transcribing;
+    }
+
+    if recording {
+        return TrayState::Recording;
     }
 
     match mode {
