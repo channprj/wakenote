@@ -17,6 +17,7 @@ import {
   cancelModelDownload,
   cancelCurrentTranscription,
   chooseSaveRoot,
+  chooseAudioFiles,
   deleteModel,
   downloadModel,
   enqueueBacklog,
@@ -177,6 +178,7 @@ export default function App() {
           onStartLiveCapture={() => void runAction(startLiveCapture)}
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
+          onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
           onProcessNextTranscription={() => void runAction(processNextTranscription)}

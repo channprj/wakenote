@@ -1,4 +1,4 @@
-import { Ban, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
+import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
 import { Badge, Button } from "./ui/primitives";
 import type { QueueSnapshot } from "../lib/types";
 
@@ -20,6 +20,7 @@ function toneForStatus(status: string) {
 
 export function QueuePanel({
   queue,
+  onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
   onProcessNext,
@@ -27,6 +28,7 @@ export function QueuePanel({
   onSkip,
 }: {
   queue: QueueSnapshot;
+  onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
   onProcessNext: () => void;
@@ -50,6 +52,10 @@ export function QueuePanel({
         </div>
       </div>
       <div className="toolbar">
+        <Button type="button" variant="secondary" onClick={onImportAudioFiles}>
+          <FileAudio data-icon="inline-start" />
+          Import Audio
+        </Button>
         <Button type="button" variant="secondary" onClick={onEnqueueBacklog}>
           <FolderInput data-icon="inline-start" />
           Process Backlog

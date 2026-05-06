@@ -109,6 +109,63 @@ export async function enqueueBacklog(saveRoot: string): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function enqueueAudioFiles(audioPaths: string[]): Promise<AppSnapshot> {
+  if (audioPaths.length === 0) {
+    return loadSnapshot();
+  }
+
+  if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const firstId = browserSnapshot.queue.jobs.length + 1;
+    const importedJobs = audioPaths.map((audioPath, index) => ({
+      id: firstId + index,
+      audio_path: audioPath,
+      model_id: settings.selected_model,
+      status: "pending" as const,
+      error: null,
+    }));
+    const queue: QueueSnapshot = {
+      jobs: [...browserSnapshot.queue.jobs, ...importedJobs],
+      pending_count: browserSnapshot.queue.pending_count + importedJobs.length,
+      running_count: browserSnapshot.queue.running_count,
+      failed_count: browserSnapshot.queue.failed_count,
+    };
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
+    return browserSnapshot;
+  }
+
+  for (const audioPath of audioPaths) {
+    await invoke<QueueSnapshot>("enqueue_audio_file", { audioPath });
+  }
+  return loadSnapshot();
+}
+
+export async function chooseAudioFiles(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  const selected = await open({
+    multiple: true,
+    title: "Choose Audio Files",
+    filters: [
+      {
+        name: "Audio",
+        extensions: ["m4a", "wav"],
+      },
+    ],
+  });
+  if (!Array.isArray(selected)) {
+    return loadSnapshot();
+  }
+
+  return enqueueAudioFiles(selected);
+}
+
 export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     return browserSnapshot;

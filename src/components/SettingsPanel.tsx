@@ -23,6 +23,7 @@ export function SettingsPanel({
   onStartLiveCapture,
   onStopLiveCapture,
   onChooseSaveRoot,
+  onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
   onProcessNextTranscription,
@@ -40,6 +41,7 @@ export function SettingsPanel({
   onStartLiveCapture: () => void;
   onStopLiveCapture: () => void;
   onChooseSaveRoot: () => void;
+  onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
   onProcessNextTranscription: () => void;
@@ -153,6 +155,7 @@ export function SettingsPanel({
       <Section title="History" eyebrow="Transcription queue">
         <QueuePanel
           queue={queue}
+          onImportAudioFiles={onImportAudioFiles}
           onEnqueueBacklog={onEnqueueBacklog}
           onCancelCurrent={onCancelCurrent}
           onProcessNext={onProcessNextTranscription}
