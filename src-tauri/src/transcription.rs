@@ -4,7 +4,7 @@ use std::process::Command;
 use thiserror::Error;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::queue::TranscriptionQueue;
+use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{RecordedChunk, RecorderError, TranscriptionSidecar};
 
 #[derive(Debug, Clone, Copy)]
@@ -130,6 +130,15 @@ pub fn apply_outcome(
     queue: &mut TranscriptionQueue,
     outcome: TranscriptionJobOutcome,
 ) -> Result<(), TranscriptionWorkerError> {
+    if queue.job(outcome.id).is_some_and(|job| {
+        matches!(
+            job.status,
+            QueueJobStatus::Cancelled | QueueJobStatus::Skipped
+        )
+    }) {
+        return Ok(());
+    }
+
     match outcome.status {
         TranscriptionJobStatus::Completed => queue
             .mark_completed(outcome.id)

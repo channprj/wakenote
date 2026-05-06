@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
 use sagwan::transcription::{
-    Transcriber, TranscriptionError, TranscriptionRequest, TranscriptionWorker, WhisperTranscriber,
-    decode_audio_for_whisper,
+    Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
+    TranscriptionWorker, WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
 };
 
 #[derive(Clone)]
@@ -83,6 +83,22 @@ fn transcription_worker_writes_error_and_marks_job_failed() {
         std::fs::read_to_string(audio_path.with_extension("error.txt")).expect("error sidecar"),
         "model checksum mismatch\n"
     );
+}
+
+#[test]
+fn cancelled_transcription_job_ignores_late_worker_outcome() {
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file("/recordings/20260506/230911.wav", "whisper-medium");
+    queue.start_next().expect("start job");
+    queue
+        .cancel_current("cancelled by user")
+        .expect("cancel running job");
+
+    apply_outcome(&mut queue, TranscriptionJobOutcome::completed(id)).expect("late outcome");
+
+    let job = queue.job(id).expect("job");
+    assert_eq!(job.status, QueueJobStatus::Cancelled);
+    assert_eq!(job.error.as_deref(), Some("cancelled by user"));
 }
 
 #[test]
