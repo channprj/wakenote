@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
@@ -84,6 +85,19 @@ pub fn tray_menu_presentation(settings: &AppSettings, status: &AppStatus) -> Tra
         active_model_text: format!("Model: {}", status.active_model),
         active_microphone_text: format!("Microphone: {}", status.active_microphone),
         threshold_text: format!("Threshold: {:.0} dBFS", status.threshold_dbfs),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevealSaveFolderRequest {
+    pub program: PathBuf,
+    pub path: PathBuf,
+}
+
+pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderRequest {
+    RevealSaveFolderRequest {
+        program: PathBuf::from("/usr/bin/open"),
+        path: PathBuf::from(&settings.save_root),
     }
 }
 

@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::commands::{
-    AppBackend, AppMode, TrayState, tray_menu_presentation, tray_presentation_for_state,
+    AppBackend, AppMode, TrayState, reveal_save_folder_request, tray_menu_presentation,
+    tray_presentation_for_state,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -386,4 +387,19 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
     assert_eq!(menu.active_model_text, "Model: whisper-tiny");
     assert_eq!(menu.active_microphone_text, "Microphone: USB Mic");
     assert_eq!(menu.threshold_text, "Threshold: -37 dBFS");
+}
+
+#[test]
+fn reveal_save_folder_request_uses_current_save_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let request = reveal_save_folder_request(&backend.settings());
+
+    assert_eq!(request.program, PathBuf::from("/usr/bin/open"));
+    assert_eq!(request.path, tmp.path());
 }

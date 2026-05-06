@@ -1,3 +1,4 @@
+use std::process::Command;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -5,7 +6,8 @@ use std::sync::{
 use std::thread;
 
 use sagwan::commands::{
-    AppBackend, AppStatus, MicrophoneDevice, tray_menu_presentation, tray_presentation_for_state,
+    AppBackend, AppStatus, MicrophoneDevice, reveal_save_folder_request, tray_menu_presentation,
+    tray_presentation_for_state,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
@@ -544,6 +546,13 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             pause_all: Some(!settings.pause_all),
             ..SettingsPatch::default()
         }),
+        "reveal-save-folder" => {
+            let state = app.state::<BackendState>();
+            if let Ok(backend) = state.lock() {
+                let request = reveal_save_folder_request(&backend.settings());
+                let _ = Command::new(request.program).arg(request.path).spawn();
+            }
+        }
         "cancel-current-operation" => {
             let state = app.state::<BackendState>();
             if let Ok(mut backend) = state.lock() {
