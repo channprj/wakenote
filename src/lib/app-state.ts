@@ -48,6 +48,16 @@ export function deriveTrayState(mode: AppMode, hasRunningTranscription: boolean)
   }
 }
 
+export function shouldShowFloatingOverlay(
+  settings: Pick<AppSettings, "show_floating_overlay">,
+  trayState: TrayState,
+) {
+  return (
+    settings.show_floating_overlay &&
+    ["listening", "recording", "transcribing"].includes(trayState)
+  );
+}
+
 export function defaultSettings(): AppSettings {
   return {
     recording_enabled: true,

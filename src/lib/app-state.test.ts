@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveProductMode, deriveTrayState, mockSnapshot } from "./app-state";
+import { deriveProductMode, deriveTrayState, mockSnapshot, shouldShowFloatingOverlay } from "./app-state";
 
 describe("app state derivation", () => {
   it("maps independent recording/transcription toggles to PRD product modes", () => {
@@ -26,6 +26,14 @@ describe("app state derivation", () => {
     expect(deriveTrayState("transcription_only", false)).toBe("idle");
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");
+  });
+
+  it("shows the floating overlay only for active capture or transcription states", () => {
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "listening")).toBe(true);
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "recording")).toBe(true);
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "transcribing")).toBe(true);
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "idle")).toBe(false);
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: false }, "recording")).toBe(false);
   });
 
   it("provides browser-safe mock data for Vite development outside Tauri", () => {

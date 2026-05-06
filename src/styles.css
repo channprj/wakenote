@@ -638,6 +638,101 @@ svg {
   border-bottom: 0;
 }
 
+.floating-overlay {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  width: min(316px, calc(100vw - 32px));
+  min-height: 86px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.18);
+  padding: 12px;
+  pointer-events: none;
+  backdrop-filter: blur(16px);
+}
+
+.floating-overlay__mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.floating-overlay[data-state="recording"] .floating-overlay__mark {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+.floating-overlay[data-state="transcribing"] .floating-overlay__mark {
+  background: #dcfce7;
+  color: var(--success);
+}
+
+.floating-overlay__body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.floating-overlay__body strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-overlay__body > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.floating-overlay__bars {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: 3px;
+  height: 28px;
+}
+
+.floating-overlay__bars span {
+  min-height: 5px;
+  border-radius: 3px;
+  background: #cbd5e1;
+}
+
+.floating-overlay__bars span[data-lit="true"] {
+  background: var(--primary);
+}
+
+.floating-overlay[data-state="recording"] .floating-overlay__bars span[data-lit="true"] {
+  background: var(--danger);
+}
+
+.floating-overlay[data-state="transcribing"] .floating-overlay__bars span[data-lit="true"] {
+  background: var(--success);
+}
+
+.floating-overlay__body > i {
+  display: block;
+  height: 3px;
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--warning);
+}
+
 .model-list {
   display: grid;
   gap: 10px;
@@ -801,5 +896,10 @@ code {
   .queue-stats,
   .about-grid {
     grid-template-columns: 1fr;
+  }
+
+  .floating-overlay {
+    right: 12px;
+    bottom: 12px;
   }
 }

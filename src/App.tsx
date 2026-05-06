@@ -10,6 +10,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { FloatingOverlay } from "./components/FloatingOverlay";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Badge } from "./components/ui/primitives";
@@ -30,8 +31,8 @@ import {
   stopLiveCapture,
   verifyModel,
 } from "./lib/tauri-client";
+import { mockSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
 import type { AppSnapshot, AppSettings } from "./lib/types";
-import { mockSnapshot } from "./lib/app-state";
 
 const sections = [
   { id: "general", label: "General", icon: Settings2 },
@@ -189,6 +190,9 @@ export default function App() {
           onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />
+        {shouldShowFloatingOverlay(snapshot.settings, snapshot.status.tray_state) ? (
+          <FloatingOverlay status={snapshot.status} />
+        ) : null}
       </main>
     </div>
   );
