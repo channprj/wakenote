@@ -1,6 +1,28 @@
+use std::io::{Cursor, Read};
+
 use sagwan::models::{
     ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore, ModelStoreError,
 };
+
+struct CancelAfterFirstRead {
+    store: ModelStore,
+    model_id: String,
+    data: Cursor<Vec<u8>>,
+    cancelled: bool,
+}
+
+impl Read for CancelAfterFirstRead {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.data.read(buffer)?;
+        if read > 0 && !self.cancelled {
+            self.store
+                .cancel_download(&self.model_id)
+                .expect("cancel download");
+            self.cancelled = true;
+        }
+        Ok(read)
+    }
+}
 
 fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
     ModelDescriptor {
@@ -189,4 +211,36 @@ fn model_store_rejects_download_when_available_disk_space_is_too_low() {
             available_bytes: 1_024,
         }
     ));
+}
+
+#[test]
+fn model_store_cancels_active_download_and_removes_partial_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let model = descriptor("whisper-test", None);
+    let reader = CancelAfterFirstRead {
+        store: store.clone(),
+        model_id: model.id.clone(),
+        data: Cursor::new(vec![7; 128 * 1024]),
+        cancelled: false,
+    };
+
+    let error = store
+        .download_model_with(&model, |_| Ok(reader))
+        .expect_err("cancelled download should fail");
+
+    assert!(matches!(
+        error,
+        ModelStoreError::Cancelled { model_id } if model_id == "whisper-test"
+    ));
+    assert!(!store.model_path("whisper-test").exists());
+    assert!(!tmp.path().join("whisper-test.download").exists());
+
+    let state = store.load_download_state().expect("download state");
+    let record = state
+        .downloads
+        .get("whisper-test")
+        .expect("cancelled download record");
+    assert_eq!(record.status, ModelStatus::Error);
+    assert_eq!(record.error.as_deref(), Some("cancelled by user"));
 }

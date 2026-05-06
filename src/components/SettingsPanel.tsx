@@ -30,6 +30,7 @@ export function SettingsPanel({
   onSkip,
   onVerifyModel,
   onDownloadModel,
+  onCancelModelDownload,
   onDeleteModel,
 }: {
   activeSection: string;
@@ -46,6 +47,7 @@ export function SettingsPanel({
   onSkip: (id: number) => void;
   onVerifyModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
+  onCancelModelDownload: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
@@ -64,6 +66,7 @@ export function SettingsPanel({
           onPatch={onPatch}
           onVerify={onVerifyModel}
           onDownload={onDownloadModel}
+          onCancelDownload={onCancelModelDownload}
           onDelete={onDeleteModel}
         />
       </Section>

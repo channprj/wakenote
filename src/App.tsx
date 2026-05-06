@@ -14,6 +14,7 @@ import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Badge } from "./components/ui/primitives";
 import {
+  cancelModelDownload,
   cancelCurrentTranscription,
   chooseSaveRoot,
   deleteModel,
@@ -183,6 +184,7 @@ export default function App() {
           onSkip={(id) => void runAction(() => skipJob(id))}
           onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}
           onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
+          onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />
       </main>

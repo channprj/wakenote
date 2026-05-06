@@ -89,6 +89,15 @@ fn download_model(
 }
 
 #[tauri::command]
+fn cancel_model_download(
+    state: State<'_, BackendState>,
+    model_id: String,
+) -> Result<Vec<ModelDescriptor>, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.cancel_model_download(&model_id)
+}
+
+#[tauri::command]
 fn delete_model(
     state: State<'_, BackendState>,
     model_id: String,
@@ -327,6 +336,7 @@ fn main() {
             list_models,
             verify_model,
             download_model,
+            cancel_model_download,
             delete_model,
             queue_snapshot,
             enqueue_audio_file,

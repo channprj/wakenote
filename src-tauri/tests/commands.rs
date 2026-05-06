@@ -1,4 +1,5 @@
 use sagwan::commands::{AppBackend, AppMode, TrayState};
+use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{AudioFormat, SettingsPatch};
 use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
@@ -307,4 +308,30 @@ fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
             .expect("error sidecar")
             .contains("model file not found")
     );
+}
+
+#[test]
+fn backend_cancel_model_download_marks_model_as_recoverable_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    let store = ModelStore::new(&model_directory);
+    store
+        .record_download_progress("whisper-medium", 512, Some(1024))
+        .expect("record download progress");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let models = backend
+        .cancel_model_download("whisper-medium")
+        .expect("cancel model download");
+
+    let model = models
+        .iter()
+        .find(|model| model.id == "whisper-medium")
+        .expect("whisper medium");
+    assert_eq!(model.status, ModelStatus::Error);
+    assert_eq!(model.download_error.as_deref(), Some("cancelled by user"));
 }

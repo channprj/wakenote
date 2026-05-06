@@ -134,6 +134,18 @@ impl AppBackend {
         Ok(self.model_registry())
     }
 
+    pub fn cancel_model_download(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
+        if !default_model_registry().contains_key(model_id) {
+            return Err(format!("unknown model {model_id}"));
+        }
+
+        let store = ModelStore::new(&self.settings.model_directory);
+        store
+            .cancel_download(model_id)
+            .map_err(|error| error.to_string())?;
+        Ok(self.model_registry())
+    }
+
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
         let store = ModelStore::new(&self.settings.model_directory);
         store

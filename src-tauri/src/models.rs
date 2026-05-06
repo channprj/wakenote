@@ -80,6 +80,8 @@ pub enum ModelStoreError {
         required_bytes: u64,
         available_bytes: u64,
     },
+    #[error("model download cancelled: {model_id}")]
+    Cancelled { model_id: String },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -233,6 +235,12 @@ impl ModelStore {
             hasher.update(&buffer[..read]);
             std::io::Write::write_all(&mut file, &buffer[..read])?;
             downloaded_bytes += read as u64;
+            if track_progress && self.is_download_cancelled(&model.id)? {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model.id.clone(),
+                });
+            }
             if track_progress && downloaded_bytes.saturating_sub(last_recorded_bytes) >= 5_242_880 {
                 self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
                 last_recorded_bytes = downloaded_bytes;
@@ -282,6 +290,18 @@ impl ModelStore {
         error: Option<String>,
     ) -> Result<ModelDownloadRecord, ModelStoreError> {
         self.record_download(model_id, status, downloaded_bytes, total_bytes, error)
+    }
+
+    pub fn cancel_download(&self, model_id: &str) -> Result<ModelDownloadRecord, ModelStoreError> {
+        let state = self.load_download_state()?;
+        let existing = state.downloads.get(model_id);
+        self.record_download_status(
+            model_id,
+            ModelStatus::Error,
+            existing.map(|record| record.downloaded_bytes).unwrap_or(0),
+            existing.and_then(|record| record.total_bytes),
+            Some("cancelled by user".to_string()),
+        )
     }
 
     pub fn download_model_with<R: Read>(
@@ -352,12 +372,16 @@ impl ModelStore {
                 Ok(status)
             }
             Err(error) => {
+                let download_error = match &error {
+                    ModelStoreError::Cancelled { .. } => "cancelled by user".to_string(),
+                    _ => error.to_string(),
+                };
                 let _ = self.record_download_status(
                     &model.id,
                     ModelStatus::Error,
                     0,
                     total_bytes,
-                    Some(error.to_string()),
+                    Some(download_error),
                 );
                 Err(error)
             }
@@ -390,6 +414,14 @@ impl ModelStore {
             .parse::<u64>()
             .map_err(|error| ModelStoreError::Download(error.to_string()))?;
         Ok(available_kib.saturating_mul(1024))
+    }
+
+    fn is_download_cancelled(&self, model_id: &str) -> Result<bool, ModelStoreError> {
+        let state = self.load_download_state()?;
+        Ok(state
+            .downloads
+            .get(model_id)
+            .is_some_and(|record| record.error.as_deref() == Some("cancelled by user")))
     }
 
     fn save_download_state(&self, state: &ModelDownloadState) -> Result<(), ModelStoreError> {

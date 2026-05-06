@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
+import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Badge, Button, Progress } from "./ui/primitives";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
 
@@ -44,6 +44,7 @@ export function ModelManager({
   onPatch,
   onVerify,
   onDownload,
+  onCancelDownload,
   onDelete,
 }: {
   models: ModelDescriptor[];
@@ -51,6 +52,7 @@ export function ModelManager({
   onPatch: (patch: Partial<AppSettings>) => void;
   onVerify: (modelId: string) => void;
   onDownload: (modelId: string) => void;
+  onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
   return (
@@ -117,6 +119,16 @@ export function ModelManager({
                 disabled={model.status !== "error"}
               >
                 <RotateCw />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                title="Cancel Download"
+                onClick={() => onCancelDownload(model.id)}
+                disabled={!["downloading", "verifying", "extracting"].includes(model.status)}
+              >
+                <CircleX />
               </Button>
               <Button
                 type="button"
