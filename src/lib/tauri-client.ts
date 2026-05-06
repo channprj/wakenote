@@ -38,6 +38,7 @@ function statusFrom(settings: AppSettings, queue: QueueSnapshot): AppStatus {
     tray_state: deriveTrayState(mode, queue.running_count > 0),
     active_model: settings.selected_model,
     active_microphone: settings.selected_microphone_label,
+    microphone_warning: browserSnapshot.status?.microphone_warning ?? null,
     threshold_dbfs: settings.threshold_dbfs,
     level: browserSnapshot.status?.level ?? defaultLevelSnapshot(),
     queue,

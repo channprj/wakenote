@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use sagwan::live_capture::{
-    AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
-    LiveCaptureRuntime,
+    AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CandidateInputDevice,
+    LiveCaptureError, LiveCaptureRuntime, resolve_input_device_from_candidates,
 };
 
 #[derive(Clone, Default)]
@@ -75,4 +75,28 @@ fn live_capture_runtime_rejects_double_start_and_can_stop() {
     assert!(matches!(second, Err(LiveCaptureError::AlreadyRunning)));
     runtime.stop();
     assert!(!runtime.is_running());
+}
+
+#[test]
+fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
+    let resolved = resolve_input_device_from_candidates(
+        "input-9-missing-airpods",
+        &[
+            CandidateInputDevice {
+                id: "input-0-built-in".to_string(),
+                label: "Built-in Microphone".to_string(),
+                is_default: true,
+            },
+            CandidateInputDevice {
+                id: "input-1-usb".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: false,
+            },
+        ],
+    )
+    .expect("fallback device");
+
+    assert_eq!(resolved.device_id, "default");
+    assert_eq!(resolved.device_name, "System Default");
+    assert!(resolved.used_fallback_device);
 }

@@ -184,10 +184,16 @@ fn start_live_capture(
         if settings.pause_all || !settings.recording_enabled {
             return Ok(backend.app_status());
         }
-        let sample_rate = CpalAudioInput::default_sample_rate(&settings.selected_microphone)
+        let resolved = CpalAudioInput::resolve_device(&settings.selected_microphone)
             .map_err(|error| error.to_string())?;
-        backend.start_capture_session(sample_rate, chrono::Utc::now())?;
-        (settings.selected_microphone, sample_rate)
+        backend.start_capture_session_with_device(
+            resolved.sample_rate,
+            chrono::Utc::now(),
+            resolved.device_id.clone(),
+            resolved.device_name,
+            resolved.used_fallback_device,
+        )?;
+        (resolved.device_id, resolved.sample_rate)
     };
 
     let backend_arc = backend_state.inner().clone();

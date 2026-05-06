@@ -35,6 +35,7 @@ describe("app state derivation", () => {
     expect(snapshot.microphones[0].id).toBe("default");
     expect(snapshot.models.map((model) => model.id)).toContain("whisper-medium");
     expect(snapshot.status.threshold_dbfs).toBe(-45);
+    expect(snapshot.status.microphone_warning).toBeNull();
     expect(snapshot.status.level).toEqual({
       current_dbfs: -120,
       peak_dbfs: -120,

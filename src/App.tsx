@@ -162,6 +162,9 @@ export default function App() {
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
+        {!error && snapshot.status.microphone_warning ? (
+          <div className="error-banner">{snapshot.status.microphone_warning}</div>
+        ) : null}
 
         <Onboarding settings={snapshot.settings} models={snapshot.models} />
 

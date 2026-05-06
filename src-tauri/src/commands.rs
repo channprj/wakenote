@@ -45,6 +45,7 @@ pub struct AppStatus {
     pub tray_state: TrayState,
     pub active_model: String,
     pub active_microphone: String,
+    pub microphone_warning: Option<String>,
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
     pub queue: QueueSnapshot,
@@ -62,6 +63,8 @@ pub struct AppBackend {
     queue: TranscriptionQueue,
     capture: Option<CaptureController>,
     level_monitor: LevelMonitor,
+    active_microphone_label: Option<String>,
+    microphone_warning: Option<String>,
     persistence: Option<AppPersistence>,
 }
 
@@ -72,6 +75,8 @@ impl Default for AppBackend {
             queue: TranscriptionQueue::new(),
             capture: None,
             level_monitor: LevelMonitor::default(),
+            active_microphone_label: None,
+            microphone_warning: None,
             persistence: None,
         }
     }
@@ -85,6 +90,8 @@ impl AppBackend {
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
             level_monitor: LevelMonitor::default(),
+            active_microphone_label: None,
+            microphone_warning: None,
             persistence: Some(persistence),
         })
     }
@@ -144,14 +151,44 @@ impl AppBackend {
         sample_rate: u32,
         base_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<AppStatus, String> {
+        let device_id = self.settings.selected_microphone.clone();
+        let device_name = self.settings.selected_microphone_label.clone();
+        self.start_capture_session_with_device(
+            sample_rate,
+            base_time,
+            device_id,
+            device_name,
+            false,
+        )
+    }
+
+    pub fn start_capture_session_with_device(
+        &mut self,
+        sample_rate: u32,
+        base_time: chrono::DateTime<chrono::Utc>,
+        device_id: impl Into<String>,
+        device_name: impl Into<String>,
+        used_fallback_device: bool,
+    ) -> Result<AppStatus, String> {
+        let device_id = device_id.into();
+        let device_name = device_name.into();
         self.level_monitor = LevelMonitor::default();
+        self.active_microphone_label = Some(device_name.clone());
+        self.microphone_warning = if used_fallback_device {
+            Some(format!(
+                "Pinned microphone {} is unavailable; using {device_name}",
+                self.settings.selected_microphone_label
+            ))
+        } else {
+            None
+        };
         self.capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: std::path::PathBuf::from(&self.settings.save_root),
             settings: self.settings.clone(),
             sample_rate,
-            device_id: self.settings.selected_microphone.clone(),
-            device_name: self.settings.selected_microphone_label.clone(),
-            used_fallback_device: false,
+            device_id,
+            device_name,
+            used_fallback_device,
             base_time,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
         }));
@@ -169,6 +206,7 @@ impl AppBackend {
             self.handle_capture_events(events);
         }
         self.capture = None;
+        self.active_microphone_label = None;
         Ok(self.app_status())
     }
 
@@ -325,7 +363,11 @@ impl AppBackend {
             mode,
             tray_state,
             active_model: self.settings.selected_model.clone(),
-            active_microphone: self.settings.selected_microphone_label.clone(),
+            active_microphone: self
+                .active_microphone_label
+                .clone()
+                .unwrap_or_else(|| self.settings.selected_microphone_label.clone()),
+            microphone_warning: self.microphone_warning.clone(),
             threshold_dbfs: self.settings.threshold_dbfs,
             level: self.level_monitor.snapshot(),
             queue,

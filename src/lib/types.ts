@@ -107,6 +107,7 @@ export interface AppStatus {
   tray_state: TrayState;
   active_model: string;
   active_microphone: string;
+  microphone_warning?: string | null;
   threshold_dbfs: number;
   level: LevelSnapshot;
   queue: QueueSnapshot;

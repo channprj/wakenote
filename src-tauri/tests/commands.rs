@@ -1,4 +1,5 @@
 use sagwan::commands::{AppBackend, AppMode, TrayState};
+use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{AudioFormat, SettingsPatch};
 use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
@@ -101,6 +102,49 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
     assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+}
+
+#[test]
+fn backend_records_fallback_microphone_in_status_and_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        selected_microphone: Some("input-missing-airpods".to_string()),
+        selected_microphone_label: Some("Missing AirPods".to_string()),
+        ..SettingsPatch::default()
+    });
+    let status = backend
+        .start_capture_session_with_device(
+            10,
+            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            "default",
+            "System Default",
+            true,
+        )
+        .expect("start fallback capture session");
+
+    assert_eq!(status.active_microphone, "System Default");
+    assert_eq!(
+        status.microphone_warning.as_deref(),
+        Some("Pinned microphone Missing AirPods is unavailable; using System Default")
+    );
+
+    for _ in 0..5 {
+        backend
+            .process_audio_samples_for_test(&[0.8; 1], 100)
+            .expect("speech");
+    }
+    backend.stop_capture_session().expect("stop");
+
+    let metadata_path = tmp.path().join("19700101").join("000000.json");
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(metadata_path).expect("metadata"))
+            .expect("metadata json");
+    assert_eq!(metadata.device_id, "default");
+    assert_eq!(metadata.device_name, "System Default");
+    assert!(metadata.used_fallback_device);
 }
 
 #[test]

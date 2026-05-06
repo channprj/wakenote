@@ -142,6 +142,7 @@ export function mockSnapshot(): AppSnapshot {
       tray_state: trayState,
       active_model: settings.selected_model,
       active_microphone: settings.selected_microphone_label,
+      microphone_warning: null,
       threshold_dbfs: settings.threshold_dbfs,
       level: defaultLevelSnapshot(),
       queue,

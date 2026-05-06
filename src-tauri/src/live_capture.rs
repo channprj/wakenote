@@ -17,6 +17,20 @@ pub struct AudioInputConfig {
     pub sample_rate: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateInputDevice {
+    pub id: String,
+    pub label: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInputDevice {
+    pub device_id: String,
+    pub device_name: String,
+    pub used_fallback_device: bool,
+}
+
 impl Default for AudioInputConfig {
     fn default() -> Self {
         Self {
@@ -149,13 +163,31 @@ impl AudioInputBackend for CpalAudioInput {
 
 impl CpalAudioInput {
     pub fn default_sample_rate(device_id: &str) -> Result<u32, LiveCaptureError> {
+        let resolved = Self::resolve_device(device_id)?;
+        Ok(resolved.sample_rate)
+    }
+
+    pub fn resolve_device(device_id: &str) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
         let host = cpal::default_host();
-        let device = select_device(&host, device_id)?;
+        let (device, resolved) = select_device_with_resolution(&host, device_id)?;
         let config = device
             .default_input_config()
             .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
-        Ok(config.sample_rate().0)
+        Ok(ResolvedCpalInputDevice {
+            device_id: resolved.device_id,
+            device_name: resolved.device_name,
+            used_fallback_device: resolved.used_fallback_device,
+            sample_rate: config.sample_rate().0,
+        })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCpalInputDevice {
+    pub device_id: String,
+    pub device_name: String,
+    pub used_fallback_device: bool,
+    pub sample_rate: u32,
 }
 
 fn build_cpal_stream(
@@ -163,7 +195,7 @@ fn build_cpal_stream(
     on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
 ) -> Result<cpal::Stream, LiveCaptureError> {
     let host = cpal::default_host();
-    let device = select_device(&host, &config.device_id)?;
+    let (device, _) = select_device_with_resolution(&host, &config.device_id)?;
     let supported_config = device
         .default_input_config()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
@@ -227,11 +259,22 @@ fn build_cpal_stream(
     .map_err(|error| LiveCaptureError::Cpal(error.to_string()))
 }
 
-fn select_device(host: &cpal::Host, device_id: &str) -> Result<cpal::Device, LiveCaptureError> {
+fn select_device_with_resolution(
+    host: &cpal::Host,
+    device_id: &str,
+) -> Result<(cpal::Device, ResolvedInputDevice), LiveCaptureError> {
+    let default_device = host
+        .default_input_device()
+        .ok_or(LiveCaptureError::NoInputDevice)?;
     if device_id == "default" {
-        return host
-            .default_input_device()
-            .ok_or(LiveCaptureError::NoInputDevice);
+        return Ok((
+            default_device,
+            ResolvedInputDevice {
+                device_id: "default".to_string(),
+                device_name: "System Default".to_string(),
+                used_fallback_device: false,
+            },
+        ));
     }
 
     let devices = host
@@ -239,13 +282,59 @@ fn select_device(host: &cpal::Host, device_id: &str) -> Result<cpal::Device, Liv
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
     for (index, device) in devices.enumerate() {
         let label = device.name().unwrap_or_default();
-        if stable_input_device_id(index, &label) == device_id || label == device_id {
-            return Ok(device);
+        let stable_id = stable_input_device_id(index, &label);
+        if stable_id == device_id || label == device_id {
+            return Ok((
+                device,
+                ResolvedInputDevice {
+                    device_id: stable_id,
+                    device_name: label,
+                    used_fallback_device: false,
+                },
+            ));
         }
     }
 
-    host.default_input_device()
-        .ok_or(LiveCaptureError::NoInputDevice)
+    Ok((
+        default_device,
+        ResolvedInputDevice {
+            device_id: "default".to_string(),
+            device_name: "System Default".to_string(),
+            used_fallback_device: true,
+        },
+    ))
+}
+
+pub fn resolve_input_device_from_candidates(
+    requested_device_id: &str,
+    candidates: &[CandidateInputDevice],
+) -> Option<ResolvedInputDevice> {
+    if requested_device_id == "default" {
+        return Some(ResolvedInputDevice {
+            device_id: "default".to_string(),
+            device_name: "System Default".to_string(),
+            used_fallback_device: false,
+        });
+    }
+
+    if let Some(candidate) = candidates.iter().find(|candidate| {
+        candidate.id == requested_device_id || candidate.label == requested_device_id
+    }) {
+        return Some(ResolvedInputDevice {
+            device_id: candidate.id.clone(),
+            device_name: candidate.label.clone(),
+            used_fallback_device: false,
+        });
+    }
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_default)
+        .map(|_| ResolvedInputDevice {
+            device_id: "default".to_string(),
+            device_name: "System Default".to_string(),
+            used_fallback_device: true,
+        })
 }
 
 pub fn stable_input_device_id(index: usize, label: &str) -> String {
