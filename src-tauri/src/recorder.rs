@@ -1,0 +1,174 @@
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::settings::{AppSettings, AudioFormat};
+use crate::storage::{OutputTarget, next_available_output};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptionStatus {
+    NotRequested,
+    Queued,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChunkMetadata {
+    pub model_id: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub sample_rate: u32,
+    pub threshold_dbfs: f32,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub duration_ms: i64,
+    pub transcription_status: TranscriptionStatus,
+    pub app_version: String,
+    pub used_fallback_device: bool,
+}
+
+#[derive(Debug)]
+pub struct RecordingRequest<'a> {
+    pub save_root: &'a Path,
+    pub settings: &'a AppSettings,
+    pub samples: &'a [f32],
+    pub sample_rate: u32,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub device_id: &'a str,
+    pub device_name: &'a str,
+    pub used_fallback_device: bool,
+    pub transcription_enabled: bool,
+    pub app_version: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedChunk {
+    pub audio_path: std::path::PathBuf,
+    pub metadata_path: std::path::PathBuf,
+    pub transcript_path: std::path::PathBuf,
+    pub error_path: std::path::PathBuf,
+}
+
+#[derive(Debug, Error)]
+pub enum RecorderError {
+    #[error("m4a encoding requires the native macOS encoder bridge")]
+    M4aRequiresNativeBridge,
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("wav error: {0}")]
+    Wav(#[from] hound::Error),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub struct Recorder;
+
+impl Recorder {
+    pub fn write_chunk(request: RecordingRequest<'_>) -> Result<RecordedChunk, RecorderError> {
+        if request.settings.audio_format == AudioFormat::M4a {
+            return Err(RecorderError::M4aRequiresNativeBridge);
+        }
+
+        let target = next_available_output(
+            request.save_root,
+            request.started_at,
+            request.settings.audio_format,
+        )?;
+        if let Some(parent) = target.audio_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        write_wav(&target.audio_path, request.samples, request.sample_rate)?;
+
+        let metadata = ChunkMetadata {
+            model_id: request.settings.selected_model.clone(),
+            device_id: request.device_id.to_string(),
+            device_name: request.device_name.to_string(),
+            sample_rate: request.sample_rate,
+            threshold_dbfs: request.settings.threshold_dbfs,
+            started_at: request.started_at,
+            ended_at: request.ended_at,
+            duration_ms: (request.ended_at - request.started_at).num_milliseconds(),
+            transcription_status: if request.transcription_enabled {
+                TranscriptionStatus::Queued
+            } else {
+                TranscriptionStatus::NotRequested
+            },
+            app_version: request.app_version.to_string(),
+            used_fallback_device: request.used_fallback_device,
+        };
+        write_metadata(&target.metadata_path, &metadata)?;
+
+        Ok(recorded_chunk(target))
+    }
+}
+
+pub struct TranscriptionSidecar;
+
+impl TranscriptionSidecar {
+    pub fn write_success(chunk: &RecordedChunk, transcript: &str) -> Result<(), RecorderError> {
+        write_text_sidecar(&chunk.transcript_path, transcript)?;
+        if chunk.error_path.exists() {
+            fs::remove_file(&chunk.error_path)?;
+        }
+        update_metadata_status(&chunk.metadata_path, TranscriptionStatus::Completed)
+    }
+
+    pub fn write_error(chunk: &RecordedChunk, error: &str) -> Result<(), RecorderError> {
+        write_text_sidecar(&chunk.error_path, error)?;
+        if chunk.transcript_path.exists() {
+            fs::remove_file(&chunk.transcript_path)?;
+        }
+        update_metadata_status(&chunk.metadata_path, TranscriptionStatus::Failed)
+    }
+}
+
+fn recorded_chunk(target: OutputTarget) -> RecordedChunk {
+    RecordedChunk {
+        audio_path: target.audio_path,
+        metadata_path: target.metadata_path,
+        transcript_path: target.transcript_path,
+        error_path: target.error_path,
+    }
+}
+
+fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        writer.write_sample((clamped * i16::MAX as f32) as i16)?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
+fn write_metadata(path: &Path, metadata: &ChunkMetadata) -> Result<(), RecorderError> {
+    let bytes = serde_json::to_vec_pretty(metadata)?;
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
+fn write_text_sidecar(path: &Path, text: &str) -> Result<(), RecorderError> {
+    let mut file = fs::File::create(path)?;
+    writeln!(file, "{text}")?;
+    Ok(())
+}
+
+fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<(), RecorderError> {
+    let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
+    metadata.transcription_status = status;
+    write_metadata(path, &metadata)
+}

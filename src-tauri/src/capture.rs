@@ -1,0 +1,201 @@
+use std::collections::VecDeque;
+use std::path::PathBuf;
+
+use chrono::{DateTime, Duration, Utc};
+
+use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
+use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
+use crate::settings::AppSettings;
+
+#[derive(Debug, Clone)]
+pub struct CaptureProcessorConfig {
+    pub save_root: PathBuf,
+    pub settings: AppSettings,
+    pub sample_rate: u32,
+    pub device_id: String,
+    pub device_name: String,
+    pub used_fallback_device: bool,
+    pub base_time: DateTime<Utc>,
+    pub app_version: String,
+}
+
+#[derive(Debug, Clone)]
+struct BufferedFrame {
+    samples: Vec<f32>,
+    duration_ms: u64,
+}
+
+#[derive(Debug)]
+pub struct CaptureProcessor {
+    config: CaptureProcessorConfig,
+    gate: SpeechGate,
+    elapsed_ms: u64,
+    pre_roll: VecDeque<BufferedFrame>,
+    active_samples: Vec<f32>,
+    active_started_at_ms: Option<u64>,
+    completed_chunks: Vec<RecordedChunk>,
+}
+
+impl CaptureProcessor {
+    pub fn new(config: CaptureProcessorConfig) -> Self {
+        let gate = SpeechGate::new(GateConfig {
+            threshold_dbfs: config.settings.threshold_dbfs,
+            attack_ms: config.settings.attack_ms,
+            release_ms: config.settings.release_ms,
+            pre_roll_ms: config.settings.pre_roll_ms,
+            post_roll_ms: config.settings.post_roll_ms,
+            min_chunk_ms: config.settings.min_chunk_ms,
+            max_chunk_ms: config.settings.max_chunk_ms,
+        });
+
+        Self {
+            config,
+            gate,
+            elapsed_ms: 0,
+            pre_roll: VecDeque::new(),
+            active_samples: Vec::new(),
+            active_started_at_ms: None,
+            completed_chunks: Vec::new(),
+        }
+    }
+
+    pub fn process_samples(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+    ) -> Result<(), RecorderError> {
+        if self.config.settings.pause_all || !self.config.settings.recording_enabled {
+            self.elapsed_ms = self.elapsed_ms.saturating_add(duration_ms);
+            return Ok(());
+        }
+
+        let frame = BufferedFrame {
+            samples: samples.to_vec(),
+            duration_ms,
+        };
+        let frame_start_ms = self.elapsed_ms;
+        let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
+        let dbfs = dbfs_from_rms(rms(samples));
+        let decision = self.gate.observe(dbfs, frame_end_ms);
+
+        match decision {
+            GateDecision::Idle => {
+                self.push_pre_roll(frame);
+            }
+            GateDecision::Start { started_at_ms } => {
+                self.active_started_at_ms = Some(started_at_ms);
+                self.active_samples.clear();
+                self.drain_pre_roll_into_active(started_at_ms);
+                self.active_samples.extend_from_slice(&frame.samples);
+            }
+            GateDecision::Recording => {
+                if self.gate.is_recording() {
+                    self.active_samples.extend_from_slice(&frame.samples);
+                } else {
+                    self.push_pre_roll(frame);
+                }
+            }
+            GateDecision::End { ended_at_ms } => {
+                self.active_samples.extend_from_slice(&frame.samples);
+                self.commit_active_chunk(ended_at_ms)?;
+                self.push_pre_roll(frame);
+            }
+            GateDecision::Rollover {
+                ended_at_ms,
+                next_started_at_ms,
+            } => {
+                self.active_samples.extend_from_slice(&frame.samples);
+                self.commit_active_chunk(ended_at_ms)?;
+                self.active_started_at_ms = Some(next_started_at_ms);
+                self.active_samples.clear();
+                self.active_samples.extend_from_slice(&frame.samples);
+            }
+        }
+
+        self.elapsed_ms = frame_end_ms;
+        Ok(())
+    }
+
+    pub fn flush(&mut self) -> Result<(), RecorderError> {
+        if self.gate.is_recording() && !self.active_samples.is_empty() {
+            self.commit_active_chunk(self.elapsed_ms)?;
+        }
+        Ok(())
+    }
+
+    pub fn completed_chunks(&self) -> &[RecordedChunk] {
+        &self.completed_chunks
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.gate.is_recording()
+    }
+
+    fn push_pre_roll(&mut self, frame: BufferedFrame) {
+        self.pre_roll.push_back(frame);
+        let mut total_ms: u64 = self.pre_roll.iter().map(|frame| frame.duration_ms).sum();
+        while total_ms > self.config.settings.pre_roll_ms {
+            let Some(removed) = self.pre_roll.pop_front() else {
+                break;
+            };
+            total_ms = total_ms.saturating_sub(removed.duration_ms);
+        }
+    }
+
+    fn drain_pre_roll_into_active(&mut self, started_at_ms: u64) {
+        let pre_roll_start_ms = self.elapsed_ms.saturating_sub(
+            self.pre_roll
+                .iter()
+                .map(|frame| frame.duration_ms)
+                .sum::<u64>(),
+        );
+        let mut cursor_ms = pre_roll_start_ms;
+
+        while let Some(frame) = self.pre_roll.pop_front() {
+            let frame_end_ms = cursor_ms.saturating_add(frame.duration_ms);
+            if frame_end_ms >= started_at_ms {
+                self.active_samples.extend_from_slice(&frame.samples);
+            }
+            cursor_ms = frame_end_ms;
+        }
+    }
+
+    fn commit_active_chunk(&mut self, ended_at_ms: u64) -> Result<(), RecorderError> {
+        let started_at_ms = self.active_started_at_ms.unwrap_or(self.elapsed_ms);
+        if self.active_samples.is_empty() {
+            return Ok(());
+        }
+
+        let chunk = Recorder::write_chunk(RecordingRequest {
+            save_root: &self.config.save_root,
+            settings: &self.config.settings,
+            samples: &self.active_samples,
+            sample_rate: self.config.sample_rate,
+            started_at: self.time_at(started_at_ms),
+            ended_at: self.time_at(ended_at_ms),
+            device_id: &self.config.device_id,
+            device_name: &self.config.device_name,
+            used_fallback_device: self.config.used_fallback_device,
+            transcription_enabled: self.config.settings.transcription_enabled,
+            app_version: &self.config.app_version,
+        })?;
+
+        self.completed_chunks.push(chunk);
+        self.active_samples.clear();
+        self.active_started_at_ms = None;
+        Ok(())
+    }
+
+    fn time_at(&self, offset_ms: u64) -> DateTime<Utc> {
+        self.config.base_time + Duration::milliseconds(offset_ms as i64)
+    }
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let energy = samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    energy.sqrt()
+}

@@ -1,0 +1,130 @@
+use chrono::{TimeZone, Utc};
+use sagwan::recorder::{
+    ChunkMetadata, Recorder, RecordingRequest, TranscriptionSidecar, TranscriptionStatus,
+};
+use sagwan::settings::{AppSettings, AudioFormat};
+
+fn wav_settings() -> AppSettings {
+    AppSettings {
+        audio_format: AudioFormat::Wav,
+        ..AppSettings::default()
+    }
+}
+
+#[test]
+fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = wav_settings();
+    let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 11).unwrap();
+
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.25, -0.25, 0.0],
+        sample_rate: 16_000,
+        started_at,
+        ended_at,
+        device_id: "builtin-input",
+        device_name: "Built-in Microphone",
+        used_fallback_device: false,
+        transcription_enabled: false,
+        app_version: "0.1.0",
+    })
+    .expect("record chunk");
+
+    assert!(chunk.audio_path.ends_with("20260506/230709.wav"));
+    assert!(chunk.audio_path.exists());
+    assert!(chunk.metadata_path.exists());
+    assert!(!chunk.transcript_path.exists());
+    assert!(!chunk.error_path.exists());
+
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(metadata.model_id, "whisper-medium");
+    assert_eq!(metadata.device_id, "builtin-input");
+    assert_eq!(metadata.device_name, "Built-in Microphone");
+    assert_eq!(metadata.sample_rate, 16_000);
+    assert_eq!(metadata.threshold_dbfs, -45.0);
+    assert_eq!(metadata.duration_ms, 2_000);
+    assert_eq!(
+        metadata.transcription_status,
+        TranscriptionStatus::NotRequested
+    );
+    assert_eq!(metadata.app_version, "0.1.0");
+
+    let reader = hound::WavReader::open(&chunk.audio_path).expect("wav reader");
+    assert_eq!(reader.spec().sample_rate, 16_000);
+}
+
+#[test]
+fn transcription_sidecar_writes_txt_and_updates_metadata_on_success() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = wav_settings();
+    let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.1, -0.1, 0.0],
+        sample_rate: 16_000,
+        started_at: timestamp,
+        ended_at: timestamp + chrono::Duration::milliseconds(500),
+        device_id: "default",
+        device_name: "System Default",
+        used_fallback_device: false,
+        transcription_enabled: true,
+        app_version: "0.1.0",
+    })
+    .expect("record chunk");
+
+    TranscriptionSidecar::write_success(&chunk, "안녕하세요 hello").expect("write transcript");
+
+    assert_eq!(
+        std::fs::read_to_string(&chunk.transcript_path).expect("transcript"),
+        "안녕하세요 hello\n"
+    );
+    assert!(!chunk.error_path.exists());
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(
+        metadata.transcription_status,
+        TranscriptionStatus::Completed
+    );
+}
+
+#[test]
+fn transcription_sidecar_writes_error_without_removing_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = wav_settings();
+    let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.1, -0.1, 0.0],
+        sample_rate: 16_000,
+        started_at: timestamp,
+        ended_at: timestamp + chrono::Duration::milliseconds(500),
+        device_id: "default",
+        device_name: "System Default",
+        used_fallback_device: true,
+        transcription_enabled: true,
+        app_version: "0.1.0",
+    })
+    .expect("record chunk");
+
+    TranscriptionSidecar::write_error(&chunk, "model checksum mismatch").expect("write error");
+
+    assert!(chunk.audio_path.exists());
+    assert!(!chunk.transcript_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&chunk.error_path).expect("error"),
+        "model checksum mismatch\n"
+    );
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(metadata.transcription_status, TranscriptionStatus::Failed);
+    assert!(metadata.used_fallback_device);
+}
