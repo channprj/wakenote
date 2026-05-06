@@ -563,6 +563,13 @@ svg {
   color: var(--primary);
 }
 
+.calibration-actions {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
 .tray-preview {
   display: grid;
   gap: 10px;

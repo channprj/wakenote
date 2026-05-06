@@ -74,7 +74,11 @@ export function SettingsPanel({
     return (
       <Section title="Recording" eyebrow="Threshold gate">
         <div className="two-column">
-          <LevelMeter settings={settings} status={status} />
+          <LevelMeter
+            settings={settings}
+            status={status}
+            onApplyThreshold={(threshold_dbfs) => onPatch({ threshold_dbfs })}
+          />
           <div className="control-grid">
             <Slider
               label="Threshold"
@@ -293,7 +297,11 @@ export function SettingsPanel({
         </div>
       </Section>
       <TrayPreview settings={settings} status={status} onPatch={onPatch} />
-      <LevelMeter settings={settings} status={status} />
+      <LevelMeter
+        settings={settings}
+        status={status}
+        onApplyThreshold={(threshold_dbfs) => onPatch({ threshold_dbfs })}
+      />
     </div>
   );
 }

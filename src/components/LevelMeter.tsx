@@ -1,5 +1,7 @@
-import { Activity, Gauge } from "lucide-react";
-import { Badge } from "./ui/primitives";
+import { Activity, Check, Gauge, TimerReset } from "lucide-react";
+import { useEffect, useState } from "react";
+import { calibrationProgress, suggestedThresholdValue } from "../lib/calibration";
+import { Badge, Button, Progress } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
 function meterPosition(dbfs: number) {
@@ -9,19 +11,36 @@ function meterPosition(dbfs: number) {
 export function LevelMeter({
   settings,
   status,
+  onApplyThreshold,
 }: {
   settings: AppSettings;
   status: AppStatus;
+  onApplyThreshold: (thresholdDbfs: number) => void;
 }) {
   const active = settings.recording_enabled && !settings.pause_all;
+  const [calibrationStartMs, setCalibrationStartMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const currentDb = active ? status.level.current_dbfs : -120;
   const peakDb = status.level.peak_dbfs;
   const noiseFloor = status.level.noise_floor_dbfs;
   const suggestedThreshold = status.level.suggested_threshold_dbfs;
+  const thresholdToApply = suggestedThresholdValue(suggestedThreshold);
+  const calibrationPercent =
+    calibrationStartMs === null ? 0 : calibrationProgress(calibrationStartMs, nowMs, 10_000);
+  const calibrationRunning = calibrationStartMs !== null && calibrationPercent < 100;
   const bars = Array.from({ length: 28 }, (_, index) => {
     const barDb = -90 + index * 3.2;
     return barDb <= currentDb;
   });
+
+  useEffect(() => {
+    if (!calibrationRunning) {
+      return;
+    }
+
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [calibrationRunning]);
 
   return (
     <div className="level-meter">
@@ -51,12 +70,49 @@ export function LevelMeter({
         <div>
           <Activity />
           <span>Suggested</span>
-          <strong>{Math.round(suggestedThreshold)} dBFS</strong>
+          <strong>{thresholdToApply} dBFS</strong>
         </div>
         <div>
           <span>Threshold</span>
           <strong>{settings.threshold_dbfs} dBFS</strong>
         </div>
+      </div>
+      <div className="calibration-actions">
+        <Badge
+          tone={
+            calibrationStartMs === null ? "neutral" : calibrationPercent >= 100 ? "success" : "primary"
+          }
+        >
+          {calibrationStartMs === null
+            ? "Calibration"
+            : calibrationPercent >= 100
+              ? "Ready"
+              : "Calibrating"}
+        </Badge>
+        <Progress value={calibrationPercent} />
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setCalibrationStartMs(Date.now());
+            setNowMs(Date.now());
+          }}
+          disabled={!active}
+        >
+          <TimerReset data-icon="inline-start" />
+          Calibrate
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          onClick={() => onApplyThreshold(thresholdToApply)}
+          disabled={!active}
+        >
+          <Check data-icon="inline-start" />
+          Apply
+        </Button>
       </div>
     </div>
   );
