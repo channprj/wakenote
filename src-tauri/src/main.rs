@@ -110,6 +110,12 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
 }
 
 #[tauri::command]
+fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    backend.process_next_transcription()
+}
+
+#[tauri::command]
 fn start_live_capture(
     backend_state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
@@ -193,6 +199,7 @@ fn main() {
             retry_job,
             skip_job,
             cancel_current_transcription,
+            process_next_transcription,
             start_live_capture,
             stop_live_capture
         ])

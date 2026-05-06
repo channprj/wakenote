@@ -28,6 +28,9 @@
     "active": false,
     "icon": [],
     "targets": ["app"],
-    "category": "Productivity"
+    "category": "Productivity",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

@@ -24,6 +24,7 @@ export function SettingsPanel({
   onStopLiveCapture,
   onEnqueueBacklog,
   onCancelCurrent,
+  onProcessNextTranscription,
   onRetry,
   onSkip,
   onVerifyModel,
@@ -37,6 +38,7 @@ export function SettingsPanel({
   onStopLiveCapture: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
+  onProcessNextTranscription: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
   onVerifyModel: (modelId: string) => void;
@@ -141,6 +143,7 @@ export function SettingsPanel({
           queue={queue}
           onEnqueueBacklog={onEnqueueBacklog}
           onCancelCurrent={onCancelCurrent}
+          onProcessNext={onProcessNextTranscription}
           onRetry={onRetry}
           onSkip={onSkip}
         />

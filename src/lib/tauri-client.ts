@@ -114,6 +114,15 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function processNextTranscription(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  await invoke<QueueSnapshot>("process_next_transcription");
+  return loadSnapshot();
+}
+
 export async function startLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     return browserSnapshot;

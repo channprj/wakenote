@@ -1,5 +1,16 @@
 use sagwan::commands::{AppBackend, AppMode, TrayState};
 use sagwan::settings::{AudioFormat, SettingsPatch};
+use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
+
+struct StaticTranscriber;
+
+impl Transcriber for StaticTranscriber {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        assert_eq!(request.model_id, "whisper-medium");
+        assert!(request.audio_path.exists());
+        Ok("queued transcript".to_string())
+    }
+}
 
 fn wav_settings_patch(save_root: &std::path::Path) -> SettingsPatch {
     SettingsPatch {
@@ -114,4 +125,58 @@ fn backend_flushes_active_capture_when_recording_is_disabled() {
     let status = backend.app_status();
     assert_eq!(status.tray_state, TrayState::Idle);
     assert_eq!(backend.queue_snapshot().pending_count, 1);
+}
+
+#[test]
+fn backend_processes_next_transcription_job_and_writes_sidecar() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230912.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber)
+        .expect("process transcription");
+
+    assert_eq!(snapshot.pending_count, 0);
+    assert_eq!(
+        snapshot.jobs[0].status,
+        sagwan::queue::QueueJobStatus::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
+        "queued transcript\n"
+    );
+}
+
+#[test]
+fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("231013.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_next_transcription()
+        .expect("process transcription");
+
+    assert_eq!(snapshot.failed_count, 1);
+    assert_eq!(
+        snapshot.jobs[0].status,
+        sagwan::queue::QueueJobStatus::Failed
+    );
+    assert!(audio_path.exists());
+    assert!(
+        std::fs::read_to_string(audio_path.with_extension("error.txt"))
+            .expect("error sidecar")
+            .contains("model file not found")
+    );
 }

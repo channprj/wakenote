@@ -18,6 +18,7 @@ import {
   deleteModel,
   enqueueBacklog,
   loadSnapshot,
+  processNextTranscription,
   retryJob,
   saveSettingsPatch,
   skipJob,
@@ -146,6 +147,7 @@ export default function App() {
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
+          onProcessNextTranscription={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
           onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}

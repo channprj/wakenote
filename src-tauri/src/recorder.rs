@@ -56,6 +56,18 @@ pub struct RecordedChunk {
     pub error_path: std::path::PathBuf,
 }
 
+impl RecordedChunk {
+    pub fn from_audio_path(audio_path: impl Into<std::path::PathBuf>) -> Self {
+        let audio_path = audio_path.into();
+        Self {
+            metadata_path: audio_path.with_extension("json"),
+            transcript_path: audio_path.with_extension("txt"),
+            error_path: audio_path.with_extension("error.txt"),
+            audio_path,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RecorderError {
     #[error("m4a encoding requires the native macOS encoder bridge")]
@@ -118,7 +130,7 @@ impl TranscriptionSidecar {
         if chunk.error_path.exists() {
             fs::remove_file(&chunk.error_path)?;
         }
-        update_metadata_status(&chunk.metadata_path, TranscriptionStatus::Completed)
+        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Completed)
     }
 
     pub fn write_error(chunk: &RecordedChunk, error: &str) -> Result<(), RecorderError> {
@@ -126,7 +138,7 @@ impl TranscriptionSidecar {
         if chunk.transcript_path.exists() {
             fs::remove_file(&chunk.transcript_path)?;
         }
-        update_metadata_status(&chunk.metadata_path, TranscriptionStatus::Failed)
+        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Failed)
     }
 }
 
@@ -171,4 +183,14 @@ fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<()
     let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
     metadata.transcription_status = status;
     write_metadata(path, &metadata)
+}
+
+fn update_metadata_status_if_present(
+    path: &Path,
+    status: TranscriptionStatus,
+) -> Result<(), RecorderError> {
+    if path.exists() {
+        update_metadata_status(path, status)?;
+    }
+    Ok(())
 }

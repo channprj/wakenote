@@ -1,4 +1,4 @@
-import { Ban, FolderInput, RotateCw, SkipForward } from "lucide-react";
+import { Ban, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
 import { Badge, Button } from "./ui/primitives";
 import type { QueueSnapshot } from "../lib/types";
 
@@ -22,12 +22,14 @@ export function QueuePanel({
   queue,
   onEnqueueBacklog,
   onCancelCurrent,
+  onProcessNext,
   onRetry,
   onSkip,
 }: {
   queue: QueueSnapshot;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
+  onProcessNext: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
 }) {
@@ -51,6 +53,15 @@ export function QueuePanel({
         <Button type="button" variant="secondary" onClick={onEnqueueBacklog}>
           <FolderInput data-icon="inline-start" />
           Process Backlog
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={onProcessNext}
+          disabled={queue.pending_count === 0}
+        >
+          <Play data-icon="inline-start" />
+          Process Next
         </Button>
         <Button type="button" variant="secondary" onClick={onCancelCurrent}>
           <Ban data-icon="inline-start" />

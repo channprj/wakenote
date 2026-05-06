@@ -7,6 +7,7 @@ use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
 use crate::settings::{AppSettings, SettingsPatch};
+use crate::transcription::{Transcriber, TranscriptionWorker, WhisperTranscriber};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -204,6 +205,27 @@ impl AppBackend {
 
     pub fn cancel_current_transcription(&mut self) -> Result<QueueSnapshot, String> {
         self.queue.cancel_current("cancelled by user")?;
+        self.persist_queue();
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
+        let transcriber = WhisperTranscriber::new(&self.settings.model_directory);
+        self.process_next_transcription_with(transcriber)
+    }
+
+    pub fn process_next_transcription_with<T: Transcriber>(
+        &mut self,
+        transcriber: T,
+    ) -> Result<QueueSnapshot, String> {
+        if self.settings.pause_all || !self.settings.transcription_enabled {
+            return Ok(self.queue.snapshot());
+        }
+
+        let worker = TranscriptionWorker::new(transcriber);
+        worker
+            .process_next(&mut self.queue)
+            .map_err(|error| error.to_string())?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }

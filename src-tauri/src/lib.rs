@@ -8,3 +8,4 @@ pub mod queue;
 pub mod recorder;
 pub mod settings;
 pub mod storage;
+pub mod transcription;

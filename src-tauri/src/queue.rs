@@ -109,6 +109,15 @@ impl TranscriptionQueue {
         Ok(())
     }
 
+    pub fn mark_completed(&mut self, id: u64) -> Result<(), String> {
+        let job = self
+            .job_mut(id)
+            .ok_or_else(|| format!("job {id} not found"))?;
+        job.status = QueueJobStatus::Completed;
+        job.error = None;
+        Ok(())
+    }
+
     pub fn retry(&mut self, id: u64) -> Result<(), String> {
         let job = self
             .job_mut(id)
