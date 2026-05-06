@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use sagwan::commands::{AppBackend, AppMode, TrayState, tray_presentation_for_state};
+use sagwan::commands::{
+    AppBackend, AppMode, TrayState, tray_menu_presentation, tray_presentation_for_state,
+};
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{AudioFormat, SettingsPatch};
@@ -362,4 +364,26 @@ fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
         tray_presentation_for_state(TrayState::Recording).tooltip,
         "Sagwan: Recording"
     );
+}
+
+#[test]
+fn tray_menu_presentation_reflects_current_settings_and_status() {
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        selected_model: Some("whisper-tiny".to_string()),
+        selected_microphone_label: Some("USB Mic".to_string()),
+        threshold_dbfs: Some(-37.0),
+        transcription_enabled: Some(false),
+        pause_all: Some(true),
+        ..SettingsPatch::default()
+    });
+
+    let menu = tray_menu_presentation(&backend.settings(), &backend.app_status());
+
+    assert!(menu.recording_checked);
+    assert!(!menu.transcription_checked);
+    assert!(menu.pause_all_checked);
+    assert_eq!(menu.active_model_text, "Model: whisper-tiny");
+    assert_eq!(menu.active_microphone_text, "Microphone: USB Mic");
+    assert_eq!(menu.threshold_text, "Threshold: -37 dBFS");
 }

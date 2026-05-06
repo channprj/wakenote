@@ -66,6 +66,27 @@ pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayMenuPresentation {
+    pub recording_checked: bool,
+    pub transcription_checked: bool,
+    pub pause_all_checked: bool,
+    pub active_model_text: String,
+    pub active_microphone_text: String,
+    pub threshold_text: String,
+}
+
+pub fn tray_menu_presentation(settings: &AppSettings, status: &AppStatus) -> TrayMenuPresentation {
+    TrayMenuPresentation {
+        recording_checked: settings.recording_enabled,
+        transcription_checked: settings.transcription_enabled,
+        pause_all_checked: settings.pause_all,
+        active_model_text: format!("Model: {}", status.active_model),
+        active_microphone_text: format!("Microphone: {}", status.active_microphone),
+        threshold_text: format!("Threshold: {:.0} dBFS", status.threshold_dbfs),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MicrophoneDevice {
     pub id: String,

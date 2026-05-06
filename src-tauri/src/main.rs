@@ -4,7 +4,9 @@ use std::sync::{
 };
 use std::thread;
 
-use sagwan::commands::{AppBackend, AppStatus, MicrophoneDevice, tray_presentation_for_state};
+use sagwan::commands::{
+    AppBackend, AppStatus, MicrophoneDevice, tray_menu_presentation, tray_presentation_for_state,
+};
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
 use sagwan::queue::QueueSnapshot;
@@ -13,11 +15,21 @@ use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, Whispe
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, Wry};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
+
+#[derive(Clone)]
+struct TrayMenuItems {
+    recording: CheckMenuItem<Wry>,
+    transcription: CheckMenuItem<Wry>,
+    active_model: MenuItem<Wry>,
+    active_mic: MenuItem<Wry>,
+    threshold: MenuItem<Wry>,
+    pause_all: CheckMenuItem<Wry>,
+}
 
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
@@ -42,8 +54,9 @@ fn update_settings(
 #[tauri::command]
 fn app_status(app: AppHandle, state: State<'_, BackendState>) -> Result<AppStatus, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
+    let settings = backend.settings();
     let status = backend.app_status();
-    update_tray_presentation(&app, &status);
+    update_tray_presentation(&app, &settings, &status);
     Ok(status)
 }
 
@@ -326,11 +339,17 @@ fn main() {
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
-            let initial_status = backend_state
+            let initial = backend_state
                 .lock()
                 .ok()
-                .map(|backend| backend.app_status());
-            setup_tray(app, initial_status.as_ref())?;
+                .map(|backend| (backend.settings(), backend.app_status()));
+            let (initial_settings, initial_status) = match initial {
+                Some((settings, status)) => (Some(settings), Some(status)),
+                None => (None, None),
+            };
+            let tray_menu_items =
+                setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
+            app.manage(tray_menu_items);
             kick_transcription_worker_if_needed(backend_state, transcription_state);
             Ok(())
         })
@@ -358,13 +377,23 @@ fn main() {
         .expect("failed to run Sagwan");
 }
 
-fn setup_tray(app: &mut tauri::App, initial_status: Option<&AppStatus>) -> tauri::Result<()> {
+fn setup_tray(
+    app: &mut tauri::App,
+    initial_settings: Option<&AppSettings>,
+    initial_status: Option<&AppStatus>,
+) -> tauri::Result<TrayMenuItems> {
+    let initial_menu = initial_settings
+        .zip(initial_status)
+        .map(|(settings, status)| tray_menu_presentation(settings, status));
     let recording = CheckMenuItem::with_id(
         app,
         "toggle-recording",
         "Recording On",
         true,
-        true,
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.recording_checked)
+            .unwrap_or(true),
         None::<&str>,
     )?;
     let transcription = CheckMenuItem::with_id(
@@ -372,25 +401,42 @@ fn setup_tray(app: &mut tauri::App, initial_status: Option<&AppStatus>) -> tauri
         "toggle-transcription",
         "Transcription On",
         true,
-        true,
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.transcription_checked)
+            .unwrap_or(true),
         None::<&str>,
     )?;
     let active_model = MenuItem::with_id(
         app,
         "active-model",
-        "Model: whisper-medium",
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.active_model_text.as_str())
+            .unwrap_or("Model: whisper-medium"),
         false,
         None::<&str>,
     )?;
     let active_mic = MenuItem::with_id(
         app,
         "active-microphone",
-        "Microphone: System Default",
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.active_microphone_text.as_str())
+            .unwrap_or("Microphone: System Default"),
         false,
         None::<&str>,
     )?;
-    let threshold =
-        MenuItem::with_id(app, "threshold", "Threshold: -45 dBFS", false, None::<&str>)?;
+    let threshold = MenuItem::with_id(
+        app,
+        "threshold",
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.threshold_text.as_str())
+            .unwrap_or("Threshold: -45 dBFS"),
+        false,
+        None::<&str>,
+    )?;
     let reveal = MenuItem::with_id(
         app,
         "reveal-save-folder",
@@ -399,8 +445,17 @@ fn setup_tray(app: &mut tauri::App, initial_status: Option<&AppStatus>) -> tauri
         None::<&str>,
     )?;
     let open = MenuItem::with_id(app, "open-settings", "Open Settings", true, None::<&str>)?;
-    let pause_all =
-        CheckMenuItem::with_id(app, "pause-all", "Pause All", true, false, None::<&str>)?;
+    let pause_all = CheckMenuItem::with_id(
+        app,
+        "pause-all",
+        "Pause All",
+        true,
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.pause_all_checked)
+            .unwrap_or(false),
+        None::<&str>,
+    )?;
     let cancel = MenuItem::with_id(
         app,
         "cancel-current-operation",
@@ -446,16 +501,33 @@ fn setup_tray(app: &mut tauri::App, initial_status: Option<&AppStatus>) -> tauri
         })
         .build(app)?;
 
-    Ok(())
+    Ok(TrayMenuItems {
+        recording,
+        transcription,
+        active_model,
+        active_mic,
+        threshold,
+        pause_all,
+    })
 }
 
-fn update_tray_presentation(app: &tauri::AppHandle, status: &AppStatus) {
+fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
     let Some(tray) = app.tray_by_id("sagwan") else {
         return;
     };
     let presentation = tray_presentation_for_state(status.tray_state);
     let _ = tray.set_icon(Some(Image::new_owned(presentation.rgba.to_vec(), 1, 1)));
     let _ = tray.set_tooltip(Some(presentation.tooltip));
+
+    if let Some(items) = app.try_state::<TrayMenuItems>() {
+        let menu = tray_menu_presentation(settings, status);
+        let _ = items.recording.set_checked(menu.recording_checked);
+        let _ = items.transcription.set_checked(menu.transcription_checked);
+        let _ = items.pause_all.set_checked(menu.pause_all_checked);
+        let _ = items.active_model.set_text(menu.active_model_text);
+        let _ = items.active_mic.set_text(menu.active_microphone_text);
+        let _ = items.threshold.set_text(menu.threshold_text);
+    }
 }
 
 fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
@@ -476,7 +548,7 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             let state = app.state::<BackendState>();
             if let Ok(mut backend) = state.lock() {
                 let _ = backend.cancel_current_transcription();
-                update_tray_presentation(app, &backend.app_status());
+                update_tray_presentation(app, &backend.settings(), &backend.app_status());
             }
         }
         "open-settings" => {
@@ -495,6 +567,6 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     if let Ok(mut backend) = state.lock() {
         let current = backend.settings();
         backend.update_settings(patch(current));
-        update_tray_presentation(app, &backend.app_status());
+        update_tray_presentation(app, &backend.settings(), &backend.app_status());
     }
 }
