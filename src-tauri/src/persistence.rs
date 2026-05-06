@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, SettingsPatch};
 
 #[derive(Debug, Clone)]
 pub struct AppPersistence {
@@ -26,7 +26,12 @@ impl AppPersistence {
     }
 
     pub fn load_settings(&self) -> Result<Option<AppSettings>, PersistenceError> {
-        read_json_if_exists(&self.settings_path())
+        let Some(patch) = read_json_if_exists::<SettingsPatch>(&self.settings_path())? else {
+            return Ok(None);
+        };
+        let mut settings = AppSettings::default();
+        settings.apply_patch(patch);
+        Ok(Some(settings))
     }
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), PersistenceError> {

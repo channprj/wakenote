@@ -31,6 +31,34 @@ fn persistence_round_trips_settings_json() {
 }
 
 #[test]
+fn persistence_migrates_legacy_settings_with_missing_fields() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    std::fs::write(
+        tmp.path().join("settings.json"),
+        r#"{
+          "recording_enabled": false,
+          "threshold_dbfs": -39.5,
+          "save_root": "/tmp/legacy-sagwan"
+        }"#,
+    )
+    .expect("legacy settings");
+
+    let loaded = store
+        .load_settings()
+        .expect("load settings")
+        .expect("settings");
+
+    assert!(!loaded.recording_enabled);
+    assert_eq!(loaded.threshold_dbfs, -39.5);
+    assert_eq!(loaded.save_root, "/tmp/legacy-sagwan");
+    assert!(loaded.transcription_enabled);
+    assert_eq!(loaded.attack_ms, 300);
+    assert_eq!(loaded.selected_model, "whisper-medium");
+    assert_eq!(loaded.theme_primary_color, "#0047AB");
+}
+
+#[test]
 fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = AppPersistence::new(tmp.path());
