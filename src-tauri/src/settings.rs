@@ -66,7 +66,9 @@ pub enum LaunchAtLoginAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveCaptureRuntimeAction {
+    Start,
     Stop,
+    Restart,
     Unchanged,
 }
 
@@ -85,15 +87,27 @@ pub fn live_capture_runtime_action_for_patch(
     settings: &AppSettings,
     patch: &SettingsPatch,
 ) -> LiveCaptureRuntimeAction {
-    if !settings.recording_enabled || settings.pause_all {
-        return LiveCaptureRuntimeAction::Unchanged;
-    }
+    let currently_running = live_capture_should_run(settings);
+    let next_recording_enabled = patch
+        .recording_enabled
+        .unwrap_or(settings.recording_enabled);
+    let next_pause_all = patch.pause_all.unwrap_or(settings.pause_all);
+    let should_run = next_recording_enabled && !next_pause_all;
+    let microphone_changed = patch
+        .selected_microphone
+        .as_ref()
+        .is_some_and(|value| value != &settings.selected_microphone);
 
-    if patch.recording_enabled == Some(false) || patch.pause_all == Some(true) {
-        LiveCaptureRuntimeAction::Stop
-    } else {
-        LiveCaptureRuntimeAction::Unchanged
+    match (currently_running, should_run, microphone_changed) {
+        (false, true, _) => LiveCaptureRuntimeAction::Start,
+        (true, false, _) => LiveCaptureRuntimeAction::Stop,
+        (true, true, true) => LiveCaptureRuntimeAction::Restart,
+        _ => LiveCaptureRuntimeAction::Unchanged,
     }
+}
+
+pub fn live_capture_should_run(settings: &AppSettings) -> bool {
+    settings.recording_enabled && !settings.pause_all
 }
 
 impl AppSettings {

@@ -4,6 +4,7 @@ use sagwan::models::{ModelStatus, default_model_registry};
 use sagwan::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run,
 };
 use sagwan::storage::{OutputBasename, next_available_output};
 
@@ -205,6 +206,77 @@ fn live_capture_runtime_action_stops_when_recording_is_disabled_or_paused() {
         ),
         LiveCaptureRuntimeAction::Unchanged
     );
+}
+
+#[test]
+fn live_capture_runtime_action_starts_and_restarts_for_active_recording_settings() {
+    let disabled = AppSettings {
+        recording_enabled: false,
+        ..AppSettings::default()
+    };
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &disabled,
+            &SettingsPatch {
+                recording_enabled: Some(true),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Start
+    );
+
+    let paused = AppSettings {
+        pause_all: true,
+        ..AppSettings::default()
+    };
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &paused,
+            &SettingsPatch {
+                pause_all: Some(false),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Start
+    );
+
+    let active = AppSettings::default();
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &active,
+            &SettingsPatch {
+                selected_microphone: Some("usb-mic".to_string()),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Restart
+    );
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &active,
+            &SettingsPatch {
+                selected_microphone: Some(active.selected_microphone.clone()),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Unchanged
+    );
+}
+
+#[test]
+fn live_capture_should_run_only_when_recording_is_enabled_and_not_paused() {
+    assert!(live_capture_should_run(&AppSettings::default()));
+    assert!(!live_capture_should_run(&AppSettings {
+        recording_enabled: false,
+        ..AppSettings::default()
+    }));
+    assert!(!live_capture_should_run(&AppSettings {
+        pause_all: true,
+        ..AppSettings::default()
+    }));
 }
 
 #[test]

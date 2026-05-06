@@ -16,6 +16,7 @@ use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
     AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run,
 };
 use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
 use tauri::image::Image;
@@ -65,7 +66,12 @@ fn update_settings(
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.update_settings(patch)
     };
-    apply_live_capture_runtime_action(state.inner(), live_state.inner(), live_capture_action)?;
+    apply_live_capture_runtime_action(
+        state.inner(),
+        live_state.inner(),
+        transcription_state.inner().clone(),
+        live_capture_action,
+    )?;
     kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
     Ok(settings)
 }
@@ -217,6 +223,18 @@ fn start_live_capture(
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
+    start_live_capture_runtime(
+        backend_state.inner(),
+        live_state.inner(),
+        transcription_state.inner().clone(),
+    )
+}
+
+fn start_live_capture_runtime(
+    backend_state: &BackendState,
+    live_state: &LiveCaptureState,
+    transcription_state: AutoTranscriptionState,
+) -> Result<AppStatus, String> {
     let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
     if live_capture.is_running() {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
@@ -241,9 +259,9 @@ fn start_live_capture(
         (resolved.device_id, resolved.sample_rate)
     };
 
-    let backend_arc = backend_state.inner().clone();
+    let backend_arc = Arc::clone(backend_state);
     let callback_backend = backend_arc.clone();
-    let callback_transcription = transcription_state.inner().clone();
+    let callback_transcription = transcription_state.clone();
     let start_result = live_capture.start(
         AudioInputConfig {
             device_id,
@@ -280,15 +298,23 @@ fn stop_live_capture(
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
+    let status = stop_live_capture_runtime(backend_state.inner(), live_state.inner())?;
+    kick_transcription_worker_if_needed(
+        backend_state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+    Ok(status)
+}
+
+fn stop_live_capture_runtime(
+    backend_state: &BackendState,
+    live_state: &LiveCaptureState,
+) -> Result<AppStatus, String> {
     live_state.lock().map_err(|error| error.to_string())?.stop();
     let status = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.stop_capture_session()?
     };
-    kick_transcription_worker_if_needed(
-        backend_state.inner().clone(),
-        transcription_state.inner().clone(),
-    );
     Ok(status)
 }
 
@@ -359,15 +385,21 @@ fn apply_launch_at_login_action(
 fn apply_live_capture_runtime_action(
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
+    transcription_state: AutoTranscriptionState,
     action: LiveCaptureRuntimeAction,
 ) -> Result<(), String> {
     match action {
+        LiveCaptureRuntimeAction::Start => {
+            start_live_capture_runtime(backend_state, live_state, transcription_state)?;
+            Ok(())
+        }
         LiveCaptureRuntimeAction::Stop => {
-            live_state.lock().map_err(|error| error.to_string())?.stop();
-            backend_state
-                .lock()
-                .map_err(|error| error.to_string())?
-                .stop_capture_session()?;
+            stop_live_capture_runtime(backend_state, live_state)?;
+            Ok(())
+        }
+        LiveCaptureRuntimeAction::Restart => {
+            stop_live_capture_runtime(backend_state, live_state)?;
+            start_live_capture_runtime(backend_state, live_state, transcription_state)?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Unchanged => Ok(()),
@@ -435,6 +467,21 @@ fn main() {
                 let _ = apply_launch_at_login_preference(app.handle(), settings.launch_at_login);
             }
             app.manage(tray_menu_items);
+            if initial_settings
+                .as_ref()
+                .is_some_and(live_capture_should_run)
+            {
+                let live_state = app.state::<LiveCaptureState>();
+                if let Ok(status) = start_live_capture_runtime(
+                    &backend_state,
+                    live_state.inner(),
+                    transcription_state.clone(),
+                ) {
+                    if let Some(settings) = initial_settings.as_ref() {
+                        update_tray_presentation(app.handle(), settings, &status);
+                    }
+                }
+            }
             kick_transcription_worker_if_needed(backend_state, transcription_state);
             Ok(())
         })
@@ -678,8 +725,12 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
         return;
     };
 
-    let _ =
-        apply_live_capture_runtime_action(state.inner(), live_state.inner(), live_capture_action);
+    let _ = apply_live_capture_runtime_action(
+        state.inner(),
+        live_state.inner(),
+        transcription_state.inner().clone(),
+        live_capture_action,
+    );
     if let Ok(backend) = state.lock() {
         update_tray_presentation(app, &backend.settings(), &backend.app_status());
     }
