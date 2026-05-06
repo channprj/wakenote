@@ -110,6 +110,20 @@ pub struct RevealSaveFolderRequest {
     pub path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainWindowCloseAction {
+    HideToTray,
+    AllowClose,
+}
+
+pub fn main_window_close_action(window_label: &str) -> MainWindowCloseAction {
+    if window_label == "main" {
+        MainWindowCloseAction::HideToTray
+    } else {
+        MainWindowCloseAction::AllowClose
+    }
+}
+
 pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderRequest {
     RevealSaveFolderRequest {
         program: PathBuf::from("/usr/bin/open"),

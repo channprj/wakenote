@@ -1,8 +1,9 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::commands::{
-    AppBackend, AppMode, TrayState, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation,
+    AppBackend, AppMode, MainWindowCloseAction, TrayState, main_window_close_action,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -447,4 +448,16 @@ fn reveal_save_folder_request_uses_current_save_root() {
 
     assert_eq!(request.program, PathBuf::from("/usr/bin/open"));
     assert_eq!(request.path, tmp.path());
+}
+
+#[test]
+fn main_window_close_hides_settings_to_support_tray_only_mode() {
+    assert_eq!(
+        main_window_close_action("main"),
+        MainWindowCloseAction::HideToTray
+    );
+    assert_eq!(
+        main_window_close_action("secondary"),
+        MainWindowCloseAction::AllowClose
+    );
 }

@@ -6,8 +6,9 @@ use std::sync::{
 use std::thread;
 
 use sagwan::commands::{
-    AppBackend, AppStatus, MicrophoneDevice, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation,
+    AppBackend, AppStatus, MainWindowCloseAction, MicrophoneDevice, main_window_close_action,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore, default_model_registry};
@@ -367,6 +368,14 @@ fn apply_launch_at_login_preference(_app: &AppHandle, _enabled: bool) -> Result<
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             app.handle().plugin(tauri_plugin_autostart::init(
