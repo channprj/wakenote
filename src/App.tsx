@@ -31,7 +31,7 @@ import {
   stopLiveCapture,
   verifyModel,
 } from "./lib/tauri-client";
-import { mockSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
+import { mockSnapshot, shouldPollSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 
 const sections = [
@@ -76,13 +76,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    const active =
-      snapshot.status.tray_state === "listening" ||
-      snapshot.status.tray_state === "recording" ||
-      snapshot.status.tray_state === "transcribing" ||
-      snapshot.queue.pending_count > 0 ||
-      snapshot.queue.running_count > 0;
-    if (!active) {
+    if (!shouldPollSnapshot(snapshot.status, snapshot.queue)) {
       return;
     }
 
@@ -90,7 +84,7 @@ export default function App() {
       void refreshQuietly();
     }, 100);
     return () => window.clearInterval(timer);
-  }, [snapshot.status.tray_state]);
+  }, [snapshot.status.tray_state, snapshot.queue.pending_count, snapshot.queue.running_count]);
 
   async function patchSettings(patch: Partial<AppSettings>) {
     setBusy(true);

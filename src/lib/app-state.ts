@@ -2,6 +2,7 @@ import type {
   AppMode,
   AppSettings,
   AppSnapshot,
+  AppStatus,
   LevelSnapshot,
   ModelDescriptor,
   QueueSnapshot,
@@ -55,6 +56,14 @@ export function shouldShowFloatingOverlay(
   return (
     settings.show_floating_overlay &&
     ["listening", "recording", "transcribing"].includes(trayState)
+  );
+}
+
+export function shouldPollSnapshot(status: AppStatus, queue: QueueSnapshot) {
+  return (
+    ["listening", "recording", "transcribing"].includes(status.tray_state) ||
+    queue.pending_count > 0 ||
+    queue.running_count > 0
   );
 }
 

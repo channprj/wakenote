@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { deriveProductMode, deriveTrayState, mockSnapshot, shouldShowFloatingOverlay } from "./app-state";
+import {
+  deriveProductMode,
+  deriveTrayState,
+  mockSnapshot,
+  shouldPollSnapshot,
+  shouldShowFloatingOverlay,
+} from "./app-state";
 
 describe("app state derivation", () => {
   it("maps independent recording/transcription toggles to PRD product modes", () => {
@@ -34,6 +40,15 @@ describe("app state derivation", () => {
     expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "transcribing")).toBe(true);
     expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "idle")).toBe(false);
     expect(shouldShowFloatingOverlay({ show_floating_overlay: false }, "recording")).toBe(false);
+  });
+
+  it("keeps polling while transcription queue work is pending even if the tray is idle", () => {
+    const snapshot = mockSnapshot();
+    const idleStatus = { ...snapshot.status, tray_state: "idle" as const };
+
+    expect(shouldPollSnapshot(idleStatus, { ...snapshot.queue, pending_count: 1 })).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, { ...snapshot.queue, running_count: 1 })).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, snapshot.queue)).toBe(false);
   });
 
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
