@@ -64,6 +64,12 @@ pub enum LaunchAtLoginAction {
     Unchanged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveCaptureRuntimeAction {
+    Stop,
+    Unchanged,
+}
+
 pub fn launch_at_login_action_for_patch(
     settings: &AppSettings,
     patch: &SettingsPatch,
@@ -72,6 +78,21 @@ pub fn launch_at_login_action_for_patch(
         Some(true) if !settings.launch_at_login => LaunchAtLoginAction::Enable,
         Some(false) if settings.launch_at_login => LaunchAtLoginAction::Disable,
         _ => LaunchAtLoginAction::Unchanged,
+    }
+}
+
+pub fn live_capture_runtime_action_for_patch(
+    settings: &AppSettings,
+    patch: &SettingsPatch,
+) -> LiveCaptureRuntimeAction {
+    if !settings.recording_enabled || settings.pause_all {
+        return LiveCaptureRuntimeAction::Unchanged;
+    }
+
+    if patch.recording_enabled == Some(false) || patch.pause_all == Some(true) {
+        LiveCaptureRuntimeAction::Stop
+    } else {
+        LiveCaptureRuntimeAction::Unchanged
     }
 }
 

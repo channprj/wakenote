@@ -2,7 +2,8 @@ use chrono::{TimeZone, Utc};
 use sagwan::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
 use sagwan::models::{ModelStatus, default_model_registry};
 use sagwan::settings::{
-    AppSettings, AudioFormat, LaunchAtLoginAction, SettingsPatch, launch_at_login_action_for_patch,
+    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
 };
 use sagwan::storage::{OutputBasename, next_available_output};
 
@@ -157,6 +158,52 @@ fn launch_at_login_action_follows_explicit_settings_patch() {
             }
         ),
         LaunchAtLoginAction::Disable
+    );
+}
+
+#[test]
+fn live_capture_runtime_action_stops_when_recording_is_disabled_or_paused() {
+    let settings = AppSettings::default();
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &settings,
+            &SettingsPatch {
+                recording_enabled: Some(false),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Stop
+    );
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &settings,
+            &SettingsPatch {
+                pause_all: Some(true),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Stop
+    );
+    assert_eq!(
+        live_capture_runtime_action_for_patch(&settings, &SettingsPatch::default()),
+        LiveCaptureRuntimeAction::Unchanged
+    );
+
+    let already_paused = AppSettings {
+        pause_all: true,
+        ..AppSettings::default()
+    };
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &already_paused,
+            &SettingsPatch {
+                pause_all: Some(true),
+                ..SettingsPatch::default()
+            }
+        ),
+        LiveCaptureRuntimeAction::Unchanged
     );
 }
 

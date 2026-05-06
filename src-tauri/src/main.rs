@@ -14,7 +14,8 @@ use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime}
 use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
-    AppSettings, LaunchAtLoginAction, SettingsPatch, launch_at_login_action_for_patch,
+    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
 };
 use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
 use tauri::image::Image;
@@ -46,12 +47,17 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 fn update_settings(
     app: AppHandle,
     state: State<'_, BackendState>,
+    live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
-    let launch_at_login_action = {
+    let (launch_at_login_action, live_capture_action) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
-        launch_at_login_action_for_patch(&backend.settings(), &patch)
+        let settings = backend.settings();
+        (
+            launch_at_login_action_for_patch(&settings, &patch),
+            live_capture_runtime_action_for_patch(&settings, &patch),
+        )
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
 
@@ -59,6 +65,7 @@ fn update_settings(
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.update_settings(patch)
     };
+    apply_live_capture_runtime_action(state.inner(), live_state.inner(), live_capture_action)?;
     kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
     Ok(settings)
 }
@@ -346,6 +353,24 @@ fn apply_launch_at_login_action(
         LaunchAtLoginAction::Enable => apply_launch_at_login_preference(app, true),
         LaunchAtLoginAction::Disable => apply_launch_at_login_preference(app, false),
         LaunchAtLoginAction::Unchanged => Ok(()),
+    }
+}
+
+fn apply_live_capture_runtime_action(
+    backend_state: &BackendState,
+    live_state: &LiveCaptureState,
+    action: LiveCaptureRuntimeAction,
+) -> Result<(), String> {
+    match action {
+        LiveCaptureRuntimeAction::Stop => {
+            live_state.lock().map_err(|error| error.to_string())?.stop();
+            backend_state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .stop_capture_session()?;
+            Ok(())
+        }
+        LiveCaptureRuntimeAction::Unchanged => Ok(()),
     }
 }
 
@@ -641,9 +666,22 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
 
 fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> SettingsPatch) {
     let state = app.state::<BackendState>();
-    if let Ok(mut backend) = state.lock() {
+    let live_state = app.state::<LiveCaptureState>();
+    let transcription_state = app.state::<AutoTranscriptionState>();
+    let live_capture_action = if let Ok(mut backend) = state.lock() {
         let current = backend.settings();
-        backend.update_settings(patch(current));
+        let patch = patch(current.clone());
+        let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
+        backend.update_settings(patch);
+        live_capture_action
+    } else {
+        return;
+    };
+
+    let _ =
+        apply_live_capture_runtime_action(state.inner(), live_state.inner(), live_capture_action);
+    if let Ok(backend) = state.lock() {
         update_tray_presentation(app, &backend.settings(), &backend.app_status());
     }
+    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
 }
