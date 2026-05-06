@@ -1,6 +1,6 @@
 import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
 import { Badge, Button } from "./ui/primitives";
-import type { QueueSnapshot } from "../lib/types";
+import type { QueueJobStatus, QueueSnapshot } from "../lib/types";
 
 function toneForStatus(status: string) {
   if (status === "running") {
@@ -16,6 +16,13 @@ function toneForStatus(status: string) {
     return "warning";
   }
   return "neutral";
+}
+
+export function queueJobActionState(status: QueueJobStatus) {
+  return {
+    canRetry: status === "failed" || status === "cancelled",
+    canSkip: status === "pending" || status === "failed" || status === "cancelled",
+  };
 }
 
 export function QueuePanel({
@@ -92,37 +99,42 @@ export function QueuePanel({
                 </td>
               </tr>
             ) : (
-              queue.jobs.map((job) => (
-                <tr key={job.id}>
-                  <td title={job.audio_path}>{job.audio_path}</td>
-                  <td>{job.model_id}</td>
-                  <td>
-                    <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
-                  </td>
-                  <td>
-                    <div className="row-actions">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="icon"
-                        title="Retry"
-                        onClick={() => onRetry(job.id)}
-                      >
-                        <RotateCw />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title="Skip"
-                        onClick={() => onSkip(job.id)}
-                      >
-                        <SkipForward />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              queue.jobs.map((job) => {
+                const actions = queueJobActionState(job.status);
+                return (
+                  <tr key={job.id}>
+                    <td title={job.audio_path}>{job.audio_path}</td>
+                    <td>{job.model_id}</td>
+                    <td>
+                      <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="icon"
+                          title="Retry"
+                          onClick={() => onRetry(job.id)}
+                          disabled={!actions.canRetry}
+                        >
+                          <RotateCw />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Skip"
+                          onClick={() => onSkip(job.id)}
+                          disabled={!actions.canSkip}
+                        >
+                          <SkipForward />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

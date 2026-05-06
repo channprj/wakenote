@@ -122,6 +122,12 @@ impl TranscriptionQueue {
         let job = self
             .job_mut(id)
             .ok_or_else(|| format!("job {id} not found"))?;
+        if !matches!(
+            job.status,
+            QueueJobStatus::Failed | QueueJobStatus::Cancelled
+        ) {
+            return Err(format!("job {id} cannot be retried from {:?}", job.status));
+        }
         job.status = QueueJobStatus::Pending;
         job.error = None;
         Ok(())
@@ -131,6 +137,12 @@ impl TranscriptionQueue {
         let job = self
             .job_mut(id)
             .ok_or_else(|| format!("job {id} not found"))?;
+        if !matches!(
+            job.status,
+            QueueJobStatus::Pending | QueueJobStatus::Failed | QueueJobStatus::Cancelled
+        ) {
+            return Err(format!("job {id} cannot be skipped from {:?}", job.status));
+        }
         job.status = QueueJobStatus::Skipped;
         Ok(())
     }

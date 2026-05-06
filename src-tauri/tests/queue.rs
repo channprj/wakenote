@@ -30,6 +30,35 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
 }
 
 #[test]
+fn queue_rejects_retry_and_skip_for_terminal_or_active_jobs() {
+    let mut queue = TranscriptionQueue::new();
+    let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
+    let running = queue.enqueue_file("/recordings/running.wav", "whisper-medium");
+    let completed = queue.enqueue_file("/recordings/completed.wav", "whisper-medium");
+    let skipped = queue.enqueue_file("/recordings/skipped.wav", "whisper-medium");
+
+    queue.start_next().expect("start pending");
+    queue
+        .cancel_current("user cancelled")
+        .expect("cancel first");
+    queue.start_next().expect("start running");
+    queue.mark_completed(completed).expect("complete job");
+    queue.skip(skipped).expect("skip job");
+
+    assert!(queue.retry(pending).is_ok(), "cancelled jobs can retry");
+    assert!(queue.retry(running).is_err(), "running jobs cannot retry");
+    assert!(
+        queue.retry(completed).is_err(),
+        "completed jobs cannot retry"
+    );
+    assert!(queue.retry(skipped).is_err(), "skipped jobs cannot retry");
+
+    assert!(queue.skip(pending).is_ok(), "pending jobs can skip");
+    assert!(queue.skip(running).is_err(), "running jobs cannot skip");
+    assert!(queue.skip(completed).is_err(), "completed jobs cannot skip");
+}
+
+#[test]
 fn backlog_scan_enqueues_audio_without_txt_or_error_sidecar() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let day = tmp.path().join("20260506");
