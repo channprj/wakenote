@@ -73,11 +73,14 @@ export function shouldPollSnapshot(
   queue: QueueSnapshot,
   models: ModelDescriptor[] = [],
 ) {
+  const canProcessPendingTranscription =
+    status.mode === "recording_and_transcription" || status.mode === "transcription_only";
+
   return (
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
     status.live_input_active ||
     status.runtime_warning?.startsWith("Live input stream error:") ||
-    queue.pending_count > 0 ||
+    (canProcessPendingTranscription && queue.pending_count > 0) ||
     queue.running_count > 0 ||
     models.some((model) => ["downloading", "verifying", "extracting"].includes(model.status))
   );
@@ -89,6 +92,7 @@ export function pollSnapshotDependencyKey(
   models: ModelDescriptor[] = [],
 ) {
   return JSON.stringify({
+    mode: status.mode,
     trayState: status.tray_state,
     liveInputActive: status.live_input_active,
     runtimeWarning: status.runtime_warning ?? null,

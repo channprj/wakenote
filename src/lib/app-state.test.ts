@@ -55,6 +55,31 @@ describe("app state derivation", () => {
     expect(shouldPollSnapshot(idleStatus, snapshot.queue)).toBe(false);
   });
 
+  it("does not keep polling for pending transcription work when transcription is disabled", () => {
+    const snapshot = mockSnapshot();
+    const pendingQueue = { ...snapshot.queue, pending_count: 1 };
+    const recordingOnlyStatus = {
+      ...snapshot.status,
+      mode: "recording_only" as const,
+      tray_state: "idle" as const,
+    };
+    const pausedStatus = {
+      ...snapshot.status,
+      mode: "paused" as const,
+      tray_state: "paused" as const,
+    };
+
+    expect(shouldPollSnapshot(recordingOnlyStatus, pendingQueue, snapshot.models)).toBe(false);
+    expect(shouldPollSnapshot(pausedStatus, pendingQueue, snapshot.models)).toBe(false);
+    expect(
+      shouldPollSnapshot(
+        { ...recordingOnlyStatus, tray_state: "transcribing" as const },
+        pendingQueue,
+        snapshot.models,
+      ),
+    ).toBe(true);
+  });
+
   it("keeps polling while model download or verification state is active", () => {
     const snapshot = mockSnapshot();
     const idleStatus = { ...snapshot.status, tray_state: "idle" as const };
@@ -108,6 +133,13 @@ describe("app state derivation", () => {
     expect(
       pollSnapshotDependencyKey(
         { ...snapshot.status, runtime_warning: "Live input stream error: default input stream disconnected" },
+        snapshot.queue,
+        snapshot.models,
+      ),
+    ).not.toBe(baseKey);
+    expect(
+      pollSnapshotDependencyKey(
+        { ...snapshot.status, mode: "recording_only" },
         snapshot.queue,
         snapshot.models,
       ),
