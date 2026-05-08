@@ -164,6 +164,44 @@ fn default_settings_match_prd_mvp_defaults() {
 }
 
 #[test]
+fn settings_patch_clamps_voice_gate_values_to_ui_ranges() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        threshold_dbfs: Some(12.0),
+        attack_ms: Some(0),
+        release_ms: Some(10_000),
+        pre_roll_ms: Some(2_000),
+        post_roll_ms: Some(4_000),
+        min_chunk_ms: Some(0),
+        max_chunk_ms: Some(1_000_000),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.threshold_dbfs, -10.0);
+    assert_eq!(settings.attack_ms, 50);
+    assert_eq!(settings.release_ms, 5_000);
+    assert_eq!(settings.pre_roll_ms, 1_500);
+    assert_eq!(settings.post_roll_ms, 2_000);
+    assert_eq!(settings.min_chunk_ms, 100);
+    assert_eq!(settings.max_chunk_ms, 900_000);
+}
+
+#[test]
+fn settings_patch_keeps_max_chunk_at_least_min_chunk() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        min_chunk_ms: Some(5_000),
+        max_chunk_ms: Some(2_000),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.min_chunk_ms, 5_000);
+    assert_eq!(settings.max_chunk_ms, 10_000);
+}
+
+#[test]
 fn launch_at_login_action_follows_explicit_settings_patch() {
     let settings = AppSettings::default();
 

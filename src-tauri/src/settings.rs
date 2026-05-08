@@ -129,6 +129,18 @@ pub fn expand_user_path(path: impl AsRef<str>) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn clamp_threshold_dbfs(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(-90.0, -10.0)
+    } else {
+        AppSettings::default().threshold_dbfs
+    }
+}
+
+fn clamp_ms(value: u64, min: u64, max: u64) -> u64 {
+    value.clamp(min, max)
+}
+
 impl AppSettings {
     pub fn apply_patch(&mut self, patch: SettingsPatch) {
         if let Some(value) = patch.recording_enabled {
@@ -153,25 +165,25 @@ impl AppSettings {
             self.audio_format = value;
         }
         if let Some(value) = patch.threshold_dbfs {
-            self.threshold_dbfs = value;
+            self.threshold_dbfs = clamp_threshold_dbfs(value);
         }
         if let Some(value) = patch.attack_ms {
-            self.attack_ms = value;
+            self.attack_ms = clamp_ms(value, 50, 2_000);
         }
         if let Some(value) = patch.release_ms {
-            self.release_ms = value;
+            self.release_ms = clamp_ms(value, 250, 5_000);
         }
         if let Some(value) = patch.pre_roll_ms {
-            self.pre_roll_ms = value;
+            self.pre_roll_ms = clamp_ms(value, 0, 1_500);
         }
         if let Some(value) = patch.post_roll_ms {
-            self.post_roll_ms = value;
+            self.post_roll_ms = clamp_ms(value, 0, 2_000);
         }
         if let Some(value) = patch.min_chunk_ms {
-            self.min_chunk_ms = value;
+            self.min_chunk_ms = clamp_ms(value, 100, 5_000);
         }
         if let Some(value) = patch.max_chunk_ms {
-            self.max_chunk_ms = value;
+            self.max_chunk_ms = clamp_ms(value, 10_000, 900_000);
         }
         if let Some(value) = patch.selected_model {
             self.selected_model = value;
