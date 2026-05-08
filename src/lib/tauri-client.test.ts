@@ -66,6 +66,15 @@ describe("tauri live capture client", () => {
     );
   });
 
+  it("does not duplicate manually imported browser fallback audio files", async () => {
+    const audioPath = "/tmp/imported/duplicate-import.wav";
+
+    await enqueueAudioFiles([audioPath]);
+    const snapshot = await enqueueAudioFiles([audioPath]);
+
+    expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
+  });
+
   it("processes the next queued browser fallback transcription", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/fallback.wav"]);
     const pendingBefore = before.queue.pending_count;

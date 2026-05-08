@@ -60,11 +60,16 @@ impl TranscriptionQueue {
         audio_path: impl Into<PathBuf>,
         model_id: impl Into<String>,
     ) -> u64 {
+        let audio_path = audio_path.into();
+        if let Some(job) = self.jobs.iter().find(|job| job.audio_path == audio_path) {
+            return job.id;
+        }
+
         self.next_id += 1;
         let id = self.next_id;
         self.jobs.push(QueueJob {
             id,
-            audio_path: audio_path.into(),
+            audio_path,
             model_id: model_id.into(),
             status: QueueJobStatus::Pending,
             error: None,

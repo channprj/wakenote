@@ -142,13 +142,26 @@ export async function enqueueAudioFiles(audioPaths: string[]): Promise<AppSnapsh
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const firstId = browserSnapshot.queue.jobs.length + 1;
-    const importedJobs = audioPaths.map((audioPath, index) => ({
-      id: firstId + index,
-      audio_path: audioPath,
-      model_id: settings.selected_model,
-      status: "pending" as const,
-      error: null,
-    }));
+    const queuedPaths = new Set(browserSnapshot.queue.jobs.map((job) => job.audio_path));
+    const importedJobs = audioPaths
+      .filter((audioPath) => {
+        if (queuedPaths.has(audioPath)) {
+          return false;
+        }
+        queuedPaths.add(audioPath);
+        return true;
+      })
+      .map((audioPath, index) => ({
+        id: firstId + index,
+        audio_path: audioPath,
+        model_id: settings.selected_model,
+        status: "pending" as const,
+        error: null,
+      }));
+    if (importedJobs.length === 0) {
+      return browserSnapshot;
+    }
+
     const queue: QueueSnapshot = {
       jobs: [...browserSnapshot.queue.jobs, ...importedJobs],
       pending_count: browserSnapshot.queue.pending_count + importedJobs.length,

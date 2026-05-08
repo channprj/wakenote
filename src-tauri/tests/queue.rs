@@ -30,6 +30,18 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
 }
 
 #[test]
+fn queue_does_not_enqueue_duplicate_audio_paths() {
+    let mut queue = TranscriptionQueue::new();
+
+    let first = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-medium");
+    let duplicate = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-tiny");
+
+    assert_eq!(duplicate, first);
+    assert_eq!(queue.snapshot().pending_count, 1);
+    assert_eq!(queue.snapshot().jobs[0].model_id, "whisper-medium");
+}
+
+#[test]
 fn queue_rejects_retry_and_skip_for_terminal_or_active_jobs() {
     let mut queue = TranscriptionQueue::new();
     let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
