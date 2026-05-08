@@ -76,6 +76,32 @@ fn capture_processor_writes_chunk_after_attack_and_release() {
 }
 
 #[test]
+fn capture_processor_starts_after_exact_attack_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: settings(),
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..3 {
+        processor.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+    for _ in 0..17 {
+        processor.process_samples(&[0.0; 1], 100).expect("silence");
+    }
+
+    let chunks = processor.completed_chunks();
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(wav_sample_count(&chunks[0].audio_path), 20);
+}
+
+#[test]
 fn capture_processor_writes_configured_post_roll_audio_samples() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config_settings = settings();
@@ -106,7 +132,7 @@ fn capture_processor_writes_configured_post_roll_audio_samples() {
 
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 1);
-    assert_eq!(wav_sample_count(&chunks[0].audio_path), 8);
+    assert_eq!(wav_sample_count(&chunks[0].audio_path), 7);
 }
 
 #[test]

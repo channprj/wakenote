@@ -174,7 +174,7 @@ impl CaptureProcessor {
         let frame_start_ms = self.elapsed_ms;
         let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
         let dbfs = dbfs_from_samples(samples);
-        let decision = self.gate.observe(dbfs, frame_end_ms);
+        let decision = self.gate.observe_frame(dbfs, frame_start_ms, frame_end_ms);
 
         match decision {
             GateDecision::Idle => {

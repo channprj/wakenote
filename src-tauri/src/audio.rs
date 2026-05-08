@@ -187,6 +187,25 @@ impl SpeechGate {
     }
 
     pub fn observe(&mut self, dbfs: f32, time_ms: u64) -> GateDecision {
+        self.observe_window(dbfs, time_ms, time_ms)
+    }
+
+    pub fn observe_frame(
+        &mut self,
+        dbfs: f32,
+        frame_start_ms: u64,
+        frame_end_ms: u64,
+    ) -> GateDecision {
+        self.observe_window(dbfs, frame_start_ms, frame_end_ms)
+    }
+
+    fn observe_window(
+        &mut self,
+        dbfs: f32,
+        signal_start_ms: u64,
+        time_ms: u64,
+    ) -> GateDecision {
+        let signal_start_ms = signal_start_ms.min(time_ms);
         let above_threshold = dbfs >= self.config.threshold_dbfs;
 
         if !self.recording {
@@ -195,7 +214,7 @@ impl SpeechGate {
                 return GateDecision::Idle;
             }
 
-            let above_since_ms = *self.above_since_ms.get_or_insert(time_ms);
+            let above_since_ms = *self.above_since_ms.get_or_insert(signal_start_ms);
             if time_ms.saturating_sub(above_since_ms) >= self.config.attack_ms {
                 let started_at_ms = above_since_ms.saturating_sub(self.config.pre_roll_ms);
                 self.recording = true;
@@ -225,7 +244,7 @@ impl SpeechGate {
             return GateDecision::Recording;
         }
 
-        let below_since_ms = *self.below_since_ms.get_or_insert(time_ms);
+        let below_since_ms = *self.below_since_ms.get_or_insert(signal_start_ms);
         let release_elapsed = time_ms.saturating_sub(below_since_ms) >= self.config.release_ms;
         let minimum_elapsed =
             time_ms.saturating_sub(chunk_started_at_ms) >= self.config.min_chunk_ms;
