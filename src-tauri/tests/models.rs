@@ -221,6 +221,29 @@ fn model_store_downloads_with_fetcher_and_installs_ready_model() {
 }
 
 #[test]
+fn model_store_records_fetch_failure_as_download_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let model = descriptor("whisper-test", None);
+
+    let error = store
+        .download_model_with(&model, |_| {
+            Err(ModelStoreError::Download("network unavailable".to_string()))
+                as Result<Cursor<Vec<u8>>, ModelStoreError>
+        })
+        .expect_err("fetch failure should fail");
+
+    assert!(error.to_string().contains("network unavailable"));
+    let state = store.load_download_state().expect("download state");
+    let record = state
+        .downloads
+        .get("whisper-test")
+        .expect("failed download record");
+    assert_eq!(record.status, ModelStatus::Error);
+    assert_eq!(record.error.as_deref(), Some("network unavailable"));
+}
+
+#[test]
 fn model_store_resumes_partial_download_from_temp_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());

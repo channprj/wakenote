@@ -392,7 +392,13 @@ impl ModelStore {
         model: &ModelDescriptor,
         fetch: impl FnOnce(&ModelDescriptor) -> Result<R, ModelStoreError>,
     ) -> Result<ModelStatus, ModelStoreError> {
-        let reader = fetch(model)?;
+        let reader = match fetch(model) {
+            Ok(reader) => reader,
+            Err(error) => {
+                self.record_download_error(&model.id, 0, None, &error);
+                return Err(error);
+            }
+        };
         self.download_model_reader(model, reader, None)
     }
 
@@ -408,7 +414,10 @@ impl ModelStore {
         }
         let response = request
             .call()
-            .map_err(|error| ModelStoreError::Download(error.to_string()))?;
+            .map_err(|error| ModelStoreError::Download(error.to_string()))
+            .inspect_err(|error| {
+                self.record_download_error(&model.id, resume_from, None, error);
+            })?;
         let status = response.status();
         let content_length = response
             .header("Content-Length")
@@ -469,20 +478,34 @@ impl ModelStore {
                 Ok(status)
             }
             Err(error) => {
-                let download_error = match &error {
-                    ModelStoreError::Cancelled { .. } => "cancelled by user".to_string(),
-                    _ => error.to_string(),
-                };
-                let _ = self.record_download_status(
-                    &model.id,
-                    ModelStatus::Error,
-                    0,
-                    total_bytes,
-                    Some(download_error),
-                );
+                self.record_download_error(&model.id, 0, total_bytes, &error);
                 Err(error)
             }
         }
+    }
+
+    fn record_download_error(
+        &self,
+        model_id: &str,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        error: &ModelStoreError,
+    ) {
+        let _ = self.record_download_status(
+            model_id,
+            ModelStatus::Error,
+            downloaded_bytes,
+            total_bytes,
+            Some(download_error_message(error)),
+        );
+    }
+}
+
+fn download_error_message(error: &ModelStoreError) -> String {
+    match error {
+        ModelStoreError::Cancelled { .. } => "cancelled by user".to_string(),
+        ModelStoreError::Download(message) => message.clone(),
+        _ => error.to_string(),
     }
 }
 
