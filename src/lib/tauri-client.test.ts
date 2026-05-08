@@ -162,4 +162,31 @@ describe("tauri live capture client", () => {
       error: null,
     });
   });
+
+  it("queues one simulated browser capture chunk after threshold activation", async () => {
+    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: true });
+    const before = await startLiveCapture();
+    const pendingBefore = before.queue.pending_count;
+
+    const captured = await loadSnapshot();
+
+    expect(captured.status.tray_state).toBe("recording");
+    expect(captured.queue.pending_count).toBe(pendingBefore + 1);
+
+    const captureJob = captured.queue.jobs.at(-1);
+    expect(captureJob).toMatchObject({
+      model_id: captured.settings.selected_model,
+      status: "pending",
+      error: null,
+    });
+    expect(captureJob?.audio_path).toContain(captured.settings.save_root);
+    expect(captureJob?.audio_path.endsWith(`.${captured.settings.audio_format}`)).toBe(true);
+
+    const repeated = await loadSnapshot();
+
+    expect(repeated.queue.pending_count).toBe(captured.queue.pending_count);
+    expect(
+      repeated.queue.jobs.filter((job) => job.audio_path === captureJob?.audio_path),
+    ).toHaveLength(1);
+  });
 });

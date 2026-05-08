@@ -27,6 +27,8 @@ declare global {
 }
 
 let browserSnapshot = mockSnapshot();
+let browserCaptureSessionId = 0;
+let browserQueuedCaptureSessionId: number | null = null;
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
@@ -58,6 +60,37 @@ function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
     noise_floor_dbfs: -58,
     suggested_threshold_dbfs: -46,
   };
+}
+
+function maybeQueueBrowserCapture(settings: AppSettings, queue: QueueSnapshot, status: AppStatus) {
+  if (
+    browserCaptureSessionId === 0 ||
+    browserQueuedCaptureSessionId === browserCaptureSessionId ||
+    !settings.transcription_enabled ||
+    status.tray_state !== "recording"
+  ) {
+    return queue;
+  }
+
+  const audioPath = `${settings.save_root}/browser-capture-${String(browserCaptureSessionId).padStart(
+    3,
+    "0",
+  )}.${settings.audio_format}`;
+  browserQueuedCaptureSessionId = browserCaptureSessionId;
+  if (queue.jobs.some((job) => job.audio_path === audioPath)) {
+    return queue;
+  }
+
+  return queueFromJobs([
+    ...queue.jobs,
+    {
+      id: queue.jobs.length + 1,
+      audio_path: audioPath,
+      model_id: settings.selected_model,
+      status: "pending",
+      error: null,
+    },
+  ]);
 }
 
 function statusFrom(
@@ -95,7 +128,9 @@ function statusFrom(
 export async function loadSnapshot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
-    const queue = browserSnapshot.queue ?? emptyQueue();
+    const currentQueue = browserSnapshot.queue ?? emptyQueue();
+    const currentStatus = statusFrom(settings, currentQueue);
+    const queue = maybeQueueBrowserCapture(settings, currentQueue, currentStatus);
     browserSnapshot = {
       ...browserSnapshot,
       settings,
@@ -285,6 +320,7 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const queue = browserSnapshot.queue ?? emptyQueue();
+    browserCaptureSessionId += 1;
     browserSnapshot = {
       ...browserSnapshot,
       settings,
