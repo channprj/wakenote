@@ -155,6 +155,28 @@ fn backend_records_fallback_microphone_in_status_and_metadata() {
 }
 
 #[test]
+fn backend_surfaces_capture_start_failure_as_microphone_warning() {
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+
+    let status = backend.capture_start_failed("No input device is available");
+
+    assert_eq!(status.tray_state, TrayState::Error);
+    assert_eq!(
+        status.microphone_warning.as_deref(),
+        Some("No input device is available")
+    );
+    assert_eq!(
+        backend
+            .process_audio_samples_for_test(&[0.8; 1], 100)
+            .expect_err("capture should be stopped"),
+        "capture session is not running"
+    );
+}
+
+#[test]
 fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();

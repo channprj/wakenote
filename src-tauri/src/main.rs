@@ -253,8 +253,12 @@ fn start_live_capture_runtime(
         if settings.pause_all || !settings.recording_enabled {
             return Ok(backend.app_status());
         }
-        let resolved = CpalAudioInput::resolve_device(&settings.selected_microphone)
-            .map_err(|error| error.to_string())?;
+        let resolved = match CpalAudioInput::resolve_device(&settings.selected_microphone) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return Ok(backend.capture_start_failed(format!("Microphone unavailable: {error}")));
+            }
+        };
         backend.start_capture_session_with_device(
             resolved.sample_rate,
             chrono::Utc::now(),
@@ -290,8 +294,7 @@ fn start_live_capture_runtime(
 
     if let Err(error) = start_result {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        let _ = backend.stop_capture_session();
-        return Err(error.to_string());
+        return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
     }
 
     let backend = backend_state.lock().map_err(|error| error.to_string())?;

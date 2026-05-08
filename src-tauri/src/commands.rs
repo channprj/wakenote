@@ -383,6 +383,13 @@ impl AppBackend {
         Ok(self.app_status())
     }
 
+    pub fn capture_start_failed(&mut self, warning: impl Into<String>) -> AppStatus {
+        self.capture = None;
+        self.active_microphone_label = None;
+        self.microphone_warning = Some(warning.into());
+        self.app_status()
+    }
+
     pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
         self.level_monitor.observe_samples(&frame.samples);
         let events = self
