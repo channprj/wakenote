@@ -37,6 +37,7 @@ export function deriveTrayState(
   mode: AppMode,
   hasRunningTranscription: boolean,
   hasError = false,
+  hasActiveCapture = false,
 ): TrayState {
   if (hasRunningTranscription) {
     return "transcribing";
@@ -49,7 +50,7 @@ export function deriveTrayState(
   switch (mode) {
     case "recording_and_transcription":
     case "recording_only":
-      return "listening";
+      return hasActiveCapture ? "listening" : "idle";
     case "transcription_only":
       return "idle";
     case "paused":

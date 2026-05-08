@@ -27,8 +27,10 @@ describe("app state derivation", () => {
   });
 
   it("derives tray states from mode and queue activity", () => {
-    expect(deriveTrayState("recording_and_transcription", false)).toBe("listening");
-    expect(deriveTrayState("recording_only", false)).toBe("listening");
+    expect(deriveTrayState("recording_and_transcription", false)).toBe("idle");
+    expect(deriveTrayState("recording_and_transcription", false, false, true)).toBe("listening");
+    expect(deriveTrayState("recording_only", false)).toBe("idle");
+    expect(deriveTrayState("recording_only", false, false, true)).toBe("listening");
     expect(deriveTrayState("transcription_only", false)).toBe("idle");
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");

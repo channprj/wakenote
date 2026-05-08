@@ -3,16 +3,30 @@ import { captureStatusPresentation } from "./status-summary";
 import { mockSnapshot } from "./app-state";
 
 describe("capture status presentation", () => {
-  it("describes continuous listening with microphone and threshold context", () => {
+  it("describes stopped input with microphone and threshold context", () => {
     const snapshot = mockSnapshot();
 
     expect(captureStatusPresentation(snapshot)).toMatchObject({
-      headline: "Listening for voice",
-      tone: "primary",
+      headline: "Input stopped",
+      tone: "neutral",
       modeLabel: "Recording + transcription",
       microphone: "System Default",
       threshold: "-45 dBFS",
       queueSummary: "0 pending · 0 running · 0 failed",
+    });
+  });
+
+  it("describes continuous listening only when capture is active", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        status: { ...snapshot.status, tray_state: "listening" },
+      }),
+    ).toMatchObject({
+      headline: "Listening for voice",
+      tone: "primary",
     });
   });
 
