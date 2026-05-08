@@ -55,8 +55,10 @@ export function SettingsPanel({
   const { settings, status, microphones, models, queue } = snapshot;
   const selectedMicrophone = microphones.find((mic) => mic.id === settings.selected_microphone);
   const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
+  const fallbackMicrophone = microphones.find((mic) => mic.fallback && mic.available);
+  const canStartWithMicrophone = selectedMicrophoneAvailable || Boolean(fallbackMicrophone);
   const liveCaptureDisabled =
-    settings.pause_all || !settings.recording_enabled || !selectedMicrophoneAvailable;
+    settings.pause_all || !settings.recording_enabled || !canStartWithMicrophone;
 
   if (activeSection === "models") {
     return (
@@ -306,7 +308,14 @@ export function SettingsPanel({
             ))}
           </Select>
           {!selectedMicrophoneAvailable ? (
-            <div className="warning-banner">No available input device is selected.</div>
+            fallbackMicrophone ? (
+              <div className="warning-banner">
+                {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
+                {fallbackMicrophone.label}.
+              </div>
+            ) : (
+              <div className="warning-banner">No available input device is selected.</div>
+            )
           ) : null}
         </div>
       </Section>
