@@ -381,6 +381,26 @@ export async function deleteModel(modelId: string): Promise<AppSnapshot> {
 
 export async function retryJob(id: number): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    let retried = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (job.id !== id || !["failed", "cancelled"].includes(job.status)) {
+        return job;
+      }
+
+      retried = true;
+      return { ...job, status: "pending" as const, error: null };
+    });
+    if (!retried) {
+      return browserSnapshot;
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
     return browserSnapshot;
   }
 
