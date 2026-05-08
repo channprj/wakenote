@@ -250,6 +250,32 @@ fn backend_resets_level_snapshot_when_recording_is_disabled() {
 }
 
 #[test]
+fn backend_ignores_late_audio_frames_after_capture_session_stops() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    backend
+        .process_audio_samples_for_test(&[0.5; 1], 100)
+        .expect("speech");
+    backend
+        .stop_capture_session()
+        .expect("stop capture session");
+
+    let error = backend
+        .process_audio_samples_for_test(&[0.8; 1], 100)
+        .expect_err("late frame should be rejected");
+    let status = backend.app_status();
+
+    assert_eq!(error, "capture session is not running");
+    assert!(!status.live_input_active);
+    assert_eq!(status.level.current_dbfs, -120.0);
+    assert_eq!(status.level.peak_dbfs, -120.0);
+}
+
+#[test]
 fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();

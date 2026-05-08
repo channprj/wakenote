@@ -424,11 +424,12 @@ impl AppBackend {
     }
 
     pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
-        self.level_monitor.observe_samples(&frame.samples);
-        let events = self
+        let capture = self
             .capture
             .as_mut()
-            .ok_or_else(|| "capture session is not running".to_string())?
+            .ok_or_else(|| "capture session is not running".to_string())?;
+        self.level_monitor.observe_samples(&frame.samples);
+        let events = capture
             .process_samples(&frame.samples, frame.duration_ms)
             .map_err(|error| error.to_string())?;
         self.handle_capture_events(events);
