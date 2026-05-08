@@ -7,6 +7,7 @@ use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
+use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
 use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
 use crate::transcription::{
     Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
@@ -654,15 +655,29 @@ impl AppBackend {
         for event in events {
             match event {
                 CaptureControllerEvent::ChunkCompleted { chunk } => {
-                    if self.settings.transcription_enabled {
-                        self.queue
-                            .enqueue_file(chunk.audio_path, self.settings.selected_model.clone());
+                    if let Some(model_id) = self.transcription_model_for_completed_chunk(&chunk) {
+                        self.queue.enqueue_file(chunk.audio_path, model_id);
                     }
                 }
             }
         }
 
         self.persist_queue();
+    }
+
+    fn transcription_model_for_completed_chunk(&self, chunk: &RecordedChunk) -> Option<String> {
+        let metadata = std::fs::read_to_string(&chunk.metadata_path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<ChunkMetadata>(&contents).ok());
+
+        if let Some(metadata) = metadata {
+            return (metadata.transcription_status == TranscriptionStatus::Queued)
+                .then_some(metadata.model_id);
+        }
+
+        self.settings
+            .transcription_enabled
+            .then(|| self.settings.selected_model.clone())
     }
 }
 
