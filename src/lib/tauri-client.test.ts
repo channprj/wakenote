@@ -69,6 +69,23 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ threshold_dbfs: -45, transcription_enabled: true });
   });
 
+  it("does not process browser fallback queue work while the selected model is unavailable", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/missing-selected-model.wav"]);
+    const pendingId = before.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/missing-selected-model.wav",
+    )?.id;
+    expect(pendingId).toBeTypeOf("number");
+
+    const processed = await processNextTranscription();
+
+    expect(processed.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+      status: "pending",
+      error: null,
+    });
+
+    await skipJob(pendingId ?? -1);
+  });
+
   it("simulates model download and cancel state outside Tauri", async () => {
     const downloading = await downloadModel("whisper-tiny");
     expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
@@ -228,19 +245,21 @@ describe("tauri live capture client", () => {
   });
 
   it("queues manually selected audio files outside Tauri", async () => {
+    const before = await loadSnapshot();
     const snapshot = await enqueueAudioFiles([
       "/tmp/imported/meeting.wav",
       "/tmp/imported/call.m4a",
     ]);
+    const audioPaths = snapshot.queue.jobs.map((job) => job.audio_path);
 
-    expect(snapshot.queue.pending_count).toBe(2);
-    expect(snapshot.queue.jobs.map((job) => job.audio_path)).toEqual([
-      "/tmp/imported/meeting.wav",
-      "/tmp/imported/call.m4a",
-    ]);
-    expect(snapshot.queue.jobs.every((job) => job.model_id === snapshot.settings.selected_model)).toBe(
-      true,
-    );
+    expect(snapshot.queue.pending_count).toBe(before.queue.pending_count + 2);
+    expect(audioPaths).toContain("/tmp/imported/meeting.wav");
+    expect(audioPaths).toContain("/tmp/imported/call.m4a");
+    expect(
+      snapshot.queue.jobs
+        .filter((job) => ["/tmp/imported/meeting.wav", "/tmp/imported/call.m4a"].includes(job.audio_path))
+        .every((job) => job.model_id === snapshot.settings.selected_model),
+    ).toBe(true);
   });
 
   it("does not duplicate manually imported browser fallback audio files", async () => {

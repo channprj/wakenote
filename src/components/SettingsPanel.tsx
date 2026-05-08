@@ -57,6 +57,9 @@ export function SettingsPanel({
   const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
   const fallbackMicrophone = microphones.find((mic) => mic.fallback && mic.available);
   const canStartWithMicrophone = selectedMicrophoneAvailable || Boolean(fallbackMicrophone);
+  const selectedModel = models.find((model) => model.id === settings.selected_model);
+  const selectedModelUsable =
+    selectedModel && ["ready", "installed", "unloaded"].includes(selectedModel.status);
   const liveCaptureDisabled =
     settings.pause_all || !settings.recording_enabled || !canStartWithMicrophone;
 
@@ -160,7 +163,9 @@ export function SettingsPanel({
       <Section title="History" eyebrow="Transcription queue">
         <QueuePanel
           queue={queue}
-          canProcessTranscription={!settings.pause_all && settings.transcription_enabled}
+          canProcessTranscription={
+            !settings.pause_all && settings.transcription_enabled && Boolean(selectedModelUsable)
+          }
           onImportAudioFiles={onImportAudioFiles}
           onEnqueueBacklog={onEnqueueBacklog}
           onCancelCurrent={onCancelCurrent}

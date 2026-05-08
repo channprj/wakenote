@@ -4,10 +4,10 @@ import { mockSnapshot } from "../lib/app-state";
 import { SettingsPanel } from "./SettingsPanel";
 import type { AppSnapshot } from "../lib/types";
 
-function renderSettingsPanel(snapshot: AppSnapshot) {
+function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
   return renderToStaticMarkup(
     <SettingsPanel
-      activeSection="general"
+      activeSection={activeSection}
       snapshot={snapshot}
       onPatch={() => {}}
       onRefresh={() => {}}
@@ -63,5 +63,35 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(markup, "Start Input"))).toBe(false);
     expect(markup).toContain("Missing AirPods is unavailable");
     expect(markup).toContain("Start Input will use System Default");
+  });
+
+  it("disables process next until the selected model is usable", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/pending.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const missingMarkup = renderSettingsPanel(snapshot, "history");
+
+    expect(isDisabled(buttonTag(missingMarkup, "Process Next"))).toBe(true);
+
+    snapshot.models = snapshot.models.map((model) =>
+      model.id === snapshot.settings.selected_model ? { ...model, status: "ready" } : model,
+    );
+    const readyMarkup = renderSettingsPanel(snapshot, "history");
+
+    expect(isDisabled(buttonTag(readyMarkup, "Process Next"))).toBe(false);
   });
 });

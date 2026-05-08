@@ -378,7 +378,12 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
 export async function processNextTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
-    if (settings.pause_all || !settings.transcription_enabled) {
+    const models = browserSnapshot.models ?? mockModels();
+    if (
+      settings.pause_all ||
+      !settings.transcription_enabled ||
+      !isUsableBrowserModel(settings.selected_model, models)
+    ) {
       return browserSnapshot;
     }
 

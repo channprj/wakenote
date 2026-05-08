@@ -570,6 +570,10 @@ impl AppBackend {
     pub fn should_process_transcriptions(&self) -> bool {
         !self.settings.pause_all
             && self.settings.transcription_enabled
+            && model_is_selectable(
+                &self.settings.selected_model,
+                &self.settings.model_directory,
+            )
             && self.queue.snapshot().pending_count > 0
     }
 

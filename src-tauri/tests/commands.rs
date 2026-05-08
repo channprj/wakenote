@@ -862,6 +862,51 @@ fn backend_delete_model_rejects_active_selected_model() {
 }
 
 #[test]
+fn backend_auto_transcription_waits_for_usable_selected_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "ready-local",
+            "display_name": "Ready Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    let audio_path = tmp.path().join("20260506").join("pending.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("ready-local".to_string()));
+
+    assert!(!backend.should_process_transcriptions());
+
+    std::fs::write(model_directory.join("ready-local.bin"), b"ready model").expect("ready model");
+    backend.update_settings(SettingsPatch {
+        selected_model: Some("ready-local".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert!(backend.should_process_transcriptions());
+}
+
+#[test]
 fn backend_cancel_current_operation_cancels_active_model_download() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
