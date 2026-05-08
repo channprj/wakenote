@@ -237,13 +237,17 @@ fn runtime_warning_summarizes_dropped_audio_frames_without_overriding_state() {
 
 #[test]
 fn runtime_warning_surfaces_input_stream_errors_before_dropped_frames() {
-    let backend = AppBackend::default();
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
     let status = with_live_runtime_warning(
         backend.app_status(),
         42,
         Some("default input stream disconnected".to_string()),
     );
 
+    assert_eq!(status.tray_state, TrayState::Error);
     assert_eq!(
         status.runtime_warning.as_deref(),
         Some("Live input stream error: default input stream disconnected")

@@ -674,6 +674,7 @@ pub fn with_live_runtime_warning(
     stream_error: Option<String>,
 ) -> AppStatus {
     if let Some(stream_error) = stream_error.filter(|error| !error.trim().is_empty()) {
+        status.tray_state = TrayState::Error;
         status.runtime_warning = Some(format!("Live input stream error: {stream_error}"));
         return status;
     }
