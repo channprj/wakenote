@@ -146,6 +146,25 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("clears stale browser fallback queue errors when jobs are skipped", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/skip-failed.wav"]);
+    const job = before.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/skip-failed.wav",
+    );
+    expect(job?.id).toBeTypeOf("number");
+    if (job) {
+      job.status = "failed";
+      job.error = "mock failure";
+    }
+
+    const skipped = await skipJob(job?.id ?? -1);
+
+    expect(skipped.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+      status: "skipped",
+      error: null,
+    });
+  });
+
   it("retries failed browser fallback queue jobs", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/retry-me.wav"]);
     const job = before.queue.jobs.find((candidate) => candidate.audio_path === "/tmp/imported/retry-me.wav");

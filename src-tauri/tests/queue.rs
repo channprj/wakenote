@@ -27,6 +27,28 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Pending);
     queue.skip(second).expect("skip job");
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Skipped);
+    assert_eq!(queue.job(second).unwrap().error, None);
+}
+
+#[test]
+fn skipping_failed_or_cancelled_jobs_clears_stale_errors() {
+    let mut queue = TranscriptionQueue::new();
+    let cancelled = queue.enqueue_file("/recordings/cancelled.wav", "whisper-medium");
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+
+    queue.start_next().expect("start cancelled job");
+    queue
+        .cancel_current("user cancelled")
+        .expect("cancel current");
+    queue.mark_failed(failed, "model missing").expect("fail job");
+
+    queue.skip(cancelled).expect("skip cancelled job");
+    queue.skip(failed).expect("skip failed job");
+
+    assert_eq!(queue.job(cancelled).unwrap().status, QueueJobStatus::Skipped);
+    assert_eq!(queue.job(cancelled).unwrap().error, None);
+    assert_eq!(queue.job(failed).unwrap().status, QueueJobStatus::Skipped);
+    assert_eq!(queue.job(failed).unwrap().error, None);
 }
 
 #[test]

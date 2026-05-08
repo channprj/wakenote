@@ -501,7 +501,7 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
       }
 
       skipped = true;
-      return { ...job, status: "skipped" as const };
+      return { ...job, status: "skipped" as const, error: null };
     });
     if (!skipped) {
       return browserSnapshot;

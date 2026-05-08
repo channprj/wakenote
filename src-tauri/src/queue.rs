@@ -160,6 +160,7 @@ impl TranscriptionQueue {
             return Err(format!("job {id} cannot be skipped from {:?}", job.status));
         }
         job.status = QueueJobStatus::Skipped;
+        job.error = None;
         Ok(())
     }
 
