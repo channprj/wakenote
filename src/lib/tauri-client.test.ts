@@ -189,4 +189,17 @@ describe("tauri live capture client", () => {
       repeated.queue.jobs.filter((job) => job.audio_path === captureJob?.audio_path),
     ).toHaveLength(1);
   });
+
+  it("does not duplicate browser capture sessions while input is already active", async () => {
+    await stopLiveCapture();
+    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: true });
+    await startLiveCapture();
+    const firstCapture = await loadSnapshot();
+
+    await startLiveCapture();
+    const repeatedStart = await loadSnapshot();
+
+    expect(repeatedStart.status.live_input_active).toBe(true);
+    expect(repeatedStart.queue.pending_count).toBe(firstCapture.queue.pending_count);
+  });
 });

@@ -320,6 +320,10 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const queue = browserSnapshot.queue ?? emptyQueue();
+    if (browserSnapshot.status?.live_input_active) {
+      return loadSnapshot();
+    }
+
     browserCaptureSessionId += 1;
     browserSnapshot = {
       ...browserSnapshot,
