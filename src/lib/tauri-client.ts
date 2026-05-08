@@ -270,6 +270,19 @@ export async function verifyModel(modelId: string): Promise<AppSnapshot> {
 
 export async function downloadModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      models: browserSnapshot.models.map((model) =>
+        model.id === modelId
+          ? {
+              ...model,
+              status: "downloading",
+              download_progress: 0,
+              download_error: null,
+            }
+          : model,
+      ),
+    };
     return browserSnapshot;
   }
 
@@ -279,6 +292,19 @@ export async function downloadModel(modelId: string): Promise<AppSnapshot> {
 
 export async function cancelModelDownload(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      models: browserSnapshot.models.map((model) =>
+        model.id === modelId
+          ? {
+              ...model,
+              status: "error",
+              download_progress: model.download_progress ?? 0,
+              download_error: "cancelled by user",
+            }
+          : model,
+      ),
+    };
     return browserSnapshot;
   }
 

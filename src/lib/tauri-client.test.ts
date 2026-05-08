@@ -30,9 +30,23 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ recording_enabled: true });
     await expect(stopLiveCapture()).resolves.toEqual(expected);
     await expect(processNextTranscription()).resolves.toEqual(expected);
-    await expect(downloadModel("whisper-tiny")).resolves.toEqual(expected);
-    await expect(cancelModelDownload("whisper-tiny")).resolves.toEqual(expected);
     await expect(chooseSaveRoot()).resolves.toEqual(expected);
+  });
+
+  it("simulates model download and cancel state outside Tauri", async () => {
+    const downloading = await downloadModel("whisper-tiny");
+    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "downloading",
+      download_progress: 0,
+      download_error: null,
+    });
+
+    const cancelled = await cancelModelDownload("whisper-tiny");
+    expect(cancelled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "error",
+      download_progress: 0,
+      download_error: "cancelled by user",
+    });
   });
 
   it("queues manually selected audio files outside Tauri", async () => {
