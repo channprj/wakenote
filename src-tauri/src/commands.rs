@@ -357,6 +357,28 @@ impl AppBackend {
         }
 
         let store = self.model_store();
+        let registry = store
+            .load_model_registry()
+            .map_err(|error| error.to_string())?;
+        if !registry.contains_key(model_id) {
+            return Err(format!("unknown model {model_id}"));
+        }
+        let mut refreshed_models: Vec<ModelDescriptor> = registry.values().cloned().collect();
+        store
+            .refresh_statuses(&mut refreshed_models)
+            .map_err(|error| error.to_string())?;
+        let current_status = refreshed_models
+            .iter()
+            .find(|candidate| candidate.id == model_id)
+            .map(|candidate| candidate.status)
+            .unwrap_or(ModelStatus::Missing);
+        if matches!(
+            current_status,
+            ModelStatus::Downloading | ModelStatus::Verifying | ModelStatus::Extracting
+        ) {
+            return Err(format!("model {model_id} download is active"));
+        }
+
         store
             .delete_model(model_id)
             .map_err(|error| error.to_string())?;

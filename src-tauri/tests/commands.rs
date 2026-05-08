@@ -991,6 +991,55 @@ fn backend_delete_model_rejects_active_selected_model() {
 }
 
 #[test]
+fn backend_delete_model_rejects_active_download_models() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": "https://example.invalid/custom-local.bin",
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    let temp_path = model_directory.join("custom-local.bin.part");
+    std::fs::write(&temp_path, b"partial download").expect("partial model");
+    ModelStore::new(&model_directory)
+        .record_download_progress("custom-local", 512, Some(1024))
+        .expect("record active download");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .delete_model("custom-local")
+        .expect_err("active download should not be deleted");
+
+    assert_eq!(error, "model custom-local download is active");
+    assert!(temp_path.exists());
+    let model = backend
+        .model_registry()
+        .into_iter()
+        .find(|model| model.id == "custom-local")
+        .expect("custom model");
+    assert_eq!(model.status, ModelStatus::Downloading);
+}
+
+#[test]
 fn backend_auto_transcription_waits_for_usable_selected_model() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
