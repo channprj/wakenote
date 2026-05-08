@@ -36,7 +36,11 @@ import {
   verifyModel,
 } from "./lib/tauri-client";
 import { mockSnapshot, shouldPollSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
-import { captureStatusPresentation } from "./lib/status-summary";
+import {
+  captureStatusPresentation,
+  nextDismissedWarningKey,
+  visibleWarningForDismissedKey,
+} from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 
 const sections = [
@@ -124,8 +128,10 @@ export default function App() {
   }
 
   const statusPresentation = captureStatusPresentation(snapshot);
-  const visibleWarning =
-    statusPresentation.warning?.key === dismissedWarningKey ? null : statusPresentation.warning;
+  useEffect(() => {
+    setDismissedWarningKey((current) => nextDismissedWarningKey(statusPresentation.warning, current));
+  }, [statusPresentation.warning?.key]);
+  const visibleWarning = visibleWarningForDismissedKey(statusPresentation.warning, dismissedWarningKey);
 
   return (
     <div className="app-shell">

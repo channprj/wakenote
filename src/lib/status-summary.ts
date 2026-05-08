@@ -21,6 +21,20 @@ export interface CaptureWarning {
   tone: "warning" | "danger";
 }
 
+export function visibleWarningForDismissedKey(
+  warning: CaptureWarning | null,
+  dismissedWarningKey: string | null,
+): CaptureWarning | null {
+  return warning?.key === dismissedWarningKey ? null : warning;
+}
+
+export function nextDismissedWarningKey(
+  warning: CaptureWarning | null,
+  dismissedWarningKey: string | null,
+): string | null {
+  return warning ? dismissedWarningKey : null;
+}
+
 const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
   idle: { headline: "Ready for backlog", tone: "neutral" },
   listening: { headline: "Listening for voice", tone: "primary" },

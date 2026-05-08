@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { captureStatusPresentation } from "./status-summary";
+import {
+  captureStatusPresentation,
+  nextDismissedWarningKey,
+  visibleWarningForDismissedKey,
+} from "./status-summary";
 import { mockSnapshot } from "./app-state";
 
 describe("capture status presentation", () => {
@@ -154,5 +158,23 @@ describe("capture status presentation", () => {
       message: "3 transcription jobs need attention",
       tone: "danger",
     });
+  });
+
+  it("hides only the currently dismissed warning key", () => {
+    const warning = {
+      key: "runtime:Live input stream error: default input stream disconnected",
+      message: "Live input stream error: default input stream disconnected",
+      tone: "danger" as const,
+    };
+
+    expect(visibleWarningForDismissedKey(warning, warning.key)).toBeNull();
+    expect(visibleWarningForDismissedKey(warning, "runtime:other")).toEqual(warning);
+  });
+
+  it("clears dismissed warning state after warnings recover", () => {
+    expect(nextDismissedWarningKey(null, "runtime:Live input stream error")).toBeNull();
+    expect(nextDismissedWarningKey({ key: "runtime:a", message: "a", tone: "warning" }, "runtime:a")).toBe(
+      "runtime:a",
+    );
   });
 });
