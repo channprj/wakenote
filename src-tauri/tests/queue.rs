@@ -52,6 +52,25 @@ fn skipping_failed_or_cancelled_jobs_clears_stale_errors() {
 }
 
 #[test]
+fn starting_pending_jobs_clears_recovery_errors() {
+    let mut queue = TranscriptionQueue::new();
+    let recovered = queue.enqueue_file("/recordings/recovered.wav", "whisper-medium");
+    let recovered_job = queue
+        .jobs_mut()
+        .iter_mut()
+        .find(|job| job.id == recovered)
+        .expect("recovered job");
+    recovered_job.status = QueueJobStatus::Pending;
+    recovered_job.error = Some("recovered from interrupted app session".to_string());
+
+    let running = queue.start_next().expect("start recovered job");
+
+    assert_eq!(running.id, recovered);
+    assert_eq!(running.error, None);
+    assert_eq!(queue.job(recovered).unwrap().error, None);
+}
+
+#[test]
 fn queue_does_not_enqueue_duplicate_audio_paths() {
     let mut queue = TranscriptionQueue::new();
 

@@ -102,6 +102,7 @@ impl TranscriptionQueue {
             .iter_mut()
             .find(|job| job.status == QueueJobStatus::Pending)?;
         job.status = QueueJobStatus::Running;
+        job.error = None;
         Some(job.clone())
     }
 
