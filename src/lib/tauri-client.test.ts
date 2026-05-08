@@ -6,6 +6,7 @@ import {
   downloadModel,
   enqueueAudioFiles,
   processNextTranscription,
+  saveSettingsPatch,
   startLiveCapture,
   stopLiveCapture,
 } from "./tauri-client";
@@ -14,7 +15,19 @@ describe("tauri live capture client", () => {
   it("returns browser-safe snapshots for live capture actions outside Tauri", async () => {
     const expected = mockSnapshot();
 
-    await expect(startLiveCapture()).resolves.toEqual(expected);
+    const started = await startLiveCapture();
+    expect(started.status).toMatchObject({
+      live_input_active: true,
+      tray_state: "listening",
+    });
+
+    const transcriptionOnly = await saveSettingsPatch({ recording_enabled: false });
+    expect(transcriptionOnly.status).toMatchObject({
+      live_input_active: false,
+      tray_state: "idle",
+    });
+
+    await saveSettingsPatch({ recording_enabled: true });
     await expect(stopLiveCapture()).resolves.toEqual(expected);
     await expect(processNextTranscription()).resolves.toEqual(expected);
     await expect(downloadModel("whisper-tiny")).resolves.toEqual(expected);

@@ -31,12 +31,25 @@ function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
 
-function statusFrom(settings: AppSettings, queue: QueueSnapshot): AppStatus {
+function statusFrom(
+  settings: AppSettings,
+  queue: QueueSnapshot,
+  liveInputActive = browserSnapshot.status?.live_input_active ?? false,
+): AppStatus {
   const mode = deriveProductMode(settings);
+  const canCapture =
+    mode === "recording_and_transcription" || mode === "recording_only";
+  const activeCapture = canCapture && liveInputActive;
+
   return {
     mode,
-    tray_state: deriveTrayState(mode, queue.running_count > 0, queue.failed_count > 0),
-    live_input_active: browserSnapshot.status?.live_input_active ?? false,
+    tray_state: deriveTrayState(
+      mode,
+      queue.running_count > 0,
+      queue.failed_count > 0,
+      activeCapture,
+    ),
+    live_input_active: activeCapture,
     active_model: settings.selected_model,
     active_microphone: settings.selected_microphone_label,
     microphone_warning: browserSnapshot.status?.microphone_warning ?? null,
@@ -188,6 +201,14 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
 
 export async function startLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = browserSnapshot.queue ?? emptyQueue();
+    browserSnapshot = {
+      ...browserSnapshot,
+      settings,
+      queue,
+      status: statusFrom(settings, queue, true),
+    };
     return browserSnapshot;
   }
 
@@ -197,6 +218,14 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
 
 export async function stopLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = browserSnapshot.queue ?? emptyQueue();
+    browserSnapshot = {
+      ...browserSnapshot,
+      settings,
+      queue,
+      status: statusFrom(settings, queue, false),
+    };
     return browserSnapshot;
   }
 
