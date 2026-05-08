@@ -182,7 +182,6 @@ impl ModelStore {
                             | ModelStatus::Verifying
                             | ModelStatus::Extracting
                             | ModelStatus::Error
-                            | ModelStatus::Ready
                     ) =>
                 {
                     model.status = record.status;

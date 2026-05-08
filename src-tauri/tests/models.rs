@@ -113,13 +113,11 @@ fn model_store_delete_removes_model_file() {
     store.delete_model("whisper-tiny").expect("delete");
 
     assert!(!path.exists());
-    assert!(
-        !store
-            .load_download_state()
-            .expect("download state")
-            .downloads
-            .contains_key("whisper-tiny")
-    );
+    assert!(!store
+        .load_download_state()
+        .expect("download state")
+        .downloads
+        .contains_key("whisper-tiny"));
 }
 
 #[test]
@@ -142,13 +140,11 @@ fn model_store_delete_clears_stale_download_error_without_model_file() {
         .expect("delete stale state");
 
     assert!(!tmp.path().join("whisper-test.download").exists());
-    assert!(
-        !store
-            .load_download_state()
-            .expect("download state")
-            .downloads
-            .contains_key("whisper-test")
-    );
+    assert!(!store
+        .load_download_state()
+        .expect("download state")
+        .downloads
+        .contains_key("whisper-test"));
 }
 
 #[test]
@@ -327,6 +323,33 @@ fn model_store_overlays_download_progress_on_model_registry_status() {
 
     assert_eq!(registry[0].status, ModelStatus::Downloading);
     assert_eq!(registry[0].download_progress, Some(50));
+}
+
+#[test]
+fn model_store_does_not_trust_stale_ready_download_records_without_valid_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let good_checksum = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    let mut registry = vec![
+        descriptor("missing", Some(good_checksum)),
+        descriptor("corrupt", Some(good_checksum)),
+    ];
+    std::fs::write(store.model_path("corrupt"), b"wrong").expect("corrupt model");
+    store
+        .record_download_status("missing", ModelStatus::Ready, 0, Some(0), None)
+        .expect("stale missing ready record");
+    store
+        .record_download_status("corrupt", ModelStatus::Ready, 5, Some(5), None)
+        .expect("stale corrupt ready record");
+
+    store
+        .refresh_statuses(&mut registry)
+        .expect("refresh statuses");
+
+    assert_eq!(registry[0].status, ModelStatus::Missing);
+    assert_eq!(registry[0].download_progress, None);
+    assert_eq!(registry[1].status, ModelStatus::Error);
+    assert_eq!(registry[1].download_progress, None);
 }
 
 #[test]
