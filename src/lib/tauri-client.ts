@@ -106,13 +106,18 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
 export async function enqueueBacklog(saveRoot: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
+    const audioPath = `${saveRoot}/20260506/230709.m4a`;
+    if (browserSnapshot.queue.jobs.some((job) => job.audio_path === audioPath)) {
+      return browserSnapshot;
+    }
+
     const id = browserSnapshot.queue.jobs.length + 1;
     const queue: QueueSnapshot = {
       jobs: [
         ...browserSnapshot.queue.jobs,
         {
           id,
-          audio_path: `${saveRoot}/20260506/230709.m4a`,
+          audio_path: audioPath,
           model_id: settings.selected_model,
           status: "pending",
           error: null,

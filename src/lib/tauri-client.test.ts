@@ -4,6 +4,7 @@ import {
   chooseSaveRoot,
   cancelModelDownload,
   downloadModel,
+  enqueueBacklog,
   enqueueAudioFiles,
   processNextTranscription,
   saveSettingsPatch,
@@ -71,6 +72,16 @@ describe("tauri live capture client", () => {
 
     await enqueueAudioFiles([audioPath]);
     const snapshot = await enqueueAudioFiles([audioPath]);
+
+    expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
+  });
+
+  it("does not duplicate browser fallback backlog audio files", async () => {
+    const saveRoot = "/tmp/browser-backlog-dedupe";
+    const audioPath = `${saveRoot}/20260506/230709.m4a`;
+
+    await enqueueBacklog(saveRoot);
+    const snapshot = await enqueueBacklog(saveRoot);
 
     expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
   });
