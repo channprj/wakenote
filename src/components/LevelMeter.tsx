@@ -17,7 +17,7 @@ export function LevelMeter({
   status: AppStatus;
   onApplyThreshold: (thresholdDbfs: number) => void;
 }) {
-  const active = settings.recording_enabled && !settings.pause_all;
+  const active = status.live_input_active;
   const [calibrationStartMs, setCalibrationStartMs] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const currentDb = active ? status.level.current_dbfs : -120;
