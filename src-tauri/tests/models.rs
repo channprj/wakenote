@@ -309,6 +309,19 @@ fn model_store_persists_download_progress_across_instances() {
 }
 
 #[test]
+fn model_download_progress_is_capped_at_one_hundred_percent() {
+    let record = ModelDownloadRecord {
+        model_id: "whisper-test".to_string(),
+        status: ModelStatus::Downloading,
+        downloaded_bytes: 1536,
+        total_bytes: Some(1024),
+        error: None,
+    };
+
+    assert_eq!(record.download_progress_percent(), Some(100));
+}
+
+#[test]
 fn model_store_overlays_download_progress_on_model_registry_status() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());

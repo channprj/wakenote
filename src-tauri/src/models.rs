@@ -611,7 +611,11 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
         return Some(0);
     }
 
-    Some(((record.downloaded_bytes as f64 / total as f64) * 100.0).round() as u8)
+    Some(
+        ((record.downloaded_bytes as f64 / total as f64) * 100.0)
+            .round()
+            .clamp(0.0, 100.0) as u8,
+    )
 }
 
 pub fn parse_model_registry_json(
