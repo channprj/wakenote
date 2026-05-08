@@ -87,3 +87,29 @@ fn backlog_scan_enqueues_audio_without_txt_or_error_sidecar() {
             .ends_with("230709.m4a")
     );
 }
+
+#[test]
+fn backlog_enqueue_ignores_files_already_in_queue() {
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file("/recordings/20260506/230709.wav", "whisper-medium");
+
+    let added = queue.enqueue_backlog(
+        BacklogScan {
+            pending_audio: vec![
+                "/recordings/20260506/230709.wav".into(),
+                "/recordings/20260506/230810.wav".into(),
+            ],
+        },
+        "whisper-medium",
+    );
+
+    assert_eq!(added.len(), 1);
+    assert_eq!(queue.snapshot().pending_count, 2);
+    assert!(
+        queue
+            .job(added[0])
+            .unwrap()
+            .audio_path
+            .ends_with("20260506/230810.wav")
+    );
+}

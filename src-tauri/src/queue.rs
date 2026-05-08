@@ -74,9 +74,20 @@ impl TranscriptionQueue {
 
     pub fn enqueue_backlog(&mut self, scan: BacklogScan, model_id: impl Into<String>) -> Vec<u64> {
         let model_id = model_id.into();
+        let mut existing_paths = self
+            .jobs
+            .iter()
+            .map(|job| job.audio_path.clone())
+            .collect::<std::collections::HashSet<_>>();
         scan.pending_audio
             .into_iter()
-            .map(|audio_path| self.enqueue_file(audio_path, model_id.clone()))
+            .filter_map(|audio_path| {
+                if existing_paths.insert(audio_path.clone()) {
+                    Some(self.enqueue_file(audio_path, model_id.clone()))
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
