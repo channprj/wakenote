@@ -104,7 +104,14 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
         config: AudioInputConfig,
         on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
     ) -> Result<(), LiveCaptureError> {
-        if self.stream.is_some() {
+        if self
+            .stream
+            .as_ref()
+            .and_then(|stream| stream.runtime_error())
+            .is_some()
+        {
+            self.stop();
+        } else if self.stream.is_some() {
             return Err(LiveCaptureError::AlreadyRunning);
         }
 

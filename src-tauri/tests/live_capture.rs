@@ -45,6 +45,7 @@ impl AudioInputBackend for FakeInput {
         on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         *self.starts.lock().unwrap() += 1;
+        *self.runtime_error.lock().unwrap() = None;
         *self.callback.lock().unwrap() = Some(on_frame);
         Ok(Box::new(FakeHandle {
             runtime_error: self.runtime_error.clone(),
@@ -207,6 +208,25 @@ fn live_capture_runtime_reports_stream_runtime_errors() {
         runtime.runtime_error().as_deref(),
         Some("default input stream disconnected")
     );
+}
+
+#[test]
+fn live_capture_runtime_restarts_after_stream_runtime_error() {
+    let input = FakeInput::default();
+    let handle = input.clone();
+    let mut runtime = LiveCaptureRuntime::new(input);
+
+    runtime
+        .start(AudioInputConfig::default(), |_| {})
+        .expect("start");
+    handle.set_runtime_error("default input stream disconnected");
+
+    runtime
+        .start(AudioInputConfig::default(), |_| {})
+        .expect("restart after stream error");
+
+    assert_eq!(handle.starts(), 2);
+    assert_eq!(runtime.runtime_error(), None);
 }
 
 #[test]

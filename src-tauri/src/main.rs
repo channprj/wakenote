@@ -244,13 +244,19 @@ fn start_live_capture_runtime(
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
     let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
-    if live_capture.is_running() {
+    let stream_error = live_capture.runtime_error();
+    if live_capture.is_running() && stream_error.is_none() {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
         return Ok(with_live_runtime_warning(
             backend.app_status(),
             live_capture.dropped_frame_count(),
-            live_capture.runtime_error(),
+            None,
         ));
+    }
+    if stream_error.is_some() {
+        live_capture.stop();
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        backend.stop_capture_session()?;
     }
 
     let (device_id, sample_rate) = {
