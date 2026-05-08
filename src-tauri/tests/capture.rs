@@ -162,6 +162,33 @@ fn capture_processor_rolls_over_at_max_chunk_without_dropping_stream() {
 }
 
 #[test]
+fn capture_processor_rollover_does_not_duplicate_boundary_frame() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config_settings = settings();
+    config_settings.attack_ms = 100;
+    config_settings.max_chunk_ms = 500;
+    let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: config_settings,
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..10 {
+        processor.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+
+    let chunks = processor.completed_chunks();
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(wav_sample_count(&chunks[0].audio_path), 5);
+    assert_eq!(wav_sample_count(&chunks[1].audio_path), 5);
+}
+
+#[test]
 fn capture_controller_flushes_active_chunk_when_recording_is_disabled() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut controller = CaptureController::new(CaptureControllerConfig {

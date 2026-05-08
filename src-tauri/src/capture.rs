@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_samples};
+use crate::audio::{dbfs_from_samples, GateConfig, GateDecision, SpeechGate};
 use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
 use crate::settings::AppSettings;
 
@@ -206,7 +206,6 @@ impl CaptureProcessor {
                 self.commit_active_chunk(ended_at_ms)?;
                 self.active_started_at_ms = Some(next_started_at_ms);
                 self.active_samples.clear();
-                self.active_samples.extend_from_slice(&frame.samples);
             }
         }
 
