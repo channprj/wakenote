@@ -28,6 +28,7 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.selected_microphone, "input-1-usb-mic");
     assert_eq!(loaded.selected_microphone_label, "USB Mic");
     assert_eq!(loaded.save_root, "/tmp/sagwan-recordings");
+    assert!(loaded.save_root_confirmed);
 }
 
 #[test]
@@ -52,6 +53,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert!(!loaded.recording_enabled);
     assert_eq!(loaded.threshold_dbfs, -39.5);
     assert_eq!(loaded.save_root, "/tmp/legacy-sagwan");
+    assert!(loaded.save_root_confirmed);
     assert!(loaded.transcription_enabled);
     assert!(!loaded.calibration_completed);
     assert_eq!(loaded.attack_ms, 300);

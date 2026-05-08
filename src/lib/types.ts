@@ -39,6 +39,7 @@ export interface AppSettings {
   selected_microphone: string;
   selected_microphone_label: string;
   save_root: string;
+  save_root_confirmed: boolean;
   audio_format: AudioFormat;
   threshold_dbfs: number;
   calibration_completed: boolean;

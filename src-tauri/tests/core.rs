@@ -152,6 +152,7 @@ fn default_settings_match_prd_mvp_defaults() {
 
     assert!(settings.recording_enabled);
     assert!(settings.transcription_enabled);
+    assert!(!settings.save_root_confirmed);
     assert!(!settings.calibration_completed);
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
@@ -186,6 +187,27 @@ fn settings_patch_clamps_voice_gate_values_to_ui_ranges() {
     assert_eq!(settings.post_roll_ms, 2_000);
     assert_eq!(settings.min_chunk_ms, 100);
     assert_eq!(settings.max_chunk_ms, 900_000);
+}
+
+#[test]
+fn settings_patch_marks_non_empty_save_root_confirmed() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        save_root: Some("/tmp/sagwan-recordings".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.save_root, "/tmp/sagwan-recordings");
+    assert!(settings.save_root_confirmed);
+
+    settings.apply_patch(SettingsPatch {
+        save_root: Some("   ".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.save_root, "   ");
+    assert!(!settings.save_root_confirmed);
 }
 
 #[test]

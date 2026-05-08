@@ -17,6 +17,7 @@ pub struct AppSettings {
     pub selected_microphone: String,
     pub selected_microphone_label: String,
     pub save_root: String,
+    pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
     pub threshold_dbfs: f32,
     pub calibration_completed: bool,
@@ -161,6 +162,7 @@ impl AppSettings {
             self.selected_microphone_label = value;
         }
         if let Some(value) = patch.save_root {
+            self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
         }
         if let Some(value) = patch.audio_format {
@@ -223,6 +225,7 @@ impl Default for AppSettings {
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
             save_root: "~/Documents/Sagwan".to_string(),
+            save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
             threshold_dbfs: -45.0,
             calibration_completed: false,

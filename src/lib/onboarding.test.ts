@@ -42,6 +42,30 @@ describe("onboarding setup steps", () => {
     expect(deriveOnboardingSteps(settings, readyModels).find((step) => step.id === "model")?.complete).toBe(true);
   });
 
+  it("requires explicit save root confirmation before storage setup is complete", () => {
+    const models = mockModels();
+    const microphones = [{ id: "default", label: "System Default", available: true, fallback: false }];
+    const unconfirmedSettings = {
+      ...defaultSettings(),
+      save_root_confirmed: false,
+    };
+    const confirmedSettings = {
+      ...defaultSettings(),
+      save_root_confirmed: true,
+    };
+
+    expect(
+      deriveOnboardingSteps(unconfirmedSettings, models, microphones).find(
+        (step) => step.id === "save_root",
+      )?.complete,
+    ).toBe(false);
+    expect(
+      deriveOnboardingSteps(confirmedSettings, models, microphones).find(
+        (step) => step.id === "save_root",
+      )?.complete,
+    ).toBe(true);
+  });
+
   it("requires explicit threshold calibration before calibration setup is complete", () => {
     const models = mockModels();
     const microphones = [{ id: "default", label: "System Default", available: true, fallback: false }];

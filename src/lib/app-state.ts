@@ -131,6 +131,7 @@ export function defaultSettings(): AppSettings {
     selected_microphone: "default",
     selected_microphone_label: "System Default",
     save_root: "~/Documents/Sagwan",
+    save_root_confirmed: false,
     audio_format: "m4a",
     threshold_dbfs: -45,
     calibration_completed: false,

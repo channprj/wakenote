@@ -210,6 +210,9 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
     ) {
       delete safePatch.selected_model;
     }
+    if (typeof safePatch.save_root === "string") {
+      safePatch.save_root_confirmed = safePatch.save_root.trim().length > 0;
+    }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (
       safePatch.recording_enabled === false ||

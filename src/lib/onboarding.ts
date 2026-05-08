@@ -28,7 +28,7 @@ export function deriveOnboardingSteps(
 
   return [
     { id: "microphone", label: "Microphone", complete: microphoneCanStart(settings, microphones) },
-    { id: "save_root", label: "Save Root", complete: Boolean(settings.save_root) },
+    { id: "save_root", label: "Save Root", complete: settings.save_root_confirmed },
     { id: "model", label: "Model", complete: modelIsAvailable(selectedModel) },
     { id: "calibration", label: "Calibration", complete: settings.calibration_completed },
   ];
