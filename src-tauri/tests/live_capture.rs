@@ -252,3 +252,34 @@ fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
     assert_eq!(resolved.device_name, "System Default");
     assert!(resolved.used_fallback_device);
 }
+
+#[test]
+fn input_device_resolution_rejects_missing_system_default() {
+    let resolved = resolve_input_device_from_candidates(
+        "default",
+        &[CandidateInputDevice {
+            id: "input-0-usb".to_string(),
+            label: "USB Mic".to_string(),
+            is_default: false,
+        }],
+    );
+
+    assert_eq!(resolved, None);
+}
+
+#[test]
+fn input_device_resolution_uses_pinned_device_without_system_default() {
+    let resolved = resolve_input_device_from_candidates(
+        "input-0-usb",
+        &[CandidateInputDevice {
+            id: "input-0-usb".to_string(),
+            label: "USB Mic".to_string(),
+            is_default: false,
+        }],
+    )
+    .expect("pinned device");
+
+    assert_eq!(resolved.device_id, "input-0-usb");
+    assert_eq!(resolved.device_name, "USB Mic");
+    assert!(!resolved.used_fallback_device);
+}

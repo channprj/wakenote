@@ -425,18 +425,12 @@ fn select_device_with_resolution(
     host: &cpal::Host,
     device_id: &str,
 ) -> Result<(cpal::Device, ResolvedInputDevice), LiveCaptureError> {
-    let default_device = host
-        .default_input_device()
-        .ok_or(LiveCaptureError::NoInputDevice)?;
+    let default_device = host.default_input_device();
     if device_id == "default" {
-        return Ok((
-            default_device,
-            ResolvedInputDevice {
-                device_id: "default".to_string(),
-                device_name: "System Default".to_string(),
-                used_fallback_device: false,
-            },
-        ));
+        let Some(default_device) = default_device else {
+            return Err(LiveCaptureError::NoInputDevice);
+        };
+        return Ok((default_device, default_input_resolution(false)));
     }
 
     let devices = host
@@ -457,14 +451,18 @@ fn select_device_with_resolution(
         }
     }
 
-    Ok((
-        default_device,
-        ResolvedInputDevice {
-            device_id: "default".to_string(),
-            device_name: "System Default".to_string(),
-            used_fallback_device: true,
-        },
-    ))
+    let Some(default_device) = default_device else {
+        return Err(LiveCaptureError::NoInputDevice);
+    };
+    Ok((default_device, default_input_resolution(true)))
+}
+
+fn default_input_resolution(used_fallback_device: bool) -> ResolvedInputDevice {
+    ResolvedInputDevice {
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device,
+    }
 }
 
 pub fn resolve_input_device_from_candidates(
@@ -472,11 +470,10 @@ pub fn resolve_input_device_from_candidates(
     candidates: &[CandidateInputDevice],
 ) -> Option<ResolvedInputDevice> {
     if requested_device_id == "default" {
-        return Some(ResolvedInputDevice {
-            device_id: "default".to_string(),
-            device_name: "System Default".to_string(),
-            used_fallback_device: false,
-        });
+        return candidates
+            .iter()
+            .any(|candidate| candidate.is_default)
+            .then(|| default_input_resolution(false));
     }
 
     if let Some(candidate) = candidates.iter().find(|candidate| {
