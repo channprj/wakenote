@@ -210,7 +210,16 @@ impl AppBackend {
         self.settings.clone()
     }
 
-    pub fn update_settings(&mut self, patch: SettingsPatch) -> AppSettings {
+    pub fn update_settings(&mut self, mut patch: SettingsPatch) -> AppSettings {
+        if let Some(model_id) = patch.selected_model.as_deref() {
+            let model_directory = patch
+                .model_directory
+                .as_deref()
+                .unwrap_or(&self.settings.model_directory);
+            if !model_is_selectable(model_id, model_directory) {
+                patch.selected_model = None;
+            }
+        }
         self.settings.apply_patch(patch);
         self.sync_capture_settings();
         self.persist_settings();
@@ -730,6 +739,23 @@ fn derive_tray_state(
         AppMode::TranscriptionOnly => TrayState::Idle,
         AppMode::Paused => TrayState::Paused,
     }
+}
+
+fn model_is_selectable(model_id: &str, model_directory: &str) -> bool {
+    let store = ModelStore::new(expand_user_path(model_directory));
+    let mut models = store
+        .load_model_registry()
+        .unwrap_or_else(|_| default_model_registry())
+        .into_values()
+        .collect::<Vec<_>>();
+    let _ = store.refresh_statuses(&mut models);
+    models.iter().any(|model| {
+        model.id == model_id
+            && matches!(
+                model.status,
+                ModelStatus::Installed | ModelStatus::Ready | ModelStatus::Unloaded
+            )
+    })
 }
 
 pub fn with_runtime_warning(status: AppStatus, dropped_frames: u64) -> AppStatus {

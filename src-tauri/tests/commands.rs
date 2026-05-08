@@ -763,6 +763,63 @@ fn backend_prepare_model_download_rejects_installed_models() {
 }
 
 #[test]
+fn backend_settings_ignore_unusable_selected_model_patches() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "ready-local",
+            "display_name": "Ready Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          },
+          {
+            "id": "missing-local",
+            "display_name": "Missing Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    std::fs::write(model_directory.join("ready-local.bin"), b"ready model").expect("ready model");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("ready-local".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    backend.update_settings(SettingsPatch {
+        selected_model: Some("missing-local".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.update_settings(SettingsPatch {
+        selected_model: Some("unknown-model".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(backend.settings().selected_model, "ready-local");
+}
+
+#[test]
 fn backend_cancel_current_operation_cancels_active_model_download() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
@@ -835,8 +892,32 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
 
 #[test]
 fn tray_menu_presentation_reflects_current_settings_and_status() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "whisper-tiny",
+            "display_name": "Whisper Tiny",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 75,
+            "languages": ["ko", "en", "multi"],
+            "speed_score": 9,
+            "accuracy_score": 4,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    std::fs::write(model_directory.join("whisper-tiny.bin"), b"ready model").expect("ready model");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
         selected_model: Some("whisper-tiny".to_string()),
         selected_microphone_label: Some("USB Mic".to_string()),
         threshold_dbfs: Some(-37.0),
