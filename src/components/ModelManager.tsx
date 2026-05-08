@@ -40,8 +40,10 @@ function statusProgress(model: ModelDescriptor) {
 
 export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "status">) {
   const activeDownload = ["downloading", "verifying", "extracting"].includes(model.status);
+  const usableModel = ["ready", "installed", "unloaded"].includes(model.status);
 
   return {
+    canSwitch: usableModel,
     canDownload: Boolean(model.download_url) && model.status === "missing",
     canVerify: !activeDownload,
     canRetry: Boolean(model.download_url) && model.status === "error",
@@ -100,6 +102,7 @@ export function ModelManager({
                 variant={selected ? "secondary" : "primary"}
                 size="sm"
                 onClick={() => onPatch({ selected_model: model.id })}
+                disabled={selected ? false : !actions.canSwitch}
               >
                 <CheckCircle2 data-icon="inline-start" />
                 {selected ? "Active" : "Switch"}

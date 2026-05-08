@@ -31,11 +31,26 @@ function buttonTag(markup: string, title: string) {
   return match?.[0] ?? "";
 }
 
+function buttonWithText(markup: string, text: string) {
+  const match = markup.match(new RegExp(`<button[^>]*>[\\s\\S]*?${text}[\\s\\S]*?</button>`));
+  expect(match, `expected ${text} button`).not.toBeNull();
+  return match?.[0] ?? "";
+}
+
 function isDisabled(button: string) {
   return /\sdisabled(=""|\s|>)/.test(button);
 }
 
 describe("model manager actions", () => {
+  it("enables switching only for usable local models", () => {
+    expect(isDisabled(buttonWithText(renderModel("ready"), "Switch"))).toBe(false);
+    expect(isDisabled(buttonWithText(renderModel("installed"), "Switch"))).toBe(false);
+    expect(isDisabled(buttonWithText(renderModel("unloaded"), "Switch"))).toBe(false);
+    expect(isDisabled(buttonWithText(renderModel("missing"), "Switch"))).toBe(true);
+    expect(isDisabled(buttonWithText(renderModel("downloading"), "Switch"))).toBe(true);
+    expect(isDisabled(buttonWithText(renderModel("error"), "Switch"))).toBe(true);
+  });
+
   it.each(["downloading", "verifying", "extracting"] satisfies ModelStatus[])(
     "prevents duplicate downloads while %s is active",
     (status) => {
