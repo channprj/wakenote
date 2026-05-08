@@ -15,6 +15,7 @@ import type {
   AppStatus,
   MicrophoneDevice,
   ModelDescriptor,
+  QueueJob,
   QueueSnapshot,
   SettingsPatch,
 } from "./types";
@@ -29,6 +30,15 @@ let browserSnapshot = mockSnapshot();
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+}
+
+function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
+  return {
+    jobs,
+    pending_count: jobs.filter((job) => job.status === "pending").length,
+    running_count: jobs.filter((job) => job.status === "running").length,
+    failed_count: jobs.filter((job) => job.status === "failed").length,
+  };
 }
 
 function statusFrom(
@@ -192,6 +202,30 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
 
 export async function processNextTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    if (settings.pause_all || !settings.transcription_enabled) {
+      return browserSnapshot;
+    }
+
+    let processed = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (processed || job.status !== "pending") {
+        return job;
+      }
+
+      processed = true;
+      return { ...job, status: "completed" as const, error: null };
+    });
+    if (!processed) {
+      return browserSnapshot;
+    }
+
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
     return browserSnapshot;
   }
 

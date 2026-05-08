@@ -64,4 +64,19 @@ describe("tauri live capture client", () => {
       true,
     );
   });
+
+  it("processes the next queued browser fallback transcription", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/fallback.wav"]);
+    const pendingBefore = before.queue.pending_count;
+    const firstPendingId = before.queue.jobs.find((job) => job.status === "pending")?.id;
+
+    const processed = await processNextTranscription();
+
+    expect(processed.queue.pending_count).toBe(pendingBefore - 1);
+    expect(processed.queue.running_count).toBe(0);
+    expect(processed.queue.jobs.find((job) => job.id === firstPendingId)).toMatchObject({
+      status: "completed",
+      error: null,
+    });
+  });
 });
