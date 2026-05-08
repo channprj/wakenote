@@ -393,6 +393,53 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("does not process browser fallback queue work while another job is running", async () => {
+    await downloadModel("whisper-medium");
+    await loadSnapshot();
+    await saveSettingsPatch({
+      selected_model: "whisper-medium",
+      transcription_enabled: true,
+      pause_all: false,
+    });
+    const current = await loadSnapshot();
+    for (const job of current.queue.jobs.filter((candidate) => candidate.status === "pending")) {
+      await skipJob(job.id);
+    }
+
+    const queued = await enqueueAudioFiles([
+      "/tmp/imported/single-flight-running.wav",
+      "/tmp/imported/single-flight-pending.wav",
+    ]);
+    const runningJob = queued.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/single-flight-running.wav",
+    );
+    const pendingJob = queued.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/single-flight-pending.wav",
+    );
+    expect(runningJob?.id).toBeTypeOf("number");
+    expect(pendingJob?.id).toBeTypeOf("number");
+    if (runningJob) {
+      runningJob.status = "running";
+      queued.queue.pending_count -= 1;
+      queued.queue.running_count += 1;
+    }
+
+    const processed = await processNextTranscription();
+
+    expect(processed.queue.jobs.find((candidate) => candidate.id === runningJob?.id)).toMatchObject({
+      status: "running",
+      error: null,
+    });
+    expect(processed.queue.jobs.find((candidate) => candidate.id === pendingJob?.id)).toMatchObject({
+      status: "pending",
+      error: null,
+    });
+
+    await cancelCurrentTranscription();
+    await skipJob(runningJob?.id ?? -1);
+    await skipJob(pendingJob?.id ?? -1);
+  });
+
   it("cancels running browser fallback transcription jobs", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/cancel-running.wav"]);
     const job = before.queue.jobs.find(

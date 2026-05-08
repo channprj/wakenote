@@ -416,6 +416,9 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
     if (settings.pause_all || !settings.transcription_enabled) {
       return browserSnapshot;
     }
+    if (browserSnapshot.queue.jobs.some((job) => job.status === "running")) {
+      return browserSnapshot;
+    }
 
     let processed = false;
     const jobs = browserSnapshot.queue.jobs.map((job) => {
