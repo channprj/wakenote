@@ -54,7 +54,11 @@ pub enum LiveCaptureError {
     Cpal(String),
 }
 
-pub trait AudioStreamHandle: Send {}
+pub trait AudioStreamHandle: Send {
+    fn runtime_error(&self) -> Option<String> {
+        None
+    }
+}
 
 pub trait AudioInputBackend: Send {
     fn start(
@@ -131,6 +135,12 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
             .as_ref()
             .map(FrameDispatcher::dropped_frame_count)
             .unwrap_or(0)
+    }
+
+    pub fn runtime_error(&self) -> Option<String> {
+        self.stream
+            .as_ref()
+            .and_then(|stream| stream.runtime_error())
     }
 }
 
@@ -235,9 +245,14 @@ pub struct CpalAudioInput;
 pub struct CpalStreamHandle {
     stop_tx: Option<mpsc::Sender<()>>,
     join: Option<thread::JoinHandle<()>>,
+    runtime_error: Arc<Mutex<Option<String>>>,
 }
 
-impl AudioStreamHandle for CpalStreamHandle {}
+impl AudioStreamHandle for CpalStreamHandle {
+    fn runtime_error(&self) -> Option<String> {
+        self.runtime_error.lock().ok()?.clone()
+    }
+}
 
 impl Drop for CpalStreamHandle {
     fn drop(&mut self) {
@@ -258,8 +273,10 @@ impl AudioInputBackend for CpalAudioInput {
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (stop_tx, stop_rx) = mpsc::channel();
+        let runtime_error = Arc::new(Mutex::new(None));
+        let stream_error = runtime_error.clone();
         let join = thread::spawn(move || {
-            let stream = match build_cpal_stream(config, on_frame) {
+            let stream = match build_cpal_stream(config, on_frame, stream_error) {
                 Ok(stream) => stream,
                 Err(error) => {
                     let _ = ready_tx.send(Err(error));
@@ -281,6 +298,7 @@ impl AudioInputBackend for CpalAudioInput {
             Ok(Ok(())) => Ok(Box::new(CpalStreamHandle {
                 stop_tx: Some(stop_tx),
                 join: Some(join),
+                runtime_error,
             })),
             Ok(Err(error)) => {
                 let _ = join.join();
@@ -326,6 +344,7 @@ pub struct ResolvedCpalInputDevice {
 fn build_cpal_stream(
     config: AudioInputConfig,
     on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
+    runtime_error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, LiveCaptureError> {
     let host = cpal::default_host();
     let (device, _) = select_device_with_resolution(&host, &config.device_id)?;
@@ -339,7 +358,10 @@ fn build_cpal_stream(
     let channels = usize::from(stream_config.channels);
     let sample_rate = stream_config.sample_rate.0;
 
-    let err_fn = |error| {
+    let err_fn = move |error: cpal::StreamError| {
+        if let Ok(mut runtime_error) = runtime_error.lock() {
+            *runtime_error = Some(error.to_string());
+        }
         eprintln!("audio input stream error: {error}");
     };
 

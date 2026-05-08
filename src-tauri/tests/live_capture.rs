@@ -10,11 +10,18 @@ use sagwan::live_capture::{
 struct FakeInput {
     callback: Arc<Mutex<Option<Arc<dyn Fn(AudioFrame) + Send + Sync>>>>,
     starts: Arc<Mutex<usize>>,
+    runtime_error: Arc<Mutex<Option<String>>>,
 }
 
-struct FakeHandle;
+struct FakeHandle {
+    runtime_error: Arc<Mutex<Option<String>>>,
+}
 
-impl AudioStreamHandle for FakeHandle {}
+impl AudioStreamHandle for FakeHandle {
+    fn runtime_error(&self) -> Option<String> {
+        self.runtime_error.lock().ok()?.clone()
+    }
+}
 
 impl FakeInput {
     fn emit(&self, frame: AudioFrame) {
@@ -24,6 +31,10 @@ impl FakeInput {
 
     fn starts(&self) -> usize {
         *self.starts.lock().unwrap()
+    }
+
+    fn set_runtime_error(&self, error: impl Into<String>) {
+        *self.runtime_error.lock().unwrap() = Some(error.into());
     }
 }
 
@@ -35,7 +46,9 @@ impl AudioInputBackend for FakeInput {
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         *self.starts.lock().unwrap() += 1;
         *self.callback.lock().unwrap() = Some(on_frame);
-        Ok(Box::new(FakeHandle))
+        Ok(Box::new(FakeHandle {
+            runtime_error: self.runtime_error.clone(),
+        }))
     }
 }
 
@@ -177,6 +190,23 @@ fn live_capture_runtime_drops_stale_frames_when_processing_falls_behind() {
         .expect("first frame after busy processing");
     assert!(first_after_busy > 1);
     assert!(runtime.dropped_frame_count() > 0);
+}
+
+#[test]
+fn live_capture_runtime_reports_stream_runtime_errors() {
+    let input = FakeInput::default();
+    let handle = input.clone();
+    let mut runtime = LiveCaptureRuntime::new(input);
+
+    runtime
+        .start(AudioInputConfig::default(), |_| {})
+        .expect("start");
+    handle.set_runtime_error("default input stream disconnected");
+
+    assert_eq!(
+        runtime.runtime_error().as_deref(),
+        Some("default input stream disconnected")
+    );
 }
 
 #[test]

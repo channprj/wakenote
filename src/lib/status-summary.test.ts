@@ -70,6 +70,24 @@ describe("capture status presentation", () => {
     });
   });
 
+  it("surfaces live input stream errors as danger warnings", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        status: {
+          ...snapshot.status,
+          runtime_warning: "Live input stream error: default input stream disconnected",
+        },
+      }).warning,
+    ).toEqual({
+      key: "runtime:Live input stream error: default input stream disconnected",
+      message: "Live input stream error: default input stream disconnected",
+      tone: "danger",
+    });
+  });
+
   it("prioritizes microphone warnings over runtime and queue warnings", () => {
     const snapshot = mockSnapshot();
 

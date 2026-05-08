@@ -8,7 +8,7 @@ use std::thread;
 use sagwan::commands::{
     AppBackend, AppStatus, MainWindowCloseAction, MicrophoneDevice, main_window_close_action,
     reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_runtime_warning,
+    tray_runtime_presentation, with_live_runtime_warning,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore};
@@ -82,13 +82,18 @@ fn app_status(
     state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
 ) -> Result<AppStatus, String> {
-    let dropped_frames = live_state
+    let (dropped_frames, stream_error) = live_state
         .lock()
-        .map(|live_capture| live_capture.dropped_frame_count())
-        .unwrap_or(0);
+        .map(|live_capture| {
+            (
+                live_capture.dropped_frame_count(),
+                live_capture.runtime_error(),
+            )
+        })
+        .unwrap_or((0, None));
     let backend = state.lock().map_err(|error| error.to_string())?;
     let settings = backend.settings();
-    let status = with_runtime_warning(backend.app_status(), dropped_frames);
+    let status = with_live_runtime_warning(backend.app_status(), dropped_frames, stream_error);
     update_tray_presentation(&app, &settings, &status);
     Ok(status)
 }
@@ -241,9 +246,10 @@ fn start_live_capture_runtime(
     let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
     if live_capture.is_running() {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
-        return Ok(with_runtime_warning(
+        return Ok(with_live_runtime_warning(
             backend.app_status(),
             live_capture.dropped_frame_count(),
+            live_capture.runtime_error(),
         ));
     }
 
@@ -298,9 +304,10 @@ fn start_live_capture_runtime(
     }
 
     let backend = backend_state.lock().map_err(|error| error.to_string())?;
-    Ok(with_runtime_warning(
+    Ok(with_live_runtime_warning(
         backend.app_status(),
         live_capture.dropped_frame_count(),
+        live_capture.runtime_error(),
     ))
 }
 

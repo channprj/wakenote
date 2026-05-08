@@ -75,7 +75,7 @@ function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
     return {
       key: `runtime:${runtimeWarning}`,
       message: runtimeWarning,
-      tone: "warning",
+      tone: runtimeWarning.startsWith("Live input stream error:") ? "danger" : "warning",
     };
   }
 

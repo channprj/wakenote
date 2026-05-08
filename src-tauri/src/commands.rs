@@ -653,7 +653,20 @@ fn derive_tray_state(
     }
 }
 
-pub fn with_runtime_warning(mut status: AppStatus, dropped_frames: u64) -> AppStatus {
+pub fn with_runtime_warning(status: AppStatus, dropped_frames: u64) -> AppStatus {
+    with_live_runtime_warning(status, dropped_frames, None)
+}
+
+pub fn with_live_runtime_warning(
+    mut status: AppStatus,
+    dropped_frames: u64,
+    stream_error: Option<String>,
+) -> AppStatus {
+    if let Some(stream_error) = stream_error.filter(|error| !error.trim().is_empty()) {
+        status.runtime_warning = Some(format!("Live input stream error: {stream_error}"));
+        return status;
+    }
+
     if dropped_frames > 0 {
         status.runtime_warning = Some(format!(
             "Live input dropped {dropped_frames} stale audio frames while processing was busy"

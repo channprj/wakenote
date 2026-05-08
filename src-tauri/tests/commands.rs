@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 use sagwan::commands::{
     AppBackend, AppMode, MainWindowCloseAction, TrayState, main_window_close_action,
     reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_runtime_warning,
+    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -209,6 +209,21 @@ fn runtime_warning_summarizes_dropped_audio_frames_without_overriding_state() {
     assert_eq!(
         status.runtime_warning.as_deref(),
         Some("Live input dropped 42 stale audio frames while processing was busy")
+    );
+}
+
+#[test]
+fn runtime_warning_surfaces_input_stream_errors_before_dropped_frames() {
+    let backend = AppBackend::default();
+    let status = with_live_runtime_warning(
+        backend.app_status(),
+        42,
+        Some("default input stream disconnected".to_string()),
+    );
+
+    assert_eq!(
+        status.runtime_warning.as_deref(),
+        Some("Live input stream error: default input stream disconnected")
     );
 }
 
