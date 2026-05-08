@@ -644,6 +644,10 @@ impl AppBackend {
         if let Ok(events) = capture.update_settings(self.settings.clone()) {
             self.handle_capture_events(events);
         }
+        if self.settings.pause_all || !self.settings.recording_enabled {
+            self.capture = None;
+            self.active_microphone_label = None;
+        }
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {

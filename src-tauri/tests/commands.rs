@@ -279,6 +279,7 @@ fn backend_flushes_active_capture_when_recording_is_disabled() {
 
     let status = backend.app_status();
     assert_eq!(status.tray_state, TrayState::Idle);
+    assert!(!status.live_input_active);
     assert_eq!(backend.queue_snapshot().pending_count, 1);
 }
 
