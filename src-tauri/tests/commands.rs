@@ -854,6 +854,54 @@ fn backend_prepare_model_download_rejects_active_downloads() {
 }
 
 #[test]
+fn backend_download_model_rejects_active_downloads_before_fetching() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": "http://127.0.0.1:9/custom-local.bin",
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    ModelStore::new(&model_directory)
+        .record_download_progress("custom-local", 512, Some(1024))
+        .expect("record active download");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .download_model("custom-local")
+        .expect_err("active download should not fetch again");
+
+    assert_eq!(error, "model custom-local download is already active");
+    let model = backend
+        .model_registry()
+        .into_iter()
+        .find(|model| model.id == "custom-local")
+        .expect("custom model");
+    assert_eq!(model.status, ModelStatus::Downloading);
+    assert_eq!(model.download_progress, Some(50));
+    assert_eq!(model.download_error, None);
+}
+
+#[test]
 fn backend_prepare_model_download_rejects_installed_models() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

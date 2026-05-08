@@ -262,15 +262,10 @@ impl AppBackend {
     }
 
     pub fn download_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        let store = self.model_store();
-        let registry = store
-            .load_model_registry()
-            .map_err(|error| error.to_string())?;
-        let model = registry
-            .get(model_id)
-            .ok_or_else(|| format!("unknown model {model_id}"))?;
+        let prepared = self.prepare_model_download(model_id)?;
+        let store = ModelStore::new(prepared.model_directory);
         store
-            .download_model(model)
+            .download_model(&prepared.model)
             .map_err(|error| error.to_string())?;
         Ok(self.model_registry())
     }
