@@ -50,4 +50,18 @@ describe("queue toolbar actions", () => {
       canCancelCurrent: true,
     });
   });
+
+  it("disables process next while a queue job is already running", () => {
+    const queue = {
+      jobs: [],
+      pending_count: 1,
+      running_count: 1,
+      failed_count: 0,
+    };
+
+    expect(queueToolbarActionState(queue, true)).toEqual({
+      canProcessNext: false,
+      canCancelCurrent: true,
+    });
+  });
 });

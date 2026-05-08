@@ -100,6 +100,14 @@ impl TranscriptionQueue {
     }
 
     pub fn start_next(&mut self) -> Option<QueueJob> {
+        if self
+            .jobs
+            .iter()
+            .any(|job| job.status == QueueJobStatus::Running)
+        {
+            return None;
+        }
+
         let job = self
             .jobs
             .iter_mut()
@@ -116,6 +124,14 @@ impl TranscriptionQueue {
     }
 
     pub fn start_next_for_model_ids(&mut self, model_ids: &HashSet<String>) -> Option<QueueJob> {
+        if self
+            .jobs
+            .iter()
+            .any(|job| job.status == QueueJobStatus::Running)
+        {
+            return None;
+        }
+
         let job = self.jobs.iter_mut().find(|job| {
             job.status == QueueJobStatus::Pending && model_ids.contains(&job.model_id)
         })?;

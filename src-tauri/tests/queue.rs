@@ -83,6 +83,23 @@ fn queue_does_not_enqueue_duplicate_audio_paths() {
 }
 
 #[test]
+fn queue_does_not_start_next_job_while_another_job_is_running() {
+    let mut queue = TranscriptionQueue::new();
+    let first = queue.enqueue_file("/recordings/first.wav", "whisper-medium");
+    let second = queue.enqueue_file("/recordings/second.wav", "whisper-medium");
+
+    let started = queue.start_next().expect("first job");
+    let attempted_second = queue.start_next();
+
+    assert_eq!(started.id, first);
+    assert_eq!(attempted_second, None);
+    assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Pending);
+    assert_eq!(queue.snapshot().running_count, 1);
+    assert_eq!(queue.snapshot().pending_count, 1);
+}
+
+#[test]
 fn queue_rejects_retry_and_skip_for_terminal_or_active_jobs() {
     let mut queue = TranscriptionQueue::new();
     let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
