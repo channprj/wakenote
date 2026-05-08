@@ -127,4 +127,26 @@ describe("settings panel", () => {
 
     expect(isDisabled(buttonTag(readyJobModelMarkup, "Process Next"))).toBe(false);
   });
+
+  it("shows an explicit save root confirmation action until storage is confirmed", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.save_root = "~/Documents/Sagwan";
+    snapshot.settings.save_root_confirmed = false;
+
+    const unconfirmedMarkup = renderSettingsPanel(snapshot, "storage");
+
+    expect(isDisabled(buttonTag(unconfirmedMarkup, "Confirm Save Root"))).toBe(false);
+
+    snapshot.settings.save_root = "   ";
+    const blankMarkup = renderSettingsPanel(snapshot, "storage");
+
+    expect(isDisabled(buttonTag(blankMarkup, "Confirm Save Root"))).toBe(true);
+
+    snapshot.settings.save_root = "/tmp/sagwan-recordings";
+    snapshot.settings.save_root_confirmed = true;
+    const confirmedMarkup = renderSettingsPanel(snapshot, "storage");
+
+    expect(confirmedMarkup).toContain("Confirmed");
+    expect(confirmedMarkup).not.toContain("Confirm Save Root");
+  });
 });

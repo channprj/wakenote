@@ -1,4 +1,4 @@
-import { FolderOpen, Play, RefreshCw, Square } from "lucide-react";
+import { CheckCircle2, FolderOpen, Play, RefreshCw, Square } from "lucide-react";
 import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
@@ -131,10 +131,25 @@ export function SettingsPanel({
         title="Storage"
         eyebrow="Local archive"
         actions={
-          <Button type="button" variant="secondary" onClick={onChooseSaveRoot}>
-            <FolderOpen data-icon="inline-start" />
-            Choose Folder
-          </Button>
+          <>
+            {settings.save_root_confirmed ? (
+              <Badge tone="success">Confirmed</Badge>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={settings.save_root.trim().length === 0}
+                onClick={() => onPatch({ save_root: settings.save_root })}
+              >
+                <CheckCircle2 data-icon="inline-start" />
+                Confirm Save Root
+              </Button>
+            )}
+            <Button type="button" variant="secondary" onClick={onChooseSaveRoot}>
+              <FolderOpen data-icon="inline-start" />
+              Choose Folder
+            </Button>
+          </>
         }
       >
         <div className="control-grid">
