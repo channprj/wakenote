@@ -153,8 +153,17 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
 
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
-    const settings = { ...browserSnapshot.settings, ...patch };
-    const queue = browserSnapshot.queue ?? emptyQueue();
+    const previousSettings = browserSnapshot.settings ?? defaultSettings();
+    let queue = browserSnapshot.queue ?? emptyQueue();
+    if (patch.recording_enabled === false || patch.pause_all === true) {
+      queue = maybeQueueBrowserCapture(
+        previousSettings,
+        queue,
+        statusFrom(previousSettings, queue),
+      );
+    }
+
+    const settings = { ...previousSettings, ...patch };
     browserSnapshot = {
       ...browserSnapshot,
       settings,

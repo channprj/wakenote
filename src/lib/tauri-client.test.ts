@@ -202,4 +202,26 @@ describe("tauri live capture client", () => {
     expect(repeatedStart.status.live_input_active).toBe(true);
     expect(repeatedStart.queue.pending_count).toBe(firstCapture.queue.pending_count);
   });
+
+  it("finalizes a simulated browser capture when recording is disabled", async () => {
+    await stopLiveCapture();
+    await saveSettingsPatch({
+      recording_enabled: true,
+      threshold_dbfs: -90,
+      transcription_enabled: true,
+    });
+    const active = await startLiveCapture();
+    const pendingBefore = active.queue.pending_count;
+
+    const disabled = await saveSettingsPatch({ recording_enabled: false });
+
+    expect(disabled.status.live_input_active).toBe(false);
+    expect(disabled.status.tray_state).toBe("idle");
+    expect(disabled.queue.pending_count).toBe(pendingBefore + 1);
+    expect(disabled.queue.jobs.at(-1)).toMatchObject({
+      model_id: disabled.settings.selected_model,
+      status: "pending",
+      error: null,
+    });
+  });
 });
