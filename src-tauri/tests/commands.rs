@@ -458,6 +458,30 @@ fn backend_cancel_model_download_marks_model_as_recoverable_error() {
 }
 
 #[test]
+fn backend_cancel_model_download_rejects_inactive_models() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .cancel_model_download("whisper-medium")
+        .expect_err("inactive model download should not be cancelled");
+
+    assert_eq!(error, "model whisper-medium has no active download");
+    let model = backend
+        .model_registry()
+        .into_iter()
+        .find(|model| model.id == "whisper-medium")
+        .expect("whisper medium");
+    assert_eq!(model.status, ModelStatus::Missing);
+    assert_eq!(model.download_error, None);
+}
+
+#[test]
 fn backend_prepare_model_download_marks_model_downloading_before_fetch() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
