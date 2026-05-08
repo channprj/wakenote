@@ -57,6 +57,7 @@ pub struct CaptureProcessor {
     pre_roll: VecDeque<BufferedFrame>,
     active_samples: Vec<f32>,
     active_started_at_ms: Option<u64>,
+    active_has_signal: bool,
     completed_chunks: Vec<RecordedChunk>,
 }
 
@@ -153,6 +154,7 @@ impl CaptureProcessor {
             pre_roll: VecDeque::new(),
             active_samples: Vec::new(),
             active_started_at_ms: None,
+            active_has_signal: false,
             completed_chunks: Vec::new(),
         }
     }
@@ -174,6 +176,7 @@ impl CaptureProcessor {
         let frame_start_ms = self.elapsed_ms;
         let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
         let dbfs = dbfs_from_samples(samples);
+        let above_threshold = dbfs >= self.config.settings.threshold_dbfs;
         let decision = self.gate.observe_frame(dbfs, frame_start_ms, frame_end_ms);
 
         match decision {
@@ -183,11 +186,13 @@ impl CaptureProcessor {
             GateDecision::Start { started_at_ms } => {
                 self.active_started_at_ms = Some(started_at_ms);
                 self.active_samples.clear();
+                self.active_has_signal = true;
                 self.drain_pre_roll_into_active(started_at_ms);
                 self.active_samples.extend_from_slice(&frame.samples);
             }
             GateDecision::Recording => {
                 if self.gate.is_recording() {
+                    self.active_has_signal |= above_threshold;
                     self.active_samples.extend_from_slice(&frame.samples);
                 } else {
                     self.push_pre_roll(frame);
@@ -206,6 +211,7 @@ impl CaptureProcessor {
                 self.commit_active_chunk(ended_at_ms)?;
                 self.active_started_at_ms = Some(next_started_at_ms);
                 self.active_samples.clear();
+                self.active_has_signal = false;
             }
         }
 
@@ -242,6 +248,7 @@ impl CaptureProcessor {
         self.pre_roll.clear();
         self.active_samples.clear();
         self.active_started_at_ms = None;
+        self.active_has_signal = false;
     }
 
     fn push_pre_roll(&mut self, frame: BufferedFrame) {
@@ -275,7 +282,10 @@ impl CaptureProcessor {
 
     fn commit_active_chunk(&mut self, ended_at_ms: u64) -> Result<(), RecorderError> {
         let started_at_ms = self.active_started_at_ms.unwrap_or(self.elapsed_ms);
-        if self.active_samples.is_empty() {
+        if self.active_samples.is_empty() || !self.active_has_signal {
+            self.active_samples.clear();
+            self.active_started_at_ms = None;
+            self.active_has_signal = false;
             return Ok(());
         }
 
@@ -296,6 +306,7 @@ impl CaptureProcessor {
         self.completed_chunks.push(chunk);
         self.active_samples.clear();
         self.active_started_at_ms = None;
+        self.active_has_signal = false;
         Ok(())
     }
 
