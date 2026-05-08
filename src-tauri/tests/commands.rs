@@ -38,6 +38,10 @@ fn backend_derives_four_product_modes_from_independent_toggles() {
         backend.app_status().mode,
         AppMode::RecordingAndTranscription
     );
+    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
     assert_eq!(backend.app_status().tray_state, TrayState::Listening);
 
     backend.update_settings(SettingsPatch {
@@ -177,6 +181,22 @@ fn backend_surfaces_capture_start_failure_as_microphone_warning() {
 }
 
 #[test]
+fn backend_reports_idle_after_capture_session_stops() {
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    assert_eq!(backend.app_status().tray_state, TrayState::Listening);
+
+    let status = backend
+        .stop_capture_session()
+        .expect("stop capture session");
+
+    assert_eq!(status.mode, AppMode::RecordingAndTranscription);
+    assert_eq!(status.tray_state, TrayState::Idle);
+}
+
+#[test]
 fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();
@@ -202,7 +222,10 @@ fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
 
 #[test]
 fn runtime_warning_summarizes_dropped_audio_frames_without_overriding_state() {
-    let backend = AppBackend::default();
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
     let status = with_runtime_warning(backend.app_status(), 42);
 
     assert_eq!(status.tray_state, TrayState::Listening);
@@ -498,7 +521,7 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
 
     let visible = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert!(visible.visible);
-    assert_eq!(visible.icon.tooltip, "Sagwan: Listening");
+    assert_eq!(visible.icon.tooltip, "Sagwan: Idle");
 
     backend.update_settings(SettingsPatch {
         show_tray_icon: Some(false),
@@ -507,7 +530,7 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
 
     let hidden = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert!(!hidden.visible);
-    assert_eq!(hidden.icon.tooltip, "Sagwan: Listening");
+    assert_eq!(hidden.icon.tooltip, "Sagwan: Idle");
 }
 
 #[test]

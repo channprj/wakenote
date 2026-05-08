@@ -39,7 +39,11 @@ const modeLabels: Record<AppMode, string> = {
 
 export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusPresentation {
   const { settings, status, queue } = snapshot;
-  const state = trayCopy[status.tray_state];
+  const state =
+    status.tray_state === "idle" &&
+    (status.mode === "recording_and_transcription" || status.mode === "recording_only")
+      ? { headline: "Input stopped", tone: "neutral" as const }
+      : trayCopy[status.tray_state];
   const threshold = `${settings.threshold_dbfs} dBFS`;
   const microphone = status.active_microphone || settings.selected_microphone_label;
   const modeLabel = modeLabels[status.mode];

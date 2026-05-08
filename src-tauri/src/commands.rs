@@ -558,8 +558,15 @@ impl AppBackend {
             .as_ref()
             .map(|capture| capture.is_recording())
             .unwrap_or(false);
+        let is_monitoring = self.capture.is_some();
         let has_error = self.microphone_warning.is_some() || queue.failed_count > 0;
-        let tray_state = derive_tray_state(mode, queue.running_count > 0, is_recording, has_error);
+        let tray_state = derive_tray_state(
+            mode,
+            queue.running_count > 0,
+            is_monitoring,
+            is_recording,
+            has_error,
+        );
 
         AppStatus {
             mode,
@@ -631,6 +638,7 @@ pub fn derive_mode(settings: &AppSettings) -> AppMode {
 fn derive_tray_state(
     mode: AppMode,
     transcribing: bool,
+    monitoring: bool,
     recording: bool,
     has_error: bool,
 ) -> TrayState {
@@ -647,7 +655,10 @@ fn derive_tray_state(
     }
 
     match mode {
-        AppMode::RecordingAndTranscription | AppMode::RecordingOnly => TrayState::Listening,
+        AppMode::RecordingAndTranscription | AppMode::RecordingOnly if monitoring => {
+            TrayState::Listening
+        }
+        AppMode::RecordingAndTranscription | AppMode::RecordingOnly => TrayState::Idle,
         AppMode::TranscriptionOnly => TrayState::Idle,
         AppMode::Paused => TrayState::Paused,
     }

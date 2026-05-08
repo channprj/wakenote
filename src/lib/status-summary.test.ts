@@ -50,6 +50,21 @@ describe("capture status presentation", () => {
     ).toMatchObject({ headline: "Needs attention", tone: "danger" });
   });
 
+  it("labels idle recording modes as stopped input", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        status: {
+          ...snapshot.status,
+          mode: "recording_and_transcription",
+          tray_state: "idle",
+        },
+      }),
+    ).toMatchObject({ headline: "Input stopped", tone: "neutral" });
+  });
+
   it("includes runtime warnings in the status detail", () => {
     const snapshot = mockSnapshot();
 
