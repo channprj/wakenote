@@ -29,6 +29,7 @@ declare global {
 let browserSnapshot = mockSnapshot();
 let browserCaptureSessionId = 0;
 let browserQueuedCaptureSessionId: number | null = null;
+const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
@@ -41,6 +42,42 @@ function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
     running_count: jobs.filter((job) => job.status === "running").length,
     failed_count: jobs.filter((job) => job.status === "failed").length,
   };
+}
+
+function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
+  return models.map((model) => {
+    if (model.status === "downloading") {
+      return {
+        ...model,
+        status: "ready",
+        download_progress: 100,
+        download_error: null,
+      };
+    }
+
+    if (model.status !== "verifying") {
+      return model;
+    }
+
+    const previousStatus = browserVerificationPreviousStatuses.get(model.id) ?? "missing";
+    browserVerificationPreviousStatuses.delete(model.id);
+    if (["ready", "installed", "unloaded"].includes(previousStatus)) {
+      return {
+        ...model,
+        status: "ready",
+        download_progress: 100,
+        download_error: null,
+      };
+    }
+
+    return {
+      ...model,
+      status: previousStatus === "error" ? "error" : "missing",
+      download_progress: null,
+      download_error:
+        previousStatus === "error" ? (model.download_error ?? "model verification failed") : null,
+    };
+  });
 }
 
 function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
@@ -129,11 +166,13 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const currentQueue = browserSnapshot.queue ?? emptyQueue();
+    const models = settledBrowserModels(browserSnapshot.models ?? mockModels());
     const currentStatus = statusFrom(settings, currentQueue);
     const queue = maybeQueueBrowserCapture(settings, currentQueue, currentStatus);
     browserSnapshot = {
       ...browserSnapshot,
       settings,
+      models,
       queue,
       status: statusFrom(settings, queue),
     };
@@ -398,7 +437,17 @@ export async function verifyModel(modelId: string): Promise<AppSnapshot> {
     browserSnapshot = {
       ...browserSnapshot,
       models: browserSnapshot.models.map((model) =>
-        model.id === modelId ? { ...model, status: "verifying" } : model,
+        model.id === modelId
+          ? (() => {
+              browserVerificationPreviousStatuses.set(modelId, model.status);
+              return {
+                ...model,
+                status: "verifying",
+                download_progress: null,
+                download_error: null,
+              };
+            })()
+          : model,
       ),
     };
     return browserSnapshot;
@@ -410,6 +459,7 @@ export async function verifyModel(modelId: string): Promise<AppSnapshot> {
 
 export async function downloadModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    browserVerificationPreviousStatuses.delete(modelId);
     browserSnapshot = {
       ...browserSnapshot,
       models: browserSnapshot.models.map((model) =>
@@ -454,10 +504,13 @@ export async function cancelModelDownload(modelId: string): Promise<AppSnapshot>
 
 export async function deleteModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    browserVerificationPreviousStatuses.delete(modelId);
     browserSnapshot = {
       ...browserSnapshot,
       models: browserSnapshot.models.map((model) =>
-        model.id === modelId ? { ...model, status: "missing" } : model,
+        model.id === modelId
+          ? { ...model, status: "missing", download_progress: null, download_error: null }
+          : model,
       ),
     };
     return browserSnapshot;

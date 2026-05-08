@@ -3,6 +3,7 @@ import { defaultLevelSnapshot, mockSnapshot } from "./app-state";
 import {
   chooseSaveRoot,
   cancelModelDownload,
+  deleteModel,
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
@@ -13,6 +14,7 @@ import {
   skipJob,
   startLiveCapture,
   stopLiveCapture,
+  verifyModel,
 } from "./tauri-client";
 
 describe("tauri live capture client", () => {
@@ -79,6 +81,43 @@ describe("tauri live capture client", () => {
       status: "error",
       download_progress: 0,
       download_error: "cancelled by user",
+    });
+  });
+
+  it("settles browser fallback model downloads during snapshot polling", async () => {
+    await deleteModel("whisper-tiny");
+
+    const downloading = await downloadModel("whisper-tiny");
+    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "downloading",
+      download_progress: 0,
+      download_error: null,
+    });
+
+    const settled = await loadSnapshot();
+
+    expect(settled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "ready",
+      download_progress: 100,
+      download_error: null,
+    });
+  });
+
+  it("settles browser fallback verification during snapshot polling", async () => {
+    await deleteModel("whisper-medium");
+
+    const verifying = await verifyModel("whisper-medium");
+    expect(verifying.models.find((model) => model.id === "whisper-medium")).toMatchObject({
+      status: "verifying",
+      download_error: null,
+    });
+
+    const settled = await loadSnapshot();
+
+    expect(settled.models.find((model) => model.id === "whisper-medium")).toMatchObject({
+      status: "missing",
+      download_progress: null,
+      download_error: null,
     });
   });
 
