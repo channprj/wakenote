@@ -56,14 +56,14 @@ describe("tauri live capture client", () => {
   });
 
   it("reports recording state when simulated browser input crosses threshold", async () => {
-    await saveSettingsPatch({ threshold_dbfs: -90 });
+    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: false });
 
     const started = await startLiveCapture();
 
     expect(started.status.tray_state).toBe("recording");
 
     await stopLiveCapture();
-    await saveSettingsPatch({ threshold_dbfs: -45 });
+    await saveSettingsPatch({ threshold_dbfs: -45, transcription_enabled: true });
   });
 
   it("simulates model download and cancel state outside Tauri", async () => {
@@ -220,6 +220,27 @@ describe("tauri live capture client", () => {
     expect(disabled.queue.pending_count).toBe(pendingBefore + 1);
     expect(disabled.queue.jobs.at(-1)).toMatchObject({
       model_id: disabled.settings.selected_model,
+      status: "pending",
+      error: null,
+    });
+  });
+
+  it("finalizes a simulated browser capture when input is stopped", async () => {
+    await saveSettingsPatch({
+      recording_enabled: true,
+      threshold_dbfs: -90,
+      transcription_enabled: true,
+    });
+    const active = await startLiveCapture();
+    const pendingBefore = active.queue.pending_count;
+
+    const stopped = await stopLiveCapture();
+
+    expect(stopped.status.live_input_active).toBe(false);
+    expect(stopped.status.level).toEqual(defaultLevelSnapshot());
+    expect(stopped.queue.pending_count).toBe(pendingBefore + 1);
+    expect(stopped.queue.jobs.at(-1)).toMatchObject({
+      model_id: stopped.settings.selected_model,
       status: "pending",
       error: null,
     });
