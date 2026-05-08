@@ -3,6 +3,7 @@ import {
   deriveProductMode,
   deriveTrayState,
   mockSnapshot,
+  pollSnapshotDependencyKey,
   shouldPollSnapshot,
   shouldShowFloatingOverlay,
 } from "./app-state";
@@ -91,6 +92,26 @@ describe("app state derivation", () => {
     };
 
     expect(shouldPollSnapshot(activeInputErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
+  });
+
+  it("changes the polling dependency key when polling inputs change", () => {
+    const snapshot = mockSnapshot();
+    const baseKey = pollSnapshotDependencyKey(snapshot.status, snapshot.queue, snapshot.models);
+
+    expect(
+      pollSnapshotDependencyKey(
+        { ...snapshot.status, live_input_active: true },
+        snapshot.queue,
+        snapshot.models,
+      ),
+    ).not.toBe(baseKey);
+    expect(
+      pollSnapshotDependencyKey(
+        { ...snapshot.status, runtime_warning: "Live input stream error: default input stream disconnected" },
+        snapshot.queue,
+        snapshot.models,
+      ),
+    ).not.toBe(baseKey);
   });
 
   it("provides browser-safe mock data for Vite development outside Tauri", () => {

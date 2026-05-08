@@ -83,6 +83,25 @@ export function shouldPollSnapshot(
   );
 }
 
+export function pollSnapshotDependencyKey(
+  status: AppStatus,
+  queue: QueueSnapshot,
+  models: ModelDescriptor[] = [],
+) {
+  return JSON.stringify({
+    trayState: status.tray_state,
+    liveInputActive: status.live_input_active,
+    runtimeWarning: status.runtime_warning ?? null,
+    pendingCount: queue.pending_count,
+    runningCount: queue.running_count,
+    models: models.map((model) => ({
+      id: model.id,
+      status: model.status,
+      downloadProgress: model.download_progress ?? null,
+    })),
+  });
+}
+
 export function defaultSettings(): AppSettings {
   return {
     recording_enabled: true,

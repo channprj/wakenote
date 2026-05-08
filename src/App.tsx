@@ -35,7 +35,12 @@ import {
   stopLiveCapture,
   verifyModel,
 } from "./lib/tauri-client";
-import { mockSnapshot, shouldPollSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
+import {
+  mockSnapshot,
+  pollSnapshotDependencyKey,
+  shouldPollSnapshot,
+  shouldShowFloatingOverlay,
+} from "./lib/app-state";
 import {
   captureStatusPresentation,
   nextDismissedWarningKey,
@@ -85,6 +90,12 @@ export default function App() {
     }
   }
 
+  const pollingDependencyKey = pollSnapshotDependencyKey(
+    snapshot.status,
+    snapshot.queue,
+    snapshot.models,
+  );
+
   useEffect(() => {
     if (!shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models)) {
       return;
@@ -94,14 +105,7 @@ export default function App() {
       void refreshQuietly();
     }, 100);
     return () => window.clearInterval(timer);
-  }, [
-    snapshot.status.tray_state,
-    snapshot.queue.pending_count,
-    snapshot.queue.running_count,
-    snapshot.models
-      .map((model) => `${model.id}:${model.status}:${model.download_progress ?? ""}`)
-      .join("|"),
-  ]);
+  }, [pollingDependencyKey]);
 
   async function patchSettings(patch: Partial<AppSettings>) {
     setBusy(true);
