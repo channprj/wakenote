@@ -54,8 +54,9 @@ fn speech_gate_starts_after_attack_and_ends_after_release() {
     );
     assert_eq!(gate.observe(-80.0, 1_000), GateDecision::Recording);
     assert_eq!(gate.observe(-82.0, 2_499), GateDecision::Recording);
+    assert_eq!(gate.observe(-82.0, 2_500), GateDecision::Recording);
     assert_eq!(
-        gate.observe(-82.0, 2_500),
+        gate.observe(-82.0, 2_800),
         GateDecision::End { ended_at_ms: 2_800 }
     );
     assert!(!gate.is_recording());

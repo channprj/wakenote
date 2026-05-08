@@ -50,6 +50,7 @@ pub struct SpeechGate {
     above_since_ms: Option<u64>,
     below_since_ms: Option<u64>,
     chunk_started_at_ms: Option<u64>,
+    post_roll_deadline_ms: Option<u64>,
     recording: bool,
 }
 
@@ -165,6 +166,7 @@ impl SpeechGate {
             above_since_ms: None,
             below_since_ms: None,
             chunk_started_at_ms: None,
+            post_roll_deadline_ms: None,
             recording: false,
         }
     }
@@ -194,6 +196,7 @@ impl SpeechGate {
         if time_ms.saturating_sub(chunk_started_at_ms) >= self.config.max_chunk_ms {
             self.chunk_started_at_ms = Some(time_ms);
             self.below_since_ms = None;
+            self.post_roll_deadline_ms = None;
             self.above_since_ms = if above_threshold { Some(time_ms) } else { None };
             return GateDecision::Rollover {
                 ended_at_ms: time_ms,
@@ -203,6 +206,7 @@ impl SpeechGate {
 
         if above_threshold {
             self.below_since_ms = None;
+            self.post_roll_deadline_ms = None;
             return GateDecision::Recording;
         }
 
@@ -212,11 +216,19 @@ impl SpeechGate {
             time_ms.saturating_sub(chunk_started_at_ms) >= self.config.min_chunk_ms;
 
         if release_elapsed && minimum_elapsed {
-            let ended_at_ms = time_ms.saturating_add(self.config.post_roll_ms);
+            let post_roll_deadline_ms = *self
+                .post_roll_deadline_ms
+                .get_or_insert_with(|| time_ms.saturating_add(self.config.post_roll_ms));
+            if time_ms < post_roll_deadline_ms {
+                return GateDecision::Recording;
+            }
+
+            let ended_at_ms = time_ms;
             self.recording = false;
             self.above_since_ms = None;
             self.below_since_ms = None;
             self.chunk_started_at_ms = None;
+            self.post_roll_deadline_ms = None;
             return GateDecision::End { ended_at_ms };
         }
 

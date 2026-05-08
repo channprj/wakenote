@@ -100,7 +100,7 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
             .process_audio_samples_for_test(&[0.8; 1], 100)
             .expect("speech");
     }
-    for _ in 0..18 {
+    for _ in 0..21 {
         backend
             .process_audio_samples_for_test(&[0.0; 1], 100)
             .expect("silence");

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -63,6 +63,12 @@ pub trait AudioInputBackend: Send {
 pub struct LiveCaptureRuntime<B: AudioInputBackend> {
     backend: B,
     stream: Option<Box<dyn AudioStreamHandle>>,
+    dispatcher: Option<FrameDispatcher>,
+}
+
+struct FrameDispatcher {
+    sender: Arc<Mutex<Option<mpsc::Sender<AudioFrame>>>>,
+    join: Option<thread::JoinHandle<()>>,
 }
 
 impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
@@ -70,6 +76,7 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
         Self {
             backend,
             stream: None,
+            dispatcher: None,
         }
     }
 
@@ -82,17 +89,72 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
             return Err(LiveCaptureError::AlreadyRunning);
         }
 
-        let stream = self.backend.start(config, Arc::new(on_frame))?;
+        let (dispatcher, on_frame) = FrameDispatcher::new(on_frame);
+        let stream = match self.backend.start(config, on_frame) {
+            Ok(stream) => stream,
+            Err(error) => {
+                drop(dispatcher);
+                return Err(error);
+            }
+        };
         self.stream = Some(stream);
+        self.dispatcher = Some(dispatcher);
         Ok(())
     }
 
     pub fn stop(&mut self) {
         self.stream = None;
+        self.dispatcher = None;
     }
 
     pub fn is_running(&self) -> bool {
         self.stream.is_some()
+    }
+}
+
+impl FrameDispatcher {
+    fn new(
+        on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
+    ) -> (Self, Arc<dyn Fn(AudioFrame) + Send + Sync>) {
+        let (tx, rx) = mpsc::channel::<AudioFrame>();
+        let sender = Arc::new(Mutex::new(Some(tx)));
+        let callback_sender = sender.clone();
+        let callback = Arc::new(move |frame| {
+            let Ok(sender) = callback_sender.lock() else {
+                return;
+            };
+            if let Some(tx) = sender.as_ref() {
+                let _ = tx.send(frame);
+            }
+        });
+        let join = thread::spawn(move || {
+            while let Ok(frame) = rx.recv() {
+                on_frame(frame);
+            }
+        });
+
+        (
+            Self {
+                sender,
+                join: Some(join),
+            },
+            callback,
+        )
+    }
+
+    fn stop(&mut self) {
+        if let Ok(mut sender) = self.sender.lock() {
+            sender.take();
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for FrameDispatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
