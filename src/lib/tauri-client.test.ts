@@ -153,6 +153,24 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("does not verify active browser fallback model downloads", async () => {
+    await deleteModel("whisper-tiny");
+    const downloading = await downloadModel("whisper-tiny");
+    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "downloading",
+      download_progress: 0,
+      download_error: null,
+    });
+
+    const verified = await verifyModel("whisper-tiny");
+
+    expect(verified.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "downloading",
+      download_progress: 0,
+      download_error: null,
+    });
+  });
+
   it("settles browser fallback verification during snapshot polling", async () => {
     await deleteModel("whisper-medium");
 
