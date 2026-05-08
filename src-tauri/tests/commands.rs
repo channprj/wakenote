@@ -434,6 +434,39 @@ fn backend_queues_active_capture_started_before_transcription_is_disabled() {
 }
 
 #[test]
+fn backend_restarting_capture_session_flushes_active_chunk() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+
+    for _ in 0..5 {
+        backend
+            .process_audio_samples_for_test(&[0.8; 1], 100)
+            .expect("speech");
+    }
+
+    backend
+        .start_capture_session_with_device(
+            10,
+            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            "input-1-usb",
+            "USB Mic",
+            false,
+        )
+        .expect("restart capture session");
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+    let status = backend.app_status();
+    assert!(status.live_input_active);
+    assert_eq!(status.active_microphone, "USB Mic");
+}
+
+#[test]
 fn backend_processes_next_transcription_job_and_writes_sidecar() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230912.wav");

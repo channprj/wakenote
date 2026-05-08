@@ -410,6 +410,10 @@ impl AppBackend {
     ) -> Result<AppStatus, String> {
         let device_id = device_id.into();
         let device_name = device_name.into();
+        if let Some(capture) = self.capture.as_mut() {
+            let events = capture.flush().map_err(|error| error.to_string())?;
+            self.handle_capture_events(events);
+        }
         self.level_monitor = LevelMonitor::default();
         self.active_microphone_label = Some(device_name.clone());
         self.microphone_warning = if used_fallback_device {
