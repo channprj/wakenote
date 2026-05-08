@@ -20,8 +20,10 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { Badge } from "./components/ui/primitives";
 import {
   cancelModelDownload,
+  cancelCurrentOperation,
   cancelCurrentTranscription,
   chooseSaveRoot,
+  revealSaveFolder,
   chooseAudioFiles,
   deleteModel,
   downloadModel,
@@ -230,9 +232,11 @@ export default function App() {
           onStartLiveCapture={() => void runAction(startLiveCapture)}
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
+          onRevealSaveFolder={() => void runAction(revealSaveFolder)}
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
+          onCancelCurrentOperation={() => void runAction(cancelCurrentOperation)}
           onProcessNextTranscription={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}

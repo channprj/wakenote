@@ -6,10 +6,14 @@ export function TrayPreview({
   settings,
   status,
   onPatch,
+  onRevealSaveFolder,
+  onCancelCurrentOperation,
 }: {
   settings: AppSettings;
   status: AppStatus;
   onPatch: (patch: Partial<AppSettings>) => void;
+  onRevealSaveFolder: () => void;
+  onCancelCurrentOperation: () => void;
 }) {
   return (
     <div className="tray-preview">
@@ -34,11 +38,11 @@ export function TrayPreview({
           <AudioWaveform />
           Transcription {settings.transcription_enabled ? "On" : "Off"}
         </button>
-        <button>
+        <button onClick={onRevealSaveFolder}>
           <FolderOpen />
           Reveal Save Folder
         </button>
-        <button>
+        <button disabled>
           <Settings />
           Open Settings
         </button>
@@ -46,7 +50,7 @@ export function TrayPreview({
           {settings.pause_all ? <Square /> : <Pause />}
           {settings.pause_all ? "Resume" : "Pause All"}
         </button>
-        <button>
+        <button onClick={onCancelCurrentOperation}>
           <XCircle />
           Cancel Current Operation
         </button>

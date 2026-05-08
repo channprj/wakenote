@@ -24,9 +24,11 @@ export function SettingsPanel({
   onStartLiveCapture,
   onStopLiveCapture,
   onChooseSaveRoot,
+  onRevealSaveFolder,
   onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
+  onCancelCurrentOperation,
   onProcessNextTranscription,
   onRetry,
   onSkip,
@@ -42,9 +44,11 @@ export function SettingsPanel({
   onStartLiveCapture: () => void;
   onStopLiveCapture: () => void;
   onChooseSaveRoot: () => void;
+  onRevealSaveFolder: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
+  onCancelCurrentOperation: () => void;
   onProcessNextTranscription: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
@@ -345,7 +349,13 @@ export function SettingsPanel({
           ) : null}
         </div>
       </Section>
-      <TrayPreview settings={settings} status={status} onPatch={onPatch} />
+      <TrayPreview
+        settings={settings}
+        status={status}
+        onPatch={onPatch}
+        onRevealSaveFolder={onRevealSaveFolder}
+        onCancelCurrentOperation={onCancelCurrentOperation}
+      />
       <LevelMeter
         settings={settings}
         status={status}

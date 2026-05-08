@@ -220,6 +220,28 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
 }
 
 #[tauri::command]
+fn cancel_current_operation(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<(), String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    backend.cancel_current_operation()?;
+    update_tray_presentation(&app, &backend.settings(), &backend.app_status());
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_save_folder(state: State<'_, BackendState>) -> Result<(), String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    let request = reveal_save_folder_request(&backend.settings());
+    Command::new(request.program)
+        .arg(request.path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.process_next_transcription()
@@ -526,6 +548,8 @@ fn main() {
             retry_job,
             skip_job,
             cancel_current_transcription,
+            cancel_current_operation,
+            reveal_save_folder,
             process_next_transcription,
             start_live_capture,
             stop_live_capture

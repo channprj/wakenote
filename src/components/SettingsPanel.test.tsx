@@ -14,9 +14,11 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onStartLiveCapture={() => {}}
       onStopLiveCapture={() => {}}
       onChooseSaveRoot={() => {}}
+      onRevealSaveFolder={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
       onCancelCurrent={() => {}}
+      onCancelCurrentOperation={() => {}}
       onProcessNextTranscription={() => {}}
       onRetry={() => {}}
       onSkip={() => {}}

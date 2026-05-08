@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { defaultLevelSnapshot, mockSnapshot } from "./app-state";
 import {
   chooseSaveRoot,
+  revealSaveFolder,
+  cancelCurrentOperation,
   cancelModelDownload,
   cancelCurrentTranscription,
   deleteModel,
@@ -38,6 +40,7 @@ describe("tauri live capture client", () => {
     await expect(stopLiveCapture()).resolves.toEqual(expected);
     await expect(processNextTranscription()).resolves.toEqual(expected);
     await expect(chooseSaveRoot()).resolves.toEqual(expected);
+    await expect(revealSaveFolder()).resolves.toEqual(expected);
   });
 
   it("marks browser fallback save root patches confirmed only when non-empty", async () => {
@@ -143,6 +146,27 @@ describe("tauri live capture client", () => {
 
     const cancelled = await cancelModelDownload("whisper-tiny");
     expect(cancelled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "error",
+      download_progress: 0,
+      download_error: "cancelled by user",
+    });
+  });
+
+  it("cancels active browser fallback model downloads from the generic cancel action", async () => {
+    const current = await loadSnapshot();
+    const targetModelId =
+      current.settings.selected_model === "whisper-tiny" ? "whisper-medium" : "whisper-tiny";
+    await deleteModel(targetModelId);
+    const downloading = await downloadModel(targetModelId);
+    expect(downloading.models.find((model) => model.id === targetModelId)).toMatchObject({
+      status: "downloading",
+      download_progress: 0,
+      download_error: null,
+    });
+
+    const cancelled = await cancelCurrentOperation();
+
+    expect(cancelled.models.find((model) => model.id === targetModelId)).toMatchObject({
       status: "error",
       download_progress: 0,
       download_error: "cancelled by user",
@@ -377,6 +401,28 @@ describe("tauri live capture client", () => {
     }
 
     const cancelled = await cancelCurrentTranscription();
+
+    expect(cancelled.queue.running_count).toBe(0);
+    expect(cancelled.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+      status: "cancelled",
+      error: "cancelled by user",
+    });
+  });
+
+  it("cancels running browser fallback transcription jobs from the generic cancel action", async () => {
+    await loadSnapshot();
+    const before = await enqueueAudioFiles(["/tmp/imported/cancel-current-operation.wav"]);
+    const job = before.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/cancel-current-operation.wav",
+    );
+    expect(job?.id).toBeTypeOf("number");
+    if (job) {
+      job.status = "running";
+      before.queue.pending_count -= 1;
+      before.queue.running_count += 1;
+    }
+
+    const cancelled = await cancelCurrentOperation();
 
     expect(cancelled.queue.running_count).toBe(0);
     expect(cancelled.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({

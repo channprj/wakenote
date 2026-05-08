@@ -378,6 +378,36 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function cancelCurrentOperation(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const activeModel = browserSnapshot.models.find((model) =>
+      ["downloading", "verifying", "extracting"].includes(model.status),
+    );
+    if (activeModel) {
+      browserVerificationPreviousStatuses.delete(activeModel.id);
+      browserSnapshot = {
+        ...browserSnapshot,
+        models: browserSnapshot.models.map((model) =>
+          model.id === activeModel.id
+            ? {
+                ...model,
+                status: "error",
+                download_progress: model.download_progress ?? 0,
+                download_error: "cancelled by user",
+              }
+            : model,
+        ),
+      };
+      return browserSnapshot;
+    }
+
+    return cancelCurrentTranscription();
+  }
+
+  await invoke("cancel_current_operation");
+  return loadSnapshot();
+}
+
 export async function processNextTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
@@ -473,6 +503,15 @@ export async function chooseSaveRoot(): Promise<AppSnapshot> {
   await invoke<AppSettings>("update_settings", {
     patch: { save_root: selected },
   });
+  return loadSnapshot();
+}
+
+export async function revealSaveFolder(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  await invoke("reveal_save_folder");
   return loadSnapshot();
 }
 
