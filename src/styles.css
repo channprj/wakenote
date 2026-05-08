@@ -277,6 +277,10 @@ svg {
 }
 
 .warning-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 12px;
   border: 1px solid rgba(217, 119, 6, 0.3);
   border-radius: 8px;
@@ -284,6 +288,24 @@ svg {
   color: #92400e;
   padding: 10px 12px;
   font-size: 13px;
+}
+
+.warning-banner--danger {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.warning-banner button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .onboarding-strip {

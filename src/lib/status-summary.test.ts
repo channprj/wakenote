@@ -62,7 +62,50 @@ describe("capture status presentation", () => {
         },
       }),
     ).toMatchObject({
-      runtimeWarning: "Live input dropped 42 stale audio frames while processing was busy",
+      warning: {
+        key: "runtime:Live input dropped 42 stale audio frames while processing was busy",
+        message: "Live input dropped 42 stale audio frames while processing was busy",
+        tone: "warning",
+      },
+    });
+  });
+
+  it("prioritizes microphone warnings over runtime and queue warnings", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        queue: { ...snapshot.queue, failed_count: 2 },
+        status: {
+          ...snapshot.status,
+          microphone_warning: "Pinned microphone is unavailable",
+          runtime_warning: "Live input dropped 42 stale audio frames while processing was busy",
+        },
+      }).warning,
+    ).toEqual({
+      key: "microphone:Pinned microphone is unavailable",
+      message: "Pinned microphone is unavailable",
+      tone: "danger",
+    });
+  });
+
+  it("falls back to failed queue warnings when device and runtime are healthy", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        queue: { ...snapshot.queue, failed_count: 3 },
+        status: {
+          ...snapshot.status,
+          queue: { ...snapshot.queue, failed_count: 3 },
+        },
+      }).warning,
+    ).toEqual({
+      key: "queue-failed:3",
+      message: "3 transcription jobs need attention",
+      tone: "danger",
     });
   });
 });

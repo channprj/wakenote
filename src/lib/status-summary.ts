@@ -12,6 +12,13 @@ export interface CaptureStatusPresentation {
   queueSummary: string;
   levelSummary: string;
   runtimeWarning: string | null;
+  warning: CaptureWarning | null;
+}
+
+export interface CaptureWarning {
+  key: string;
+  message: string;
+  tone: "warning" | "danger";
 }
 
 const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
@@ -49,5 +56,37 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
       status.level.peak_dbfs,
     )} dBFS peak`,
     runtimeWarning: status.runtime_warning ?? null,
+    warning: activeWarning(snapshot),
   };
+}
+
+function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
+  const microphoneWarning = snapshot.status.microphone_warning;
+  if (microphoneWarning) {
+    return {
+      key: `microphone:${microphoneWarning}`,
+      message: microphoneWarning,
+      tone: "danger",
+    };
+  }
+
+  const runtimeWarning = snapshot.status.runtime_warning;
+  if (runtimeWarning) {
+    return {
+      key: `runtime:${runtimeWarning}`,
+      message: runtimeWarning,
+      tone: "warning",
+    };
+  }
+
+  const failedCount = snapshot.queue.failed_count;
+  if (failedCount > 0) {
+    return {
+      key: `queue-failed:${failedCount}`,
+      message: `${failedCount} transcription ${failedCount === 1 ? "job needs" : "jobs need"} attention`,
+      tone: "danger",
+    };
+  }
+
+  return null;
 }

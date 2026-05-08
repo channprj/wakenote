@@ -11,6 +11,7 @@ import {
   Settings2,
   Shield,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FloatingOverlay } from "./components/FloatingOverlay";
@@ -54,6 +55,7 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(mockSnapshot());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dismissedWarningKey, setDismissedWarningKey] = useState<string | null>(null);
 
   async function refresh() {
     setBusy(true);
@@ -122,6 +124,8 @@ export default function App() {
   }
 
   const statusPresentation = captureStatusPresentation(snapshot);
+  const visibleWarning =
+    statusPresentation.warning?.key === dismissedWarningKey ? null : statusPresentation.warning;
 
   return (
     <div className="app-shell">
@@ -189,11 +193,17 @@ export default function App() {
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
-        {!error && snapshot.status.microphone_warning ? (
-          <div className="error-banner">{snapshot.status.microphone_warning}</div>
-        ) : null}
-        {!error && !snapshot.status.microphone_warning && statusPresentation.runtimeWarning ? (
-          <div className="warning-banner">{statusPresentation.runtimeWarning}</div>
+        {!error && visibleWarning ? (
+          <div className={`warning-banner warning-banner--${visibleWarning.tone}`}>
+            <span>{visibleWarning.message}</span>
+            <button
+              type="button"
+              aria-label="Dismiss warning"
+              onClick={() => setDismissedWarningKey(visibleWarning.key)}
+            >
+              <X />
+            </button>
+          </div>
         ) : null}
 
         <Onboarding settings={snapshot.settings} models={snapshot.models} />
