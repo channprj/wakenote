@@ -36,7 +36,7 @@ describe("app state derivation", () => {
   });
 
   it("shows the floating overlay only for active capture or transcription states", () => {
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "listening")).toBe(true);
+    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "listening")).toBe(false);
     expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "recording")).toBe(true);
     expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "transcribing")).toBe(true);
     expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "idle")).toBe(false);

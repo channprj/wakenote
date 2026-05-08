@@ -1,10 +1,13 @@
 import {
+  Activity,
   AudioWaveform,
   Brain,
   Clock3,
   Folder,
   Info,
+  ListTodo,
   Mic,
+  RadioTower,
   Settings2,
   Shield,
   SlidersHorizontal,
@@ -32,6 +35,7 @@ import {
   verifyModel,
 } from "./lib/tauri-client";
 import { mockSnapshot, shouldPollSnapshot, shouldShowFloatingOverlay } from "./lib/app-state";
+import { captureStatusPresentation } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 
 const sections = [
@@ -117,6 +121,8 @@ export default function App() {
     }
   }
 
+  const statusPresentation = captureStatusPresentation(snapshot);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -149,19 +155,36 @@ export default function App() {
 
       <main className="workspace">
         <header className="workspace__header">
-          <div>
-            <h1>Voice Capture</h1>
-            <div className="status-strip">
-              <Badge tone={snapshot.status.tray_state === "paused" ? "warning" : "primary"}>
-                {snapshot.status.mode}
-              </Badge>
-              <Badge>{snapshot.status.active_model}</Badge>
-              <Badge>{snapshot.settings.threshold_dbfs} dBFS</Badge>
+          <div className="status-hero" data-tone={statusPresentation.tone}>
+            <div className="status-hero__mark">
+              <RadioTower />
+            </div>
+            <div className="status-hero__copy">
+              <div className="status-strip">
+                <Badge tone={statusPresentation.tone}>{statusPresentation.modeLabel}</Badge>
+                <Badge>{snapshot.status.tray_state}</Badge>
+              </div>
+              <h1>{statusPresentation.headline}</h1>
+              <span>{statusPresentation.detail}</span>
             </div>
           </div>
-          <div className="header-meter" data-busy={busy}>
-            <span />
-            <strong>{busy ? "Syncing" : snapshot.status.tray_state}</strong>
+
+          <div className="status-cards" aria-label="Capture status summary">
+            <div>
+              <Activity />
+              <span>Level</span>
+              <strong>{statusPresentation.levelSummary}</strong>
+            </div>
+            <div>
+              <ListTodo />
+              <span>Queue</span>
+              <strong>{statusPresentation.queueSummary}</strong>
+            </div>
+            <div data-busy={busy}>
+              <AudioWaveform />
+              <span>Runtime</span>
+              <strong>{busy ? "Syncing snapshot" : statusPresentation.microphone}</strong>
+            </div>
           </div>
         </header>
 

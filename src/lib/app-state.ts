@@ -63,7 +63,7 @@ export function shouldShowFloatingOverlay(
 ) {
   return (
     settings.show_floating_overlay &&
-    ["listening", "recording", "transcribing"].includes(trayState)
+    ["recording", "transcribing"].includes(trayState)
   );
 }
 

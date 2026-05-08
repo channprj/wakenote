@@ -53,7 +53,12 @@ export function LevelMeter({
           <span>Peak</span>
           <strong>{Math.round(peakDb)} dBFS</strong>
         </div>
-        <Badge tone={active ? "success" : "neutral"}>{status.tray_state}</Badge>
+        <div>
+          <span>State</span>
+          <strong>
+            <Badge tone={active ? "success" : "neutral"}>{status.tray_state}</Badge>
+          </strong>
+        </div>
       </div>
       <div className="level-meter__track" aria-label="Microphone dBFS level">
         <i style={{ left: meterPosition(settings.threshold_dbfs) }} />
