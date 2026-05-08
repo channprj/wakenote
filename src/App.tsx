@@ -216,7 +216,11 @@ export default function App() {
           </div>
         ) : null}
 
-        <Onboarding settings={snapshot.settings} models={snapshot.models} />
+        <Onboarding
+          settings={snapshot.settings}
+          models={snapshot.models}
+          microphones={snapshot.microphones}
+        />
 
         <SettingsPanel
           activeSection={activeSection}
