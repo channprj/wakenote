@@ -73,6 +73,18 @@ export function shouldShowFloatingOverlay(
   );
 }
 
+function hasProcessablePendingTranscription(queue: QueueSnapshot, models: ModelDescriptor[]) {
+  const usableModelIds = new Set(
+    models
+      .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
+      .map((model) => model.id),
+  );
+
+  return queue.jobs.some(
+    (job) => job.status === "pending" && usableModelIds.has(job.model_id),
+  );
+}
+
 export function shouldPollSnapshot(
   status: AppStatus,
   queue: QueueSnapshot,
@@ -85,7 +97,7 @@ export function shouldPollSnapshot(
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
     status.live_input_active ||
     status.runtime_warning?.startsWith("Live input stream error:") ||
-    (canProcessPendingTranscription && queue.pending_count > 0) ||
+    (canProcessPendingTranscription && hasProcessablePendingTranscription(queue, models)) ||
     queue.running_count > 0 ||
     models.some((model) => ["downloading", "verifying", "extracting"].includes(model.status))
   );

@@ -52,10 +52,46 @@ describe("app state derivation", () => {
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {
     const snapshot = mockSnapshot();
     const idleStatus = { ...snapshot.status, tray_state: "idle" as const };
+    const pendingQueue = {
+      ...snapshot.queue,
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/pending.wav",
+          model_id: "whisper-medium",
+          status: "pending" as const,
+          error: null,
+        },
+      ],
+      pending_count: 1,
+    };
+    const readyModels = snapshot.models.map((model) =>
+      model.id === "whisper-medium" ? { ...model, status: "ready" as const } : model,
+    );
 
-    expect(shouldPollSnapshot(idleStatus, { ...snapshot.queue, pending_count: 1 })).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, pendingQueue, readyModels)).toBe(true);
     expect(shouldPollSnapshot(idleStatus, { ...snapshot.queue, running_count: 1 })).toBe(true);
     expect(shouldPollSnapshot(idleStatus, snapshot.queue)).toBe(false);
+  });
+
+  it("does not poll static pending queue work when every pending job model is unavailable", () => {
+    const snapshot = mockSnapshot();
+    const idleStatus = { ...snapshot.status, tray_state: "idle" as const };
+    const pendingQueue = {
+      ...snapshot.queue,
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/missing-model.wav",
+          model_id: "whisper-medium",
+          status: "pending" as const,
+          error: null,
+        },
+      ],
+      pending_count: 1,
+    };
+
+    expect(shouldPollSnapshot(idleStatus, pendingQueue, snapshot.models)).toBe(false);
   });
 
   it("does not keep polling for pending transcription work when transcription is disabled", () => {
