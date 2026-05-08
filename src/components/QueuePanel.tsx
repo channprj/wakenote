@@ -25,8 +25,18 @@ export function queueJobActionState(status: QueueJobStatus) {
   };
 }
 
+export function queueToolbarActionState(
+  queue: Pick<QueueSnapshot, "pending_count">,
+  canProcessTranscription: boolean,
+) {
+  return {
+    canProcessNext: canProcessTranscription && queue.pending_count > 0,
+  };
+}
+
 export function QueuePanel({
   queue,
+  canProcessTranscription,
   onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
@@ -35,6 +45,7 @@ export function QueuePanel({
   onSkip,
 }: {
   queue: QueueSnapshot;
+  canProcessTranscription: boolean;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
@@ -42,6 +53,8 @@ export function QueuePanel({
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
 }) {
+  const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
+
   return (
     <div className="queue-panel">
       <div className="queue-stats">
@@ -71,7 +84,7 @@ export function QueuePanel({
           type="button"
           variant="primary"
           onClick={onProcessNext}
-          disabled={queue.pending_count === 0}
+          disabled={!toolbarActions.canProcessNext}
         >
           <Play data-icon="inline-start" />
           Process Next

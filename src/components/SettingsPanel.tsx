@@ -158,6 +158,7 @@ export function SettingsPanel({
       <Section title="History" eyebrow="Transcription queue">
         <QueuePanel
           queue={queue}
+          canProcessTranscription={!settings.pause_all && settings.transcription_enabled}
           onImportAudioFiles={onImportAudioFiles}
           onEnqueueBacklog={onEnqueueBacklog}
           onCancelCurrent={onCancelCurrent}
