@@ -71,6 +71,17 @@ describe("app state derivation", () => {
     expect(shouldPollSnapshot(idleStatus, snapshot.queue, snapshot.models)).toBe(false);
   });
 
+  it("keeps polling while a live input stream error is active", () => {
+    const snapshot = mockSnapshot();
+    const streamErrorStatus = {
+      ...snapshot.status,
+      tray_state: "error" as const,
+      runtime_warning: "Live input stream error: default input stream disconnected",
+    };
+
+    expect(shouldPollSnapshot(streamErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
+  });
+
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 

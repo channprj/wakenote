@@ -75,6 +75,7 @@ export function shouldPollSnapshot(
 ) {
   return (
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
+    status.runtime_warning?.startsWith("Live input stream error:") ||
     queue.pending_count > 0 ||
     queue.running_count > 0 ||
     models.some((model) => ["downloading", "verifying", "extracting"].includes(model.status))
