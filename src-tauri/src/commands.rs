@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
-use crate::audio::{list_input_devices, LevelMonitor, LevelSnapshot};
+use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
-use crate::models::{default_model_registry, ModelDescriptor, ModelStatus, ModelStore};
+use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
-use crate::queue::{is_importable_audio_path, BacklogScan, QueueSnapshot, TranscriptionQueue};
+use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable_audio_path};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
-use crate::settings::{expand_user_path, AppSettings, SettingsPatch};
+use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
 use crate::transcription::{
-    apply_outcome, Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber,
+    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -542,12 +542,15 @@ impl AppBackend {
             return Ok(self.queue.snapshot());
         }
 
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
+            return Ok(self.queue.snapshot());
+        };
         let worker = TranscriptionWorker::new(transcriber);
-        worker
-            .process_next(&mut self.queue)
-            .map_err(|error| error.to_string())?;
-        self.persist_queue();
-        Ok(self.queue.snapshot())
+        let outcome = worker
+            .process_started_job(&job)
+            .unwrap_or_else(|error| TranscriptionJobOutcome::failed(job.id, error.to_string()));
+        self.finish_transcription_job(outcome)
     }
 
     pub fn process_pending_transcriptions_with<T: Clone + Transcriber>(
@@ -568,13 +571,10 @@ impl AppBackend {
     }
 
     pub fn should_process_transcriptions(&self) -> bool {
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
         !self.settings.pause_all
             && self.settings.transcription_enabled
-            && model_is_selectable(
-                &self.settings.selected_model,
-                &self.settings.model_directory,
-            )
-            && self.queue.snapshot().pending_count > 0
+            && self.queue.has_pending_for_model_ids(&selectable_model_ids)
     }
 
     pub fn start_next_transcription_job(&mut self) -> Option<StartedTranscriptionJob> {
@@ -582,7 +582,8 @@ impl AppBackend {
             return None;
         }
 
-        let job = self.queue.start_next()?;
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let job = self.queue.start_next_for_model_ids(&selectable_model_ids)?;
         self.persist_queue();
         Some(StartedTranscriptionJob {
             job,
@@ -750,6 +751,10 @@ fn derive_tray_state(
 }
 
 fn model_is_selectable(model_id: &str, model_directory: &str) -> bool {
+    selectable_model_ids(model_directory).contains(model_id)
+}
+
+fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
     let store = ModelStore::new(expand_user_path(model_directory));
     let mut models = store
         .load_model_registry()
@@ -757,13 +762,16 @@ fn model_is_selectable(model_id: &str, model_directory: &str) -> bool {
         .into_values()
         .collect::<Vec<_>>();
     let _ = store.refresh_statuses(&mut models);
-    models.iter().any(|model| {
-        model.id == model_id
-            && matches!(
+    models
+        .into_iter()
+        .filter(|model| {
+            matches!(
                 model.status,
                 ModelStatus::Installed | ModelStatus::Ready | ModelStatus::Unloaded
             )
-    })
+        })
+        .map(|model| model.id)
+        .collect()
 }
 
 pub fn with_runtime_warning(status: AppStatus, dropped_frames: u64) -> AppStatus {

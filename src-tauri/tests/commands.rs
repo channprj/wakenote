@@ -1,9 +1,9 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::commands::{
-    main_window_close_action, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
-    with_runtime_warning, AppBackend, AppMode, MainWindowCloseAction, TrayState,
+    AppBackend, AppMode, MainWindowCloseAction, TrayState, main_window_close_action,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -28,6 +28,36 @@ fn wav_settings_patch(save_root: &std::path::Path) -> SettingsPatch {
         transcription_enabled: Some(true),
         ..SettingsPatch::default()
     }
+}
+
+fn write_ready_local_model(model_directory: &std::path::Path, model_id: &str) {
+    std::fs::create_dir_all(model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        format!(
+            r#"[
+          {{
+            "id": "{model_id}",
+            "display_name": "Ready Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }}
+        ]"#
+        ),
+    )
+    .expect("registry json");
+    std::fs::write(
+        model_directory.join(format!("{model_id}.bin")),
+        b"ready model",
+    )
+    .expect("ready model");
 }
 
 #[test]
@@ -407,9 +437,16 @@ fn backend_queues_active_capture_started_before_transcription_is_disabled() {
 fn backend_processes_next_transcription_job_and_writes_sidecar() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230912.wav");
+    let model_directory = tmp.path().join("models");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
     std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    write_ready_local_model(&model_directory, "whisper-medium");
     let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
@@ -425,6 +462,89 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
         "queued transcript\n"
     );
+}
+
+#[test]
+fn backend_process_next_transcription_skips_unusable_pending_job_models() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "whisper-medium",
+            "display_name": "Whisper Medium",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          },
+          {
+            "id": "missing-local",
+            "display_name": "Missing Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    let missing_audio = tmp.path().join("20260506").join("missing.wav");
+    let ready_audio = tmp.path().join("20260506").join("ready.wav");
+    std::fs::create_dir_all(missing_audio.parent().unwrap()).expect("audio dir");
+    std::fs::write(&missing_audio, b"wav bytes").expect("missing audio");
+    std::fs::write(&ready_audio, b"wav bytes").expect("ready audio");
+    std::fs::write(model_directory.join("whisper-medium.bin"), b"ready model")
+        .expect("ready model");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&missing_audio, Some("missing-local".to_string()));
+    backend.enqueue_audio_file(&ready_audio, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber)
+        .expect("process usable transcription");
+
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|job| job.audio_path == missing_audio)
+            .expect("missing job")
+            .status,
+        sagwan::queue::QueueJobStatus::Pending
+    );
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|job| job.audio_path == ready_audio)
+            .expect("ready job")
+            .status,
+        sagwan::queue::QueueJobStatus::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(ready_audio.with_extension("txt")).expect("transcript"),
+        "queued transcript\n"
+    );
+    assert!(!missing_audio.with_extension("error.txt").exists());
 }
 
 #[test]
@@ -445,10 +565,17 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let first_audio = tmp.path().join("20260506").join("231114.wav");
     let second_audio = tmp.path().join("20260506").join("231115.wav");
+    let model_directory = tmp.path().join("models");
     std::fs::create_dir_all(first_audio.parent().unwrap()).expect("audio dir");
     std::fs::write(&first_audio, b"wav bytes").expect("first audio");
     std::fs::write(&second_audio, b"wav bytes").expect("second audio");
+    write_ready_local_model(&model_directory, "whisper-medium");
     let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
     backend.enqueue_audio_file(&first_audio, Some("whisper-medium".to_string()));
     backend.enqueue_audio_file(&second_audio, Some("whisper-medium".to_string()));
 
@@ -458,10 +585,12 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
 
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 0);
-    assert!(snapshot
-        .jobs
-        .iter()
-        .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed));
+    assert!(
+        snapshot
+            .jobs
+            .iter()
+            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
+    );
     assert_eq!(
         std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
         "queued transcript\n"
@@ -476,10 +605,17 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
 fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("231119.wav");
+    let model_directory = tmp.path().join("models");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
     std::fs::write(&audio_path, b"wav bytes").expect("audio");
     std::fs::create_dir(audio_path.with_extension("txt")).expect("block transcript sidecar");
+    write_ready_local_model(&model_directory, "whisper-medium");
     let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
@@ -489,11 +625,13 @@ fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
     assert_eq!(snapshot.running_count, 0);
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 1);
-    assert!(snapshot.jobs[0]
-        .error
-        .as_deref()
-        .unwrap_or("")
-        .contains("recorder error"));
+    assert!(
+        snapshot.jobs[0]
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("recorder error")
+    );
 }
 
 #[test]
@@ -522,7 +660,7 @@ fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
 }
 
 #[test]
-fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
+fn backend_default_transcription_worker_waits_when_model_is_missing() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("231013.wav");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
@@ -538,23 +676,19 @@ fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
         .process_next_transcription()
         .expect("process transcription");
 
-    assert_eq!(snapshot.failed_count, 1);
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.failed_count, 0);
     assert_eq!(
         snapshot.jobs[0].status,
-        sagwan::queue::QueueJobStatus::Failed
+        sagwan::queue::QueueJobStatus::Pending
     );
-    assert_eq!(backend.app_status().tray_state, TrayState::Error);
+    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
     assert!(audio_path.exists());
-    assert!(
-        std::fs::read_to_string(audio_path.with_extension("error.txt"))
-            .expect("error sidecar")
-            .contains("model file not found")
-    );
+    assert!(!audio_path.with_extension("error.txt").exists());
 }
 
 #[test]
-fn backend_manual_transcription_expands_tilde_model_directory() {
-    let home = std::env::var_os("HOME").expect("HOME should be set");
+fn backend_manual_transcription_waits_when_model_directory_has_no_usable_model() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("231014.wav");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
@@ -573,18 +707,13 @@ fn backend_manual_transcription_expands_tilde_model_directory() {
         .process_next_transcription()
         .expect("process transcription");
 
-    assert_eq!(snapshot.failed_count, 1);
-    assert!(
-        std::fs::read_to_string(audio_path.with_extension("error.txt"))
-            .expect("error sidecar")
-            .contains(
-                PathBuf::from(home)
-                    .join("Library/Application Support/Sagwan/models")
-                    .join("missing-model-for-tilde-expansion.bin")
-                    .to_string_lossy()
-                    .as_ref()
-            )
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.failed_count, 0);
+    assert_eq!(
+        snapshot.jobs[0].status,
+        sagwan::queue::QueueJobStatus::Pending
     );
+    assert!(!audio_path.with_extension("error.txt").exists());
 }
 
 #[test]
@@ -904,6 +1033,67 @@ fn backend_auto_transcription_waits_for_usable_selected_model() {
     });
 
     assert!(backend.should_process_transcriptions());
+}
+
+#[test]
+fn backend_auto_transcription_waits_for_pending_job_model_readiness() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "ready-local",
+            "display_name": "Ready Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          },
+          {
+            "id": "missing-local",
+            "display_name": "Missing Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    let audio_path = tmp.path().join("20260506").join("pending.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    std::fs::write(model_directory.join("ready-local.bin"), b"ready model").expect("ready model");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("ready-local".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("missing-local".to_string()));
+
+    assert!(!backend.should_process_transcriptions());
+    assert!(backend.start_next_transcription_job().is_none());
+
+    std::fs::write(model_directory.join("missing-local.bin"), b"ready model").expect("ready model");
+
+    assert!(backend.should_process_transcriptions());
+    let started = backend
+        .start_next_transcription_job()
+        .expect("ready job should start");
+    assert_eq!(started.job.model_id, "missing-local");
 }
 
 #[test]

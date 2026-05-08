@@ -94,4 +94,37 @@ describe("settings panel", () => {
 
     expect(isDisabled(buttonTag(readyMarkup, "Process Next"))).toBe(false);
   });
+
+  it("disables process next until at least one pending job model is usable", () => {
+    const snapshot = mockSnapshot();
+    snapshot.models = snapshot.models.map((model) =>
+      model.id === snapshot.settings.selected_model ? { ...model, status: "ready" } : model,
+    );
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/pending-tiny.wav",
+          model_id: "whisper-tiny",
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const missingJobModelMarkup = renderSettingsPanel(snapshot, "history");
+
+    expect(isDisabled(buttonTag(missingJobModelMarkup, "Process Next"))).toBe(true);
+
+    snapshot.models = snapshot.models.map((model) =>
+      model.id === "whisper-tiny" ? { ...model, status: "ready" } : model,
+    );
+    const readyJobModelMarkup = renderSettingsPanel(snapshot, "history");
+
+    expect(isDisabled(buttonTag(readyJobModelMarkup, "Process Next"))).toBe(false);
+  });
 });

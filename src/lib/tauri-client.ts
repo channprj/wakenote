@@ -379,17 +379,13 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const models = browserSnapshot.models ?? mockModels();
-    if (
-      settings.pause_all ||
-      !settings.transcription_enabled ||
-      !isUsableBrowserModel(settings.selected_model, models)
-    ) {
+    if (settings.pause_all || !settings.transcription_enabled) {
       return browserSnapshot;
     }
 
     let processed = false;
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (processed || job.status !== "pending") {
+      if (processed || job.status !== "pending" || !isUsableBrowserModel(job.model_id, models)) {
         return job;
       }
 

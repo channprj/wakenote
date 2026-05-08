@@ -86,6 +86,41 @@ describe("tauri live capture client", () => {
     await skipJob(pendingId ?? -1);
   });
 
+  it("does not process browser fallback queue work while the queued model is unavailable", async () => {
+    const current = await loadSnapshot();
+    for (const job of current.queue.jobs.filter((candidate) => candidate.status === "pending")) {
+      await skipJob(job.id);
+    }
+
+    await downloadModel("whisper-medium");
+    await loadSnapshot();
+    await saveSettingsPatch({ selected_model: "whisper-medium" });
+    const queued = await enqueueAudioFiles(["/tmp/imported/missing-queued-model.wav"]);
+    const pendingId = queued.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/missing-queued-model.wav",
+    )?.id;
+    expect(pendingId).toBeTypeOf("number");
+
+    await downloadModel("whisper-tiny");
+    await loadSnapshot();
+    await saveSettingsPatch({ selected_model: "whisper-tiny" });
+    await deleteModel("whisper-medium");
+
+    const processed = await processNextTranscription();
+
+    expect(processed.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+      model_id: "whisper-medium",
+      status: "pending",
+      error: null,
+    });
+
+    await skipJob(pendingId ?? -1);
+    await downloadModel("whisper-medium");
+    await loadSnapshot();
+    await saveSettingsPatch({ selected_model: "whisper-medium" });
+    await deleteModel("whisper-tiny");
+  });
+
   it("simulates model download and cancel state outside Tauri", async () => {
     const downloading = await downloadModel("whisper-tiny");
     expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
@@ -189,6 +224,9 @@ describe("tauri live capture client", () => {
   });
 
   it("settles browser fallback verification during snapshot polling", async () => {
+    await downloadModel("whisper-tiny");
+    await loadSnapshot();
+    await saveSettingsPatch({ selected_model: "whisper-tiny" });
     await deleteModel("whisper-medium");
 
     const verifying = await verifyModel("whisper-medium");

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +104,21 @@ impl TranscriptionQueue {
             .jobs
             .iter_mut()
             .find(|job| job.status == QueueJobStatus::Pending)?;
+        job.status = QueueJobStatus::Running;
+        job.error = None;
+        Some(job.clone())
+    }
+
+    pub fn has_pending_for_model_ids(&self, model_ids: &HashSet<String>) -> bool {
+        self.jobs
+            .iter()
+            .any(|job| job.status == QueueJobStatus::Pending && model_ids.contains(&job.model_id))
+    }
+
+    pub fn start_next_for_model_ids(&mut self, model_ids: &HashSet<String>) -> Option<QueueJob> {
+        let job = self.jobs.iter_mut().find(|job| {
+            job.status == QueueJobStatus::Pending && model_ids.contains(&job.model_id)
+        })?;
         job.status = QueueJobStatus::Running;
         job.error = None;
         Some(job.clone())

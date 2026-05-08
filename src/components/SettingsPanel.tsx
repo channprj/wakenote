@@ -57,9 +57,14 @@ export function SettingsPanel({
   const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
   const fallbackMicrophone = microphones.find((mic) => mic.fallback && mic.available);
   const canStartWithMicrophone = selectedMicrophoneAvailable || Boolean(fallbackMicrophone);
-  const selectedModel = models.find((model) => model.id === settings.selected_model);
-  const selectedModelUsable =
-    selectedModel && ["ready", "installed", "unloaded"].includes(selectedModel.status);
+  const usableModelIds = new Set(
+    models
+      .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
+      .map((model) => model.id),
+  );
+  const hasProcessablePendingJob = queue.jobs.some(
+    (job) => job.status === "pending" && usableModelIds.has(job.model_id),
+  );
   const liveCaptureDisabled =
     settings.pause_all || !settings.recording_enabled || !canStartWithMicrophone;
 
@@ -164,7 +169,7 @@ export function SettingsPanel({
         <QueuePanel
           queue={queue}
           canProcessTranscription={
-            !settings.pause_all && settings.transcription_enabled && Boolean(selectedModelUsable)
+            !settings.pause_all && settings.transcription_enabled && hasProcessablePendingJob
           }
           onImportAudioFiles={onImportAudioFiles}
           onEnqueueBacklog={onEnqueueBacklog}
