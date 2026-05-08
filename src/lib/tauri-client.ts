@@ -44,6 +44,10 @@ function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
   };
 }
 
+function isBrowserImportableAudioPath(audioPath: string) {
+  return /\.(m4a|wav)$/i.test(audioPath);
+}
+
 function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
   return models.map((model) => {
     if (model.status === "downloading") {
@@ -267,6 +271,9 @@ export async function enqueueAudioFiles(audioPaths: string[]): Promise<AppSnapsh
     const queuedPaths = new Set(browserSnapshot.queue.jobs.map((job) => job.audio_path));
     const importedJobs = audioPaths
       .filter((audioPath) => {
+        if (!isBrowserImportableAudioPath(audioPath)) {
+          return false;
+        }
         if (queuedPaths.has(audioPath)) {
           return false;
         }

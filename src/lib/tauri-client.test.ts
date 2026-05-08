@@ -214,6 +214,24 @@ describe("tauri live capture client", () => {
     expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
   });
 
+  it("ignores non-audio browser fallback imports", async () => {
+    const before = await loadSnapshot();
+    const snapshot = await enqueueAudioFiles([
+      "/tmp/imported/not-audio.txt",
+      "/tmp/imported/folder",
+      "/tmp/imported/voice.WAV",
+    ]);
+
+    expect(snapshot.queue.pending_count).toBe(before.queue.pending_count + 1);
+    expect(snapshot.queue.jobs.map((job) => job.audio_path)).toContain("/tmp/imported/voice.WAV");
+    expect(snapshot.queue.jobs.map((job) => job.audio_path)).not.toContain(
+      "/tmp/imported/not-audio.txt",
+    );
+    expect(snapshot.queue.jobs.map((job) => job.audio_path)).not.toContain(
+      "/tmp/imported/folder",
+    );
+  });
+
   it("does not duplicate browser fallback backlog audio files", async () => {
     const saveRoot = "/tmp/browser-backlog-dedupe";
     const audioPath = `${saveRoot}/20260506/230709.m4a`;
