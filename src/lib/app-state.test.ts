@@ -185,6 +185,39 @@ describe("app state derivation", () => {
     ).not.toBe(baseKey);
   });
 
+  it("changes the polling dependency key when pending job model targets change", () => {
+    const snapshot = mockSnapshot();
+    const mediumPendingQueue = {
+      ...snapshot.queue,
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/medium.wav",
+          model_id: "whisper-medium",
+          status: "pending" as const,
+          error: null,
+        },
+      ],
+      pending_count: 1,
+    };
+    const tinyPendingQueue = {
+      ...mediumPendingQueue,
+      jobs: [
+        {
+          id: 2,
+          audio_path: "/tmp/imported/tiny.wav",
+          model_id: "whisper-tiny",
+          status: "pending" as const,
+          error: null,
+        },
+      ],
+    };
+
+    expect(
+      pollSnapshotDependencyKey(snapshot.status, tinyPendingQueue, snapshot.models),
+    ).not.toBe(pollSnapshotDependencyKey(snapshot.status, mediumPendingQueue, snapshot.models));
+  });
+
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 

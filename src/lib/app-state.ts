@@ -115,6 +115,9 @@ export function pollSnapshotDependencyKey(
     runtimeWarning: status.runtime_warning ?? null,
     pendingCount: queue.pending_count,
     runningCount: queue.running_count,
+    pendingJobs: queue.jobs
+      .filter((job) => job.status === "pending")
+      .map((job) => ({ id: job.id, modelId: job.model_id })),
     models: models.map((model) => ({
       id: model.id,
       status: model.status,
