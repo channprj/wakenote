@@ -397,6 +397,41 @@ fn backend_default_transcription_worker_writes_error_when_model_is_missing() {
 }
 
 #[test]
+fn backend_manual_transcription_expands_tilde_model_directory() {
+    let home = std::env::var_os("HOME").expect("HOME should be set");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("231014.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some("~/Library/Application Support/Sagwan/models".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(
+        &audio_path,
+        Some("missing-model-for-tilde-expansion".to_string()),
+    );
+
+    let snapshot = backend
+        .process_next_transcription()
+        .expect("process transcription");
+
+    assert_eq!(snapshot.failed_count, 1);
+    assert!(
+        std::fs::read_to_string(audio_path.with_extension("error.txt"))
+            .expect("error sidecar")
+            .contains(
+                PathBuf::from(home)
+                    .join("Library/Application Support/Sagwan/models")
+                    .join("missing-model-for-tilde-expansion.bin")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+    );
+}
+
+#[test]
 fn backend_cancel_model_download_marks_model_as_recoverable_error() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

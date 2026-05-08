@@ -6,6 +6,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{RecordedChunk, RecorderError, TranscriptionSidecar};
+use crate::settings::expand_user_path;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
@@ -155,9 +156,9 @@ pub struct WhisperTranscriber {
 }
 
 impl WhisperTranscriber {
-    pub fn new(model_directory: impl Into<PathBuf>) -> Self {
+    pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
-            model_directory: model_directory.into(),
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
         }
     }
 

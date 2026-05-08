@@ -124,6 +124,29 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
 }
 
 #[test]
+fn whisper_transcriber_expands_tilde_model_directory() {
+    let home = std::env::var_os("HOME").expect("HOME should be set");
+    let audio_path = PathBuf::from("/tmp/sagwan-unused-audio.wav");
+    let transcriber = WhisperTranscriber::new("~/Library/Application Support/Sagwan/models");
+
+    let error = transcriber
+        .transcribe(TranscriptionRequest {
+            audio_path: &audio_path,
+            model_id: "missing-model-for-tilde-expansion",
+        })
+        .expect_err("missing model should fail");
+
+    assert_eq!(
+        error,
+        TranscriptionError::ModelMissing(
+            PathBuf::from(home)
+                .join("Library/Application Support/Sagwan/models")
+                .join("missing-model-for-tilde-expansion.bin")
+        )
+    );
+}
+
+#[test]
 fn m4a_audio_is_decoded_through_native_bridge_for_whisper() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let wav_path = tmp.path().join("source.wav");
