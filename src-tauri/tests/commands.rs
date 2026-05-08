@@ -354,6 +354,32 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
 }
 
 #[test]
+fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("231119.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    std::fs::create_dir(audio_path.with_extension("txt")).expect("block transcript sidecar");
+    let mut backend = AppBackend::default();
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_pending_transcriptions_with(StaticTranscriber)
+        .expect("worker sidecar errors should be captured as failed jobs");
+
+    assert_eq!(snapshot.running_count, 0);
+    assert_eq!(snapshot.pending_count, 0);
+    assert_eq!(snapshot.failed_count, 1);
+    assert!(
+        snapshot.jobs[0]
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("recorder error")
+    );
+}
+
+#[test]
 fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("231216.wav");

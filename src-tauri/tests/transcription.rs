@@ -86,6 +86,28 @@ fn transcription_worker_writes_error_and_marks_job_failed() {
 }
 
 #[test]
+fn transcription_worker_marks_job_failed_when_sidecar_write_fails() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("231010.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    std::fs::create_dir(audio_path.with_extension("txt")).expect("block transcript sidecar");
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::new(StaticTranscriber::success("transcript"));
+
+    let processed = worker
+        .process_next(&mut queue)
+        .expect("sidecar write failure should be captured as a failed job")
+        .expect("processed job");
+
+    assert_eq!(processed, id);
+    let job = queue.job(id).expect("job");
+    assert_eq!(job.status, QueueJobStatus::Failed);
+    assert!(job.error.as_deref().unwrap_or("").contains("recorder error"));
+}
+
+#[test]
 fn cancelled_transcription_job_ignores_late_worker_outcome() {
     let mut queue = TranscriptionQueue::new();
     let id = queue.enqueue_file("/recordings/20260506/230911.wav", "whisper-medium");

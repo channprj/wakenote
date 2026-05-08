@@ -120,8 +120,12 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             return Ok(None);
         };
 
-        let outcome = self.process_started_job(&job)?;
-        apply_outcome(queue, outcome)?;
+        match self.process_started_job(&job) {
+            Ok(outcome) => apply_outcome(queue, outcome)?,
+            Err(error) => queue
+                .mark_failed(job.id, error.to_string())
+                .map_err(TranscriptionWorkerError::Queue)?,
+        }
 
         Ok(Some(job.id))
     }

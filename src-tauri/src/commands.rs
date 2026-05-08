@@ -540,7 +540,9 @@ impl AppBackend {
             let worker = TranscriptionWorker::new(transcriber.clone());
             let outcome = worker
                 .process_started_job(&started.job)
-                .map_err(|error| error.to_string())?;
+                .unwrap_or_else(|error| {
+                    TranscriptionJobOutcome::failed(started.job.id, error.to_string())
+                });
             self.finish_transcription_job(outcome)?;
         }
 
