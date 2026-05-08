@@ -31,7 +31,9 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
 }
 
 function buttonTag(markup: string, label: string) {
-  const match = markup.match(new RegExp(`<button[^>]*>[\\s\\S]*?${label}[\\s\\S]*?</button>`));
+  const match = markup.match(
+    new RegExp(`<button[^>]*>(?:(?!</button>)[\\s\\S])*?${label}(?:(?!</button>)[\\s\\S])*?</button>`),
+  );
   expect(match, `expected ${label} button`).not.toBeNull();
   return match?.[0] ?? "";
 }
@@ -65,6 +67,31 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(markup, "Start Input"))).toBe(false);
     expect(markup).toContain("Missing AirPods is unavailable");
     expect(markup).toContain("Start Input will use System Default");
+  });
+
+  it("disables redundant live input start and stop actions while preserving error recovery", () => {
+    const stopped = mockSnapshot();
+    const stoppedMarkup = renderSettingsPanel(stopped);
+
+    expect(isDisabled(buttonTag(stoppedMarkup, "Start Input"))).toBe(false);
+    expect(isDisabled(buttonTag(stoppedMarkup, "Stop Input"))).toBe(true);
+
+    const active = mockSnapshot();
+    active.status.live_input_active = true;
+    active.status.tray_state = "listening";
+    const activeMarkup = renderSettingsPanel(active);
+
+    expect(isDisabled(buttonTag(activeMarkup, "Start Input"))).toBe(true);
+    expect(isDisabled(buttonTag(activeMarkup, "Stop Input"))).toBe(false);
+
+    const errored = mockSnapshot();
+    errored.status.live_input_active = true;
+    errored.status.tray_state = "error";
+    errored.status.runtime_warning = "Live input stream error: default input stream disconnected";
+    const erroredMarkup = renderSettingsPanel(errored);
+
+    expect(isDisabled(buttonTag(erroredMarkup, "Start Input"))).toBe(false);
+    expect(isDisabled(buttonTag(erroredMarkup, "Stop Input"))).toBe(false);
   });
 
   it("disables process next until the selected model is usable", () => {

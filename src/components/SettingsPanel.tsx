@@ -70,8 +70,12 @@ export function SettingsPanel({
   const hasProcessablePendingJob = queue.jobs.some(
     (job) => job.status === "pending" && usableModelIds.has(job.model_id),
   );
+  const liveInputStreamErrored = status.runtime_warning?.startsWith("Live input stream error:");
   const liveCaptureDisabled =
-    settings.pause_all || !settings.recording_enabled || !canStartWithMicrophone;
+    settings.pause_all ||
+    !settings.recording_enabled ||
+    !canStartWithMicrophone ||
+    (status.live_input_active && !liveInputStreamErrored);
 
   if (activeSection === "models") {
     return (
@@ -292,7 +296,13 @@ export function SettingsPanel({
               <Play data-icon="inline-start" />
               Start Input
             </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={onStopLiveCapture}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onStopLiveCapture}
+              disabled={!status.live_input_active}
+            >
               <Square data-icon="inline-start" />
               Stop Input
             </Button>
