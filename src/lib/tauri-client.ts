@@ -328,6 +328,26 @@ export async function chooseAudioFiles(): Promise<AppSnapshot> {
 
 export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    let cancelled = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (cancelled || job.status !== "running") {
+        return job;
+      }
+
+      cancelled = true;
+      return { ...job, status: "cancelled" as const, error: "cancelled by user" };
+    });
+    if (!cancelled) {
+      return browserSnapshot;
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
     return browserSnapshot;
   }
 

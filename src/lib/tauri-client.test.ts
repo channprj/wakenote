@@ -3,6 +3,7 @@ import { defaultLevelSnapshot, mockSnapshot } from "./app-state";
 import {
   chooseSaveRoot,
   cancelModelDownload,
+  cancelCurrentTranscription,
   deleteModel,
   downloadModel,
   enqueueBacklog,
@@ -168,6 +169,27 @@ describe("tauri live capture client", () => {
     expect(processed.queue.jobs.find((job) => job.id === firstPendingId)).toMatchObject({
       status: "completed",
       error: null,
+    });
+  });
+
+  it("cancels running browser fallback transcription jobs", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/cancel-running.wav"]);
+    const job = before.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/cancel-running.wav",
+    );
+    expect(job?.id).toBeTypeOf("number");
+    if (job) {
+      job.status = "running";
+      before.queue.pending_count -= 1;
+      before.queue.running_count += 1;
+    }
+
+    const cancelled = await cancelCurrentTranscription();
+
+    expect(cancelled.queue.running_count).toBe(0);
+    expect(cancelled.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+      status: "cancelled",
+      error: "cancelled by user",
     });
   });
 
