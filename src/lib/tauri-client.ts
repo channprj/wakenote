@@ -479,6 +479,14 @@ export async function verifyModel(modelId: string): Promise<AppSnapshot> {
 
 export async function downloadModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const target = browserSnapshot.models.find((model) => model.id === modelId);
+    if (
+      !target?.download_url ||
+      !["missing", "error"].includes(target.status)
+    ) {
+      return browserSnapshot;
+    }
+
     browserVerificationPreviousStatuses.delete(modelId);
     browserSnapshot = {
       ...browserSnapshot,
