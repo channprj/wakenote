@@ -132,6 +132,53 @@ fn live_capture_runtime_does_not_block_input_callback_when_processing_is_busy() 
 }
 
 #[test]
+fn live_capture_runtime_drops_stale_frames_when_processing_falls_behind() {
+    let input = FakeInput::default();
+    let emitter = input.clone();
+    let mut runtime = LiveCaptureRuntime::new(input);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let release_clone = release.clone();
+
+    runtime
+        .start(AudioInputConfig::default(), move |frame| {
+            let _ = entered_tx.send(frame.duration_ms);
+            if frame.duration_ms == 0 {
+                let (lock, cvar) = &*release_clone;
+                let mut released = lock.lock().expect("release lock");
+                while !*released {
+                    released = cvar.wait(released).expect("release wait");
+                }
+            }
+        })
+        .expect("start");
+
+    emitter.emit(AudioFrame {
+        samples: vec![0.1],
+        duration_ms: 0,
+    });
+    assert_eq!(entered_rx.recv_timeout(Duration::from_secs(1)), Ok(0));
+
+    for duration_ms in 1..=600 {
+        emitter.emit(AudioFrame {
+            samples: vec![0.2],
+            duration_ms,
+        });
+    }
+
+    {
+        let (lock, cvar) = &*release;
+        *lock.lock().expect("release lock") = true;
+        cvar.notify_all();
+    }
+
+    let first_after_busy = entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first frame after busy processing");
+    assert!(first_after_busy > 1);
+}
+
+#[test]
 fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
     let resolved = resolve_input_device_from_candidates(
         "input-9-missing-airpods",

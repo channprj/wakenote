@@ -1,9 +1,12 @@
+use std::collections::VecDeque;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use thiserror::Error;
+
+const FRAME_DISPATCH_QUEUE_CAPACITY: usize = 512;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioFrame {
@@ -67,8 +70,18 @@ pub struct LiveCaptureRuntime<B: AudioInputBackend> {
 }
 
 struct FrameDispatcher {
-    sender: Arc<Mutex<Option<mpsc::Sender<AudioFrame>>>>,
+    queue: Arc<FrameDispatchQueue>,
     join: Option<thread::JoinHandle<()>>,
+}
+
+struct FrameDispatchQueue {
+    state: Mutex<FrameDispatchState>,
+    available: Condvar,
+}
+
+struct FrameDispatchState {
+    frames: VecDeque<AudioFrame>,
+    closed: bool,
 }
 
 impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
@@ -116,26 +129,21 @@ impl FrameDispatcher {
     fn new(
         on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
     ) -> (Self, Arc<dyn Fn(AudioFrame) + Send + Sync>) {
-        let (tx, rx) = mpsc::channel::<AudioFrame>();
-        let sender = Arc::new(Mutex::new(Some(tx)));
-        let callback_sender = sender.clone();
+        let queue = Arc::new(FrameDispatchQueue::new());
+        let callback_queue = queue.clone();
         let callback = Arc::new(move |frame| {
-            let Ok(sender) = callback_sender.lock() else {
-                return;
-            };
-            if let Some(tx) = sender.as_ref() {
-                let _ = tx.send(frame);
-            }
+            callback_queue.push(frame);
         });
+        let worker_queue = queue.clone();
         let join = thread::spawn(move || {
-            while let Ok(frame) = rx.recv() {
+            while let Some(frame) = worker_queue.pop() {
                 on_frame(frame);
             }
         });
 
         (
             Self {
-                sender,
+                queue,
                 join: Some(join),
             },
             callback,
@@ -143,11 +151,55 @@ impl FrameDispatcher {
     }
 
     fn stop(&mut self) {
-        if let Ok(mut sender) = self.sender.lock() {
-            sender.take();
-        }
+        self.queue.close();
         if let Some(join) = self.join.take() {
             let _ = join.join();
+        }
+    }
+}
+
+impl FrameDispatchQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(FrameDispatchState {
+                frames: VecDeque::new(),
+                closed: false,
+            }),
+            available: Condvar::new(),
+        }
+    }
+
+    fn push(&self, frame: AudioFrame) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.closed {
+            return;
+        }
+        if state.frames.len() >= FRAME_DISPATCH_QUEUE_CAPACITY {
+            state.frames.pop_front();
+        }
+        state.frames.push_back(frame);
+        self.available.notify_one();
+    }
+
+    fn pop(&self) -> Option<AudioFrame> {
+        let mut state = self.state.lock().ok()?;
+        loop {
+            if let Some(frame) = state.frames.pop_front() {
+                return Some(frame);
+            }
+            if state.closed {
+                return None;
+            }
+            state = self.available.wait(state).ok()?;
+        }
+    }
+
+    fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            self.available.notify_all();
         }
     }
 }
