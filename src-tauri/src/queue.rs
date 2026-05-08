@@ -224,6 +224,10 @@ fn collect_pending_audio(root: &Path, pending_audio: &mut Vec<PathBuf>) -> std::
     Ok(())
 }
 
+pub fn is_importable_audio_path(path: &Path) -> bool {
+    path.is_file() && is_audio_path(path)
+}
+
 fn is_audio_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())

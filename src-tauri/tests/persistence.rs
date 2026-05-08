@@ -86,6 +86,13 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
 #[test]
 fn backend_loaded_from_dir_persists_settings_and_queue_mutations() {
     let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp
+        .path()
+        .join("recordings")
+        .join("20260506")
+        .join("230709.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
     let mut backend = AppBackend::load_from_dir(tmp.path()).expect("load backend");
 
     backend.update_settings(SettingsPatch {
@@ -93,7 +100,7 @@ fn backend_loaded_from_dir_persists_settings_and_queue_mutations() {
         threshold_dbfs: Some(-42.0),
         ..SettingsPatch::default()
     });
-    backend.enqueue_audio_file("/recordings/20260506/230709.wav", None);
+    backend.enqueue_audio_file(&audio_path, None);
 
     let reloaded = AppBackend::load_from_dir(tmp.path()).expect("reload backend");
     assert!(!reloaded.settings().transcription_enabled);

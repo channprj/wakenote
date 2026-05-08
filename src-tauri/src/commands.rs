@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
+use crate::audio::{list_input_devices, LevelMonitor, LevelSnapshot};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
-use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
+use crate::models::{default_model_registry, ModelDescriptor, ModelStatus, ModelStore};
 use crate::persistence::{AppPersistence, PersistenceError};
-use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
+use crate::queue::{is_importable_audio_path, BacklogScan, QueueSnapshot, TranscriptionQueue};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
-use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
+use crate::settings::{expand_user_path, AppSettings, SettingsPatch};
 use crate::transcription::{
-    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
+    apply_outcome, Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +452,11 @@ impl AppBackend {
         audio_path: impl Into<std::path::PathBuf>,
         model_id: Option<String>,
     ) -> QueueSnapshot {
+        let audio_path = audio_path.into();
+        if !is_importable_audio_path(&audio_path) {
+            return self.queue.snapshot();
+        }
+
         let model_id = model_id.unwrap_or_else(|| self.settings.selected_model.clone());
         self.queue.enqueue_file(audio_path, model_id);
         self.persist_queue();

@@ -1,9 +1,9 @@
 use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::commands::{
-    AppBackend, AppMode, MainWindowCloseAction, TrayState, main_window_close_action,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
+    main_window_close_action, reveal_save_folder_request, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
+    with_runtime_warning, AppBackend, AppMode, MainWindowCloseAction, TrayState,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -113,6 +113,25 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
     assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+}
+
+#[test]
+fn backend_manual_import_queues_only_existing_audio_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("meeting.wav");
+    let text_path = tmp.path().join("notes.txt");
+    let directory_path = tmp.path().join("folder.m4a");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    std::fs::write(&text_path, b"not audio").expect("text");
+    std::fs::create_dir(&directory_path).expect("directory");
+    let mut backend = AppBackend::default();
+
+    backend.enqueue_audio_file(&text_path, Some("whisper-medium".to_string()));
+    backend.enqueue_audio_file(&directory_path, Some("whisper-medium".to_string()));
+    let snapshot = backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.jobs[0].audio_path, audio_path);
 }
 
 #[test]
@@ -439,12 +458,10 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
 
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 0);
-    assert!(
-        snapshot
-            .jobs
-            .iter()
-            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
-    );
+    assert!(snapshot
+        .jobs
+        .iter()
+        .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed));
     assert_eq!(
         std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
         "queued transcript\n"
@@ -472,13 +489,11 @@ fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
     assert_eq!(snapshot.running_count, 0);
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 1);
-    assert!(
-        snapshot.jobs[0]
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("recorder error")
-    );
+    assert!(snapshot.jobs[0]
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("recorder error"));
 }
 
 #[test]
