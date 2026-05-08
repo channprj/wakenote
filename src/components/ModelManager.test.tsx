@@ -42,7 +42,9 @@ describe("model manager actions", () => {
       const markup = renderModel(status);
 
       expect(isDisabled(buttonTag(markup, "Download"))).toBe(true);
+      expect(isDisabled(buttonTag(markup, "Verify"))).toBe(true);
       expect(isDisabled(buttonTag(markup, "Cancel Download"))).toBe(false);
+      expect(isDisabled(buttonTag(markup, "Delete"))).toBe(true);
     },
   );
 
@@ -63,9 +65,23 @@ describe("model manager actions", () => {
   );
 
   it("offers download only for downloadable missing models", () => {
-    expect(isDisabled(buttonTag(renderModel("missing"), "Download"))).toBe(false);
+    const missingMarkup = renderModel("missing");
+
+    expect(isDisabled(buttonTag(missingMarkup, "Download"))).toBe(false);
+    expect(isDisabled(buttonTag(missingMarkup, "Verify"))).toBe(false);
+    expect(isDisabled(buttonTag(missingMarkup, "Delete"))).toBe(true);
     expect(
       isDisabled(buttonTag(renderModel("missing", { download_url: null }), "Download")),
     ).toBe(true);
   });
+
+  it.each(["ready", "installed", "unloaded", "error"] satisfies ModelStatus[])(
+    "allows verify and delete for non-active %s models",
+    (status) => {
+      const markup = renderModel(status);
+
+      expect(isDisabled(buttonTag(markup, "Verify"))).toBe(false);
+      expect(isDisabled(buttonTag(markup, "Delete"))).toBe(false);
+    },
+  );
 });

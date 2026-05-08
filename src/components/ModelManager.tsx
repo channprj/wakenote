@@ -43,8 +43,10 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
 
   return {
     canDownload: Boolean(model.download_url) && model.status === "missing",
+    canVerify: !activeDownload,
     canRetry: model.status === "error",
     canCancelDownload: activeDownload,
+    canDelete: !activeDownload && model.status !== "missing",
   };
 }
 
@@ -118,6 +120,7 @@ export function ModelManager({
                 size="icon"
                 title="Verify"
                 onClick={() => onVerify(model.id)}
+                disabled={!actions.canVerify}
               >
                 <ShieldCheck />
               </Button>
@@ -147,6 +150,7 @@ export function ModelManager({
                 size="icon"
                 title="Delete"
                 onClick={() => onDelete(model.id)}
+                disabled={!actions.canDelete}
               >
                 <Trash2 />
               </Button>
