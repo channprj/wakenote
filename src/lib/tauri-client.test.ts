@@ -7,6 +7,7 @@ import {
   enqueueAudioFiles,
   processNextTranscription,
   saveSettingsPatch,
+  skipJob,
   startLiveCapture,
   stopLiveCapture,
 } from "./tauri-client";
@@ -77,6 +78,20 @@ describe("tauri live capture client", () => {
     expect(processed.queue.jobs.find((job) => job.id === firstPendingId)).toMatchObject({
       status: "completed",
       error: null,
+    });
+  });
+
+  it("skips pending browser fallback queue jobs", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/skip-me.wav"]);
+    const pendingBefore = before.queue.pending_count;
+    const pendingId = before.queue.jobs.find((job) => job.status === "pending")?.id;
+    expect(pendingId).toBeTypeOf("number");
+
+    const skipped = await skipJob(pendingId ?? -1);
+
+    expect(skipped.queue.pending_count).toBe(pendingBefore - 1);
+    expect(skipped.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+      status: "skipped",
     });
   });
 });

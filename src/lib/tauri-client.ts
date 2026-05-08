@@ -372,6 +372,26 @@ export async function retryJob(id: number): Promise<AppSnapshot> {
 
 export async function skipJob(id: number): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    let skipped = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (job.id !== id || !["pending", "failed", "cancelled"].includes(job.status)) {
+        return job;
+      }
+
+      skipped = true;
+      return { ...job, status: "skipped" as const };
+    });
+    if (!skipped) {
+      return browserSnapshot;
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
     return browserSnapshot;
   }
 
