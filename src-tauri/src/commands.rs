@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
-use crate::models::{ModelDescriptor, ModelStore, default_model_registry};
+use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue};
 use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
@@ -276,6 +276,24 @@ impl AppBackend {
             .clone();
         if model.download_url.is_none() {
             return Err(format!("model {model_id} has no download URL"));
+        }
+        let mut refreshed_models: Vec<ModelDescriptor> = registry.values().cloned().collect();
+        store
+            .refresh_statuses(&mut refreshed_models)
+            .map_err(|error| error.to_string())?;
+        let current_status = refreshed_models
+            .iter()
+            .find(|candidate| candidate.id == model_id)
+            .map(|candidate| candidate.status)
+            .unwrap_or(model.status);
+        match current_status {
+            ModelStatus::Downloading | ModelStatus::Verifying | ModelStatus::Extracting => {
+                return Err(format!("model {model_id} download is already active"));
+            }
+            ModelStatus::Installed | ModelStatus::Ready | ModelStatus::Unloaded => {
+                return Err(format!("model {model_id} is already installed"));
+            }
+            ModelStatus::Missing | ModelStatus::Error => {}
         }
 
         store

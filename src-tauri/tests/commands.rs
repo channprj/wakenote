@@ -505,6 +505,84 @@ fn backend_prepare_model_download_marks_model_downloading_before_fetch() {
 }
 
 #[test]
+fn backend_prepare_model_download_rejects_active_downloads() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": "https://example.invalid/custom-local.bin",
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    ModelStore::new(&model_directory)
+        .record_download_progress("custom-local", 512, Some(1024))
+        .expect("record active download");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .prepare_model_download("custom-local")
+        .expect_err("active download should not be prepared again");
+
+    assert_eq!(error, "model custom-local download is already active");
+}
+
+#[test]
+fn backend_prepare_model_download_rejects_installed_models() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "custom-local",
+            "display_name": "Custom Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": "https://example.invalid/custom-local.bin",
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    std::fs::write(model_directory.join("custom-local.bin"), b"ready model").expect("model file");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .prepare_model_download("custom-local")
+        .expect_err("installed model should not be prepared for download");
+
+    assert_eq!(error, "model custom-local is already installed");
+}
+
+#[test]
 fn backend_cancel_current_operation_cancels_active_model_download() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
