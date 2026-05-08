@@ -38,6 +38,16 @@ function statusProgress(model: ModelDescriptor) {
   }
 }
 
+export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "status">) {
+  const activeDownload = ["downloading", "verifying", "extracting"].includes(model.status);
+
+  return {
+    canDownload: Boolean(model.download_url) && model.status === "missing",
+    canRetry: model.status === "error",
+    canCancelDownload: activeDownload,
+  };
+}
+
 export function ModelManager({
   models,
   settings,
@@ -60,6 +70,7 @@ export function ModelManager({
       {models.map((model) => {
         const selected = settings.selected_model === model.id;
         const progress = statusProgress(model);
+        const actions = modelActionState(model);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -97,7 +108,7 @@ export function ModelManager({
                 size="icon"
                 title="Download"
                 onClick={() => onDownload(model.id)}
-                disabled={!model.download_url || model.status === "ready"}
+                disabled={!actions.canDownload}
               >
                 <Download />
               </Button>
@@ -116,7 +127,7 @@ export function ModelManager({
                 size="icon"
                 title="Retry"
                 onClick={() => onDownload(model.id)}
-                disabled={model.status !== "error"}
+                disabled={!actions.canRetry}
               >
                 <RotateCw />
               </Button>
@@ -126,7 +137,7 @@ export function ModelManager({
                 size="icon"
                 title="Cancel Download"
                 onClick={() => onCancelDownload(model.id)}
-                disabled={!["downloading", "verifying", "extracting"].includes(model.status)}
+                disabled={!actions.canCancelDownload}
               >
                 <CircleX />
               </Button>
