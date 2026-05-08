@@ -155,7 +155,11 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
   if (!isTauriRuntime()) {
     const previousSettings = browserSnapshot.settings ?? defaultSettings();
     let queue = browserSnapshot.queue ?? emptyQueue();
-    if (patch.recording_enabled === false || patch.pause_all === true) {
+    if (
+      patch.recording_enabled === false ||
+      patch.pause_all === true ||
+      patch.transcription_enabled === false
+    ) {
       queue = maybeQueueBrowserCapture(
         previousSettings,
         queue,

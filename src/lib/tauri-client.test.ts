@@ -244,6 +244,30 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("preserves a simulated browser capture when transcription is disabled mid-recording", async () => {
+    await stopLiveCapture();
+    await saveSettingsPatch({
+      recording_enabled: true,
+      threshold_dbfs: -90,
+      transcription_enabled: true,
+    });
+    const active = await startLiveCapture();
+    const pendingBefore = active.queue.pending_count;
+
+    const disabled = await saveSettingsPatch({ transcription_enabled: false });
+
+    expect(disabled.status.live_input_active).toBe(true);
+    expect(disabled.status.mode).toBe("recording_only");
+    expect(disabled.queue.pending_count).toBe(pendingBefore + 1);
+    expect(disabled.queue.jobs.at(-1)).toMatchObject({
+      model_id: active.settings.selected_model,
+      status: "pending",
+      error: null,
+    });
+
+    await stopLiveCapture();
+  });
+
   it("finalizes a simulated browser capture when input is stopped", async () => {
     await saveSettingsPatch({
       recording_enabled: true,
