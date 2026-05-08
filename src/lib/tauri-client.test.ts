@@ -85,6 +85,18 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("does not create cancelled errors for inactive browser fallback model downloads", async () => {
+    await deleteModel("whisper-tiny");
+
+    const cancelled = await cancelModelDownload("whisper-tiny");
+
+    expect(cancelled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+      status: "missing",
+      download_progress: null,
+      download_error: null,
+    });
+  });
+
   it("settles browser fallback model downloads during snapshot polling", async () => {
     await deleteModel("whisper-tiny");
 

@@ -502,6 +502,15 @@ export async function downloadModel(modelId: string): Promise<AppSnapshot> {
 
 export async function cancelModelDownload(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const target = browserSnapshot.models.find((model) => model.id === modelId);
+    if (
+      !target ||
+      !["downloading", "verifying", "extracting"].includes(target.status)
+    ) {
+      return browserSnapshot;
+    }
+
+    browserVerificationPreviousStatuses.delete(modelId);
     browserSnapshot = {
       ...browserSnapshot,
       models: browserSnapshot.models.map((model) =>
