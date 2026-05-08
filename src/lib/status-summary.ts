@@ -61,6 +61,8 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
   const threshold = `${settings.threshold_dbfs} dBFS`;
   const microphone = status.active_microphone || settings.selected_microphone_label;
   const modeLabel = modeLabels[status.mode];
+  const currentDbfs = status.live_input_active ? status.level.current_dbfs : -120;
+  const peakDbfs = status.live_input_active ? status.level.peak_dbfs : -120;
 
   return {
     headline: state.headline,
@@ -70,9 +72,7 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
     microphone,
     threshold,
     queueSummary: `${queue.pending_count} pending · ${queue.running_count} running · ${queue.failed_count} failed`,
-    levelSummary: `${Math.round(status.level.current_dbfs)} dBFS current · ${Math.round(
-      status.level.peak_dbfs,
-    )} dBFS peak`,
+    levelSummary: `${Math.round(currentDbfs)} dBFS current · ${Math.round(peakDbfs)} dBFS peak`,
     runtimeWarning: status.runtime_warning ?? null,
     warning: activeWarning(snapshot),
   };

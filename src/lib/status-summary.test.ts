@@ -20,6 +20,26 @@ describe("capture status presentation", () => {
     });
   });
 
+  it("uses silence levels for stopped input summaries", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        status: {
+          ...snapshot.status,
+          live_input_active: false,
+          level: {
+            current_dbfs: -22,
+            peak_dbfs: -18,
+            noise_floor_dbfs: -55,
+            suggested_threshold_dbfs: -43,
+          },
+        },
+      }).levelSummary,
+    ).toBe("-120 dBFS current · -120 dBFS peak");
+  });
+
   it("describes continuous listening only when capture is active", () => {
     const snapshot = mockSnapshot();
 
