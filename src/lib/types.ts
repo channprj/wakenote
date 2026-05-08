@@ -41,6 +41,7 @@ export interface AppSettings {
   save_root: string;
   audio_format: AudioFormat;
   threshold_dbfs: number;
+  calibration_completed: boolean;
   attack_ms: number;
   release_ms: number;
   pre_roll_ms: number;

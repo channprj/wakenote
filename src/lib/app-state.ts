@@ -133,6 +133,7 @@ export function defaultSettings(): AppSettings {
     save_root: "~/Documents/Sagwan",
     audio_format: "m4a",
     threshold_dbfs: -45,
+    calibration_completed: false,
     attack_ms: 300,
     release_ms: 1500,
     pre_roll_ms: 300,

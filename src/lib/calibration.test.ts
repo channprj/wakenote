@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calibrationProgress, suggestedThresholdValue } from "./calibration";
+import { calibrationProgress, calibrationSettingsPatch, suggestedThresholdValue } from "./calibration";
 
 describe("calibration helpers", () => {
   it("reports bounded calibration progress", () => {
@@ -12,5 +12,12 @@ describe("calibration helpers", () => {
     expect(suggestedThresholdValue(-50.4)).toBe(-50);
     expect(suggestedThresholdValue(-120)).toBe(-90);
     expect(suggestedThresholdValue(5)).toBe(-10);
+  });
+
+  it("marks setup calibration complete when applying the suggested threshold", () => {
+    expect(calibrationSettingsPatch(-43)).toEqual({
+      threshold_dbfs: -43,
+      calibration_completed: true,
+    });
   });
 });

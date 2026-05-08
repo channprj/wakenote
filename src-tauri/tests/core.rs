@@ -152,6 +152,7 @@ fn default_settings_match_prd_mvp_defaults() {
 
     assert!(settings.recording_enabled);
     assert!(settings.transcription_enabled);
+    assert!(!settings.calibration_completed);
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
     assert_eq!(settings.threshold_dbfs, -45.0);
@@ -199,6 +200,20 @@ fn settings_patch_keeps_max_chunk_at_least_min_chunk() {
 
     assert_eq!(settings.min_chunk_ms, 5_000);
     assert_eq!(settings.max_chunk_ms, 10_000);
+}
+
+#[test]
+fn settings_patch_records_completed_threshold_calibration() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        threshold_dbfs: Some(-43.0),
+        calibration_completed: Some(true),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.threshold_dbfs, -43.0);
+    assert!(settings.calibration_completed);
 }
 
 #[test]

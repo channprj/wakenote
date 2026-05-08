@@ -19,6 +19,7 @@ pub struct AppSettings {
     pub save_root: String,
     pub audio_format: AudioFormat,
     pub threshold_dbfs: f32,
+    pub calibration_completed: bool,
     pub attack_ms: u64,
     pub release_ms: u64,
     pub pre_roll_ms: u64,
@@ -44,6 +45,7 @@ pub struct SettingsPatch {
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub threshold_dbfs: Option<f32>,
+    pub calibration_completed: Option<bool>,
     pub attack_ms: Option<u64>,
     pub release_ms: Option<u64>,
     pub pre_roll_ms: Option<u64>,
@@ -167,6 +169,9 @@ impl AppSettings {
         if let Some(value) = patch.threshold_dbfs {
             self.threshold_dbfs = clamp_threshold_dbfs(value);
         }
+        if let Some(value) = patch.calibration_completed {
+            self.calibration_completed = value;
+        }
         if let Some(value) = patch.attack_ms {
             self.attack_ms = clamp_ms(value, 50, 2_000);
         }
@@ -220,6 +225,7 @@ impl Default for AppSettings {
             save_root: "~/Documents/Sagwan".to_string(),
             audio_format: AudioFormat::M4a,
             threshold_dbfs: -45.0,
+            calibration_completed: false,
             attack_ms: 300,
             release_ms: 1_500,
             pre_roll_ms: 300,

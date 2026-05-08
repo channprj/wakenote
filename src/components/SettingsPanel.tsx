@@ -4,6 +4,7 @@ import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TrayPreview } from "./TrayPreview";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
+import { calibrationSettingsPatch } from "../lib/calibration";
 import type { AppSnapshot, AppSettings } from "../lib/types";
 
 const durationFields = [
@@ -95,7 +96,7 @@ export function SettingsPanel({
           <LevelMeter
             settings={settings}
             status={status}
-            onApplyThreshold={(threshold_dbfs) => onPatch({ threshold_dbfs })}
+            onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
           />
           <div className="control-grid">
             <Slider
@@ -333,7 +334,7 @@ export function SettingsPanel({
       <LevelMeter
         settings={settings}
         status={status}
-        onApplyThreshold={(threshold_dbfs) => onPatch({ threshold_dbfs })}
+        onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
       />
     </div>
   );

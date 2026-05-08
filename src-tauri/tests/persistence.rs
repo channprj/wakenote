@@ -53,6 +53,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert_eq!(loaded.threshold_dbfs, -39.5);
     assert_eq!(loaded.save_root, "/tmp/legacy-sagwan");
     assert!(loaded.transcription_enabled);
+    assert!(!loaded.calibration_completed);
     assert_eq!(loaded.attack_ms, 300);
     assert_eq!(loaded.selected_model, "whisper-medium");
     assert_eq!(loaded.theme_primary_color, "#0047AB");

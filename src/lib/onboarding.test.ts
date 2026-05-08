@@ -41,4 +41,28 @@ describe("onboarding setup steps", () => {
 
     expect(deriveOnboardingSteps(settings, readyModels).find((step) => step.id === "model")?.complete).toBe(true);
   });
+
+  it("requires explicit threshold calibration before calibration setup is complete", () => {
+    const models = mockModels();
+    const microphones = [{ id: "default", label: "System Default", available: true, fallback: false }];
+    const uncalibratedSettings = {
+      ...defaultSettings(),
+      calibration_completed: false,
+    };
+    const calibratedSettings = {
+      ...defaultSettings(),
+      calibration_completed: true,
+    };
+
+    expect(
+      deriveOnboardingSteps(uncalibratedSettings, models, microphones).find(
+        (step) => step.id === "calibration",
+      )?.complete,
+    ).toBe(false);
+    expect(
+      deriveOnboardingSteps(calibratedSettings, models, microphones).find(
+        (step) => step.id === "calibration",
+      )?.complete,
+    ).toBe(true);
+  });
 });
