@@ -55,6 +55,16 @@ describe("model manager actions", () => {
     expect(isDisabled(buttonTag(markup, "Retry"))).toBe(false);
   });
 
+  it("does not offer retry for failed models without a download URL", () => {
+    const markup = renderModel("error", {
+      download_url: null,
+      download_error: "manual model path is missing",
+    });
+
+    expect(isDisabled(buttonTag(markup, "Download"))).toBe(true);
+    expect(isDisabled(buttonTag(markup, "Retry"))).toBe(true);
+  });
+
   it.each(["ready", "installed", "unloaded"] satisfies ModelStatus[])(
     "does not offer download for usable %s models",
     (status) => {

@@ -44,7 +44,7 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
   return {
     canDownload: Boolean(model.download_url) && model.status === "missing",
     canVerify: !activeDownload,
-    canRetry: model.status === "error",
+    canRetry: Boolean(model.download_url) && model.status === "error",
     canCancelDownload: activeDownload,
     canDelete: !activeDownload && model.status !== "missing",
   };
