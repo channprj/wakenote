@@ -186,12 +186,15 @@ fn backend_reports_idle_after_capture_session_stops() {
     backend
         .start_capture_session_for_test(10)
         .expect("start capture session");
-    assert_eq!(backend.app_status().tray_state, TrayState::Listening);
+    let active_status = backend.app_status();
+    assert!(active_status.live_input_active);
+    assert_eq!(active_status.tray_state, TrayState::Listening);
 
     let status = backend
         .stop_capture_session()
         .expect("stop capture session");
 
+    assert!(!status.live_input_active);
     assert_eq!(status.mode, AppMode::RecordingAndTranscription);
     assert_eq!(status.tray_state, TrayState::Idle);
 }

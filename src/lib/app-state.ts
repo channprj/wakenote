@@ -75,6 +75,7 @@ export function shouldPollSnapshot(
 ) {
   return (
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
+    status.live_input_active ||
     status.runtime_warning?.startsWith("Live input stream error:") ||
     queue.pending_count > 0 ||
     queue.running_count > 0 ||
@@ -178,6 +179,7 @@ export function mockSnapshot(): AppSnapshot {
     status: {
       mode,
       tray_state: trayState,
+      live_input_active: false,
       active_model: settings.selected_model,
       active_microphone: settings.selected_microphone_label,
       microphone_warning: null,

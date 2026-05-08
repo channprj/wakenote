@@ -82,6 +82,17 @@ describe("app state derivation", () => {
     expect(shouldPollSnapshot(streamErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
   });
 
+  it("keeps polling while live input remains active under an error state", () => {
+    const snapshot = mockSnapshot();
+    const activeInputErrorStatus = {
+      ...snapshot.status,
+      tray_state: "error" as const,
+      live_input_active: true,
+    };
+
+    expect(shouldPollSnapshot(activeInputErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
+  });
+
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 

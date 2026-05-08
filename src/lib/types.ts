@@ -107,6 +107,7 @@ export interface LevelSnapshot {
 export interface AppStatus {
   mode: AppMode;
   tray_state: TrayState;
+  live_input_active: boolean;
   active_model: string;
   active_microphone: string;
   microphone_warning?: string | null;

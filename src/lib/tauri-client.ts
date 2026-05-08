@@ -36,6 +36,7 @@ function statusFrom(settings: AppSettings, queue: QueueSnapshot): AppStatus {
   return {
     mode,
     tray_state: deriveTrayState(mode, queue.running_count > 0, queue.failed_count > 0),
+    live_input_active: browserSnapshot.status?.live_input_active ?? false,
     active_model: settings.selected_model,
     active_microphone: settings.selected_microphone_label,
     microphone_warning: browserSnapshot.status?.microphone_warning ?? null,

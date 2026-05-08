@@ -143,6 +143,7 @@ pub struct MicrophoneDevice {
 pub struct AppStatus {
     pub mode: AppMode,
     pub tray_state: TrayState,
+    pub live_input_active: bool,
     pub active_model: String,
     pub active_microphone: String,
     pub microphone_warning: Option<String>,
@@ -571,6 +572,7 @@ impl AppBackend {
         AppStatus {
             mode,
             tray_state,
+            live_input_active: is_monitoring,
             active_model: self.settings.selected_model.clone(),
             active_microphone: self
                 .active_microphone_label
