@@ -48,6 +48,11 @@ function isBrowserImportableAudioPath(audioPath: string) {
   return /\.(m4a|wav)$/i.test(audioPath);
 }
 
+function isUsableBrowserModel(modelId: string, models: ModelDescriptor[]) {
+  const model = models.find((candidate) => candidate.id === modelId);
+  return Boolean(model && ["ready", "installed", "unloaded"].includes(model.status));
+}
+
 function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
   return models.map((model) => {
     if (model.status === "downloading") {
@@ -197,11 +202,19 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const previousSettings = browserSnapshot.settings ?? defaultSettings();
+    const models = browserSnapshot.models ?? mockModels();
+    const safePatch = { ...patch };
+    if (
+      typeof safePatch.selected_model === "string" &&
+      !isUsableBrowserModel(safePatch.selected_model, models)
+    ) {
+      delete safePatch.selected_model;
+    }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (
-      patch.recording_enabled === false ||
-      patch.pause_all === true ||
-      patch.transcription_enabled === false
+      safePatch.recording_enabled === false ||
+      safePatch.pause_all === true ||
+      safePatch.transcription_enabled === false
     ) {
       queue = maybeQueueBrowserCapture(
         previousSettings,
@@ -210,7 +223,7 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
       );
     }
 
-    const settings = { ...previousSettings, ...patch };
+    const settings = { ...previousSettings, ...safePatch };
     browserSnapshot = {
       ...browserSnapshot,
       settings,

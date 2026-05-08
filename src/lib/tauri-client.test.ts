@@ -189,6 +189,27 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("ignores browser fallback selected model patches for unusable models", async () => {
+    await deleteModel("whisper-tiny");
+    await downloadModel("whisper-tiny");
+    await loadSnapshot();
+    const selectedTiny = await saveSettingsPatch({ selected_model: "whisper-tiny" });
+    expect(selectedTiny.settings.selected_model).toBe("whisper-tiny");
+
+    await deleteModel("whisper-medium");
+    const blocked = await saveSettingsPatch({ selected_model: "whisper-medium" });
+
+    expect(blocked.settings.selected_model).toBe("whisper-tiny");
+    expect(blocked.status.active_model).toBe("whisper-tiny");
+
+    await downloadModel("whisper-medium");
+    await loadSnapshot();
+    const selectedMedium = await saveSettingsPatch({ selected_model: "whisper-medium" });
+
+    expect(selectedMedium.settings.selected_model).toBe("whisper-medium");
+    expect(selectedMedium.status.active_model).toBe("whisper-medium");
+  });
+
   it("queues manually selected audio files outside Tauri", async () => {
     const snapshot = await enqueueAudioFiles([
       "/tmp/imported/meeting.wav",
