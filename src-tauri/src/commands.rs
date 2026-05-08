@@ -413,14 +413,12 @@ impl AppBackend {
             let events = capture.flush().map_err(|error| error.to_string())?;
             self.handle_capture_events(events);
         }
-        self.capture = None;
-        self.active_microphone_label = None;
+        self.clear_capture_session_state();
         Ok(self.app_status())
     }
 
     pub fn capture_start_failed(&mut self, warning: impl Into<String>) -> AppStatus {
-        self.capture = None;
-        self.active_microphone_label = None;
+        self.clear_capture_session_state();
         self.microphone_warning = Some(warning.into());
         self.app_status()
     }
@@ -646,9 +644,14 @@ impl AppBackend {
             self.handle_capture_events(events);
         }
         if self.settings.pause_all || !self.settings.recording_enabled {
-            self.capture = None;
-            self.active_microphone_label = None;
+            self.clear_capture_session_state();
         }
+    }
+
+    fn clear_capture_session_state(&mut self) {
+        self.capture = None;
+        self.active_microphone_label = None;
+        self.level_monitor = LevelMonitor::default();
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {

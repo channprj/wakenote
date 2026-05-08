@@ -200,6 +200,56 @@ fn backend_reports_idle_after_capture_session_stops() {
 }
 
 #[test]
+fn backend_resets_level_snapshot_after_capture_session_stops() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    let live_status = backend
+        .process_audio_samples_for_test(&[0.5; 1], 100)
+        .expect("speech");
+    assert!(live_status.level.current_dbfs > -120.0);
+
+    let stopped_status = backend
+        .stop_capture_session()
+        .expect("stop capture session");
+
+    assert!(!stopped_status.live_input_active);
+    assert_eq!(stopped_status.level.current_dbfs, -120.0);
+    assert_eq!(stopped_status.level.peak_dbfs, -120.0);
+    assert_eq!(stopped_status.level.noise_floor_dbfs, -120.0);
+    assert_eq!(stopped_status.level.suggested_threshold_dbfs, -90.0);
+}
+
+#[test]
+fn backend_resets_level_snapshot_when_recording_is_disabled() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    let live_status = backend
+        .process_audio_samples_for_test(&[0.5; 1], 100)
+        .expect("speech");
+    assert!(live_status.level.current_dbfs > -120.0);
+
+    backend.update_settings(SettingsPatch {
+        recording_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let stopped_status = backend.app_status();
+
+    assert!(!stopped_status.live_input_active);
+    assert_eq!(stopped_status.level.current_dbfs, -120.0);
+    assert_eq!(stopped_status.level.peak_dbfs, -120.0);
+    assert_eq!(stopped_status.level.noise_floor_dbfs, -120.0);
+    assert_eq!(stopped_status.level.suggested_threshold_dbfs, -90.0);
+}
+
+#[test]
 fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();
