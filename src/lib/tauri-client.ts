@@ -29,6 +29,7 @@ declare global {
 let browserSnapshot = mockSnapshot();
 let browserCaptureSessionId = 0;
 let browserQueuedCaptureSessionId: number | null = null;
+let browserCaptureSessionTranscriptionRequested = false;
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 
 function isTauriRuntime() {
@@ -112,7 +113,7 @@ function maybeQueueBrowserCapture(settings: AppSettings, queue: QueueSnapshot, s
   if (
     browserCaptureSessionId === 0 ||
     browserQueuedCaptureSessionId === browserCaptureSessionId ||
-    !settings.transcription_enabled ||
+    !browserCaptureSessionTranscriptionRequested ||
     status.tray_state !== "recording"
   ) {
     return queue;
@@ -462,6 +463,7 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
     }
 
     browserCaptureSessionId += 1;
+    browserCaptureSessionTranscriptionRequested = settings.transcription_enabled;
     browserSnapshot = {
       ...browserSnapshot,
       settings,

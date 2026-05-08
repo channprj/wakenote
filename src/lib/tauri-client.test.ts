@@ -605,6 +605,25 @@ describe("tauri live capture client", () => {
     await stopLiveCapture();
   });
 
+  it("does not retroactively queue a simulated browser capture when transcription is enabled mid-recording", async () => {
+    await stopLiveCapture();
+    await saveSettingsPatch({
+      recording_enabled: true,
+      threshold_dbfs: -90,
+      transcription_enabled: false,
+    });
+    const active = await startLiveCapture();
+    const pendingBefore = active.queue.pending_count;
+
+    await saveSettingsPatch({ transcription_enabled: true });
+    const stopped = await stopLiveCapture();
+
+    expect(stopped.status.live_input_active).toBe(false);
+    expect(stopped.queue.pending_count).toBe(pendingBefore);
+
+    await saveSettingsPatch({ threshold_dbfs: -45 });
+  });
+
   it("finalizes a simulated browser capture when input is stopped", async () => {
     await saveSettingsPatch({
       recording_enabled: true,
