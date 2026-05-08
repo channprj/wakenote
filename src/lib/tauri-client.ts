@@ -449,6 +449,17 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
     if (browserSnapshot.status?.live_input_active) {
       return loadSnapshot();
     }
+    const mode = deriveProductMode(settings);
+    const canCapture = mode === "recording_and_transcription" || mode === "recording_only";
+    if (!canCapture) {
+      browserSnapshot = {
+        ...browserSnapshot,
+        settings,
+        queue,
+        status: statusFrom(settings, queue, false),
+      };
+      return browserSnapshot;
+    }
 
     browserCaptureSessionId += 1;
     browserSnapshot = {

@@ -20,6 +20,11 @@ import {
   verifyModel,
 } from "./tauri-client";
 
+function browserCaptureNumber(audioPath: string | undefined) {
+  const match = audioPath?.match(/browser-capture-(\d+)\./);
+  return match ? Number(match[1]) : null;
+}
+
 describe("tauri live capture client", () => {
   it("returns browser-safe snapshots for live capture actions outside Tauri", async () => {
     const expected = mockSnapshot();
@@ -519,6 +524,39 @@ describe("tauri live capture client", () => {
 
     expect(repeatedStart.status.live_input_active).toBe(true);
     expect(repeatedStart.queue.pending_count).toBe(firstCapture.queue.pending_count);
+  });
+
+  it("does not allocate simulated browser capture sessions while recording is unavailable", async () => {
+    await stopLiveCapture();
+    await saveSettingsPatch({
+      recording_enabled: true,
+      transcription_enabled: true,
+      pause_all: false,
+      threshold_dbfs: -90,
+    });
+
+    await startLiveCapture();
+    const synced = await stopLiveCapture();
+    const syncedJob = synced.queue.jobs.at(-1);
+    const syncedCaptureNumber = browserCaptureNumber(syncedJob?.audio_path);
+    expect(syncedCaptureNumber).toBeTypeOf("number");
+
+    await saveSettingsPatch({ recording_enabled: false, transcription_enabled: true });
+    const blocked = await startLiveCapture();
+
+    expect(blocked.status.live_input_active).toBe(false);
+    expect(blocked.status.tray_state).toBe("idle");
+
+    await saveSettingsPatch({ recording_enabled: true });
+    await startLiveCapture();
+    const stopped = await stopLiveCapture();
+    const nextJob = stopped.queue.jobs.at(-1);
+
+    expect(browserCaptureNumber(nextJob?.audio_path)).toBe((syncedCaptureNumber ?? 0) + 1);
+
+    await skipJob(syncedJob?.id ?? -1);
+    await skipJob(nextJob?.id ?? -1);
+    await saveSettingsPatch({ threshold_dbfs: -45 });
   });
 
   it("finalizes a simulated browser capture when recording is disabled", async () => {
