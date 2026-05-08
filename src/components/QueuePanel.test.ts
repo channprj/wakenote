@@ -27,11 +27,17 @@ describe("queue toolbar actions", () => {
       failed_count: 0,
     };
 
-    expect(queueToolbarActionState(queue, true)).toEqual({ canProcessNext: true });
-    expect(queueToolbarActionState(queue, false)).toEqual({ canProcessNext: false });
+    expect(queueToolbarActionState(queue, true)).toEqual({
+      canProcessNext: true,
+      canCancelCurrent: false,
+    });
+    expect(queueToolbarActionState(queue, false)).toEqual({
+      canProcessNext: false,
+      canCancelCurrent: false,
+    });
   });
 
-  it("keeps process next disabled when no pending work exists", () => {
+  it("enables cancel current only while a queue job is running", () => {
     const queue = {
       jobs: [],
       pending_count: 0,
@@ -39,6 +45,9 @@ describe("queue toolbar actions", () => {
       failed_count: 0,
     };
 
-    expect(queueToolbarActionState(queue, true)).toEqual({ canProcessNext: false });
+    expect(queueToolbarActionState(queue, true)).toEqual({
+      canProcessNext: false,
+      canCancelCurrent: true,
+    });
   });
 });

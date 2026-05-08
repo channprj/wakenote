@@ -26,11 +26,12 @@ export function queueJobActionState(status: QueueJobStatus) {
 }
 
 export function queueToolbarActionState(
-  queue: Pick<QueueSnapshot, "pending_count">,
+  queue: Pick<QueueSnapshot, "pending_count" | "running_count">,
   canProcessTranscription: boolean,
 ) {
   return {
     canProcessNext: canProcessTranscription && queue.pending_count > 0,
+    canCancelCurrent: queue.running_count > 0,
   };
 }
 
@@ -89,7 +90,12 @@ export function QueuePanel({
           <Play data-icon="inline-start" />
           Process Next
         </Button>
-        <Button type="button" variant="secondary" onClick={onCancelCurrent}>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onCancelCurrent}
+          disabled={!toolbarActions.canCancelCurrent}
+        >
           <Ban data-icon="inline-start" />
           Cancel Current
         </Button>
