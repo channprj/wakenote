@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mockSnapshot } from "./app-state";
+import { defaultLevelSnapshot, mockSnapshot } from "./app-state";
 import {
   chooseSaveRoot,
   cancelModelDownload,
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
+  loadSnapshot,
   processNextTranscription,
   retryJob,
   saveSettingsPatch,
@@ -34,6 +35,24 @@ describe("tauri live capture client", () => {
     await expect(stopLiveCapture()).resolves.toEqual(expected);
     await expect(processNextTranscription()).resolves.toEqual(expected);
     await expect(chooseSaveRoot()).resolves.toEqual(expected);
+  });
+
+  it("simulates live browser fallback level snapshots while input is active", async () => {
+    await startLiveCapture();
+
+    const live = await loadSnapshot();
+
+    expect(live.status.live_input_active).toBe(true);
+    expect(live.status.level.current_dbfs).toBeGreaterThan(-120);
+    expect(live.status.level.current_dbfs).toBeLessThanOrEqual(0);
+    expect(live.status.level.noise_floor_dbfs).toBeLessThan(
+      live.status.level.suggested_threshold_dbfs,
+    );
+
+    const stopped = await stopLiveCapture();
+
+    expect(stopped.status.live_input_active).toBe(false);
+    expect(stopped.status.level).toEqual(defaultLevelSnapshot());
   });
 
   it("simulates model download and cancel state outside Tauri", async () => {

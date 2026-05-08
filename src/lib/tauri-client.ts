@@ -41,6 +41,25 @@ function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
   };
 }
 
+function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
+  if (!activeCapture) {
+    return defaultLevelSnapshot();
+  }
+
+  const now = Date.now();
+  const currentDbfs = Math.max(
+    -70,
+    Math.min(-18, -44 + Math.sin(now / 320) * 18 + Math.sin(now / 95) * 4),
+  );
+
+  return {
+    current_dbfs: currentDbfs,
+    peak_dbfs: Math.max(currentDbfs, browserSnapshot.status?.level.peak_dbfs ?? currentDbfs),
+    noise_floor_dbfs: -58,
+    suggested_threshold_dbfs: -46,
+  };
+}
+
 function statusFrom(
   settings: AppSettings,
   queue: QueueSnapshot,
@@ -65,13 +84,21 @@ function statusFrom(
     microphone_warning: browserSnapshot.status?.microphone_warning ?? null,
     runtime_warning: browserSnapshot.status?.runtime_warning ?? null,
     threshold_dbfs: settings.threshold_dbfs,
-    level: browserSnapshot.status?.level ?? defaultLevelSnapshot(),
+    level: browserLevelSnapshot(activeCapture),
     queue,
   };
 }
 
 export async function loadSnapshot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = browserSnapshot.queue ?? emptyQueue();
+    browserSnapshot = {
+      ...browserSnapshot,
+      settings,
+      queue,
+      status: statusFrom(settings, queue),
+    };
     return browserSnapshot;
   }
 
