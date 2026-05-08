@@ -38,9 +38,14 @@ export function deriveTrayState(
   hasRunningTranscription: boolean,
   hasError = false,
   hasActiveCapture = false,
+  isRecording = false,
 ): TrayState {
   if (hasRunningTranscription) {
     return "transcribing";
+  }
+
+  if (isRecording) {
+    return "recording";
   }
 
   if (hasError) {

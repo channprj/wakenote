@@ -55,6 +55,17 @@ describe("tauri live capture client", () => {
     expect(stopped.status.level).toEqual(defaultLevelSnapshot());
   });
 
+  it("reports recording state when simulated browser input crosses threshold", async () => {
+    await saveSettingsPatch({ threshold_dbfs: -90 });
+
+    const started = await startLiveCapture();
+
+    expect(started.status.tray_state).toBe("recording");
+
+    await stopLiveCapture();
+    await saveSettingsPatch({ threshold_dbfs: -45 });
+  });
+
   it("simulates model download and cancel state outside Tauri", async () => {
     const downloading = await downloadModel("whisper-tiny");
     expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({

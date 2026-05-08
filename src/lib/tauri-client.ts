@@ -48,8 +48,8 @@ function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
 
   const now = Date.now();
   const currentDbfs = Math.max(
-    -70,
-    Math.min(-18, -44 + Math.sin(now / 320) * 18 + Math.sin(now / 95) * 4),
+    -64,
+    Math.min(-48, -56 + Math.sin(now / 320) * 7 + Math.sin(now / 95) * 2),
   );
 
   return {
@@ -69,6 +69,8 @@ function statusFrom(
   const canCapture =
     mode === "recording_and_transcription" || mode === "recording_only";
   const activeCapture = canCapture && liveInputActive;
+  const level = browserLevelSnapshot(activeCapture);
+  const isRecording = activeCapture && level.current_dbfs >= settings.threshold_dbfs;
 
   return {
     mode,
@@ -77,6 +79,7 @@ function statusFrom(
       queue.running_count > 0,
       queue.failed_count > 0,
       activeCapture,
+      isRecording,
     ),
     live_input_active: activeCapture,
     active_model: settings.selected_model,
@@ -84,7 +87,7 @@ function statusFrom(
     microphone_warning: browserSnapshot.status?.microphone_warning ?? null,
     runtime_warning: browserSnapshot.status?.runtime_warning ?? null,
     threshold_dbfs: settings.threshold_dbfs,
-    level: browserLevelSnapshot(activeCapture),
+    level,
     queue,
   };
 }
