@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -77,6 +78,7 @@ struct FrameDispatcher {
 struct FrameDispatchQueue {
     state: Mutex<FrameDispatchState>,
     available: Condvar,
+    dropped_frames: AtomicU64,
 }
 
 struct FrameDispatchState {
@@ -123,6 +125,13 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
     pub fn is_running(&self) -> bool {
         self.stream.is_some()
     }
+
+    pub fn dropped_frame_count(&self) -> u64 {
+        self.dispatcher
+            .as_ref()
+            .map(FrameDispatcher::dropped_frame_count)
+            .unwrap_or(0)
+    }
 }
 
 impl FrameDispatcher {
@@ -156,6 +165,10 @@ impl FrameDispatcher {
             let _ = join.join();
         }
     }
+
+    fn dropped_frame_count(&self) -> u64 {
+        self.queue.dropped_frame_count()
+    }
 }
 
 impl FrameDispatchQueue {
@@ -166,6 +179,7 @@ impl FrameDispatchQueue {
                 closed: false,
             }),
             available: Condvar::new(),
+            dropped_frames: AtomicU64::new(0),
         }
     }
 
@@ -178,6 +192,7 @@ impl FrameDispatchQueue {
         }
         if state.frames.len() >= FRAME_DISPATCH_QUEUE_CAPACITY {
             state.frames.pop_front();
+            self.dropped_frames.fetch_add(1, Ordering::Relaxed);
         }
         state.frames.push_back(frame);
         self.available.notify_one();
@@ -201,6 +216,10 @@ impl FrameDispatchQueue {
             state.closed = true;
             self.available.notify_all();
         }
+    }
+
+    fn dropped_frame_count(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 }
 

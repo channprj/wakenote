@@ -146,6 +146,7 @@ pub struct AppStatus {
     pub active_model: String,
     pub active_microphone: String,
     pub microphone_warning: Option<String>,
+    pub runtime_warning: Option<String>,
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
     pub queue: QueueSnapshot,
@@ -562,6 +563,7 @@ impl AppBackend {
                 .clone()
                 .unwrap_or_else(|| self.settings.selected_microphone_label.clone()),
             microphone_warning: self.microphone_warning.clone(),
+            runtime_warning: None,
             threshold_dbfs: self.settings.threshold_dbfs,
             level: self.level_monitor.snapshot(),
             queue,
@@ -642,4 +644,13 @@ fn derive_tray_state(
         AppMode::TranscriptionOnly => TrayState::Idle,
         AppMode::Paused => TrayState::Paused,
     }
+}
+
+pub fn with_runtime_warning(mut status: AppStatus, dropped_frames: u64) -> AppStatus {
+    if dropped_frames > 0 {
+        status.runtime_warning = Some(format!(
+            "Live input dropped {dropped_frames} stale audio frames while processing was busy"
+        ));
+    }
+    status
 }

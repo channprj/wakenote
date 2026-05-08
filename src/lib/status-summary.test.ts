@@ -49,4 +49,20 @@ describe("capture status presentation", () => {
       }),
     ).toMatchObject({ headline: "Needs attention", tone: "danger" });
   });
+
+  it("includes runtime warnings in the status detail", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        status: {
+          ...snapshot.status,
+          runtime_warning: "Live input dropped 42 stale audio frames while processing was busy",
+        },
+      }),
+    ).toMatchObject({
+      runtimeWarning: "Live input dropped 42 stale audio frames while processing was busy",
+    });
+  });
 });

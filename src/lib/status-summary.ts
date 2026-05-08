@@ -11,6 +11,7 @@ export interface CaptureStatusPresentation {
   threshold: string;
   queueSummary: string;
   levelSummary: string;
+  runtimeWarning: string | null;
 }
 
 const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
@@ -47,5 +48,6 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
     levelSummary: `${Math.round(status.level.current_dbfs)} dBFS current · ${Math.round(
       status.level.peak_dbfs,
     )} dBFS peak`,
+    runtimeWarning: status.runtime_warning ?? null,
   };
 }

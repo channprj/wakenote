@@ -179,6 +179,7 @@ export function mockSnapshot(): AppSnapshot {
       active_model: settings.selected_model,
       active_microphone: settings.selected_microphone_label,
       microphone_warning: null,
+      runtime_warning: null,
       threshold_dbfs: settings.threshold_dbfs,
       level: defaultLevelSnapshot(),
       queue,

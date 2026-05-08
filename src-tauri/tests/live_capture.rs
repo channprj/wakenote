@@ -176,6 +176,7 @@ fn live_capture_runtime_drops_stale_frames_when_processing_falls_behind() {
         .recv_timeout(Duration::from_secs(1))
         .expect("first frame after busy processing");
     assert!(first_after_busy > 1);
+    assert!(runtime.dropped_frame_count() > 0);
 }
 
 #[test]

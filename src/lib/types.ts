@@ -110,6 +110,7 @@ export interface AppStatus {
   active_model: string;
   active_microphone: string;
   microphone_warning?: string | null;
+  runtime_warning?: string | null;
   threshold_dbfs: number;
   level: LevelSnapshot;
   queue: QueueSnapshot;
