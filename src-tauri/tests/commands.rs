@@ -820,6 +820,48 @@ fn backend_settings_ignore_unusable_selected_model_patches() {
 }
 
 #[test]
+fn backend_delete_model_rejects_active_selected_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "ready-local",
+            "display_name": "Ready Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    let model_path = model_directory.join("ready-local.bin");
+    std::fs::write(&model_path, b"ready model").expect("ready model");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("ready-local".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let error = backend
+        .delete_model("ready-local")
+        .expect_err("active model should not be deleted");
+
+    assert_eq!(error, "cannot delete active model ready-local");
+    assert!(model_path.exists());
+    assert_eq!(backend.settings().selected_model, "ready-local");
+}
+
+#[test]
 fn backend_cancel_current_operation_cancels_active_model_download() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

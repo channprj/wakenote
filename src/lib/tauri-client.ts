@@ -569,9 +569,11 @@ export async function cancelModelDownload(modelId: string): Promise<AppSnapshot>
 
 export async function deleteModel(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const settings = browserSnapshot.settings ?? defaultSettings();
     const target = browserSnapshot.models.find((model) => model.id === modelId);
     if (
       !target ||
+      settings.selected_model === modelId ||
       target.status === "missing" ||
       ["downloading", "verifying", "extracting"].includes(target.status)
     ) {

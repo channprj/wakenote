@@ -352,6 +352,10 @@ impl AppBackend {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
+        if model_id == self.settings.selected_model {
+            return Err(format!("cannot delete active model {model_id}"));
+        }
+
         let store = self.model_store();
         store
             .delete_model(model_id)

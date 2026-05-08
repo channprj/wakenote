@@ -153,7 +153,7 @@ export function ModelManager({
                 size="icon"
                 title="Delete"
                 onClick={() => onDelete(model.id)}
-                disabled={!actions.canDelete}
+                disabled={selected || !actions.canDelete}
               >
                 <Trash2 />
               </Button>

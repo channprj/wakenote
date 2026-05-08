@@ -4,7 +4,11 @@ import { defaultSettings, mockModels } from "../lib/app-state";
 import type { ModelDescriptor, ModelStatus } from "../lib/types";
 import { ModelManager } from "./ModelManager";
 
-function renderModel(status: ModelStatus, overrides: Partial<ModelDescriptor> = {}) {
+function renderModel(
+  status: ModelStatus,
+  overrides: Partial<ModelDescriptor> = {},
+  selectedModel = "other-model",
+) {
   const model: ModelDescriptor = {
     ...mockModels()[0],
     status,
@@ -15,7 +19,7 @@ function renderModel(status: ModelStatus, overrides: Partial<ModelDescriptor> = 
   return renderToStaticMarkup(
     <ModelManager
       models={[model]}
-      settings={{ ...defaultSettings(), selected_model: "other-model" }}
+      settings={{ ...defaultSettings(), selected_model: selectedModel }}
       onPatch={() => {}}
       onVerify={() => {}}
       onDownload={() => {}}
@@ -98,6 +102,13 @@ describe("model manager actions", () => {
     expect(
       isDisabled(buttonTag(renderModel("missing", { download_url: null }), "Download")),
     ).toBe(true);
+  });
+
+  it("does not allow deleting the active selected model", () => {
+    const activeModelId = mockModels()[0].id;
+    const markup = renderModel("ready", {}, activeModelId);
+
+    expect(isDisabled(buttonTag(markup, "Delete"))).toBe(true);
   });
 
   it.each(["ready", "installed", "unloaded", "error"] satisfies ModelStatus[])(
