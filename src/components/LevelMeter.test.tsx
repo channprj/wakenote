@@ -40,6 +40,10 @@ describe("level meter", () => {
     const inactive = renderLevelMeter(false);
 
     expect(inactive).toContain("-120 dBFS");
+    expect(inactive).toContain("-90 dBFS");
+    expect(inactive).not.toContain("-18 dBFS");
+    expect(inactive).not.toContain("-55 dBFS");
+    expect(inactive).not.toContain("-43 dBFS");
     expect(isDisabled(buttonTag(inactive, "Calibrate"))).toBe(true);
     expect(isDisabled(buttonTag(inactive, "Apply"))).toBe(true);
 

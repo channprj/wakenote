@@ -21,9 +21,9 @@ export function LevelMeter({
   const [calibrationStartMs, setCalibrationStartMs] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const currentDb = active ? status.level.current_dbfs : -120;
-  const peakDb = status.level.peak_dbfs;
-  const noiseFloor = status.level.noise_floor_dbfs;
-  const suggestedThreshold = status.level.suggested_threshold_dbfs;
+  const peakDb = active ? status.level.peak_dbfs : -120;
+  const noiseFloor = active ? status.level.noise_floor_dbfs : -120;
+  const suggestedThreshold = active ? status.level.suggested_threshold_dbfs : -90;
   const thresholdToApply = suggestedThresholdValue(suggestedThreshold);
   const calibrationPercent =
     calibrationStartMs === null ? 0 : calibrationProgress(calibrationStartMs, nowMs, 10_000);
