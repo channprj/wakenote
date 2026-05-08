@@ -1,5 +1,7 @@
 use chrono::{TimeZone, Utc};
-use sagwan::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_rms};
+use sagwan::audio::{
+    GateConfig, GateDecision, SpeechGate, dbfs_from_rms, input_devices_from_labels,
+};
 use sagwan::models::{ModelStatus, default_model_registry};
 use sagwan::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
@@ -14,6 +16,17 @@ fn dbfs_conversion_clamps_silence_and_reports_full_scale() {
     assert_eq!(dbfs_from_rms(-1.0), -120.0);
     assert!((dbfs_from_rms(1.0) - 0.0).abs() < 0.001);
     assert!((dbfs_from_rms(0.5) - -6.0206).abs() < 0.001);
+}
+
+#[test]
+fn input_device_list_marks_system_default_unavailable_without_default_input() {
+    let devices = input_devices_from_labels(false, ["USB Mic", "Built-in Microphone"]);
+
+    assert_eq!(devices[0].id, "default");
+    assert_eq!(devices[0].label, "System Default");
+    assert!(!devices[0].available);
+    assert_eq!(devices[1].id, "input-0-usb-mic");
+    assert!(devices[1].available);
 }
 
 #[test]

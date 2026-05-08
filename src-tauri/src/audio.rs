@@ -95,24 +95,39 @@ pub fn dbfs_from_samples(samples: &[f32]) -> f32 {
 pub fn list_input_devices() -> Vec<InputDevice> {
     use cpal::traits::{DeviceTrait, HostTrait};
 
+    let host = cpal::default_host();
+    let default_available = host.default_input_device().is_some();
+    let Ok(inputs) = host.input_devices() else {
+        return input_devices_from_labels(default_available, std::iter::empty::<String>());
+    };
+    let labels = inputs
+        .enumerate()
+        .map(|(index, device)| {
+            device
+                .name()
+                .unwrap_or_else(|_| format!("Input Device {}", index + 1))
+        })
+        .collect::<Vec<_>>();
+
+    input_devices_from_labels(default_available, labels)
+}
+
+pub fn input_devices_from_labels<I, S>(default_available: bool, labels: I) -> Vec<InputDevice>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut devices = vec![InputDevice {
         id: "default".to_string(),
         label: "System Default".to_string(),
-        available: true,
+        available: default_available,
     }];
 
-    let host = cpal::default_host();
-    let Ok(inputs) = host.input_devices() else {
-        return devices;
-    };
-
-    for (index, device) in inputs.enumerate() {
-        let label = device
-            .name()
-            .unwrap_or_else(|_| format!("Input Device {}", index + 1));
+    for (index, label) in labels.into_iter().enumerate() {
+        let label = label.as_ref();
         devices.push(InputDevice {
             id: format!("input-{index}-{}", slugify_device_label(&label)),
-            label,
+            label: label.to_string(),
             available: true,
         });
     }

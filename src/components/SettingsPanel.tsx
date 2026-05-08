@@ -53,7 +53,10 @@ export function SettingsPanel({
   onDeleteModel: (modelId: string) => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
-  const liveCaptureDisabled = settings.pause_all || !settings.recording_enabled;
+  const selectedMicrophone = microphones.find((mic) => mic.id === settings.selected_microphone);
+  const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
+  const liveCaptureDisabled =
+    settings.pause_all || !settings.recording_enabled || !selectedMicrophoneAvailable;
 
   if (activeSection === "models") {
     return (
@@ -295,11 +298,15 @@ export function SettingsPanel({
             }}
           >
             {microphones.map((device) => (
-              <option key={device.id} value={device.id}>
+              <option key={device.id} value={device.id} disabled={!device.available}>
                 {device.label}
+                {device.available ? "" : " (Unavailable)"}
               </option>
             ))}
           </Select>
+          {!selectedMicrophoneAvailable ? (
+            <div className="warning-banner">No available input device is selected.</div>
+          ) : null}
         </div>
       </Section>
       <TrayPreview settings={settings} status={status} onPatch={onPatch} />
