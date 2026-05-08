@@ -483,8 +483,11 @@ impl AppBackend {
     }
 
     pub fn cancel_current_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        self.queue.cancel_current("cancelled by user")?;
-        self.persist_queue();
+        match self.queue.cancel_current("cancelled by user") {
+            Ok(()) => self.persist_queue(),
+            Err(error) if error == "no running job" => {}
+            Err(error) => return Err(error),
+        }
         Ok(self.queue.snapshot())
     }
 

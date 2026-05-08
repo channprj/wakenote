@@ -307,6 +307,19 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
 }
 
 #[test]
+fn backend_cancel_current_transcription_is_noop_without_running_job() {
+    let mut backend = AppBackend::default();
+
+    let snapshot = backend
+        .cancel_current_transcription()
+        .expect("empty queue cancel should not surface a command error");
+
+    assert_eq!(snapshot.running_count, 0);
+    assert_eq!(snapshot.pending_count, 0);
+    assert_eq!(snapshot.failed_count, 0);
+}
+
+#[test]
 fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let first_audio = tmp.path().join("20260506").join("231114.wav");
