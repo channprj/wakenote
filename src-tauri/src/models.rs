@@ -752,6 +752,8 @@ mod tests {
         "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
     const WHISPER_MEDIUM_SHA256: &str =
         "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208";
+    const WHISPER_TURBO_SHA256: &str =
+        "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
     // Pre-fix bogus values that shipped to users; never reintroduce.
     const WHISPER_TINY_BOGUS_SHA256: &str =
         "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2";
@@ -787,7 +789,7 @@ mod tests {
     #[test]
     fn default_registry_uses_real_huggingface_sha256() {
         let registry = default_model_registry();
-        assert_eq!(registry.len(), 2, "registry should ship two models");
+        assert_eq!(registry.len(), 3, "registry should ship three models");
 
         let tiny = registry.get("whisper-tiny").expect("whisper-tiny entry");
         let tiny_hash = tiny
@@ -818,6 +820,17 @@ mod tests {
             medium_hash, WHISPER_MEDIUM_BOGUS_SHA256,
             "regression: pre-fix bogus medium checksum must never reappear",
         );
+
+        let turbo = registry.get("whisper-turbo").expect("whisper-turbo entry");
+        let turbo_hash = turbo
+            .checksum_sha256
+            .as_deref()
+            .expect("whisper-turbo must have a checksum");
+        assert!(
+            is_lowercase_hex_64(turbo_hash),
+            "turbo checksum must be 64 lowercase hex chars: {turbo_hash}",
+        );
+        assert_eq!(turbo_hash, WHISPER_TURBO_SHA256);
     }
 
     #[test]

@@ -433,11 +433,11 @@ fn default_registry_uses_real_huggingface_sha256() {
     const EXPECTED: &[(&str, &str)] = &[
         (
             "whisper-medium",
-            "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e",
+            "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
         ),
         (
             "whisper-tiny",
-            "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2",
+            "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
         ),
         (
             "whisper-turbo",
