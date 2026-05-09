@@ -156,7 +156,7 @@ fn default_settings_match_prd_mvp_defaults() {
     assert!(!settings.calibration_completed);
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
-    assert_eq!(settings.threshold_dbfs, -45.0);
+    assert_eq!(settings.threshold_dbfs, -60.0);
     assert_eq!(settings.attack_ms, 300);
     assert_eq!(settings.release_ms, 1_500);
     assert_eq!(settings.pre_roll_ms, 300);

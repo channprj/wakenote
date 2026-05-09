@@ -97,15 +97,15 @@ function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
 
   const now = Date.now();
   const currentDbfs = Math.max(
-    -64,
-    Math.min(-48, -56 + Math.sin(now / 320) * 7 + Math.sin(now / 95) * 2),
+    -78,
+    Math.min(-62, -70 + Math.sin(now / 320) * 7 + Math.sin(now / 95) * 2),
   );
 
   return {
     current_dbfs: currentDbfs,
     peak_dbfs: Math.max(currentDbfs, browserSnapshot.status?.level.peak_dbfs ?? currentDbfs),
-    noise_floor_dbfs: -58,
-    suggested_threshold_dbfs: -46,
+    noise_floor_dbfs: -73,
+    suggested_threshold_dbfs: -61,
   };
 }
 
@@ -518,6 +518,26 @@ export async function chooseSaveRoot(): Promise<AppSnapshot> {
 
   await invoke<AppSettings>("update_settings", {
     patch: { save_root: selected },
+  });
+  return loadSnapshot();
+}
+
+export async function chooseModelDirectory(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot;
+  }
+
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose Model Directory",
+  });
+  if (typeof selected !== "string") {
+    return loadSnapshot();
+  }
+
+  await invoke<AppSettings>("update_settings", {
+    patch: { model_directory: selected },
   });
   return loadSnapshot();
 }

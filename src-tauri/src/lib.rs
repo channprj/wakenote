@@ -2,6 +2,7 @@ pub mod audio;
 pub mod capture;
 pub mod commands;
 pub mod live_capture;
+pub mod live_transcription;
 pub mod models;
 pub mod overlay;
 pub mod persistence;

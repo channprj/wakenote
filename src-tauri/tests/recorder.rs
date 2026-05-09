@@ -33,6 +33,7 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
         used_fallback_device: false,
         transcription_enabled: false,
         app_version: "0.1.0",
+        live_capture_chunk_id: None,
     })
     .expect("record m4a chunk");
 
@@ -70,6 +71,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
         used_fallback_device: false,
         transcription_enabled: false,
         app_version: "0.1.0",
+        live_capture_chunk_id: None,
     })
     .expect("record chunk");
 
@@ -86,7 +88,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     assert_eq!(metadata.device_id, "builtin-input");
     assert_eq!(metadata.device_name, "Built-in Microphone");
     assert_eq!(metadata.sample_rate, 16_000);
-    assert_eq!(metadata.threshold_dbfs, -45.0);
+    assert_eq!(metadata.threshold_dbfs, -60.0);
     assert_eq!(metadata.duration_ms, 2_000);
     assert_eq!(
         metadata.transcription_status,
@@ -115,6 +117,7 @@ fn transcription_sidecar_writes_txt_and_updates_metadata_on_success() {
         used_fallback_device: false,
         transcription_enabled: true,
         app_version: "0.1.0",
+        live_capture_chunk_id: None,
     })
     .expect("record chunk");
 
@@ -151,6 +154,7 @@ fn transcription_sidecar_writes_error_without_removing_audio() {
         used_fallback_device: true,
         transcription_enabled: true,
         app_version: "0.1.0",
+        live_capture_chunk_id: None,
     })
     .expect("record chunk");
 

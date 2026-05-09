@@ -64,7 +64,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 | Setting | Default | Range |
 | --- | --- | --- |
-| Threshold | `-45 dBFS` | `-90 … -10` |
+| Threshold | `-60 dBFS` | `-90 … -10` |
 | Attack | `300 ms` | `50 … 2 000` |
 | Release | `1 500 ms` | `250 … 5 000` |
 | Pre-roll | `300 ms` | `0 … 1 500` |

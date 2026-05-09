@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 use std::sync::{
     Arc, Mutex,
@@ -6,28 +7,72 @@ use std::sync::{
 use std::thread;
 
 use sagwan::commands::{
-    AppBackend, AppStatus, MainWindowCloseAction, MicrophoneDevice, main_window_close_action,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_live_runtime_warning,
+    AppBackend, AppStatus, LiveTranscriptEvent, MainWindowCloseAction, MicrophoneDevice,
+    main_window_close_action, reveal_save_folder_request, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
+use sagwan::live_transcription::{LivePartialEvent, LivePartialRequest, LiveTranscriptionService};
 use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::overlay::{self, OverlayState};
 use sagwan::queue::QueueSnapshot;
+use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
     SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run,
 };
-use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
+use sagwan::transcription::{
+    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
+};
+use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State, Wry};
+use tauri::{AppHandle, Emitter, Manager, State, Wry};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
+type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
+
+const EVENT_LIVE_STARTED: &str = "live-transcript-started";
+const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
+const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
+const EVENT_LIVE_FINAL: &str = "live-transcript-final";
+const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
+
+#[derive(Debug, Clone, Serialize)]
+struct LiveStartedPayload {
+    chunk_id: u64,
+    started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LivePartialPayload {
+    chunk_id: u64,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LiveCommittedPayload {
+    chunk_id: u64,
+    audio_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LiveFinalPayload {
+    chunk_id: Option<u64>,
+    audio_path: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LiveFailedPayload {
+    chunk_id: Option<u64>,
+    audio_path: String,
+    error: String,
+}
 
 #[derive(Clone)]
 struct TrayMenuItems {
@@ -51,15 +96,17 @@ fn update_settings(
     state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
+    live_transcriber_state: State<'_, LiveTranscriberState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
-    let (launch_at_login_action, live_capture_action, prior_position) = {
+    let (launch_at_login_action, live_capture_action, prior_position, previous_model_directory) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         (
             launch_at_login_action_for_patch(&settings, &patch),
             live_capture_runtime_action_for_patch(&settings, &patch),
             settings.floating_overlay_position,
+            settings.model_directory.clone(),
         )
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
@@ -68,6 +115,13 @@ fn update_settings(
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.update_settings(patch)
     };
+    if settings.model_directory != previous_model_directory {
+        if let Ok(slot) = live_transcriber_state.lock() {
+            if let Some(service) = slot.as_ref() {
+                service.update_model_directory(&settings.model_directory);
+            }
+        }
+    }
     apply_live_capture_runtime_action(
         &app,
         state.inner(),
@@ -408,7 +462,7 @@ fn stop_live_capture(
 ) -> Result<AppStatus, String> {
     let status = stop_live_capture_runtime(&app, backend_state.inner(), live_state.inner())?;
     kick_transcription_worker_if_needed(
-        app.clone(),
+        app,
         backend_state.inner().clone(),
         transcription_state.inner().clone(),
     );
@@ -454,6 +508,142 @@ fn kick_transcription_worker_if_needed(
     }
 }
 
+fn wire_live_transcription(
+    app_handle: AppHandle,
+    backend_state: BackendState,
+    live_transcriber_state: LiveTranscriberState,
+) {
+    let model_directory = backend_state
+        .lock()
+        .map(|backend| backend.settings().model_directory)
+        .unwrap_or_default();
+    eprintln!("[sagwan] wire_live_transcription: model_dir={model_directory}");
+
+    let app_for_partial = app_handle.clone();
+    let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(move |event| {
+        match event {
+            LivePartialEvent::Text(result) => {
+                eprintln!(
+                    "[sagwan] live partial -> FE chunk_id={} text='{}'",
+                    result.chunk_id, result.text
+                );
+                if let Err(error) = app_for_partial.emit(
+                    EVENT_LIVE_PARTIAL,
+                    LivePartialPayload {
+                        chunk_id: result.chunk_id,
+                        text: result.text,
+                    },
+                ) {
+                    eprintln!("[sagwan] WARN failed to emit partial: {error}");
+                }
+            }
+            LivePartialEvent::ModelMissing { chunk_id, model_id } => {
+                eprintln!(
+                    "[sagwan] live partial: model missing chunk_id={chunk_id} model={model_id}"
+                );
+                let error = format!(
+                    "Live transcription model {model_id} is not installed. Open Models tab to download it.",
+                );
+                if let Err(emit_error) = app_for_partial.emit(
+                    EVENT_LIVE_FAILED,
+                    LiveFailedPayload {
+                        chunk_id: Some(chunk_id),
+                        audio_path: String::new(),
+                        error,
+                    },
+                ) {
+                    eprintln!("[sagwan] WARN failed to emit live-failed: {emit_error}");
+                }
+            }
+            LivePartialEvent::EngineError { chunk_id, message } => {
+                eprintln!(
+                    "[sagwan] live partial: engine error chunk_id={chunk_id} message={message}"
+                );
+                if let Err(emit_error) = app_for_partial.emit(
+                    EVENT_LIVE_FAILED,
+                    LiveFailedPayload {
+                        chunk_id: Some(chunk_id),
+                        audio_path: String::new(),
+                        error: format!("Live partial decode failed: {message}"),
+                    },
+                ) {
+                    eprintln!("[sagwan] WARN failed to emit live-failed: {emit_error}");
+                }
+            }
+        }
+    });
+
+    let service = Arc::new(LiveTranscriptionService::new(
+        &model_directory,
+        on_partial,
+    ));
+    if let Ok(mut slot) = live_transcriber_state.lock() {
+        *slot = Some(service.clone());
+    }
+
+    let app_for_handler = app_handle.clone();
+    let service_for_handler = service.clone();
+    let handler: sagwan::commands::LiveEventHandler = Arc::new(move |event| {
+        match event {
+            LiveTranscriptEvent::Started {
+                chunk_id,
+                started_at,
+            } => {
+                eprintln!("[sagwan] handler: emit started chunk_id={chunk_id}");
+                if let Err(error) = app_for_handler.emit(
+                    EVENT_LIVE_STARTED,
+                    LiveStartedPayload {
+                        chunk_id,
+                        started_at: started_at.to_rfc3339(),
+                    },
+                ) {
+                    eprintln!("[sagwan] WARN emit started failed: {error}");
+                }
+            }
+            LiveTranscriptEvent::SamplesReady {
+                chunk_id,
+                model_id,
+                sample_rate,
+                samples,
+            } => {
+                eprintln!(
+                    "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
+                    samples.len()
+                );
+                service_for_handler.submit(LivePartialRequest {
+                    chunk_id,
+                    model_id,
+                    sample_rate,
+                    samples,
+                });
+            }
+            LiveTranscriptEvent::Committed {
+                chunk_id,
+                audio_path,
+            } => {
+                eprintln!(
+                    "[sagwan] handler: emit committed chunk_id={chunk_id} path={}",
+                    audio_path.display()
+                );
+                service_for_handler.cancel_chunk(chunk_id);
+                if let Err(error) = app_for_handler.emit(
+                    EVENT_LIVE_COMMITTED,
+                    LiveCommittedPayload {
+                        chunk_id,
+                        audio_path: audio_path.to_string_lossy().to_string(),
+                    },
+                ) {
+                    eprintln!("[sagwan] WARN emit committed failed: {error}");
+                }
+            }
+        }
+    });
+
+    if let Ok(mut backend) = backend_state.lock() {
+        backend.set_live_event_handler(handler);
+    }
+}
+
 fn kick_transcription_worker(
     app: AppHandle,
     backend_state: BackendState,
@@ -467,13 +657,23 @@ fn kick_transcription_worker(
     }
 
     thread::spawn(move || {
+        eprintln!("[sagwan] queue worker thread started");
         loop {
             let Some(started) = (match backend_state.lock() {
                 Ok(mut backend) => backend.start_next_transcription_job(),
                 Err(_) => break,
             }) else {
+                eprintln!("[sagwan] queue worker: no pending jobs, exiting loop");
                 break;
             };
+
+            let audio_path = started.job.audio_path.clone();
+            eprintln!(
+                "[sagwan] queue worker: processing job id={} path={} model={}",
+                started.job.id,
+                audio_path.display(),
+                started.job.model_id
+            );
 
             let overlay_position = backend_state
                 .lock()
@@ -489,8 +689,15 @@ fn kick_transcription_worker(
             let outcome = worker
                 .process_started_job(&started.job)
                 .unwrap_or_else(|error| {
+                    eprintln!("[sagwan] queue worker: process_started_job error: {error}");
                     TranscriptionJobOutcome::failed(started.job.id, error.to_string())
                 });
+            eprintln!(
+                "[sagwan] queue worker: job id={} outcome={:?}",
+                started.job.id, outcome.status
+            );
+
+            emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
 
             match backend_state.lock() {
                 Ok(mut backend) => {
@@ -528,6 +735,75 @@ fn kick_transcription_worker(
 
         kick_transcription_worker_if_needed(app, backend_state, transcription_state);
     });
+}
+
+fn emit_outcome_to_frontend(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    audio_path: &Path,
+    outcome: &TranscriptionJobOutcome,
+) {
+    let chunk_id = backend_state
+        .lock()
+        .ok()
+        .and_then(|backend| backend.chunk_id_for_audio_path(audio_path))
+        .or_else(|| chunk_id_from_metadata(audio_path));
+    let audio_path_str = audio_path.to_string_lossy().to_string();
+
+    match &outcome.status {
+        TranscriptionJobStatus::Completed => {
+            let transcript_path = audio_path.with_extension("txt");
+            let text = std::fs::read_to_string(&transcript_path)
+                .map(|content| content.trim_end().to_string())
+                .unwrap_or_default();
+            if text.is_empty() {
+                eprintln!(
+                    "[sagwan] emit_outcome_to_frontend: empty sidecar at {}",
+                    transcript_path.display()
+                );
+                return;
+            }
+            eprintln!(
+                "[sagwan] emit final chunk_id={:?} path={} text_len={}",
+                chunk_id,
+                audio_path_str,
+                text.len()
+            );
+            if let Err(error) = app.emit(
+                EVENT_LIVE_FINAL,
+                LiveFinalPayload {
+                    chunk_id,
+                    audio_path: audio_path_str,
+                    text,
+                },
+            ) {
+                eprintln!("[sagwan] WARN emit final failed: {error}");
+            }
+        }
+        TranscriptionJobStatus::Failed(error) => {
+            eprintln!(
+                "[sagwan] emit failed chunk_id={:?} path={} error={}",
+                chunk_id, audio_path_str, error
+            );
+            if let Err(emit_error) = app.emit(
+                EVENT_LIVE_FAILED,
+                LiveFailedPayload {
+                    chunk_id,
+                    audio_path: audio_path_str,
+                    error: error.clone(),
+                },
+            ) {
+                eprintln!("[sagwan] WARN emit failed event failed: {emit_error}");
+            }
+        }
+    }
+}
+
+fn chunk_id_from_metadata(audio_path: &Path) -> Option<u64> {
+    let metadata_path = audio_path.with_extension("json");
+    let bytes = std::fs::read(&metadata_path).ok()?;
+    let metadata: ChunkMetadata = serde_json::from_slice(&bytes).ok()?;
+    metadata.live_capture_chunk_id
 }
 
 fn apply_launch_at_login_action(
@@ -621,9 +897,17 @@ fn main() {
                 .unwrap_or_default();
             let backend_state = Arc::new(Mutex::new(backend));
             let transcription_state = Arc::new(AtomicBool::new(false));
+            let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
+            app.manage(live_transcriber_state.clone());
+
+            wire_live_transcription(
+                app.handle().clone(),
+                backend_state.clone(),
+                live_transcriber_state.clone(),
+            );
             let initial = backend_state
                 .lock()
                 .ok()
@@ -638,6 +922,7 @@ fn main() {
                 let _ = apply_launch_at_login_preference(app.handle(), settings.launch_at_login);
             }
             app.manage(tray_menu_items);
+            let app_handle_for_initial = app.handle().clone();
             if initial_settings
                 .as_ref()
                 .is_some_and(live_capture_should_run)
@@ -655,7 +940,7 @@ fn main() {
                 }
             }
             kick_transcription_worker_if_needed(
-                app.handle().clone(),
+                app_handle_for_initial,
                 backend_state,
                 transcription_state,
             );

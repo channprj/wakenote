@@ -267,6 +267,16 @@ impl ModelStore {
         let mut buffer = [0_u8; 64 * 1024];
         let path = self.model_path(&model.id);
         let temp_path = self.temp_download_path(&model.id);
+        // If a previous partial overshoots the expected total, the resume offset is
+        // meaningless — start fresh so we never hash bytes we no longer trust.
+        if track_progress
+            && temp_path.exists()
+            && let Some(total) = total_bytes
+            && let Ok(metadata) = std::fs::metadata(&temp_path)
+            && metadata.len() > total
+        {
+            let _ = std::fs::remove_file(&temp_path);
+        }
         let resume_download = track_progress && temp_path.exists();
         let mut downloaded_bytes = 0_u64;
         if resume_download {
@@ -407,7 +417,10 @@ impl ModelStore {
             .as_ref()
             .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
         let resume_from = self.partial_download_bytes(&model.id)?;
-        let mut request = ureq::get(url);
+        let agent = ureq::AgentBuilder::new().redirects(10).build();
+        let mut request = agent
+            .get(url)
+            .set("User-Agent", &format!("sagwan/{}", env!("CARGO_PKG_VERSION")));
         if resume_from > 0 {
             request = request.set("Range", &format!("bytes={resume_from}-"));
         }
@@ -664,7 +677,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                     .to_string(),
             ),
             checksum_sha256: Some(
-                "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e".to_string(),
+                "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208".to_string(),
             ),
             size_mb: 1_465,
             languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
@@ -689,7 +702,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                     .to_string(),
             ),
             checksum_sha256: Some(
-                "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2".to_string(),
+                "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21".to_string(),
             ),
             size_mb: 75,
             languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
@@ -703,4 +716,113 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
     );
 
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    const WHISPER_TINY_SHA256: &str =
+        "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
+    const WHISPER_MEDIUM_SHA256: &str =
+        "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208";
+    // Pre-fix bogus values that shipped to users; never reintroduce.
+    const WHISPER_TINY_BOGUS_SHA256: &str =
+        "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2";
+    const WHISPER_MEDIUM_BOGUS_SHA256: &str =
+        "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e";
+
+    fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
+        ModelDescriptor {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            engine: "whisper.cpp".to_string(),
+            provider_runtime: "whisper-rs".to_string(),
+            download_url: None,
+            checksum_sha256: checksum_sha256.map(str::to_string),
+            size_mb: 1,
+            languages: vec!["en".to_string()],
+            speed_score: 5,
+            accuracy_score: 5,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        }
+    }
+
+    fn is_lowercase_hex_64(value: &str) -> bool {
+        value.len() == 64
+            && value
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    }
+
+    #[test]
+    fn default_registry_uses_real_huggingface_sha256() {
+        let registry = default_model_registry();
+        assert_eq!(registry.len(), 2, "registry should ship two models");
+
+        let tiny = registry.get("whisper-tiny").expect("whisper-tiny entry");
+        let tiny_hash = tiny
+            .checksum_sha256
+            .as_deref()
+            .expect("whisper-tiny must have a checksum");
+        assert!(
+            is_lowercase_hex_64(tiny_hash),
+            "tiny checksum must be 64 lowercase hex chars: {tiny_hash}",
+        );
+        assert_eq!(tiny_hash, WHISPER_TINY_SHA256);
+        assert_ne!(
+            tiny_hash, WHISPER_TINY_BOGUS_SHA256,
+            "regression: pre-fix bogus tiny checksum must never reappear",
+        );
+
+        let medium = registry.get("whisper-medium").expect("whisper-medium entry");
+        let medium_hash = medium
+            .checksum_sha256
+            .as_deref()
+            .expect("whisper-medium must have a checksum");
+        assert!(
+            is_lowercase_hex_64(medium_hash),
+            "medium checksum must be 64 lowercase hex chars: {medium_hash}",
+        );
+        assert_eq!(medium_hash, WHISPER_MEDIUM_SHA256);
+        assert_ne!(
+            medium_hash, WHISPER_MEDIUM_BOGUS_SHA256,
+            "regression: pre-fix bogus medium checksum must never reappear",
+        );
+    }
+
+    #[test]
+    fn install_model_reader_discards_oversized_partial_before_hashing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        // SHA256 of 50 zero bytes — what we expect when the stale 100-byte partial is dropped.
+        let fresh_payload = vec![0_u8; 50];
+        let expected = hex_sha256(&fresh_payload);
+        let model = descriptor("whisper-test", Some(&expected));
+
+        std::fs::create_dir_all(tmp.path()).expect("models dir");
+        std::fs::write(
+            store.temp_download_path("whisper-test"),
+            vec![0xFF_u8; 100],
+        )
+        .expect("stale partial");
+
+        let downloaded = store
+            .install_model_reader_inner(
+                &model,
+                Cursor::new(fresh_payload.clone()),
+                Some(fresh_payload.len() as u64),
+                true,
+            )
+            .expect("install discards stale partial");
+
+        assert_eq!(downloaded, fresh_payload.len() as u64);
+        let installed = std::fs::read(store.model_path("whisper-test")).expect("installed model");
+        assert_eq!(installed, fresh_payload);
+        assert!(!store.temp_download_path("whisper-test").exists());
+    }
 }

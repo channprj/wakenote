@@ -14,6 +14,7 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onStartLiveCapture={() => {}}
       onStopLiveCapture={() => {}}
       onChooseSaveRoot={() => {}}
+      onChooseModelDirectory={() => {}}
       onRevealSaveFolder={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}

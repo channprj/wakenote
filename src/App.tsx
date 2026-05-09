@@ -4,6 +4,7 @@ import {
   Brain,
   Clock3,
   Folder,
+  FolderOpen,
   Info,
   ListTodo,
   Mic,
@@ -13,15 +14,22 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FloatingOverlay } from "./components/FloatingOverlay";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { Badge } from "./components/ui/primitives";
+import { TranscriptFooter } from "./components/TranscriptFooter";
+import { Badge, Button } from "./components/ui/primitives";
+import {
+  reduceTranscriptLog,
+  type TranscriptEntry,
+  type TranscriptEvent,
+} from "./lib/transcript-log";
 import {
   cancelModelDownload,
   cancelCurrentOperation,
   cancelCurrentTranscription,
+  chooseModelDirectory,
   chooseSaveRoot,
   revealSaveFolder,
   chooseAudioFiles,
@@ -67,6 +75,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissedWarningKey, setDismissedWarningKey] = useState<string | null>(null);
+  const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
+  const transcriptDispatch = useRef((event: TranscriptEvent) => {
+    setTranscriptLog((entries) => reduceTranscriptLog(entries, event));
+  });
 
   async function refresh() {
     setBusy(true);
@@ -82,6 +94,88 @@ export default function App() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+      return;
+    }
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const dispatch = transcriptDispatch.current;
+      const subscriptions: Array<[string, (payload: unknown) => TranscriptEvent | null]> = [
+        ["live-transcript-started", (payload) => {
+          const data = payload as { chunk_id: number; started_at: string };
+          return { type: "started", chunk_id: data.chunk_id, started_at: data.started_at };
+        }],
+        ["live-transcript-partial", (payload) => {
+          const data = payload as { chunk_id: number; text: string };
+          return { type: "partial", chunk_id: data.chunk_id, text: data.text };
+        }],
+        ["live-transcript-committed", (payload) => {
+          const data = payload as { chunk_id: number; audio_path: string };
+          return {
+            type: "committed",
+            chunk_id: data.chunk_id,
+            audio_path: data.audio_path,
+          };
+        }],
+        ["live-transcript-final", (payload) => {
+          const data = payload as {
+            chunk_id: number | null;
+            audio_path: string;
+            text: string;
+          };
+          return {
+            type: "final",
+            chunk_id: data.chunk_id,
+            audio_path: data.audio_path,
+            text: data.text,
+          };
+        }],
+        ["live-transcript-failed", (payload) => {
+          const data = payload as {
+            chunk_id: number | null;
+            audio_path: string;
+            error: string;
+          };
+          return {
+            type: "failed",
+            chunk_id: data.chunk_id,
+            audio_path: data.audio_path,
+            error: data.error,
+          };
+        }],
+      ];
+
+      for (const [eventName, parse] of subscriptions) {
+        const unlisten = await listen(eventName, (rawEvent) => {
+          // eslint-disable-next-line no-console
+          console.log(`[sagwan FE] received ${eventName}:`, rawEvent.payload);
+          const next = parse(rawEvent.payload);
+          if (next) {
+            dispatch(next);
+          }
+        });
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlisteners.push(unlisten);
+        }
+      }
+      // eslint-disable-next-line no-console
+      console.log("[sagwan FE] live transcription listeners registered");
+    })();
+
+    return () => {
+      cancelled = true;
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
+    };
   }, []);
 
   async function refreshQuietly() {
@@ -202,6 +296,19 @@ export default function App() {
               <strong>{busy ? "Syncing snapshot" : statusPresentation.microphone}</strong>
             </div>
           </div>
+
+          <div className="status-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void runAction(revealSaveFolder)}
+              title={snapshot.settings.save_root}
+            >
+              <FolderOpen data-icon="inline-start" />
+              Open Save Folder
+            </Button>
+          </div>
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
@@ -232,6 +339,7 @@ export default function App() {
           onStartLiveCapture={() => void runAction(startLiveCapture)}
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
+          onChooseModelDirectory={() => void runAction(chooseModelDirectory)}
           onRevealSaveFolder={() => void runAction(revealSaveFolder)}
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
@@ -248,6 +356,11 @@ export default function App() {
         {shouldShowFloatingOverlay(snapshot.settings, snapshot.status.tray_state) ? (
           <FloatingOverlay status={snapshot.status} />
         ) : null}
+
+        <TranscriptFooter
+          entries={transcriptLog}
+          liveActive={snapshot.status.live_input_active}
+        />
       </main>
     </div>
   );

@@ -15,7 +15,7 @@ describe("capture status presentation", () => {
       tone: "neutral",
       modeLabel: "Recording + transcription",
       microphone: "System Default",
-      threshold: "-45 dBFS",
+      threshold: "-60 dBFS",
       queueSummary: "0 pending · 0 running · 0 failed",
     });
   });

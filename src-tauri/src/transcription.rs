@@ -284,14 +284,14 @@ fn read_m4a_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError
     decoded
 }
 
-fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
+pub fn downmix_to_mono(samples: &[f32], channels: usize) -> Vec<f32> {
     samples
         .chunks(channels)
         .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
         .collect()
 }
 
-fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
     if samples.is_empty() || source_rate == 0 || source_rate == target_rate {
         return samples.to_vec();
     }

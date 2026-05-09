@@ -24,6 +24,7 @@ export function SettingsPanel({
   onStartLiveCapture,
   onStopLiveCapture,
   onChooseSaveRoot,
+  onChooseModelDirectory,
   onRevealSaveFolder,
   onImportAudioFiles,
   onEnqueueBacklog,
@@ -44,6 +45,7 @@ export function SettingsPanel({
   onStartLiveCapture: () => void;
   onStopLiveCapture: () => void;
   onChooseSaveRoot: () => void;
+  onChooseModelDirectory: () => void;
   onRevealSaveFolder: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
@@ -239,11 +241,17 @@ export function SettingsPanel({
             checked={settings.show_floating_overlay}
             onChange={(show_floating_overlay) => onPatch({ show_floating_overlay })}
           />
-          <TextInput
-            label="Model Directory"
-            value={settings.model_directory}
-            onChange={(event) => onPatch({ model_directory: event.currentTarget.value })}
-          />
+          <div className="model-directory-row">
+            <TextInput
+              label="Model Directory"
+              value={settings.model_directory}
+              onChange={(event) => onPatch({ model_directory: event.currentTarget.value })}
+            />
+            <Button type="button" variant="secondary" size="sm" onClick={onChooseModelDirectory}>
+              <FolderOpen data-icon="inline-start" />
+              Choose Folder
+            </Button>
+          </div>
           <TextInput
             label="Primary Color"
             value={settings.theme_primary_color}

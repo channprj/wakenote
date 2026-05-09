@@ -247,11 +247,7 @@ fn capture_controller_flushes_active_chunk_when_recording_is_disabled() {
 
     assert!(!controller.is_listening());
     assert!(!controller.is_recording());
-    assert_eq!(events.len(), 1);
-    assert!(matches!(
-        events[0],
-        CaptureControllerEvent::ChunkCompleted { .. }
-    ));
+    assert_eq!(completed_event_count(&events), 1);
     assert!(controller.completed_chunks()[0].audio_path.exists());
 }
 
@@ -278,7 +274,7 @@ fn capture_controller_flushes_active_chunk_when_paused() {
     let events = controller.update_settings(paused).expect("pause");
 
     assert!(!controller.is_listening());
-    assert_eq!(events.len(), 1);
+    assert_eq!(completed_event_count(&events), 1);
     assert!(controller.completed_chunks()[0].audio_path.exists());
 }
 
@@ -307,11 +303,14 @@ fn capture_controller_flushes_active_chunk_before_threshold_settings_change() {
         .update_settings(changed)
         .expect("change threshold");
 
-    assert_eq!(events.len(), 1);
-    assert!(matches!(
-        events[0],
-        CaptureControllerEvent::ChunkCompleted { .. }
-    ));
+    assert_eq!(completed_event_count(&events), 1);
     assert!(!controller.is_recording());
     assert!(controller.completed_chunks()[0].audio_path.exists());
+}
+
+fn completed_event_count(events: &[CaptureControllerEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event, CaptureControllerEvent::ChunkCompleted { .. }))
+        .count()
 }

@@ -32,6 +32,8 @@ pub struct ChunkMetadata {
     pub transcription_status: TranscriptionStatus,
     pub app_version: String,
     pub used_fallback_device: bool,
+    #[serde(default)]
+    pub live_capture_chunk_id: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -47,6 +49,7 @@ pub struct RecordingRequest<'a> {
     pub used_fallback_device: bool,
     pub transcription_enabled: bool,
     pub app_version: &'a str,
+    pub live_capture_chunk_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +124,7 @@ impl Recorder {
             },
             app_version: request.app_version.to_string(),
             used_fallback_device: request.used_fallback_device,
+            live_capture_chunk_id: request.live_capture_chunk_id,
         };
         write_metadata(&target.metadata_path, &metadata)?;
 

@@ -240,7 +240,7 @@ impl Default for AppSettings {
             save_root: "~/Documents/Sagwan".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
-            threshold_dbfs: -45.0,
+            threshold_dbfs: -60.0,
             calibration_completed: false,
             attack_ms: 300,
             release_ms: 1_500,
