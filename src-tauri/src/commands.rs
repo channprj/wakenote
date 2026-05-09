@@ -7,16 +7,16 @@ use std::{
 
 use chrono::{DateTime, Utc};
 
-use crate::audio::{LevelMonitor, LevelSnapshot, list_input_devices};
+use crate::audio::{list_input_devices, InputDevice, LevelMonitor, LevelSnapshot};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
-use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
+use crate::models::{default_model_registry, ModelDescriptor, ModelStatus, ModelStore};
 use crate::persistence::{AppPersistence, PersistenceError};
-use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable_audio_path};
+use crate::queue::{is_importable_audio_path, BacklogScan, QueueSnapshot, TranscriptionQueue};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
-use crate::settings::{AppSettings, SettingsPatch, expand_user_path};
+use crate::settings::{expand_user_path, AppSettings, SettingsPatch};
 use crate::transcription::{
-    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
+    apply_outcome, Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -307,14 +307,7 @@ impl AppBackend {
     }
 
     pub fn model_registry(&self) -> Vec<ModelDescriptor> {
-        let store = self.model_store();
-        let mut models: Vec<ModelDescriptor> = store
-            .load_model_registry()
-            .unwrap_or_else(|_| default_model_registry())
-            .into_values()
-            .collect();
-        let _ = store.refresh_statuses(&mut models);
-        models
+        model_registry_snapshot(self.model_directory_path())
     }
 
     pub fn verify_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
@@ -690,15 +683,10 @@ impl AppBackend {
     }
 
     pub fn list_microphones(&self) -> Vec<MicrophoneDevice> {
-        list_input_devices()
-            .into_iter()
-            .map(|device| MicrophoneDevice {
-                fallback: device.id == "default" && self.settings.selected_microphone != "default",
-                id: device.id,
-                label: device.label,
-                available: device.available,
-            })
-            .collect()
+        microphone_devices_from_input_devices(
+            &self.settings.selected_microphone,
+            list_input_devices(),
+        )
     }
 
     pub fn app_status(&self) -> AppStatus {
@@ -885,6 +873,55 @@ impl AppBackend {
     }
 }
 
+pub fn microphone_devices_from_input_devices(
+    selected_microphone: &str,
+    devices: Vec<InputDevice>,
+) -> Vec<MicrophoneDevice> {
+    devices
+        .into_iter()
+        .map(|device| MicrophoneDevice {
+            fallback: device.id == "default" && selected_microphone != "default",
+            id: device.id,
+            label: device.label,
+            available: device.available,
+        })
+        .collect()
+}
+
+pub fn model_registry_snapshot(
+    model_directory: impl AsRef<std::path::Path>,
+) -> Vec<ModelDescriptor> {
+    let store = ModelStore::new(model_directory);
+    let download_state = store.load_download_state().unwrap_or_default();
+    let mut models: Vec<ModelDescriptor> = store
+        .load_model_registry()
+        .unwrap_or_else(|_| default_model_registry())
+        .into_values()
+        .map(|mut model| {
+            model.download_progress = None;
+            model.download_error = None;
+
+            if store.model_path(&model.id).exists() {
+                model.status = ModelStatus::Ready;
+                model.download_progress = Some(100);
+                return model;
+            }
+
+            if let Some(record) = download_state.downloads.get(&model.id) {
+                model.status = record.status;
+                model.download_progress = record.download_progress_percent();
+                model.download_error = record.error.clone();
+            } else {
+                model.status = ModelStatus::Missing;
+            }
+
+            model
+        })
+        .collect();
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    models
+}
+
 pub fn derive_mode(settings: &AppSettings) -> AppMode {
     if settings.pause_all || (!settings.recording_enabled && !settings.transcription_enabled) {
         return AppMode::Paused;
@@ -933,22 +970,32 @@ fn model_is_selectable(model_id: &str, model_directory: &str) -> bool {
 
 fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
     let store = ModelStore::new(expand_user_path(model_directory));
-    let mut models = store
+    let models = store
         .load_model_registry()
         .unwrap_or_else(|_| default_model_registry())
-        .into_values()
-        .collect::<Vec<_>>();
-    let _ = store.refresh_statuses(&mut models);
+        .into_values();
+    let download_state = store.load_download_state().unwrap_or_default();
+
     models
-        .into_iter()
         .filter(|model| {
-            matches!(
-                model.status,
-                ModelStatus::Installed | ModelStatus::Ready | ModelStatus::Unloaded
-            )
+            store.model_path(&model.id).exists()
+                && !download_state
+                    .downloads
+                    .get(&model.id)
+                    .is_some_and(download_record_blocks_model_selection)
         })
         .map(|model| model.id)
         .collect()
+}
+
+fn download_record_blocks_model_selection(record: &crate::models::ModelDownloadRecord) -> bool {
+    matches!(
+        record.status,
+        ModelStatus::Downloading
+            | ModelStatus::Verifying
+            | ModelStatus::Extracting
+            | ModelStatus::Error
+    )
 }
 
 pub fn with_runtime_warning(status: AppStatus, dropped_frames: u64) -> AppStatus {
@@ -972,4 +1019,64 @@ pub fn with_live_runtime_warning(
         ));
     }
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_test_registry(model_directory: &std::path::Path, model_id: &str) {
+        std::fs::create_dir_all(model_directory).expect("model dir");
+        std::fs::write(
+            model_directory.join("model-registry.json"),
+            format!(
+                r#"[
+                  {{
+                    "id": "{model_id}",
+                    "display_name": "Local Test Model",
+                    "engine": "whisper.cpp",
+                    "provider_runtime": "whisper-rs",
+                    "download_url": null,
+                    "checksum_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "size_mb": 1,
+                    "languages": ["en"],
+                    "speed_score": 1,
+                    "accuracy_score": 1,
+                    "offline": true
+                  }}
+                ]"#
+            ),
+        )
+        .expect("registry");
+    }
+
+    #[test]
+    fn selectable_model_ids_uses_file_existence_without_hashing_model_contents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_test_registry(tmp.path(), "local-ready");
+        std::fs::write(
+            tmp.path().join("local-ready.bin"),
+            b"checksum is intentionally wrong",
+        )
+        .expect("model file");
+
+        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+
+        assert!(models.contains("local-ready"));
+    }
+
+    #[test]
+    fn selectable_model_ids_excludes_models_with_active_download_records() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_test_registry(tmp.path(), "local-downloading");
+        std::fs::write(tmp.path().join("local-downloading.bin"), b"existing model")
+            .expect("model file");
+        ModelStore::new(tmp.path())
+            .record_download_progress("local-downloading", 1, Some(2))
+            .expect("download state");
+
+        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+
+        assert!(!models.contains("local-downloading"));
+    }
 }

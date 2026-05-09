@@ -1,26 +1,32 @@
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc;
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
 };
 use std::thread;
+use std::time::Duration;
 
+use sagwan::audio::list_input_devices;
 use sagwan::commands::{
-    AppBackend, AppStatus, LiveTranscriptEvent, MainWindowCloseAction, MicrophoneDevice,
-    main_window_close_action, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
+    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
+    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
+    with_live_runtime_warning, AppBackend, AppStatus, LiveTranscriptEvent, MainWindowCloseAction,
+    MicrophoneDevice,
 };
-use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
+use sagwan::live_capture::{
+    AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
+};
 use sagwan::live_transcription::{LivePartialEvent, LivePartialRequest, LiveTranscriptionService};
 use sagwan::models::{ModelDescriptor, ModelStore};
 use sagwan::overlay::{self, OverlayState};
 use sagwan::queue::QueueSnapshot;
 use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{
-    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run, AppSettings, FloatingOverlayPosition, LaunchAtLoginAction,
+    LiveCaptureRuntimeAction, SettingsPatch,
 };
 use sagwan::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
@@ -29,7 +35,7 @@ use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, State, Wry};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
@@ -41,6 +47,13 @@ const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
 const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
+const MAIN_WINDOW_LABEL: &str = "main";
+const MAIN_WINDOW_TITLE: &str = "Sagwan";
+const MAIN_WINDOW_WIDTH: f64 = 1180.0;
+const MAIN_WINDOW_HEIGHT: f64 = 760.0;
+const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
+const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
+const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -147,15 +160,70 @@ fn apply_overlay_position_change(app: &AppHandle, settings: &AppSettings) {
         .try_state::<LiveCaptureState>()
         .and_then(|state| state.lock().ok().map(|live| live.is_running()))
         .unwrap_or(false);
-    let result = if matches!(settings.floating_overlay_position, FloatingOverlayPosition::Off) {
-        overlay::hide_overlay(app)
+    let result = if matches!(
+        settings.floating_overlay_position,
+        FloatingOverlayPosition::Off
+    ) {
+        overlay::hide_overlay_on_main_thread(app, "position change hide")
     } else if live_running {
-        overlay::show_overlay(app, OverlayState::Recording, settings.floating_overlay_position)
+        overlay::show_overlay_on_main_thread(
+            app,
+            OverlayState::Recording,
+            settings.floating_overlay_position,
+            "position change show recording",
+        )
     } else {
-        overlay::hide_overlay(app)
+        overlay::hide_overlay_on_main_thread(app, "position change hide inactive")
     };
     if let Err(error) = result {
         eprintln!("[overlay] position change failed: {error}");
+    }
+}
+
+async fn resolve_microphones_for_ui(selected_microphone: String) -> Vec<MicrophoneDevice> {
+    let fallback_selected_microphone = selected_microphone.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (sender, receiver) = mpsc::channel();
+        let selected_for_worker = selected_microphone.clone();
+        thread::spawn(move || {
+            let devices =
+                microphone_devices_from_input_devices(&selected_for_worker, list_input_devices());
+            let _ = sender.send(devices);
+        });
+
+        receiver
+            .recv_timeout(Duration::from_millis(600))
+            .unwrap_or_else(|_| fallback_microphones(&selected_microphone))
+    })
+    .await
+    .unwrap_or_else(|_| fallback_microphones(&fallback_selected_microphone))
+}
+
+fn fallback_microphones(selected_microphone: &str) -> Vec<MicrophoneDevice> {
+    vec![MicrophoneDevice {
+        id: "default".to_string(),
+        label: "System Default".to_string(),
+        available: true,
+        fallback: selected_microphone != "default",
+    }]
+}
+
+fn resolve_capture_device_with_timeout(
+    device_id: String,
+) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(CpalAudioInput::resolve_device(&device_id));
+    });
+
+    match receiver.recv_timeout(AUDIO_DEVICE_RESOLVE_TIMEOUT) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(LiveCaptureError::Cpal(
+            "audio device lookup did not finish within 2 seconds".to_string(),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(LiveCaptureError::Cpal(
+            "audio device lookup disconnected".to_string(),
+        )),
     }
 }
 
@@ -182,9 +250,12 @@ fn app_status(
 }
 
 #[tauri::command]
-fn list_microphones(state: State<'_, BackendState>) -> Result<Vec<MicrophoneDevice>, String> {
-    let backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.list_microphones())
+async fn list_microphones(state: State<'_, BackendState>) -> Result<Vec<MicrophoneDevice>, String> {
+    let selected_microphone = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.settings().selected_microphone
+    };
+    Ok(resolve_microphones_for_ui(selected_microphone).await)
 }
 
 #[tauri::command]
@@ -318,10 +389,7 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
 }
 
 #[tauri::command]
-fn cancel_current_operation(
-    app: AppHandle,
-    state: State<'_, BackendState>,
-) -> Result<(), String> {
+fn cancel_current_operation(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.cancel_current_operation()?;
     update_tray_presentation(&app, &backend.settings(), &backend.app_status());
@@ -366,45 +434,64 @@ fn start_live_capture_runtime(
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
-    let mut live_capture = live_state.lock().map_err(|error| error.to_string())?;
-    let stream_error = live_capture.runtime_error();
-    if live_capture.is_running() && stream_error.is_none() {
+    let (is_running, stream_error, dropped_frames) = {
+        let live_capture = live_state.lock().map_err(|error| error.to_string())?;
+        (
+            live_capture.is_running(),
+            live_capture.runtime_error(),
+            live_capture.dropped_frame_count(),
+        )
+    };
+    if is_running && stream_error.is_none() {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
         return Ok(with_live_runtime_warning(
             backend.app_status(),
-            live_capture.dropped_frame_count(),
+            dropped_frames,
             None,
         ));
     }
     if stream_error.is_some() {
-        live_capture.stop();
+        live_state.lock().map_err(|error| error.to_string())?.stop();
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.stop_capture_session()?;
     }
 
-    let (device_id, sample_rate, overlay_position) = {
-        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+    let settings = {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         if settings.pause_all || !settings.recording_enabled {
             return Ok(backend.app_status());
         }
-        let resolved = match CpalAudioInput::resolve_device(&settings.selected_microphone) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                return Ok(backend.capture_start_failed(format!("Microphone unavailable: {error}")));
-            }
-        };
+        settings
+    };
+
+    let resolve_device_id = if settings.selected_microphone == "default" {
+        settings.selected_microphone.as_str()
+    } else {
+        "default"
+    };
+    let resolved = match resolve_capture_device_with_timeout(resolve_device_id.to_string()) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+            return Ok(backend.capture_start_failed(format!("Microphone unavailable: {error}")));
+        }
+    };
+    let used_fallback_device = settings.selected_microphone != resolved.device_id;
+
+    let (device_id, sample_rate, overlay_position) = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.start_capture_session_with_device(
             resolved.sample_rate,
             chrono::Utc::now(),
             resolved.device_id.clone(),
             resolved.device_name,
-            resolved.used_fallback_device,
+            used_fallback_device || resolved.used_fallback_device,
         )?;
         (
             resolved.device_id,
             resolved.sample_rate,
-            settings.floating_overlay_position,
+            backend.settings().floating_overlay_position,
         )
     };
 
@@ -412,7 +499,7 @@ fn start_live_capture_runtime(
     let callback_backend = backend_arc.clone();
     let callback_transcription = transcription_state.clone();
     let callback_app = app.clone();
-    let start_result = live_capture.start(
+    let start_result = live_state.lock().map_err(|error| error.to_string())?.start(
         AudioInputConfig {
             device_id,
             sample_rate: Some(sample_rate),
@@ -441,15 +528,29 @@ fn start_live_capture_runtime(
         return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
     }
 
-    if let Err(error) = overlay::show_overlay(app, OverlayState::Recording, overlay_position) {
+    if let Err(error) = overlay::show_overlay_on_main_thread(
+        app,
+        OverlayState::Recording,
+        overlay_position,
+        "show recording",
+    ) {
         eprintln!("[overlay] show recording failed: {error}");
     }
 
+    let (dropped_frames, runtime_error) = live_state
+        .lock()
+        .map(|live_capture| {
+            (
+                live_capture.dropped_frame_count(),
+                live_capture.runtime_error(),
+            )
+        })
+        .unwrap_or((0, None));
     let backend = backend_state.lock().map_err(|error| error.to_string())?;
     Ok(with_live_runtime_warning(
         backend.app_status(),
-        live_capture.dropped_frame_count(),
-        live_capture.runtime_error(),
+        dropped_frames,
+        runtime_error,
     ))
 }
 
@@ -487,7 +588,7 @@ fn stop_live_capture_runtime(
         })
         .unwrap_or(true);
     if queue_idle {
-        if let Err(error) = overlay::hide_overlay(app) {
+        if let Err(error) = overlay::hide_overlay_on_main_thread(app, "hide") {
             eprintln!("[overlay] hide failed: {error}");
         }
     }
@@ -520,8 +621,8 @@ fn wire_live_transcription(
     eprintln!("[sagwan] wire_live_transcription: model_dir={model_directory}");
 
     let app_for_partial = app_handle.clone();
-    let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(move |event| {
-        match event {
+    let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(
+        move |event| match event {
             LivePartialEvent::Text(result) => {
                 eprintln!(
                     "[sagwan] live partial -> FE chunk_id={} text='{}'",
@@ -570,71 +671,66 @@ fn wire_live_transcription(
                     eprintln!("[sagwan] WARN failed to emit live-failed: {emit_error}");
                 }
             }
-        }
-    });
+        },
+    );
 
-    let service = Arc::new(LiveTranscriptionService::new(
-        &model_directory,
-        on_partial,
-    ));
+    let service = Arc::new(LiveTranscriptionService::new(&model_directory, on_partial));
     if let Ok(mut slot) = live_transcriber_state.lock() {
         *slot = Some(service.clone());
     }
 
     let app_for_handler = app_handle.clone();
     let service_for_handler = service.clone();
-    let handler: sagwan::commands::LiveEventHandler = Arc::new(move |event| {
-        match event {
-            LiveTranscriptEvent::Started {
-                chunk_id,
-                started_at,
-            } => {
-                eprintln!("[sagwan] handler: emit started chunk_id={chunk_id}");
-                if let Err(error) = app_for_handler.emit(
-                    EVENT_LIVE_STARTED,
-                    LiveStartedPayload {
-                        chunk_id,
-                        started_at: started_at.to_rfc3339(),
-                    },
-                ) {
-                    eprintln!("[sagwan] WARN emit started failed: {error}");
-                }
+    let handler: sagwan::commands::LiveEventHandler = Arc::new(move |event| match event {
+        LiveTranscriptEvent::Started {
+            chunk_id,
+            started_at,
+        } => {
+            eprintln!("[sagwan] handler: emit started chunk_id={chunk_id}");
+            if let Err(error) = app_for_handler.emit(
+                EVENT_LIVE_STARTED,
+                LiveStartedPayload {
+                    chunk_id,
+                    started_at: started_at.to_rfc3339(),
+                },
+            ) {
+                eprintln!("[sagwan] WARN emit started failed: {error}");
             }
-            LiveTranscriptEvent::SamplesReady {
+        }
+        LiveTranscriptEvent::SamplesReady {
+            chunk_id,
+            model_id,
+            sample_rate,
+            samples,
+        } => {
+            eprintln!(
+                    "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
+                    samples.len()
+                );
+            service_for_handler.submit(LivePartialRequest {
                 chunk_id,
                 model_id,
                 sample_rate,
                 samples,
-            } => {
-                eprintln!(
-                    "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
-                    samples.len()
-                );
-                service_for_handler.submit(LivePartialRequest {
+            });
+        }
+        LiveTranscriptEvent::Committed {
+            chunk_id,
+            audio_path,
+        } => {
+            eprintln!(
+                "[sagwan] handler: emit committed chunk_id={chunk_id} path={}",
+                audio_path.display()
+            );
+            service_for_handler.cancel_chunk(chunk_id);
+            if let Err(error) = app_for_handler.emit(
+                EVENT_LIVE_COMMITTED,
+                LiveCommittedPayload {
                     chunk_id,
-                    model_id,
-                    sample_rate,
-                    samples,
-                });
-            }
-            LiveTranscriptEvent::Committed {
-                chunk_id,
-                audio_path,
-            } => {
-                eprintln!(
-                    "[sagwan] handler: emit committed chunk_id={chunk_id} path={}",
-                    audio_path.display()
-                );
-                service_for_handler.cancel_chunk(chunk_id);
-                if let Err(error) = app_for_handler.emit(
-                    EVENT_LIVE_COMMITTED,
-                    LiveCommittedPayload {
-                        chunk_id,
-                        audio_path: audio_path.to_string_lossy().to_string(),
-                    },
-                ) {
-                    eprintln!("[sagwan] WARN emit committed failed: {error}");
-                }
+                    audio_path: audio_path.to_string_lossy().to_string(),
+                },
+            ) {
+                eprintln!("[sagwan] WARN emit committed failed: {error}");
             }
         }
     });
@@ -679,9 +775,12 @@ fn kick_transcription_worker(
                 .lock()
                 .map(|backend| backend.settings().floating_overlay_position)
                 .unwrap_or(FloatingOverlayPosition::Top);
-            if let Err(error) =
-                overlay::show_overlay(&app, OverlayState::Transcribing, overlay_position)
-            {
+            if let Err(error) = overlay::show_overlay_on_main_thread(
+                &app,
+                OverlayState::Transcribing,
+                overlay_position,
+                "show transcribing",
+            ) {
                 eprintln!("[overlay] show transcribing failed: {error}");
             }
 
@@ -718,7 +817,9 @@ fn kick_transcription_worker(
             .map(|backend| backend.queue_snapshot().pending_count > 0)
             .unwrap_or(false);
         if !live_running && !queue_pending {
-            if let Err(error) = overlay::hide_overlay(&app) {
+            if let Err(error) =
+                overlay::hide_overlay_on_main_thread(&app, "hide after worker drained")
+            {
                 eprintln!("[overlay] hide after worker drained failed: {error}");
             }
         } else if live_running && !queue_pending {
@@ -726,9 +827,12 @@ fn kick_transcription_worker(
                 .lock()
                 .map(|backend| backend.settings().floating_overlay_position)
                 .unwrap_or(FloatingOverlayPosition::Top);
-            if let Err(error) =
-                overlay::show_overlay(&app, OverlayState::Recording, overlay_position)
-            {
+            if let Err(error) = overlay::show_overlay_on_main_thread(
+                &app,
+                OverlayState::Recording,
+                overlay_position,
+                "revert to recording",
+            ) {
                 eprintln!("[overlay] revert to recording failed: {error}");
             }
         }
@@ -860,9 +964,58 @@ fn apply_launch_at_login_preference(_app: &AppHandle, _enabled: bool) -> Result<
     Ok(())
 }
 
+fn ensure_main_window_visible(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        app.set_activation_policy(tauri::ActivationPolicy::Regular)?;
+        app.set_dock_visibility(true)?;
+        app.show()?;
+    }
+
+    let window = if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            MAIN_WINDOW_LABEL,
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title(MAIN_WINDOW_TITLE)
+        .inner_size(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT)
+        .min_inner_size(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
+        .resizable(true)
+        .visible(true)
+        .focused(true)
+        .build()?
+    };
+
+    window.set_min_size(Some(LogicalSize::new(
+        MAIN_WINDOW_MIN_WIDTH,
+        MAIN_WINDOW_MIN_HEIGHT,
+    )))?;
+    if window.is_minimized().unwrap_or(false) {
+        window.unminimize()?;
+    }
+    window.show()?;
+    let size = window.inner_size()?;
+    if main_window_needs_size_restore(size.width, size.height) {
+        window.set_size(LogicalSize::new(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT))?;
+        if let Err(error) = window.center() {
+            eprintln!("[window] failed to center settings window: {error}");
+        }
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("[window] failed to focus settings window: {error}");
+    }
+    Ok(())
+}
+
+fn main_window_needs_size_restore(width: u32, height: u32) -> bool {
+    width < MAIN_WINDOW_MIN_WIDTH as u32 || height < MAIN_WINDOW_MIN_HEIGHT as u32
+}
+
 fn main() {
-    let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init());
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
 
     #[cfg(target_os = "macos")]
     {
@@ -885,9 +1038,7 @@ fn main() {
                 None,
             ))?;
 
-            if let Err(error) = overlay::create_overlay_window(app.handle()) {
-                eprintln!("[overlay] failed to create overlay window: {error}");
-            }
+            ensure_main_window_visible(app.handle())?;
 
             let backend = app
                 .path()
@@ -927,17 +1078,30 @@ fn main() {
                 .as_ref()
                 .is_some_and(live_capture_should_run)
             {
-                let live_state = app.state::<LiveCaptureState>();
-                if let Ok(status) = start_live_capture_runtime(
-                    app.handle(),
-                    &backend_state,
-                    live_state.inner(),
-                    transcription_state.clone(),
-                ) {
-                    if let Some(settings) = initial_settings.as_ref() {
-                        update_tray_presentation(app.handle(), settings, &status);
+                let app_handle_for_capture = app.handle().clone();
+                let backend_state_for_capture = backend_state.clone();
+                let transcription_state_for_capture = transcription_state.clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(2));
+                    let live_state = app_handle_for_capture.state::<LiveCaptureState>();
+                    match start_live_capture_runtime(
+                        &app_handle_for_capture,
+                        &backend_state_for_capture,
+                        live_state.inner(),
+                        transcription_state_for_capture,
+                    ) {
+                        Ok(status) => {
+                            if let Ok(backend) = backend_state_for_capture.lock() {
+                                update_tray_presentation(
+                                    &app_handle_for_capture,
+                                    &backend.settings(),
+                                    &status,
+                                );
+                            }
+                        }
+                        Err(error) => eprintln!("[capture] initial live capture failed: {error}"),
                     }
-                }
+                });
             }
             kick_transcription_worker_if_needed(
                 app_handle_for_initial,
@@ -1164,13 +1328,60 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             }
         }
         "open-settings" => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+            if let Err(error) = ensure_main_window_visible(app) {
+                eprintln!("[window] failed to open settings window: {error}");
             }
         }
         "quit" => app.exit(0),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_window_size_restore_detects_zero_sized_window() {
+        assert!(main_window_needs_size_restore(0, 0));
+    }
+
+    #[test]
+    fn main_window_size_restore_detects_too_small_window() {
+        assert!(main_window_needs_size_restore(
+            100,
+            MAIN_WINDOW_MIN_HEIGHT as u32
+        ));
+        assert!(main_window_needs_size_restore(
+            MAIN_WINDOW_MIN_WIDTH as u32,
+            100
+        ));
+    }
+
+    #[test]
+    fn main_window_size_restore_keeps_usable_window_size() {
+        assert!(!main_window_needs_size_restore(
+            MAIN_WINDOW_MIN_WIDTH as u32,
+            MAIN_WINDOW_MIN_HEIGHT as u32,
+        ));
+    }
+
+    #[test]
+    fn fallback_microphones_returns_default_device_without_fallback_for_default_selection() {
+        let devices = fallback_microphones("default");
+
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "default");
+        assert!(!devices[0].fallback);
+    }
+
+    #[test]
+    fn fallback_microphones_marks_default_as_fallback_for_pinned_selection() {
+        let devices = fallback_microphones("input-0-external");
+
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "default");
+        assert!(devices[0].fallback);
     }
 }
 

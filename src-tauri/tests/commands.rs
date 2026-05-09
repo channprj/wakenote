@@ -1,9 +1,11 @@
 use std::{collections::HashSet, path::PathBuf};
 
+use sagwan::audio::input_devices_from_labels;
 use sagwan::commands::{
-    AppBackend, AppMode, MainWindowCloseAction, TrayState, main_window_close_action,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
+    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
+    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
+    with_live_runtime_warning, with_runtime_warning, AppBackend, AppMode, MainWindowCloseAction,
+    TrayState,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
@@ -120,8 +122,8 @@ fn pause_all_overrides_enabled_toggles() {
 
 #[test]
 fn microphone_picker_always_includes_system_default() {
-    let backend = AppBackend::default();
-    let devices = backend.list_microphones();
+    let devices =
+        microphone_devices_from_input_devices("default", input_devices_from_labels(true, ["BY-V"]));
 
     assert_eq!(devices[0].id, "default");
     assert_eq!(devices[0].label, "System Default");
@@ -151,11 +153,9 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(
-        snapshot.jobs[0]
-            .audio_path
-            .ends_with(format!("{dir}/{stem}.wav"))
-    );
+    assert!(snapshot.jobs[0]
+        .audio_path
+        .ends_with(format!("{dir}/{stem}.wav")));
 }
 
 #[test]
@@ -445,11 +445,9 @@ fn backend_queues_active_capture_started_before_transcription_is_disabled() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(
-        snapshot.jobs[0]
-            .audio_path
-            .ends_with(format!("{dir}/{stem}.wav"))
-    );
+    assert!(snapshot.jobs[0]
+        .audio_path
+        .ends_with(format!("{dir}/{stem}.wav")));
 }
 
 #[test]
@@ -480,11 +478,9 @@ fn backend_restarting_capture_session_flushes_active_chunk() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(
-        snapshot.jobs[0]
-            .audio_path
-            .ends_with(format!("{dir}/{stem}.wav"))
-    );
+    assert!(snapshot.jobs[0]
+        .audio_path
+        .ends_with(format!("{dir}/{stem}.wav")));
     let status = backend.app_status();
     assert!(status.live_input_active);
     assert_eq!(status.active_microphone, "USB Mic");
@@ -642,12 +638,10 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
 
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 0);
-    assert!(
-        snapshot
-            .jobs
-            .iter()
-            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
-    );
+    assert!(snapshot
+        .jobs
+        .iter()
+        .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed));
     assert_eq!(
         std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
         "queued transcript\n"
@@ -682,13 +676,11 @@ fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
     assert_eq!(snapshot.running_count, 0);
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 1);
-    assert!(
-        snapshot.jobs[0]
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("recorder error")
-    );
+    assert!(snapshot.jobs[0]
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("recorder error"));
 }
 
 #[test]

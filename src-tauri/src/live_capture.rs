@@ -1,13 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use thiserror::Error;
 
 const FRAME_DISPATCH_QUEUE_CAPACITY: usize = 512;
+const CPAL_STREAM_READY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioFrame {
@@ -301,7 +303,7 @@ impl AudioInputBackend for CpalAudioInput {
             drop(stream);
         });
 
-        match ready_rx.recv() {
+        match ready_rx.recv_timeout(CPAL_STREAM_READY_TIMEOUT) {
             Ok(Ok(())) => Ok(Box::new(CpalStreamHandle {
                 stop_tx: Some(stop_tx),
                 join: Some(join),
@@ -311,9 +313,17 @@ impl AudioInputBackend for CpalAudioInput {
                 let _ = join.join();
                 Err(error)
             }
-            Err(error) => {
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = stop_tx.send(());
+                Err(LiveCaptureError::Cpal(
+                    "input device did not become ready within 2 seconds".to_string(),
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
                 let _ = join.join();
-                Err(LiveCaptureError::Cpal(error.to_string()))
+                Err(LiveCaptureError::Cpal(
+                    "input device startup disconnected".to_string(),
+                ))
             }
         }
     }

@@ -80,9 +80,7 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn apply_panel_behaviour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
-    use tauri_nspanel::{
-        tauri_panel, CollectionBehavior, PanelLevel, WebviewWindowExt,
-    };
+    use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelLevel, WebviewWindowExt};
 
     tauri_panel! {
         panel!(SagwanOverlayPanel {
@@ -121,6 +119,9 @@ pub fn show_overlay(
         return hide_overlay(app);
     }
 
+    if app.get_webview_window(OVERLAY_LABEL).is_none() {
+        create_overlay_window(app)?;
+    }
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return Ok(());
     };
@@ -136,7 +137,10 @@ pub fn show_overlay(
             anchor,
             (OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL),
         );
-        window.set_size(LogicalSize::new(OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL))?;
+        window.set_size(LogicalSize::new(
+            OVERLAY_WIDTH_LOGICAL,
+            OVERLAY_HEIGHT_LOGICAL,
+        ))?;
         window.set_position(physical)?;
     }
 
@@ -145,6 +149,20 @@ pub fn show_overlay(
 
     window.show()?;
     Ok(())
+}
+
+pub fn show_overlay_on_main_thread(
+    app: &AppHandle,
+    state: OverlayState,
+    position: FloatingOverlayPosition,
+    context: &'static str,
+) -> tauri::Result<()> {
+    let app_for_task = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = show_overlay(&app_for_task, state, position) {
+            eprintln!("[overlay] {context} failed: {error}");
+        }
+    })
 }
 
 pub fn hide_overlay(app: &AppHandle) -> tauri::Result<()> {
@@ -158,6 +176,15 @@ pub fn hide_overlay(app: &AppHandle) -> tauri::Result<()> {
         window.hide()?;
     }
     Ok(())
+}
+
+pub fn hide_overlay_on_main_thread(app: &AppHandle, context: &'static str) -> tauri::Result<()> {
+    let app_for_task = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = hide_overlay(&app_for_task) {
+            eprintln!("[overlay] {context} failed: {error}");
+        }
+    })
 }
 
 fn monitor_with_cursor<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Option<MonitorRect> {
