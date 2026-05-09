@@ -25,6 +25,14 @@ fn wav_sample_count(path: &std::path::Path) -> usize {
     reader.into_samples::<i16>().count()
 }
 
+fn wav_samples(path: &std::path::Path) -> Vec<i16> {
+    let reader = hound::WavReader::open(path).expect("wav");
+    reader
+        .into_samples::<i16>()
+        .map(|s| s.expect("sample"))
+        .collect()
+}
+
 #[test]
 fn capture_processor_rejects_spikes_shorter_than_attack() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -99,6 +107,49 @@ fn capture_processor_starts_after_exact_attack_window() {
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 1);
     assert_eq!(wav_sample_count(&chunks[0].audio_path), 20);
+}
+
+#[test]
+fn capture_processor_includes_pre_onset_audio_in_chunk() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config_settings = settings();
+    config_settings.attack_ms = 200;
+    config_settings.pre_roll_ms = 200;
+    config_settings.release_ms = 200;
+    config_settings.min_chunk_ms = 0;
+    config_settings.post_roll_ms = 0;
+    config_settings.threshold_dbfs = -45.0;
+    config_settings.audio_format = AudioFormat::Wav;
+    let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: config_settings,
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+    });
+
+    for _ in 0..5 {
+        processor.process_samples(&[0.0; 1], 100).expect("silence");
+    }
+    for _ in 0..4 {
+        processor.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+    for _ in 0..4 {
+        processor
+            .process_samples(&[0.0; 1], 100)
+            .expect("trailing silence");
+    }
+    processor.flush().expect("flush");
+
+    let chunks = processor.completed_chunks();
+    assert_eq!(chunks.len(), 1);
+    let samples = wav_samples(&chunks[0].audio_path);
+    assert!(samples.len() >= 2, "chunk too short: {}", samples.len());
+    assert_eq!(samples[0], 0, "first sample should be pre-onset silence");
+    assert_eq!(samples[1], 0, "second sample should be pre-onset silence");
 }
 
 #[test]
