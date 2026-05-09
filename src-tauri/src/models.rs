@@ -702,5 +702,30 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    registry.insert(
+        "whisper-turbo".to_string(),
+        ModelDescriptor {
+            id: "whisper-turbo".to_string(),
+            display_name: "Whisper Turbo".to_string(),
+            engine: "whisper.cpp".to_string(),
+            provider_runtime: "whisper-rs".to_string(),
+            download_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+                    .to_string(),
+            ),
+            checksum_sha256: Some(
+                "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69".to_string(),
+            ),
+            size_mb: 1_550,
+            languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
+            speed_score: 8,
+            accuracy_score: 7,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
     registry
 }
