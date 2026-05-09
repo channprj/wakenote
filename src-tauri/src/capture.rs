@@ -254,7 +254,13 @@ impl CaptureProcessor {
     fn push_pre_roll(&mut self, frame: BufferedFrame) {
         self.pre_roll.push_back(frame);
         let mut total_ms: u64 = self.pre_roll.iter().map(|frame| frame.duration_ms).sum();
-        while total_ms > self.config.settings.pre_roll_ms {
+        // Cap includes attack window so pre-onset frames aren't evicted by Idle frames pushed during attack.
+        let cap_ms = self
+            .config
+            .settings
+            .pre_roll_ms
+            .saturating_add(self.config.settings.attack_ms);
+        while total_ms > cap_ms {
             let Some(removed) = self.pre_roll.pop_front() else {
                 break;
             };
@@ -262,21 +268,9 @@ impl CaptureProcessor {
         }
     }
 
-    fn drain_pre_roll_into_active(&mut self, started_at_ms: u64) {
-        let pre_roll_start_ms = self.elapsed_ms.saturating_sub(
-            self.pre_roll
-                .iter()
-                .map(|frame| frame.duration_ms)
-                .sum::<u64>(),
-        );
-        let mut cursor_ms = pre_roll_start_ms;
-
+    fn drain_pre_roll_into_active(&mut self, _started_at_ms: u64) {
         while let Some(frame) = self.pre_roll.pop_front() {
-            let frame_end_ms = cursor_ms.saturating_add(frame.duration_ms);
-            if frame_end_ms >= started_at_ms {
-                self.active_samples.extend_from_slice(&frame.samples);
-            }
-            cursor_ms = frame_end_ms;
+            self.active_samples.extend_from_slice(&frame.samples);
         }
     }
 
