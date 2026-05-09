@@ -4,8 +4,8 @@ use std::thread::{self, JoinHandle};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::settings::expand_user_path;
-use crate::transcription::resample_linear;
+use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::transcription::{configure_whisper_language, resample_linear};
 
 /// Whisper requires roughly 1 second of audio for a meaningful pass; below
 /// this we skip the partial decode entirely so the live preview never spits
@@ -22,6 +22,7 @@ const PARTIAL_WINDOW_SECONDS: u64 = 20;
 pub struct LivePartialRequest {
     pub chunk_id: u64,
     pub model_id: String,
+    pub language: TranscriptionLanguage,
     pub samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
 }
@@ -177,11 +178,12 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
                     "[sagwan] live_transcription: model not loadable for id={}",
                     request.model_id
                 );
-                let already_warned = last_missing
-                    .as_ref()
-                    .is_some_and(|(prev_chunk, prev_model)| {
-                        *prev_chunk == request.chunk_id && prev_model == &request.model_id
-                    });
+                let already_warned =
+                    last_missing
+                        .as_ref()
+                        .is_some_and(|(prev_chunk, prev_model)| {
+                            *prev_chunk == request.chunk_id && prev_model == &request.model_id
+                        });
                 if !already_warned {
                     last_missing = Some((request.chunk_id, request.model_id.clone()));
                     on_result(LivePartialEvent::ModelMissing {
@@ -195,7 +197,12 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
         };
 
         let started = std::time::Instant::now();
-        let result = run_whisper_partial(&context, &request.samples, request.sample_rate);
+        let result = run_whisper_partial(
+            &context,
+            &request.samples,
+            request.sample_rate,
+            request.language,
+        );
         let elapsed = started.elapsed();
         eprintln!(
             "[sagwan] live_transcription: chunk_id={} decode took {:?}",
@@ -309,6 +316,7 @@ fn run_whisper_partial(
     context: &WhisperContext,
     samples: &[f32],
     source_rate: u32,
+    language: TranscriptionLanguage,
 ) -> Result<Option<String>, String> {
     // Take only the trailing window. Re-decoding minutes of audio every
     // partial cycle would never keep up; the queue worker still gets the
@@ -340,6 +348,7 @@ fn run_whisper_partial(
     params.set_print_timestamps(false);
     params.set_no_context(true);
     params.set_single_segment(true);
+    configure_whisper_language(&mut params, language);
     state
         .full(params, &resampled)
         .map_err(|error| format!("decode: {error}"))?;

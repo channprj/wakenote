@@ -7,16 +7,16 @@ use std::{
 
 use chrono::{DateTime, Utc};
 
-use crate::audio::{list_input_devices, InputDevice, LevelMonitor, LevelSnapshot};
+use crate::audio::{InputDevice, LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
-use crate::models::{default_model_registry, ModelDescriptor, ModelStatus, ModelStore};
+use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
-use crate::queue::{is_importable_audio_path, BacklogScan, QueueSnapshot, TranscriptionQueue};
+use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable_audio_path};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
-use crate::settings::{expand_user_path, AppSettings, SettingsPatch};
+use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
-    apply_outcome, Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber,
+    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -31,16 +31,20 @@ pub enum LiveTranscriptEvent {
     Started {
         chunk_id: u64,
         started_at: DateTime<Utc>,
+        overlay_position: crate::settings::FloatingOverlayPosition,
     },
     SamplesReady {
         chunk_id: u64,
         model_id: String,
+        language: TranscriptionLanguage,
         sample_rate: u32,
         samples: Arc<Vec<f32>>,
     },
     Committed {
         chunk_id: u64,
         audio_path: PathBuf,
+        overlay_position: crate::settings::FloatingOverlayPosition,
+        will_transcribe: bool,
     },
 }
 
@@ -191,6 +195,7 @@ pub struct AppStatus {
 pub struct StartedTranscriptionJob {
     pub job: crate::queue::QueueJob,
     pub model_directory: std::path::PathBuf,
+    pub language: TranscriptionLanguage,
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +214,7 @@ pub struct AppBackend {
     microphone_warning: Option<String>,
     persistence: Option<AppPersistence>,
     live_event_handler: Option<LiveEventHandler>,
+    pending_live_events: Vec<LiveTranscriptEvent>,
     chunk_id_history: VecDeque<(PathBuf, u64)>,
     chunk_id_index: HashMap<PathBuf, u64>,
 }
@@ -227,6 +233,7 @@ impl std::fmt::Debug for AppBackend {
                 "live_event_handler",
                 &self.live_event_handler.as_ref().map(|_| "<handler>"),
             )
+            .field("pending_live_events_len", &self.pending_live_events.len())
             .field("chunk_id_history_len", &self.chunk_id_history.len())
             .finish()
     }
@@ -243,6 +250,7 @@ impl Default for AppBackend {
             microphone_warning: None,
             persistence: None,
             live_event_handler: None,
+            pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
         }
@@ -261,6 +269,7 @@ impl AppBackend {
             microphone_warning: None,
             persistence: Some(persistence),
             live_event_handler: None,
+            pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
         })
@@ -268,6 +277,14 @@ impl AppBackend {
 
     pub fn set_live_event_handler(&mut self, handler: LiveEventHandler) {
         self.live_event_handler = Some(handler);
+    }
+
+    pub fn live_event_handler(&self) -> Option<LiveEventHandler> {
+        self.live_event_handler.clone()
+    }
+
+    pub fn drain_live_events(&mut self) -> Vec<LiveTranscriptEvent> {
+        std::mem::take(&mut self.pending_live_events)
     }
 
     pub fn chunk_id_for_audio_path(&self, audio_path: &std::path::Path) -> Option<u64> {
@@ -628,7 +645,8 @@ impl AppBackend {
         let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
             return Ok(self.queue.snapshot());
         };
-        let worker = TranscriptionWorker::new(transcriber);
+        let worker =
+            TranscriptionWorker::with_language(transcriber, self.settings.transcription_language);
         let outcome = worker
             .process_started_job(&job)
             .unwrap_or_else(|error| TranscriptionJobOutcome::failed(job.id, error.to_string()));
@@ -640,7 +658,7 @@ impl AppBackend {
         transcriber: T,
     ) -> Result<QueueSnapshot, String> {
         while let Some(started) = self.start_next_transcription_job() {
-            let worker = TranscriptionWorker::new(transcriber.clone());
+            let worker = TranscriptionWorker::with_language(transcriber.clone(), started.language);
             let outcome = worker
                 .process_started_job(&started.job)
                 .unwrap_or_else(|error| {
@@ -670,6 +688,7 @@ impl AppBackend {
         Some(StartedTranscriptionJob {
             job,
             model_directory: self.model_directory_path(),
+            language: self.settings.transcription_language,
         })
     }
 
@@ -797,6 +816,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::Started {
                         chunk_id,
                         started_at,
+                        overlay_position: self.settings.floating_overlay_position,
                     });
                 }
                 CaptureControllerEvent::LiveSamplesReady {
@@ -811,6 +831,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::SamplesReady {
                         chunk_id,
                         model_id: self.settings.selected_model.clone(),
+                        language: self.settings.transcription_language,
                         sample_rate,
                         samples,
                     });
@@ -823,13 +844,15 @@ impl AppBackend {
                         model_id
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
+                    if let Some(model_id) = model_id {
+                        self.queue.enqueue_file(chunk.audio_path.clone(), model_id);
+                    }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
                         chunk_id,
                         audio_path: chunk.audio_path.clone(),
+                        overlay_position: self.settings.floating_overlay_position,
+                        will_transcribe: self.should_process_transcriptions(),
                     });
-                    if let Some(model_id) = model_id {
-                        self.queue.enqueue_file(chunk.audio_path, model_id);
-                    }
                 }
             }
         }
@@ -837,12 +860,8 @@ impl AppBackend {
         self.persist_queue();
     }
 
-    fn emit_live_event(&self, event: LiveTranscriptEvent) {
-        if let Some(handler) = &self.live_event_handler {
-            handler(event);
-        } else {
-            eprintln!("[sagwan] WARN: emit_live_event without handler set");
-        }
+    fn emit_live_event(&mut self, event: LiveTranscriptEvent) {
+        self.pending_live_events.push(event);
     }
 
     fn remember_chunk_id(&mut self, audio_path: &std::path::Path, chunk_id: u64) {

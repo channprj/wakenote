@@ -59,6 +59,16 @@ export function reduceTranscriptLog(
       }));
 
     case "partial":
+      if (!entries.some((entry) => entry.chunk_id === event.chunk_id)) {
+        return appendOrReplace(entries, event.chunk_id, () => ({
+          chunk_id: event.chunk_id,
+          status: "partial",
+          text: event.text,
+          started_at: new Date().toISOString(),
+          audio_path: null,
+          error: null,
+        }));
+      }
       return updateEntry(entries, event.chunk_id, (entry) => {
         if (entry.status === "final" || entry.status === "failed") {
           return entry;

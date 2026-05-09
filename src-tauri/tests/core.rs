@@ -5,8 +5,8 @@ use sagwan::audio::{
 use sagwan::models::{ModelStatus, default_model_registry};
 use sagwan::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
-    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run,
+    TranscriptionLanguage, expand_user_path, launch_at_login_action_for_patch,
+    live_capture_runtime_action_for_patch, live_capture_should_run,
 };
 use sagwan::storage::{OutputBasename, next_available_output};
 
@@ -127,11 +127,7 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     let second =
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("second path");
     assert_eq!(second.basename, OutputBasename::new(format!("{stem}-001")));
-    assert!(
-        second
-            .audio_path
-            .ends_with(format!("{dir}/{stem}-001.m4a"))
-    );
+    assert!(second.audio_path.ends_with(format!("{dir}/{stem}-001.m4a")));
 }
 
 #[test]
@@ -168,12 +164,25 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
     assert_eq!(settings.threshold_dbfs, -60.0);
+    assert_eq!(settings.transcription_language, TranscriptionLanguage::Auto);
     assert_eq!(settings.attack_ms, 300);
     assert_eq!(settings.release_ms, 1_500);
     assert_eq!(settings.pre_roll_ms, 300);
     assert_eq!(settings.post_roll_ms, 300);
     assert_eq!(settings.selected_model, "whisper-medium");
     assert_eq!(settings.theme_primary_color, "#0047AB");
+}
+
+#[test]
+fn settings_patch_updates_transcription_language() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        transcription_language: Some(TranscriptionLanguage::Ko),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
 }
 
 #[test]
@@ -457,7 +466,9 @@ fn default_registry_uses_real_huggingface_sha256() {
         assert_eq!(actual, *expected_hash, "{model_id} checksum mismatch");
         assert_eq!(actual.len(), 64, "{model_id} checksum must be 64 hex chars");
         assert!(
-            actual.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            actual
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
             "{model_id} checksum must be lowercase hex"
         );
     }

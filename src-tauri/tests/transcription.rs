@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
+use sagwan::settings::TranscriptionLanguage;
 use sagwan::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
     TranscriptionWorker, WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
@@ -9,25 +10,34 @@ use sagwan::transcription::{
 #[derive(Clone)]
 struct StaticTranscriber {
     result: Result<String, String>,
+    expected_language: TranscriptionLanguage,
 }
 
 impl StaticTranscriber {
     fn success(transcript: &str) -> Self {
         Self {
             result: Ok(transcript.to_string()),
+            expected_language: TranscriptionLanguage::Auto,
         }
     }
 
     fn failure(error: &str) -> Self {
         Self {
             result: Err(error.to_string()),
+            expected_language: TranscriptionLanguage::Auto,
         }
+    }
+
+    fn expecting_language(mut self, expected_language: TranscriptionLanguage) -> Self {
+        self.expected_language = expected_language;
+        self
     }
 }
 
 impl Transcriber for StaticTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
         assert_eq!(request.model_id, "whisper-medium");
+        assert_eq!(request.language, self.expected_language);
         assert!(request.audio_path.exists());
         self.result.clone().map_err(TranscriptionError::Engine)
     }
@@ -56,6 +66,25 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
         "안녕하세요 hello\n"
     );
     assert!(!audio_path.with_extension("error.txt").exists());
+}
+
+#[test]
+fn transcription_worker_passes_configured_language_to_transcriber() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230812.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::with_language(
+        StaticTranscriber::success("안녕하세요").expecting_language(TranscriptionLanguage::Ko),
+        TranscriptionLanguage::Ko,
+    );
+
+    worker
+        .process_next(&mut queue)
+        .expect("process")
+        .expect("processed job");
 }
 
 #[test]
@@ -104,7 +133,12 @@ fn transcription_worker_marks_job_failed_when_sidecar_write_fails() {
     assert_eq!(processed, id);
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Failed);
-    assert!(job.error.as_deref().unwrap_or("").contains("recorder error"));
+    assert!(
+        job.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("recorder error")
+    );
 }
 
 #[test]
@@ -134,6 +168,7 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
         .transcribe(TranscriptionRequest {
             audio_path: &audio_path,
             model_id: "whisper-medium",
+            language: TranscriptionLanguage::Auto,
         })
         .expect_err("missing model should fail");
 
@@ -155,6 +190,7 @@ fn whisper_transcriber_expands_tilde_model_directory() {
         .transcribe(TranscriptionRequest {
             audio_path: &audio_path,
             model_id: "missing-model-for-tilde-expansion",
+            language: TranscriptionLanguage::Auto,
         })
         .expect_err("missing model should fail");
 

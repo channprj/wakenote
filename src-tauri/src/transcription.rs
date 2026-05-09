@@ -6,12 +6,13 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{RecordedChunk, RecorderError, TranscriptionSidecar};
-use crate::settings::expand_user_path;
+use crate::settings::{TranscriptionLanguage, expand_user_path};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
     pub audio_path: &'a Path,
     pub model_id: &'a str,
+    pub language: TranscriptionLanguage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -80,11 +81,22 @@ impl TranscriptionJobOutcome {
 #[derive(Debug, Clone)]
 pub struct TranscriptionWorker<T> {
     transcriber: T,
+    language: TranscriptionLanguage,
 }
 
 impl<T> TranscriptionWorker<T> {
     pub fn new(transcriber: T) -> Self {
-        Self { transcriber }
+        Self {
+            transcriber,
+            language: TranscriptionLanguage::Auto,
+        }
+    }
+
+    pub fn with_language(transcriber: T, language: TranscriptionLanguage) -> Self {
+        Self {
+            transcriber,
+            language,
+        }
     }
 }
 
@@ -97,6 +109,7 @@ impl<T: Transcriber> TranscriptionWorker<T> {
         let request = TranscriptionRequest {
             audio_path: &job.audio_path,
             model_id: &job.model_id,
+            language: self.language,
         };
 
         match self.transcriber.transcribe(request) {
@@ -179,11 +192,28 @@ impl Transcriber for WhisperTranscriber {
         }
 
         let samples = decode_audio_for_whisper(request.audio_path)?;
-        run_whisper(&model_path, &samples)
+        run_whisper(&model_path, &samples, request.language)
     }
 }
 
-fn run_whisper(model_path: &Path, samples: &[f32]) -> Result<String, TranscriptionError> {
+pub(crate) fn configure_whisper_language(
+    params: &mut FullParams<'_, '_>,
+    language: TranscriptionLanguage,
+) {
+    match language.whisper_code() {
+        Some(code) => params.set_language(Some(code)),
+        None => {
+            params.set_language(None);
+            params.set_detect_language(true);
+        }
+    }
+}
+
+fn run_whisper(
+    model_path: &Path,
+    samples: &[f32],
+    language: TranscriptionLanguage,
+) -> Result<String, TranscriptionError> {
     let context = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
         .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
     let mut state = context
@@ -195,6 +225,7 @@ fn run_whisper(model_path: &Path, samples: &[f32]) -> Result<String, Transcripti
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_no_context(true);
+    configure_whisper_language(&mut params, language);
 
     state
         .full(params, samples)

@@ -120,6 +120,7 @@ export function defaultSettings(): AppSettings {
   return {
     recording_enabled: true,
     transcription_enabled: true,
+    transcription_language: "auto",
     pause_all: false,
     selected_microphone: "default",
     selected_microphone_label: "System Default",

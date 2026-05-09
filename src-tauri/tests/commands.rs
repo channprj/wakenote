@@ -2,14 +2,16 @@ use std::{collections::HashSet, path::PathBuf};
 
 use sagwan::audio::input_devices_from_labels;
 use sagwan::commands::{
+    AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
     main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
     tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    with_live_runtime_warning, with_runtime_warning, AppBackend, AppMode, MainWindowCloseAction,
-    TrayState,
+    with_live_runtime_warning, with_runtime_warning,
 };
 use sagwan::models::{ModelStatus, ModelStore};
 use sagwan::recorder::ChunkMetadata;
-use sagwan::settings::{AudioFormat, SettingsPatch};
+use sagwan::settings::{
+    AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
+};
 use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
 fn epoch_local_path_parts() -> (String, String) {
@@ -21,11 +23,28 @@ fn epoch_local_path_parts() -> (String, String) {
 }
 
 #[derive(Clone)]
-struct StaticTranscriber;
+struct StaticTranscriber {
+    expected_language: TranscriptionLanguage,
+}
+
+impl Default for StaticTranscriber {
+    fn default() -> Self {
+        Self {
+            expected_language: TranscriptionLanguage::Auto,
+        }
+    }
+}
+
+impl StaticTranscriber {
+    fn expecting_language(expected_language: TranscriptionLanguage) -> Self {
+        Self { expected_language }
+    }
+}
 
 impl Transcriber for StaticTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
         assert_eq!(request.model_id, "whisper-medium");
+        assert_eq!(request.language, self.expected_language);
         assert!(request.audio_path.exists());
         Ok("queued transcript".to_string())
     }
@@ -153,9 +172,67 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0]
-        .audio_path
-        .ends_with(format!("{dir}/{stem}.wav")));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
+}
+
+#[test]
+fn backend_live_events_include_overlay_context_without_runtime_backend_lookup() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    });
+
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+
+    for _ in 0..5 {
+        backend
+            .process_audio_samples_for_test(&[0.8; 1], 100)
+            .expect("speech");
+    }
+    for _ in 0..21 {
+        backend
+            .process_audio_samples_for_test(&[0.0; 1], 100)
+            .expect("silence");
+    }
+
+    let events = backend.drain_live_events();
+    let started_overlay_position = events.iter().find_map(|event| match event {
+        LiveTranscriptEvent::Started {
+            overlay_position, ..
+        } => Some(*overlay_position),
+        _ => None,
+    });
+    let committed_overlay_context = events.iter().find_map(|event| match event {
+        LiveTranscriptEvent::Committed {
+            overlay_position,
+            will_transcribe,
+            ..
+        } => Some((*overlay_position, *will_transcribe)),
+        _ => None,
+    });
+
+    assert_eq!(
+        started_overlay_position,
+        Some(FloatingOverlayPosition::Bottom)
+    );
+    assert_eq!(
+        committed_overlay_context,
+        Some((FloatingOverlayPosition::Bottom, true))
+    );
 }
 
 #[test]
@@ -445,9 +522,11 @@ fn backend_queues_active_capture_started_before_transcription_is_disabled() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0]
-        .audio_path
-        .ends_with(format!("{dir}/{stem}.wav")));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
 }
 
 #[test]
@@ -478,9 +557,11 @@ fn backend_restarting_capture_session_flushes_active_chunk() {
     let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0]
-        .audio_path
-        .ends_with(format!("{dir}/{stem}.wav")));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
     let status = backend.app_status();
     assert!(status.live_input_active);
     assert_eq!(status.active_microphone, "USB Mic");
@@ -503,7 +584,7 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .process_next_transcription_with(StaticTranscriber)
+        .process_next_transcription_with(StaticTranscriber::default())
         .expect("process transcription");
 
     assert_eq!(snapshot.pending_count, 0);
@@ -515,6 +596,30 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
         "queued transcript\n"
     );
+}
+
+#[test]
+fn backend_passes_configured_transcription_language_to_worker() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230913.wav");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        transcription_language: Some(TranscriptionLanguage::Ko),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    backend
+        .process_next_transcription_with(StaticTranscriber::expecting_language(
+            TranscriptionLanguage::Ko,
+        ))
+        .expect("process transcription");
 }
 
 #[test]
@@ -571,7 +676,7 @@ fn backend_process_next_transcription_skips_unusable_pending_job_models() {
     backend.enqueue_audio_file(&ready_audio, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .process_next_transcription_with(StaticTranscriber)
+        .process_next_transcription_with(StaticTranscriber::default())
         .expect("process usable transcription");
 
     assert_eq!(snapshot.pending_count, 1);
@@ -633,15 +738,17 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
     backend.enqueue_audio_file(&second_audio, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .process_pending_transcriptions_with(StaticTranscriber)
+        .process_pending_transcriptions_with(StaticTranscriber::default())
         .expect("process pending transcriptions");
 
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 0);
-    assert!(snapshot
-        .jobs
-        .iter()
-        .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed));
+    assert!(
+        snapshot
+            .jobs
+            .iter()
+            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
+    );
     assert_eq!(
         std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
         "queued transcript\n"
@@ -670,17 +777,19 @@ fn backend_pending_transcription_marks_worker_errors_as_failed_jobs() {
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .process_pending_transcriptions_with(StaticTranscriber)
+        .process_pending_transcriptions_with(StaticTranscriber::default())
         .expect("worker sidecar errors should be captured as failed jobs");
 
     assert_eq!(snapshot.running_count, 0);
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(snapshot.failed_count, 1);
-    assert!(snapshot.jobs[0]
-        .error
-        .as_deref()
-        .unwrap_or("")
-        .contains("recorder error"));
+    assert!(
+        snapshot.jobs[0]
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("recorder error")
+    );
 }
 
 #[test]
@@ -697,7 +806,7 @@ fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .process_pending_transcriptions_with(StaticTranscriber)
+        .process_pending_transcriptions_with(StaticTranscriber::default())
         .expect("process pending transcriptions");
 
     assert_eq!(snapshot.pending_count, 1);

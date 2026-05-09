@@ -21,14 +21,23 @@ function renderLevelMeter(liveInputActive: boolean) {
         },
       }}
       onApplyThreshold={() => {}}
+      onResetThreshold={() => {}}
     />,
   );
 }
 
 function buttonTag(markup: string, label: string) {
-  const match = markup.match(new RegExp(`<button[^>]*>[\\s\\S]*?${label}[\\s\\S]*?</button>`));
+  const match = markup.match(
+    new RegExp(`<button[^>]*>(?:(?!</button>)[\\s\\S])*?${label}(?:(?!</button>)[\\s\\S])*?</button>`),
+  );
   expect(match, `expected ${label} button`).not.toBeNull();
   return match?.[0] ?? "";
+}
+
+function hasButton(markup: string, label: string) {
+  return new RegExp(
+    `<button[^>]*>(?:(?!</button>)[\\s\\S])*?${label}(?:(?!</button>)[\\s\\S])*?</button>`,
+  ).test(markup);
 }
 
 function isDisabled(button: string) {
@@ -45,12 +54,14 @@ describe("level meter", () => {
     expect(inactive).not.toContain("-55 dBFS");
     expect(inactive).not.toContain("-43 dBFS");
     expect(isDisabled(buttonTag(inactive, "Calibrate"))).toBe(true);
-    expect(isDisabled(buttonTag(inactive, "Apply"))).toBe(true);
+    expect(isDisabled(buttonTag(inactive, "Reset"))).toBe(false);
+    expect(hasButton(inactive, "Apply")).toBe(false);
 
     const active = renderLevelMeter(true);
 
     expect(active).toContain("-22 dBFS");
     expect(isDisabled(buttonTag(active, "Calibrate"))).toBe(false);
-    expect(isDisabled(buttonTag(active, "Apply"))).toBe(false);
+    expect(isDisabled(buttonTag(active, "Reset"))).toBe(false);
+    expect(hasButton(active, "Apply")).toBe(false);
   });
 });

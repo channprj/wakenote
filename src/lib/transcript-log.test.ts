@@ -42,6 +42,19 @@ describe("reduceTranscriptLog", () => {
     expect(entries[0].text).toBe("final text");
   });
 
+  it("creates a visible partial entry even if the started event was missed", () => {
+    const entries = apply([
+      { type: "partial", chunk_id: 42, text: "실시간 전사 미리보기" },
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      chunk_id: 42,
+      status: "partial",
+      text: "실시간 전사 미리보기",
+    });
+  });
+
   it("matches finals to existing entries by audio_path when chunk_id is unknown", () => {
     const entries = apply([
       { type: "started", chunk_id: 7, started_at: "2026-05-09T08:00:00Z" },

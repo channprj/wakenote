@@ -4,7 +4,7 @@ import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TrayPreview } from "./TrayPreview";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
-import { calibrationSettingsPatch } from "../lib/calibration";
+import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import type { AppSnapshot, AppSettings } from "../lib/types";
 
 const durationFields = [
@@ -15,6 +15,20 @@ const durationFields = [
   ["min_chunk_ms", "Min Chunk", 100, 5000],
   ["max_chunk_ms", "Max Chunk", 10000, 900000],
 ] as const;
+
+const transcriptionLanguageOptions: Array<{
+  value: AppSettings["transcription_language"];
+  label: string;
+}> = [
+  { value: "auto", label: "Auto-detect" },
+  { value: "ko", label: "Korean" },
+  { value: "en", label: "English" },
+  { value: "ja", label: "Japanese" },
+  { value: "zh", label: "Chinese" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+];
 
 export function SettingsPanel({
   activeSection,
@@ -107,6 +121,7 @@ export function SettingsPanel({
             settings={settings}
             status={status}
             onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
+            onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
           />
           <div className="control-grid">
             <Slider
@@ -341,6 +356,22 @@ export function SettingsPanel({
             checked={settings.transcription_enabled}
             onChange={(transcription_enabled) => onPatch({ transcription_enabled })}
           />
+          <Select
+            label="Transcription Language"
+            value={settings.transcription_language}
+            onChange={(event) =>
+              onPatch({
+                transcription_language: event.currentTarget
+                  .value as AppSettings["transcription_language"],
+              })
+            }
+          >
+            {transcriptionLanguageOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
           <ToggleRow
             label="Pause all"
             checked={settings.pause_all}
@@ -387,6 +418,7 @@ export function SettingsPanel({
         settings={settings}
         status={status}
         onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
+        onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
       />
     </div>
   );

@@ -95,6 +95,17 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(erroredMarkup, "Stop Input"))).toBe(false);
   });
 
+  it("shows a transcription language selector in the general controls", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.transcription_language = "ko";
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Transcription Language");
+    expect(markup).toContain('<option value="auto">Auto-detect</option>');
+    expect(markup).toContain('<option value="ko" selected="">Korean</option>');
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

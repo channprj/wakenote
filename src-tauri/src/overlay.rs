@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition};
 
+use crate::commands::TrayState;
 use crate::settings::FloatingOverlayPosition;
 
 pub const OVERLAY_LABEL: &str = "overlay";
@@ -25,6 +26,14 @@ pub enum OverlayState {
     Hidden,
     Recording,
     Transcribing,
+}
+
+pub fn overlay_state_for_tray_state(tray_state: TrayState) -> OverlayState {
+    match tray_state {
+        TrayState::Recording => OverlayState::Recording,
+        TrayState::Transcribing => OverlayState::Transcribing,
+        _ => OverlayState::Hidden,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +89,7 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn apply_panel_behaviour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
-    use tauri_nspanel::{tauri_panel, CollectionBehavior, PanelLevel, WebviewWindowExt};
+    use tauri_nspanel::{CollectionBehavior, PanelLevel, WebviewWindowExt, tauri_panel};
 
     tauri_panel! {
         panel!(SagwanOverlayPanel {
@@ -115,7 +124,7 @@ pub fn show_overlay(
     state: OverlayState,
     position: FloatingOverlayPosition,
 ) -> tauri::Result<()> {
-    if matches!(position, FloatingOverlayPosition::Off) {
+    if matches!(position, FloatingOverlayPosition::Off) || matches!(state, OverlayState::Hidden) {
         return hide_overlay(app);
     }
 
@@ -144,10 +153,10 @@ pub fn show_overlay(
         window.set_position(physical)?;
     }
 
-    let payload = OverlayStatePayload { state, position };
-    let _ = app.emit(OVERLAY_EVENT, payload);
-
     window.show()?;
+    let payload = OverlayStatePayload { state, position };
+    let _ = window.emit(OVERLAY_EVENT, payload.clone());
+    let _ = app.emit(OVERLAY_EVENT, payload);
     Ok(())
 }
 
@@ -170,11 +179,11 @@ pub fn hide_overlay(app: &AppHandle) -> tauri::Result<()> {
         state: OverlayState::Hidden,
         position: FloatingOverlayPosition::Off,
     };
-    let _ = app.emit(OVERLAY_EVENT, payload);
-
     if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
+        let _ = window.emit(OVERLAY_EVENT, payload.clone());
         window.hide()?;
     }
+    let _ = app.emit(OVERLAY_EVENT, payload);
     Ok(())
 }
 
@@ -291,5 +300,23 @@ mod tests {
         // Logical width = 1920, logical x = (1920 - 172) / 2 = 874, physical = 874 * 2 = 1748
         assert_eq!(pos.x, 1748);
         assert_eq!(pos.y, (TOP_OFFSET_LOGICAL * 2.0) as i32);
+    }
+
+    #[test]
+    fn overlay_stays_hidden_until_audio_is_actively_recording() {
+        use crate::commands::TrayState;
+
+        assert_eq!(
+            overlay_state_for_tray_state(TrayState::Listening),
+            OverlayState::Hidden
+        );
+        assert_eq!(
+            overlay_state_for_tray_state(TrayState::Recording),
+            OverlayState::Recording
+        );
+        assert_eq!(
+            overlay_state_for_tray_state(TrayState::Transcribing),
+            OverlayState::Transcribing
+        );
     }
 }

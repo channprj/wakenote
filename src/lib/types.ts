@@ -1,6 +1,15 @@
 export type AudioFormat = "m4a" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type TranscriptionLanguage =
+  | "auto"
+  | "ko"
+  | "en"
+  | "ja"
+  | "zh"
+  | "es"
+  | "fr"
+  | "de";
 
 export type AppMode =
   | "recording_and_transcription"
@@ -37,6 +46,7 @@ export type QueueJobStatus =
 export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
+  transcription_language: TranscriptionLanguage;
   pause_all: boolean;
   selected_microphone: string;
   selected_microphone_label: string;

@@ -2,18 +2,18 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::Duration;
 
 use sagwan::audio::list_input_devices;
 use sagwan::commands::{
-    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
-    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    with_live_runtime_warning, AppBackend, AppStatus, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice,
+    AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
+    MicrophoneDevice, main_window_close_action, microphone_devices_from_input_devices,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, with_live_runtime_warning,
 };
 use sagwan::live_capture::{
     AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -24,9 +24,9 @@ use sagwan::overlay::{self, OverlayState};
 use sagwan::queue::QueueSnapshot;
 use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run, AppSettings, FloatingOverlayPosition, LaunchAtLoginAction,
-    LiveCaptureRuntimeAction, SettingsPatch,
+    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
+    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run,
 };
 use sagwan::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
@@ -124,9 +124,11 @@ fn update_settings(
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
 
-    let settings = {
+    let (settings, live_event_handler, live_events) = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
-        backend.update_settings(patch)
+        let settings = backend.update_settings(patch);
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (settings, handler, events)
     };
     if settings.model_directory != previous_model_directory {
         if let Ok(slot) = live_transcriber_state.lock() {
@@ -135,6 +137,7 @@ fn update_settings(
             }
         }
     }
+    dispatch_live_events(live_event_handler, live_events);
     apply_live_capture_runtime_action(
         &app,
         state.inner(),
@@ -156,27 +159,54 @@ fn update_settings(
 }
 
 fn apply_overlay_position_change(app: &AppHandle, settings: &AppSettings) {
-    let live_running = app
-        .try_state::<LiveCaptureState>()
-        .and_then(|state| state.lock().ok().map(|live| live.is_running()))
-        .unwrap_or(false);
+    let overlay_state = app
+        .try_state::<BackendState>()
+        .and_then(|state| {
+            state.lock().ok().map(|backend| {
+                overlay::overlay_state_for_tray_state(backend.app_status().tray_state)
+            })
+        })
+        .unwrap_or(OverlayState::Hidden);
     let result = if matches!(
         settings.floating_overlay_position,
         FloatingOverlayPosition::Off
     ) {
         overlay::hide_overlay_on_main_thread(app, "position change hide")
-    } else if live_running {
+    } else if !matches!(overlay_state, OverlayState::Hidden) {
         overlay::show_overlay_on_main_thread(
             app,
-            OverlayState::Recording,
+            overlay_state,
             settings.floating_overlay_position,
-            "position change show recording",
+            "position change show overlay",
         )
     } else {
         overlay::hide_overlay_on_main_thread(app, "position change hide inactive")
     };
     if let Err(error) = result {
         eprintln!("[overlay] position change failed: {error}");
+    }
+}
+
+fn live_events_for_dispatch(
+    backend: &mut AppBackend,
+) -> (Option<LiveEventHandler>, Vec<LiveTranscriptEvent>) {
+    let handler = backend.live_event_handler();
+    let events = backend.drain_live_events();
+    (handler, events)
+}
+
+fn dispatch_live_events(handler: Option<LiveEventHandler>, events: Vec<LiveTranscriptEvent>) {
+    if events.is_empty() {
+        return;
+    }
+
+    let Some(handler) = handler else {
+        eprintln!("[sagwan] WARN: live events generated before handler was set");
+        return;
+    };
+
+    for event in events {
+        handler(event);
     }
 }
 
@@ -242,9 +272,13 @@ fn app_status(
             )
         })
         .unwrap_or((0, None));
-    let backend = state.lock().map_err(|error| error.to_string())?;
-    let settings = backend.settings();
-    let status = with_live_runtime_warning(backend.app_status(), dropped_frames, stream_error);
+    let (settings, status) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        (
+            backend.settings(),
+            with_live_runtime_warning(backend.app_status(), dropped_frames, stream_error),
+        )
+    };
     update_tray_presentation(&app, &settings, &status);
     Ok(status)
 }
@@ -390,16 +424,21 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
 
 #[tauri::command]
 fn cancel_current_operation(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
-    let mut backend = state.lock().map_err(|error| error.to_string())?;
-    backend.cancel_current_operation()?;
-    update_tray_presentation(&app, &backend.settings(), &backend.app_status());
+    let (settings, status) = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.cancel_current_operation()?;
+        (backend.settings(), backend.app_status())
+    };
+    update_tray_presentation(&app, &settings, &status);
     Ok(())
 }
 
 #[tauri::command]
 fn reveal_save_folder(state: State<'_, BackendState>) -> Result<(), String> {
-    let backend = state.lock().map_err(|error| error.to_string())?;
-    let request = reveal_save_folder_request(&backend.settings());
+    let request = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        reveal_save_folder_request(&backend.settings())
+    };
     Command::new(request.program)
         .arg(request.path)
         .spawn()
@@ -452,8 +491,12 @@ fn start_live_capture_runtime(
     }
     if stream_error.is_some() {
         live_state.lock().map_err(|error| error.to_string())?.stop();
-        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        backend.stop_capture_session()?;
+        let (handler, events) = {
+            let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+            backend.stop_capture_session()?;
+            live_events_for_dispatch(&mut backend)
+        };
+        dispatch_live_events(handler, events);
     }
 
     let settings = {
@@ -479,7 +522,7 @@ fn start_live_capture_runtime(
     };
     let used_fallback_device = settings.selected_microphone != resolved.device_id;
 
-    let (device_id, sample_rate, overlay_position) = {
+    let (device_id, sample_rate, handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.start_capture_session_with_device(
             resolved.sample_rate,
@@ -488,12 +531,10 @@ fn start_live_capture_runtime(
             resolved.device_name,
             used_fallback_device || resolved.used_fallback_device,
         )?;
-        (
-            resolved.device_id,
-            resolved.sample_rate,
-            backend.settings().floating_overlay_position,
-        )
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (resolved.device_id, resolved.sample_rate, handler, events)
     };
+    dispatch_live_events(handler, events);
 
     let backend_arc = Arc::clone(backend_state);
     let callback_backend = backend_arc.clone();
@@ -505,14 +546,17 @@ fn start_live_capture_runtime(
             sample_rate: Some(sample_rate),
         },
         move |frame| {
-            let should_kick = if let Ok(mut backend) = callback_backend.lock() {
-                backend
+            let (should_kick, handler, events) = if let Ok(mut backend) = callback_backend.lock() {
+                let should_kick = backend
                     .process_audio_frame(frame)
                     .map(|_| backend.should_process_transcriptions())
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                let (handler, events) = live_events_for_dispatch(&mut backend);
+                (should_kick, handler, events)
             } else {
-                false
+                (false, None, Vec::new())
             };
+            dispatch_live_events(handler, events);
             if should_kick {
                 kick_transcription_worker(
                     callback_app.clone(),
@@ -526,15 +570,6 @@ fn start_live_capture_runtime(
     if let Err(error) = start_result {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
-    }
-
-    if let Err(error) = overlay::show_overlay_on_main_thread(
-        app,
-        OverlayState::Recording,
-        overlay_position,
-        "show recording",
-    ) {
-        eprintln!("[overlay] show recording failed: {error}");
     }
 
     let (dropped_frames, runtime_error) = live_state
@@ -576,10 +611,13 @@ fn stop_live_capture_runtime(
     live_state: &LiveCaptureState,
 ) -> Result<AppStatus, String> {
     live_state.lock().map_err(|error| error.to_string())?.stop();
-    let status = {
+    let (status, handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        backend.stop_capture_session()?
+        let status = backend.stop_capture_session()?;
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (status, handler, events)
     };
+    dispatch_live_events(handler, events);
     let queue_idle = backend_state
         .lock()
         .map(|backend| {
@@ -685,8 +723,17 @@ fn wire_live_transcription(
         LiveTranscriptEvent::Started {
             chunk_id,
             started_at,
+            overlay_position,
         } => {
             eprintln!("[sagwan] handler: emit started chunk_id={chunk_id}");
+            if let Err(error) = overlay::show_overlay_on_main_thread(
+                &app_for_handler,
+                OverlayState::Recording,
+                overlay_position,
+                "show recording on voice",
+            ) {
+                eprintln!("[overlay] show recording on voice failed: {error}");
+            }
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_STARTED,
                 LiveStartedPayload {
@@ -700,16 +747,18 @@ fn wire_live_transcription(
         LiveTranscriptEvent::SamplesReady {
             chunk_id,
             model_id,
+            language,
             sample_rate,
             samples,
         } => {
             eprintln!(
-                    "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
-                    samples.len()
-                );
+                "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
+                samples.len()
+            );
             service_for_handler.submit(LivePartialRequest {
                 chunk_id,
                 model_id,
+                language,
                 sample_rate,
                 samples,
             });
@@ -717,6 +766,8 @@ fn wire_live_transcription(
         LiveTranscriptEvent::Committed {
             chunk_id,
             audio_path,
+            overlay_position,
+            will_transcribe,
         } => {
             eprintln!(
                 "[sagwan] handler: emit committed chunk_id={chunk_id} path={}",
@@ -731,6 +782,19 @@ fn wire_live_transcription(
                 },
             ) {
                 eprintln!("[sagwan] WARN emit committed failed: {error}");
+            }
+            let overlay_result = if will_transcribe {
+                overlay::show_overlay_on_main_thread(
+                    &app_for_handler,
+                    OverlayState::Transcribing,
+                    overlay_position,
+                    "show transcribing after commit",
+                )
+            } else {
+                overlay::hide_overlay_on_main_thread(&app_for_handler, "hide after commit")
+            };
+            if let Err(error) = overlay_result {
+                eprintln!("[overlay] commit transition failed: {error}");
             }
         }
     });
@@ -784,7 +848,10 @@ fn kick_transcription_worker(
                 eprintln!("[overlay] show transcribing failed: {error}");
             }
 
-            let worker = TranscriptionWorker::new(WhisperTranscriber::new(started.model_directory));
+            let worker = TranscriptionWorker::with_language(
+                WhisperTranscriber::new(started.model_directory),
+                started.language,
+            );
             let outcome = worker
                 .process_started_job(&started.job)
                 .unwrap_or_else(|error| {
@@ -808,32 +875,29 @@ fn kick_transcription_worker(
 
         transcription_state.store(false, Ordering::Release);
 
-        let live_running = app
-            .try_state::<LiveCaptureState>()
-            .and_then(|state| state.lock().ok().map(|live| live.is_running()))
-            .unwrap_or(false);
-        let queue_pending = backend_state
+        let (queue_pending, overlay_state, overlay_position) = backend_state
             .lock()
-            .map(|backend| backend.queue_snapshot().pending_count > 0)
-            .unwrap_or(false);
-        if !live_running && !queue_pending {
-            if let Err(error) =
+            .map(|backend| {
+                (
+                    backend.queue_snapshot().pending_count > 0,
+                    overlay::overlay_state_for_tray_state(backend.app_status().tray_state),
+                    backend.settings().floating_overlay_position,
+                )
+            })
+            .unwrap_or((false, OverlayState::Hidden, FloatingOverlayPosition::Top));
+        if !queue_pending {
+            let overlay_result = if matches!(overlay_state, OverlayState::Hidden) {
                 overlay::hide_overlay_on_main_thread(&app, "hide after worker drained")
-            {
-                eprintln!("[overlay] hide after worker drained failed: {error}");
-            }
-        } else if live_running && !queue_pending {
-            let overlay_position = backend_state
-                .lock()
-                .map(|backend| backend.settings().floating_overlay_position)
-                .unwrap_or(FloatingOverlayPosition::Top);
-            if let Err(error) = overlay::show_overlay_on_main_thread(
-                &app,
-                OverlayState::Recording,
-                overlay_position,
-                "revert to recording",
-            ) {
-                eprintln!("[overlay] revert to recording failed: {error}");
+            } else {
+                overlay::show_overlay_on_main_thread(
+                    &app,
+                    overlay_state,
+                    overlay_position,
+                    "restore active overlay after worker drained",
+                )
+            };
+            if let Err(error) = overlay_result {
+                eprintln!("[overlay] worker drain transition failed: {error}");
             }
         }
 
@@ -1059,6 +1123,9 @@ fn main() {
                 backend_state.clone(),
                 live_transcriber_state.clone(),
             );
+            if let Err(error) = overlay::create_overlay_window(app.handle()) {
+                eprintln!("[overlay] initial hidden overlay creation failed: {error}");
+            }
             let initial = backend_state
                 .lock()
                 .ok()
@@ -1091,10 +1158,14 @@ fn main() {
                         transcription_state_for_capture,
                     ) {
                         Ok(status) => {
-                            if let Ok(backend) = backend_state_for_capture.lock() {
+                            let settings = backend_state_for_capture
+                                .lock()
+                                .map(|backend| backend.settings())
+                                .ok();
+                            if let Some(settings) = settings {
                                 update_tray_presentation(
                                     &app_handle_for_capture,
-                                    &backend.settings(),
+                                    &settings,
                                     &status,
                                 );
                             }
@@ -1315,16 +1386,24 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
         }),
         "reveal-save-folder" => {
             let state = app.state::<BackendState>();
-            if let Ok(backend) = state.lock() {
-                let request = reveal_save_folder_request(&backend.settings());
+            let request = state
+                .lock()
+                .map(|backend| reveal_save_folder_request(&backend.settings()))
+                .ok();
+            if let Some(request) = request {
                 let _ = Command::new(request.program).arg(request.path).spawn();
             }
         }
         "cancel-current-operation" => {
             let state = app.state::<BackendState>();
-            if let Ok(mut backend) = state.lock() {
+            let presentation = if let Ok(mut backend) = state.lock() {
                 let _ = backend.cancel_current_operation();
-                update_tray_presentation(app, &backend.settings(), &backend.app_status());
+                Some((backend.settings(), backend.app_status()))
+            } else {
+                None
+            };
+            if let Some((settings, status)) = presentation {
+                update_tray_presentation(app, &settings, &status);
             }
         }
         "open-settings" => {
@@ -1389,15 +1468,17 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     let state = app.state::<BackendState>();
     let live_state = app.state::<LiveCaptureState>();
     let transcription_state = app.state::<AutoTranscriptionState>();
-    let live_capture_action = if let Ok(mut backend) = state.lock() {
+    let (live_capture_action, handler, events) = if let Ok(mut backend) = state.lock() {
         let current = backend.settings();
         let patch = patch(current.clone());
         let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
         backend.update_settings(patch);
-        live_capture_action
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (live_capture_action, handler, events)
     } else {
         return;
     };
+    dispatch_live_events(handler, events);
 
     let _ = apply_live_capture_runtime_action(
         app,
@@ -1406,8 +1487,12 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
         transcription_state.inner().clone(),
         live_capture_action,
     );
-    if let Ok(backend) = state.lock() {
-        update_tray_presentation(app, &backend.settings(), &backend.app_status());
+    let presentation = state
+        .lock()
+        .map(|backend| (backend.settings(), backend.app_status()))
+        .ok();
+    if let Some((settings, status)) = presentation {
+        update_tray_presentation(app, &settings, &status);
     }
     kick_transcription_worker_if_needed(
         app.clone(),

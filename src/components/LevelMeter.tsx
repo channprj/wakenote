@@ -1,6 +1,10 @@
-import { Activity, Check, Gauge, TimerReset } from "lucide-react";
+import { Activity, Gauge, RotateCcw, TimerReset } from "lucide-react";
 import { useEffect, useState } from "react";
-import { calibrationProgress, suggestedThresholdValue } from "../lib/calibration";
+import {
+  calibrationProgress,
+  calibrationShouldAutoApply,
+  suggestedThresholdValue,
+} from "../lib/calibration";
 import { Badge, Button, Progress } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
@@ -12,13 +16,16 @@ export function LevelMeter({
   settings,
   status,
   onApplyThreshold,
+  onResetThreshold,
 }: {
   settings: AppSettings;
   status: AppStatus;
   onApplyThreshold: (thresholdDbfs: number) => void;
+  onResetThreshold: () => void;
 }) {
   const active = status.live_input_active;
   const [calibrationStartMs, setCalibrationStartMs] = useState<number | null>(null);
+  const [calibrationApplied, setCalibrationApplied] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const currentDb = active ? status.level.current_dbfs : -120;
   const peakDb = active ? status.level.peak_dbfs : -120;
@@ -41,6 +48,15 @@ export function LevelMeter({
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, [calibrationRunning]);
+
+  useEffect(() => {
+    if (!calibrationShouldAutoApply(calibrationStartMs, nowMs, 10_000, calibrationApplied)) {
+      return;
+    }
+
+    onApplyThreshold(thresholdToApply);
+    setCalibrationApplied(true);
+  }, [calibrationApplied, calibrationStartMs, nowMs, onApplyThreshold, thresholdToApply]);
 
   return (
     <div className="level-meter">
@@ -90,8 +106,10 @@ export function LevelMeter({
         >
           {calibrationStartMs === null
             ? "Calibration"
-            : calibrationPercent >= 100
-              ? "Ready"
+            : calibrationApplied
+              ? "Applied"
+              : calibrationPercent >= 100
+                ? "Ready"
               : "Calibrating"}
         </Badge>
         <Progress value={calibrationPercent} />
@@ -100,8 +118,10 @@ export function LevelMeter({
           variant="secondary"
           size="sm"
           onClick={() => {
-            setCalibrationStartMs(Date.now());
-            setNowMs(Date.now());
+            const startedAt = Date.now();
+            setCalibrationStartMs(startedAt);
+            setNowMs(startedAt);
+            setCalibrationApplied(false);
           }}
           disabled={!active}
         >
@@ -110,13 +130,16 @@ export function LevelMeter({
         </Button>
         <Button
           type="button"
-          variant="primary"
+          variant="secondary"
           size="sm"
-          onClick={() => onApplyThreshold(thresholdToApply)}
-          disabled={!active}
+          onClick={() => {
+            setCalibrationStartMs(null);
+            setCalibrationApplied(false);
+            onResetThreshold();
+          }}
         >
-          <Check data-icon="inline-start" />
-          Apply
+          <RotateCcw data-icon="inline-start" />
+          Reset
         </Button>
       </div>
     </div>

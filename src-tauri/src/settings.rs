@@ -17,10 +17,45 @@ pub enum FloatingOverlayPosition {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptionLanguage {
+    Auto,
+    Ko,
+    En,
+    Ja,
+    Zh,
+    Es,
+    Fr,
+    De,
+}
+
+impl TranscriptionLanguage {
+    pub fn whisper_code(self) -> Option<&'static str> {
+        match self {
+            Self::Auto => None,
+            Self::Ko => Some("ko"),
+            Self::En => Some("en"),
+            Self::Ja => Some("ja"),
+            Self::Zh => Some("zh"),
+            Self::Es => Some("es"),
+            Self::Fr => Some("fr"),
+            Self::De => Some("de"),
+        }
+    }
+}
+
+impl Default for TranscriptionLanguage {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
     pub transcription_enabled: bool,
+    pub transcription_language: TranscriptionLanguage,
     pub pause_all: bool,
     pub selected_microphone: String,
     pub selected_microphone_label: String,
@@ -49,6 +84,7 @@ pub struct AppSettings {
 pub struct SettingsPatch {
     pub recording_enabled: Option<bool>,
     pub transcription_enabled: Option<bool>,
+    pub transcription_language: Option<TranscriptionLanguage>,
     pub pause_all: Option<bool>,
     pub selected_microphone: Option<String>,
     pub selected_microphone_label: Option<String>,
@@ -162,6 +198,9 @@ impl AppSettings {
         if let Some(value) = patch.transcription_enabled {
             self.transcription_enabled = value;
         }
+        if let Some(value) = patch.transcription_language {
+            self.transcription_language = value;
+        }
         if let Some(value) = patch.pause_all {
             self.pause_all = value;
         }
@@ -234,6 +273,7 @@ impl Default for AppSettings {
         Self {
             recording_enabled: true,
             transcription_enabled: true,
+            transcription_language: TranscriptionLanguage::Auto,
             pause_all: false,
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
