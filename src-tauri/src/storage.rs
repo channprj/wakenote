@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 
 use crate::settings::AudioFormat;
 
@@ -27,8 +27,10 @@ pub fn next_available_output(
     timestamp: DateTime<Utc>,
     format: AudioFormat,
 ) -> std::io::Result<OutputTarget> {
-    let date_dir = timestamp.format("%Y%m%d").to_string();
-    let stem = timestamp.format("%H%M%S").to_string();
+    // File paths use local wall-clock for human readability; metadata JSON keeps UTC for archival.
+    let local = timestamp.with_timezone(&Local);
+    let date_dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
     let extension = match format {
         AudioFormat::M4a => "m4a",
         AudioFormat::Wav => "wav",
