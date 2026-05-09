@@ -9,6 +9,14 @@ pub enum AudioFormat {
     Wav,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FloatingOverlayPosition {
+    Off,
+    Top,
+    Bottom,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
@@ -33,6 +41,7 @@ pub struct AppSettings {
     pub launch_at_login: bool,
     pub show_tray_icon: bool,
     pub show_floating_overlay: bool,
+    pub floating_overlay_position: FloatingOverlayPosition,
     pub theme_primary_color: String,
 }
 
@@ -59,6 +68,7 @@ pub struct SettingsPatch {
     pub launch_at_login: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub show_floating_overlay: Option<bool>,
+    pub floating_overlay_position: Option<FloatingOverlayPosition>,
     pub theme_primary_color: Option<String>,
 }
 
@@ -210,6 +220,9 @@ impl AppSettings {
         if let Some(value) = patch.show_floating_overlay {
             self.show_floating_overlay = value;
         }
+        if let Some(value) = patch.floating_overlay_position {
+            self.floating_overlay_position = value;
+        }
         if let Some(value) = patch.theme_primary_color {
             self.theme_primary_color = value;
         }
@@ -241,6 +254,7 @@ impl Default for AppSettings {
             launch_at_login: false,
             show_tray_icon: true,
             show_floating_overlay: true,
+            floating_overlay_position: FloatingOverlayPosition::Top,
             theme_primary_color: "#0047AB".to_string(),
         }
     }

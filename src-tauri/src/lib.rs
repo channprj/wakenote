@@ -3,6 +3,7 @@ pub mod capture;
 pub mod commands;
 pub mod live_capture;
 pub mod models;
+pub mod overlay;
 pub mod persistence;
 pub mod queue;
 pub mod recorder;

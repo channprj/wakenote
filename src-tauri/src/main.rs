@@ -12,10 +12,11 @@ use sagwan::commands::{
 };
 use sagwan::live_capture::{AudioInputConfig, CpalAudioInput, LiveCaptureRuntime};
 use sagwan::models::{ModelDescriptor, ModelStore};
+use sagwan::overlay::{self, OverlayState};
 use sagwan::queue::QueueSnapshot;
 use sagwan::settings::{
-    AppSettings, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
+    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run,
 };
 use sagwan::transcription::{TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber};
@@ -52,12 +53,13 @@ fn update_settings(
     transcription_state: State<'_, AutoTranscriptionState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
-    let (launch_at_login_action, live_capture_action) = {
+    let (launch_at_login_action, live_capture_action, prior_position) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         (
             launch_at_login_action_for_patch(&settings, &patch),
             live_capture_runtime_action_for_patch(&settings, &patch),
+            settings.floating_overlay_position,
         )
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
@@ -67,13 +69,40 @@ fn update_settings(
         backend.update_settings(patch)
     };
     apply_live_capture_runtime_action(
+        &app,
         state.inner(),
         live_state.inner(),
         transcription_state.inner().clone(),
         live_capture_action,
     )?;
-    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    kick_transcription_worker_if_needed(
+        app.clone(),
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+
+    if prior_position != settings.floating_overlay_position {
+        apply_overlay_position_change(&app, &settings);
+    }
+
     Ok(settings)
+}
+
+fn apply_overlay_position_change(app: &AppHandle, settings: &AppSettings) {
+    let live_running = app
+        .try_state::<LiveCaptureState>()
+        .and_then(|state| state.lock().ok().map(|live| live.is_running()))
+        .unwrap_or(false);
+    let result = if matches!(settings.floating_overlay_position, FloatingOverlayPosition::Off) {
+        overlay::hide_overlay(app)
+    } else if live_running {
+        overlay::show_overlay(app, OverlayState::Recording, settings.floating_overlay_position)
+    } else {
+        overlay::hide_overlay(app)
+    };
+    if let Err(error) = result {
+        eprintln!("[overlay] position change failed: {error}");
+    }
 }
 
 #[tauri::command]
@@ -164,6 +193,7 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 
 #[tauri::command]
 fn enqueue_audio_file(
+    app: AppHandle,
     state: State<'_, BackendState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     audio_path: String,
@@ -173,12 +203,17 @@ fn enqueue_audio_file(
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.enqueue_audio_file(audio_path, model_id)
     };
-    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    kick_transcription_worker_if_needed(
+        app,
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
     Ok(snapshot)
 }
 
 #[tauri::command]
 fn enqueue_backlog(
+    app: AppHandle,
     state: State<'_, BackendState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     save_root: String,
@@ -189,12 +224,17 @@ fn enqueue_backlog(
             .enqueue_backlog(save_root)
             .map_err(|error| error.to_string())?
     };
-    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    kick_transcription_worker_if_needed(
+        app,
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
     Ok(snapshot)
 }
 
 #[tauri::command]
 fn retry_job(
+    app: AppHandle,
     state: State<'_, BackendState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     id: u64,
@@ -203,7 +243,11 @@ fn retry_job(
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.retry_job(id)?
     };
-    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    kick_transcription_worker_if_needed(
+        app,
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
     Ok(snapshot)
 }
 
@@ -249,11 +293,13 @@ fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSna
 
 #[tauri::command]
 fn start_live_capture(
+    app: AppHandle,
     backend_state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
     start_live_capture_runtime(
+        &app,
         backend_state.inner(),
         live_state.inner(),
         transcription_state.inner().clone(),
@@ -261,6 +307,7 @@ fn start_live_capture(
 }
 
 fn start_live_capture_runtime(
+    app: &AppHandle,
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
@@ -281,7 +328,7 @@ fn start_live_capture_runtime(
         backend.stop_capture_session()?;
     }
 
-    let (device_id, sample_rate) = {
+    let (device_id, sample_rate, overlay_position) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         if settings.pause_all || !settings.recording_enabled {
@@ -300,12 +347,17 @@ fn start_live_capture_runtime(
             resolved.device_name,
             resolved.used_fallback_device,
         )?;
-        (resolved.device_id, resolved.sample_rate)
+        (
+            resolved.device_id,
+            resolved.sample_rate,
+            settings.floating_overlay_position,
+        )
     };
 
     let backend_arc = Arc::clone(backend_state);
     let callback_backend = backend_arc.clone();
     let callback_transcription = transcription_state.clone();
+    let callback_app = app.clone();
     let start_result = live_capture.start(
         AudioInputConfig {
             device_id,
@@ -321,7 +373,11 @@ fn start_live_capture_runtime(
                 false
             };
             if should_kick {
-                kick_transcription_worker(callback_backend.clone(), callback_transcription.clone());
+                kick_transcription_worker(
+                    callback_app.clone(),
+                    callback_backend.clone(),
+                    callback_transcription.clone(),
+                );
             }
         },
     );
@@ -329,6 +385,10 @@ fn start_live_capture_runtime(
     if let Err(error) = start_result {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
+    }
+
+    if let Err(error) = overlay::show_overlay(app, OverlayState::Recording, overlay_position) {
+        eprintln!("[overlay] show recording failed: {error}");
     }
 
     let backend = backend_state.lock().map_err(|error| error.to_string())?;
@@ -341,12 +401,14 @@ fn start_live_capture_runtime(
 
 #[tauri::command]
 fn stop_live_capture(
+    app: AppHandle,
     backend_state: State<'_, BackendState>,
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
-    let status = stop_live_capture_runtime(backend_state.inner(), live_state.inner())?;
+    let status = stop_live_capture_runtime(&app, backend_state.inner(), live_state.inner())?;
     kick_transcription_worker_if_needed(
+        app.clone(),
         backend_state.inner().clone(),
         transcription_state.inner().clone(),
     );
@@ -354,6 +416,7 @@ fn stop_live_capture(
 }
 
 fn stop_live_capture_runtime(
+    app: &AppHandle,
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
 ) -> Result<AppStatus, String> {
@@ -362,10 +425,23 @@ fn stop_live_capture_runtime(
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.stop_capture_session()?
     };
+    let queue_idle = backend_state
+        .lock()
+        .map(|backend| {
+            let snapshot = backend.queue_snapshot();
+            snapshot.running_count == 0 && snapshot.pending_count == 0
+        })
+        .unwrap_or(true);
+    if queue_idle {
+        if let Err(error) = overlay::hide_overlay(app) {
+            eprintln!("[overlay] hide failed: {error}");
+        }
+    }
     Ok(status)
 }
 
 fn kick_transcription_worker_if_needed(
+    app: AppHandle,
     backend_state: BackendState,
     transcription_state: AutoTranscriptionState,
 ) {
@@ -374,11 +450,12 @@ fn kick_transcription_worker_if_needed(
         .map(|backend| backend.should_process_transcriptions())
         .unwrap_or(false);
     if should_process {
-        kick_transcription_worker(backend_state, transcription_state);
+        kick_transcription_worker(app, backend_state, transcription_state);
     }
 }
 
 fn kick_transcription_worker(
+    app: AppHandle,
     backend_state: BackendState,
     transcription_state: AutoTranscriptionState,
 ) {
@@ -398,6 +475,16 @@ fn kick_transcription_worker(
                 break;
             };
 
+            let overlay_position = backend_state
+                .lock()
+                .map(|backend| backend.settings().floating_overlay_position)
+                .unwrap_or(FloatingOverlayPosition::Top);
+            if let Err(error) =
+                overlay::show_overlay(&app, OverlayState::Transcribing, overlay_position)
+            {
+                eprintln!("[overlay] show transcribing failed: {error}");
+            }
+
             let worker = TranscriptionWorker::new(WhisperTranscriber::new(started.model_directory));
             let outcome = worker
                 .process_started_job(&started.job)
@@ -414,7 +501,32 @@ fn kick_transcription_worker(
         }
 
         transcription_state.store(false, Ordering::Release);
-        kick_transcription_worker_if_needed(backend_state, transcription_state);
+
+        let live_running = app
+            .try_state::<LiveCaptureState>()
+            .and_then(|state| state.lock().ok().map(|live| live.is_running()))
+            .unwrap_or(false);
+        let queue_pending = backend_state
+            .lock()
+            .map(|backend| backend.queue_snapshot().pending_count > 0)
+            .unwrap_or(false);
+        if !live_running && !queue_pending {
+            if let Err(error) = overlay::hide_overlay(&app) {
+                eprintln!("[overlay] hide after worker drained failed: {error}");
+            }
+        } else if live_running && !queue_pending {
+            let overlay_position = backend_state
+                .lock()
+                .map(|backend| backend.settings().floating_overlay_position)
+                .unwrap_or(FloatingOverlayPosition::Top);
+            if let Err(error) =
+                overlay::show_overlay(&app, OverlayState::Recording, overlay_position)
+            {
+                eprintln!("[overlay] revert to recording failed: {error}");
+            }
+        }
+
+        kick_transcription_worker_if_needed(app, backend_state, transcription_state);
     });
 }
 
@@ -430,6 +542,7 @@ fn apply_launch_at_login_action(
 }
 
 fn apply_live_capture_runtime_action(
+    app: &AppHandle,
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
@@ -437,16 +550,16 @@ fn apply_live_capture_runtime_action(
 ) -> Result<(), String> {
     match action {
         LiveCaptureRuntimeAction::Start => {
-            start_live_capture_runtime(backend_state, live_state, transcription_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Stop => {
-            stop_live_capture_runtime(backend_state, live_state)?;
+            stop_live_capture_runtime(app, backend_state, live_state)?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Restart => {
-            stop_live_capture_runtime(backend_state, live_state)?;
-            start_live_capture_runtime(backend_state, live_state, transcription_state)?;
+            stop_live_capture_runtime(app, backend_state, live_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Unchanged => Ok(()),
@@ -472,8 +585,15 @@ fn apply_launch_at_login_preference(_app: &AppHandle, _enabled: bool) -> Result<
 }
 
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
@@ -488,6 +608,10 @@ fn main() {
                 tauri_plugin_autostart::MacosLauncher::LaunchAgent,
                 None,
             ))?;
+
+            if let Err(error) = overlay::create_overlay_window(app.handle()) {
+                eprintln!("[overlay] failed to create overlay window: {error}");
+            }
 
             let backend = app
                 .path()
@@ -520,6 +644,7 @@ fn main() {
             {
                 let live_state = app.state::<LiveCaptureState>();
                 if let Ok(status) = start_live_capture_runtime(
+                    app.handle(),
                     &backend_state,
                     live_state.inner(),
                     transcription_state.clone(),
@@ -529,7 +654,11 @@ fn main() {
                     }
                 }
             }
-            kick_transcription_worker_if_needed(backend_state, transcription_state);
+            kick_transcription_worker_if_needed(
+                app.handle().clone(),
+                backend_state,
+                transcription_state,
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -775,6 +904,7 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     };
 
     let _ = apply_live_capture_runtime_action(
+        app,
         state.inner(),
         live_state.inner(),
         transcription_state.inner().clone(),
@@ -783,5 +913,9 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     if let Ok(backend) = state.lock() {
         update_tray_presentation(app, &backend.settings(), &backend.app_status());
     }
-    kick_transcription_worker_if_needed(state.inner().clone(), transcription_state.inner().clone());
+    kick_transcription_worker_if_needed(
+        app.clone(),
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
 }

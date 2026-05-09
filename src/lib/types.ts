@@ -1,5 +1,7 @@
 export type AudioFormat = "m4a" | "wav";
 
+export type FloatingOverlayPosition = "off" | "top" | "bottom";
+
 export type AppMode =
   | "recording_and_transcription"
   | "recording_only"
@@ -55,6 +57,7 @@ export interface AppSettings {
   launch_at_login: boolean;
   show_tray_icon: boolean;
   show_floating_overlay: boolean;
+  floating_overlay_position: FloatingOverlayPosition;
   theme_primary_color: string;
 }
 

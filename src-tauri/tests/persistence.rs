@@ -1,7 +1,7 @@
 use sagwan::commands::AppBackend;
 use sagwan::persistence::AppPersistence;
 use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
-use sagwan::settings::{AppSettings, SettingsPatch};
+use sagwan::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch};
 
 #[test]
 fn persistence_round_trips_settings_json() {
@@ -59,6 +59,26 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert_eq!(loaded.attack_ms, 300);
     assert_eq!(loaded.selected_model, "whisper-medium");
     assert_eq!(loaded.theme_primary_color, "#0047AB");
+    assert_eq!(loaded.floating_overlay_position, FloatingOverlayPosition::Top);
+}
+
+#[test]
+fn persistence_round_trips_floating_overlay_position() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    let mut settings = AppSettings::default();
+    settings.apply_patch(SettingsPatch {
+        floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
+        ..SettingsPatch::default()
+    });
+
+    store.save_settings(&settings).expect("save settings");
+
+    let loaded = store
+        .load_settings()
+        .expect("load settings")
+        .expect("settings");
+    assert_eq!(loaded.floating_overlay_position, FloatingOverlayPosition::Bottom);
 }
 
 #[test]
