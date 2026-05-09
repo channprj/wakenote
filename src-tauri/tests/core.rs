@@ -415,4 +415,50 @@ fn default_model_registry_includes_whisper_medium_and_fast_local_fallback() {
     let fast = registry.get("whisper-tiny").expect("fast fallback");
     assert!(fast.speed_score > medium.speed_score);
     assert!(fast.offline);
+
+    let turbo = registry.get("whisper-turbo").expect("turbo model");
+    assert_eq!(turbo.display_name, "Whisper Turbo");
+    assert!(turbo.offline);
+    assert_eq!(turbo.status, ModelStatus::Missing);
+    assert!(turbo.speed_score > medium.speed_score);
+    assert!(turbo.accuracy_score < medium.accuracy_score);
+}
+
+#[test]
+fn default_registry_uses_real_huggingface_sha256() {
+    // Pin the exact SHA256 checksums published by Hugging Face for each
+    // bundled whisper.cpp model. Bumping or changing any of these strings
+    // means the binary content has shifted; verify against
+    // `curl -L <url> | shasum -a 256` before updating.
+    const EXPECTED: &[(&str, &str)] = &[
+        (
+            "whisper-medium",
+            "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e",
+        ),
+        (
+            "whisper-tiny",
+            "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2",
+        ),
+        (
+            "whisper-turbo",
+            "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        ),
+    ];
+
+    let registry = default_model_registry();
+    for (model_id, expected_hash) in EXPECTED {
+        let model = registry
+            .get(*model_id)
+            .unwrap_or_else(|| panic!("registry missing {model_id}"));
+        let actual = model
+            .checksum_sha256
+            .as_deref()
+            .unwrap_or_else(|| panic!("{model_id} missing checksum_sha256"));
+        assert_eq!(actual, *expected_hash, "{model_id} checksum mismatch");
+        assert_eq!(actual.len(), 64, "{model_id} checksum must be 64 hex chars");
+        assert!(
+            actual.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+            "{model_id} checksum must be lowercase hex"
+        );
+    }
 }
