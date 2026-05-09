@@ -50,6 +50,10 @@ fn capture_processor_rejects_spikes_shorter_than_attack() {
 #[test]
 fn capture_processor_writes_chunk_after_attack_and_release() {
     let tmp = tempfile::tempdir().expect("tempdir");
+    let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let local = base_time.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
     let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
         save_root: tmp.path().to_path_buf(),
         settings: settings(),
@@ -57,7 +61,7 @@ fn capture_processor_writes_chunk_after_attack_and_release() {
         device_id: "default".to_string(),
         device_name: "System Default".to_string(),
         used_fallback_device: false,
-        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        base_time,
         app_version: "0.1.0".to_string(),
     });
 
@@ -70,7 +74,7 @@ fn capture_processor_writes_chunk_after_attack_and_release() {
 
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 1);
-    assert!(chunks[0].audio_path.ends_with("20260506/230709.wav"));
+    assert!(chunks[0].audio_path.ends_with(format!("{dir}/{stem}.wav")));
     assert!(chunks[0].metadata_path.exists());
     assert!(chunks[0].audio_path.exists());
 }

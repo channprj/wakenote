@@ -106,21 +106,32 @@ fn speech_gate_rolls_over_at_max_chunk_length_without_stopping() {
 fn output_paths_use_date_time_format_and_collision_suffix() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let local = timestamp.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
 
     let first = next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("first path");
-    assert_eq!(first.basename, OutputBasename::new("230709"));
-    assert!(first.audio_path.ends_with("20260506/230709.m4a"));
-    assert!(first.metadata_path.ends_with("20260506/230709.json"));
-    assert!(first.transcript_path.ends_with("20260506/230709.txt"));
-    assert!(first.error_path.ends_with("20260506/230709.error.txt"));
+    assert_eq!(first.basename, OutputBasename::new(stem.clone()));
+    assert!(first.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
+    assert!(first.metadata_path.ends_with(format!("{dir}/{stem}.json")));
+    assert!(first.transcript_path.ends_with(format!("{dir}/{stem}.txt")));
+    assert!(
+        first
+            .error_path
+            .ends_with(format!("{dir}/{stem}.error.txt"))
+    );
 
     std::fs::create_dir_all(first.audio_path.parent().unwrap()).expect("date dir");
     std::fs::write(&first.audio_path, b"existing").expect("collision file");
 
     let second =
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("second path");
-    assert_eq!(second.basename, OutputBasename::new("230709-001"));
-    assert!(second.audio_path.ends_with("20260506/230709-001.m4a"));
+    assert_eq!(second.basename, OutputBasename::new(format!("{stem}-001")));
+    assert!(
+        second
+            .audio_path
+            .ends_with(format!("{dir}/{stem}-001.m4a"))
+    );
 }
 
 #[test]

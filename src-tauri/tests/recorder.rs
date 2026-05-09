@@ -20,6 +20,9 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
     };
     let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 8, 12).unwrap();
     let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 8, 14).unwrap();
+    let local = started_at.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
 
     let chunk = Recorder::write_chunk(RecordingRequest {
         save_root: tmp.path(),
@@ -36,7 +39,7 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
     })
     .expect("record m4a chunk");
 
-    assert!(chunk.audio_path.ends_with("20260506/230812.m4a"));
+    assert!(chunk.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
     assert!(chunk.audio_path.exists());
     assert!(chunk.metadata_path.exists());
     assert!(!chunk.audio_path.with_extension("wav").exists());
@@ -57,6 +60,9 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     let settings = wav_settings();
     let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
     let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 11).unwrap();
+    let local = started_at.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
 
     let chunk = Recorder::write_chunk(RecordingRequest {
         save_root: tmp.path(),
@@ -73,7 +79,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     })
     .expect("record chunk");
 
-    assert!(chunk.audio_path.ends_with("20260506/230709.wav"));
+    assert!(chunk.audio_path.ends_with(format!("{dir}/{stem}.wav")));
     assert!(chunk.audio_path.exists());
     assert!(chunk.metadata_path.exists());
     assert!(!chunk.transcript_path.exists());

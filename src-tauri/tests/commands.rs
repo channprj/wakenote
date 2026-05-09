@@ -10,6 +10,14 @@ use sagwan::recorder::ChunkMetadata;
 use sagwan::settings::{AudioFormat, SettingsPatch};
 use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
+fn epoch_local_path_parts() -> (String, String) {
+    let local = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH.with_timezone(&chrono::Local);
+    (
+        local.format("%Y%m%d").to_string(),
+        local.format("%H%M%S").to_string(),
+    )
+}
+
 #[derive(Clone)]
 struct StaticTranscriber;
 
@@ -140,9 +148,14 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
             .expect("silence");
     }
 
+    let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
 }
 
 #[test]
@@ -198,7 +211,8 @@ fn backend_records_fallback_microphone_in_status_and_metadata() {
     }
     backend.stop_capture_session().expect("stop");
 
-    let metadata_path = tmp.path().join("19700101").join("000000.json");
+    let (dir, stem) = epoch_local_path_parts();
+    let metadata_path = tmp.path().join(&dir).join(format!("{stem}.json"));
     let metadata: ChunkMetadata =
         serde_json::from_slice(&std::fs::read(metadata_path).expect("metadata"))
             .expect("metadata json");
@@ -428,9 +442,14 @@ fn backend_queues_active_capture_started_before_transcription_is_disabled() {
         ..SettingsPatch::default()
     });
 
+    let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
 }
 
 #[test]
@@ -458,9 +477,14 @@ fn backend_restarting_capture_session_flushes_active_chunk() {
         )
         .expect("restart capture session");
 
+    let (dir, stem) = epoch_local_path_parts();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
-    assert!(snapshot.jobs[0].audio_path.ends_with("19700101/000000.wav"));
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{dir}/{stem}.wav"))
+    );
     let status = backend.app_status();
     assert!(status.live_input_active);
     assert_eq!(status.active_microphone, "USB Mic");
