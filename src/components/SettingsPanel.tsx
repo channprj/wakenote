@@ -236,11 +236,20 @@ export function SettingsPanel({
             checked={settings.show_tray_icon}
             onChange={(show_tray_icon) => onPatch({ show_tray_icon })}
           />
-          <ToggleRow
+          <Select
             label="Floating overlay"
-            checked={settings.show_floating_overlay}
-            onChange={(show_floating_overlay) => onPatch({ show_floating_overlay })}
-          />
+            value={settings.floating_overlay_position}
+            onChange={(event) =>
+              onPatch({
+                floating_overlay_position: event.currentTarget
+                  .value as AppSettings["floating_overlay_position"],
+              })
+            }
+          >
+            <option value="off">Off</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+          </Select>
           <div className="model-directory-row">
             <TextInput
               label="Model Directory"

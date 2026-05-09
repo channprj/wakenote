@@ -1,0 +1,148 @@
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    Arial, sans-serif;
+  font-size: 12px;
+  color: #fff;
+}
+
+#overlay-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+}
+
+.overlay-pill {
+  display: grid;
+  grid-template-columns: 24px 1fr 24px;
+  align-items: center;
+  gap: 6px;
+  width: 172px;
+  height: 36px;
+  padding: 6px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.84);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  box-sizing: border-box;
+  animation: overlay-fade-in 300ms ease-out both;
+}
+
+.overlay-pill__leading,
+.overlay-pill__trailing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.overlay-pill__leading svg,
+.overlay-pill__trailing svg {
+  width: 16px;
+  height: 16px;
+}
+
+.overlay-pill__leading--mic {
+  color: #ff4d4f;
+}
+
+.overlay-pill__leading--spinner {
+  color: #f5a524;
+}
+
+.overlay-pill__leading--spinner svg {
+  animation: overlay-spin 900ms linear infinite;
+}
+
+.overlay-pill__middle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlay-pill__middle--pulse {
+  animation: overlay-pulse 1500ms ease-in-out infinite;
+}
+
+.overlay-pill__close {
+  background: transparent;
+  border: 0;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 12px;
+}
+
+.overlay-pill__close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.overlay-waveform {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+}
+
+.overlay-waveform span {
+  display: inline-block;
+  width: 2px;
+  height: 30%;
+  background: #ff4d4f;
+  border-radius: 1px;
+  animation: overlay-wave 800ms ease-in-out infinite;
+}
+
+@keyframes overlay-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes overlay-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-wave {
+  0%,
+  100% {
+    height: 25%;
+  }
+  50% {
+    height: 90%;
+  }
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

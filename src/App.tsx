@@ -15,7 +15,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { FloatingOverlay } from "./components/FloatingOverlay";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptFooter } from "./components/TranscriptFooter";
@@ -49,7 +48,6 @@ import {
   mockSnapshot,
   pollSnapshotDependencyKey,
   shouldPollSnapshot,
-  shouldShowFloatingOverlay,
 } from "./lib/app-state";
 import {
   captureStatusPresentation,
@@ -353,10 +351,6 @@ export default function App() {
           onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />
-        {shouldShowFloatingOverlay(snapshot.settings, snapshot.status.tray_state) ? (
-          <FloatingOverlay status={snapshot.status} />
-        ) : null}
-
         <TranscriptFooter
           entries={transcriptLog}
           liveActive={snapshot.status.live_input_active}

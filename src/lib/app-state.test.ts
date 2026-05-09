@@ -5,7 +5,6 @@ import {
   mockSnapshot,
   pollSnapshotDependencyKey,
   shouldPollSnapshot,
-  shouldShowFloatingOverlay,
 } from "./app-state";
 
 describe("app state derivation", () => {
@@ -39,14 +38,6 @@ describe("app state derivation", () => {
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");
     expect(deriveTrayState("recording_only", false, true)).toBe("error");
-  });
-
-  it("shows the floating overlay only for active capture or transcription states", () => {
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "listening")).toBe(false);
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "recording")).toBe(true);
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "transcribing")).toBe(true);
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: true }, "idle")).toBe(false);
-    expect(shouldShowFloatingOverlay({ show_floating_overlay: false }, "recording")).toBe(false);
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {

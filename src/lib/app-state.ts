@@ -63,16 +63,6 @@ export function deriveTrayState(
   }
 }
 
-export function shouldShowFloatingOverlay(
-  settings: Pick<AppSettings, "show_floating_overlay">,
-  trayState: TrayState,
-) {
-  return (
-    settings.show_floating_overlay &&
-    ["recording", "transcribing"].includes(trayState)
-  );
-}
-
 function hasProcessablePendingTranscription(queue: QueueSnapshot, models: ModelDescriptor[]) {
   const usableModelIds = new Set(
     models
