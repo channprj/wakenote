@@ -823,8 +823,8 @@ fn wire_live_transcription(
         LiveTranscriptEvent::Committed {
             chunk_id,
             audio_path,
-            overlay_position,
-            will_transcribe,
+            overlay_position: _,
+            will_transcribe: _,
         } => {
             eprintln!(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
@@ -839,18 +839,10 @@ fn wire_live_transcription(
             ) {
                 eprintln!("[wakenote] WARN emit committed failed: {error}");
             }
-            let overlay_result = if will_transcribe {
-                overlay::show_overlay_on_main_thread(
-                    &app_for_handler,
-                    OverlayState::Transcribing,
-                    overlay_position,
-                    "show transcribing after commit",
-                )
-            } else {
+            if let Err(error) =
                 overlay::hide_overlay_on_main_thread(&app_for_handler, "hide after commit")
-            };
-            if let Err(error) = overlay_result {
-                eprintln!("[overlay] commit transition failed: {error}");
+            {
+                eprintln!("[overlay] commit hide failed: {error}");
             }
         }
     });
@@ -891,19 +883,6 @@ fn kick_transcription_worker(
                 started.job.model_id
             );
 
-            let overlay_position = backend_state
-                .lock()
-                .map(|backend| backend.settings().floating_overlay_position)
-                .unwrap_or(FloatingOverlayPosition::Top);
-            if let Err(error) = overlay::show_overlay_on_main_thread(
-                &app,
-                OverlayState::Transcribing,
-                overlay_position,
-                "show transcribing",
-            ) {
-                eprintln!("[overlay] show transcribing failed: {error}");
-            }
-
             let worker = TranscriptionWorker::with_options(
                 WhisperTranscriber::new(started.model_directory),
                 TranscriptionWorkerOptions {
@@ -934,32 +913,6 @@ fn kick_transcription_worker(
         }
 
         transcription_state.store(false, Ordering::Release);
-
-        let (queue_pending, overlay_state, overlay_position) = backend_state
-            .lock()
-            .map(|backend| {
-                (
-                    backend.queue_snapshot().pending_count > 0,
-                    overlay::overlay_state_for_tray_state(backend.app_status().tray_state),
-                    backend.settings().floating_overlay_position,
-                )
-            })
-            .unwrap_or((false, OverlayState::Hidden, FloatingOverlayPosition::Top));
-        if !queue_pending {
-            let overlay_result = if matches!(overlay_state, OverlayState::Hidden) {
-                overlay::hide_overlay_on_main_thread(&app, "hide after worker drained")
-            } else {
-                overlay::show_overlay_on_main_thread(
-                    &app,
-                    overlay_state,
-                    overlay_position,
-                    "restore active overlay after worker drained",
-                )
-            };
-            if let Err(error) = overlay_result {
-                eprintln!("[overlay] worker drain transition failed: {error}");
-            }
-        }
 
         kick_transcription_worker_if_needed(app, backend_state, transcription_state);
     });

@@ -45,7 +45,6 @@ pub enum OverlayState {
 pub fn overlay_state_for_tray_state(tray_state: TrayState) -> OverlayState {
     match tray_state {
         TrayState::Recording => OverlayState::Recording,
-        TrayState::Transcribing => OverlayState::Transcribing,
         _ => OverlayState::Hidden,
     }
 }
@@ -392,7 +391,7 @@ mod tests {
         );
         assert_eq!(
             overlay_state_for_tray_state(TrayState::Transcribing),
-            OverlayState::Transcribing
+            OverlayState::Hidden
         );
     }
 
