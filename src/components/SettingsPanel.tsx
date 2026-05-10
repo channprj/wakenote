@@ -381,6 +381,13 @@ export function SettingsPanel({
             checked={settings.start_live_input_on_launch}
             onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
           />
+          <ToggleRow
+            label="Hide low-confidence transcripts"
+            checked={settings.suppress_low_confidence_transcripts}
+            onChange={(suppress_low_confidence_transcripts) =>
+              onPatch({ suppress_low_confidence_transcripts })
+            }
+          />
           <Select
             label="Transcription Language"
             value={settings.transcription_language}

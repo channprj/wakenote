@@ -36,7 +36,8 @@ use wakenote::settings::{
     live_capture_should_start_on_launch,
 };
 use wakenote::transcription::{
-    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
+    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
+    TranscriptionWorkerOptions, WhisperTranscriber,
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
@@ -56,6 +57,7 @@ const MAIN_WINDOW_HEIGHT: f64 = 760.0;
 const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
 const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -771,6 +773,7 @@ fn wire_live_transcription(
             chunk_id,
             model_id,
             language,
+            suppress_low_confidence_transcripts,
             sample_rate,
             samples,
         } => {
@@ -782,6 +785,7 @@ fn wire_live_transcription(
                 chunk_id,
                 model_id,
                 language,
+                suppress_low_confidence_transcripts,
                 sample_rate,
                 samples,
             });
@@ -870,9 +874,13 @@ fn kick_transcription_worker(
                 eprintln!("[overlay] show transcribing failed: {error}");
             }
 
-            let worker = TranscriptionWorker::with_language(
+            let worker = TranscriptionWorker::with_options(
                 WhisperTranscriber::new(started.model_directory),
-                started.language,
+                TranscriptionWorkerOptions {
+                    language: started.language,
+                    suppress_low_confidence_transcripts: started
+                        .suppress_low_confidence_transcripts,
+                },
             );
             let outcome = worker
                 .process_started_job(&started.job)
@@ -1029,6 +1037,14 @@ fn apply_live_capture_runtime_action(
             Ok(())
         }
         LiveCaptureRuntimeAction::Unchanged => Ok(()),
+    }
+}
+
+fn launch_auto_start_retry_delay_secs(settings: &AppSettings) -> &'static [u64] {
+    if live_capture_should_start_on_launch(settings) {
+        &LAUNCH_AUTO_START_RETRY_DELAY_SECS
+    } else {
+        &[]
     }
 }
 
@@ -1202,36 +1218,64 @@ fn main() {
             }
             app.manage(tray_menu_items);
             let app_handle_for_initial = app.handle().clone();
-            if initial_settings
+            let launch_auto_start_delays = initial_settings
                 .as_ref()
-                .is_some_and(live_capture_should_start_on_launch)
-            {
+                .map(launch_auto_start_retry_delay_secs)
+                .unwrap_or(&[])
+                .to_vec();
+            if !launch_auto_start_delays.is_empty() {
                 let app_handle_for_capture = app.handle().clone();
                 let backend_state_for_capture = backend_state.clone();
                 let transcription_state_for_capture = transcription_state.clone();
                 thread::spawn(move || {
-                    thread::sleep(Duration::from_secs(2));
-                    let live_state = app_handle_for_capture.state::<LiveCaptureState>();
-                    match start_live_capture_runtime(
-                        &app_handle_for_capture,
-                        &backend_state_for_capture,
-                        live_state.inner(),
-                        transcription_state_for_capture,
-                    ) {
-                        Ok(status) => {
-                            let settings = backend_state_for_capture
-                                .lock()
-                                .map(|backend| backend.settings())
-                                .ok();
-                            if let Some(settings) = settings {
-                                update_tray_presentation(
-                                    &app_handle_for_capture,
-                                    &settings,
-                                    &status,
+                    for delay_secs in launch_auto_start_delays {
+                        thread::sleep(Duration::from_secs(delay_secs));
+                        let should_start = backend_state_for_capture
+                            .lock()
+                            .map(|backend| {
+                                live_capture_should_start_on_launch(&backend.settings())
+                            })
+                            .unwrap_or(false);
+                        if !should_start {
+                            eprintln!(
+                                "[capture] launch auto-start stopped because settings no longer allow live input"
+                            );
+                            break;
+                        }
+
+                        let live_state = app_handle_for_capture.state::<LiveCaptureState>();
+                        match start_live_capture_runtime(
+                            &app_handle_for_capture,
+                            &backend_state_for_capture,
+                            live_state.inner(),
+                            transcription_state_for_capture.clone(),
+                        ) {
+                            Ok(status) => {
+                                let settings = backend_state_for_capture
+                                    .lock()
+                                    .map(|backend| backend.settings())
+                                    .ok();
+                                if let Some(settings) = settings {
+                                    update_tray_presentation(
+                                        &app_handle_for_capture,
+                                        &settings,
+                                        &status,
+                                    );
+                                }
+                                if status.live_input_active {
+                                    eprintln!("[capture] launch auto-start succeeded");
+                                    break;
+                                }
+                                eprintln!(
+                                    "[capture] launch auto-start did not activate input; retrying if attempts remain"
+                                );
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "[capture] launch auto-start attempt failed: {error}"
                                 );
                             }
                         }
-                        Err(error) => eprintln!("[capture] initial live capture failed: {error}"),
                     }
                 });
             }
@@ -1538,6 +1582,38 @@ mod tests {
 
         settings.show_tray_icon = false;
         assert!(settings_window_should_open_on_launch(&settings));
+    }
+
+    #[test]
+    fn launch_auto_start_uses_retry_delays_only_when_enabled() {
+        let settings = AppSettings::default();
+
+        assert_eq!(
+            launch_auto_start_retry_delay_secs(&settings),
+            &[2, 5, 10, 20, 30, 60]
+        );
+
+        assert!(
+            launch_auto_start_retry_delay_secs(&AppSettings {
+                start_live_input_on_launch: false,
+                ..AppSettings::default()
+            })
+            .is_empty()
+        );
+        assert!(
+            launch_auto_start_retry_delay_secs(&AppSettings {
+                recording_enabled: false,
+                ..AppSettings::default()
+            })
+            .is_empty()
+        );
+        assert!(
+            launch_auto_start_retry_delay_secs(&AppSettings {
+                pause_all: true,
+                ..AppSettings::default()
+            })
+            .is_empty()
+        );
     }
 
     #[test]

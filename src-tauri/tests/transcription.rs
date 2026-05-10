@@ -4,7 +4,8 @@ use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
-    TranscriptionWorker, WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
+    TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome,
+    decode_audio_for_whisper, should_suppress_transcript_artifact,
 };
 
 #[derive(Clone)]
@@ -66,6 +67,76 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
         "안녕하세요 hello\n"
     );
     assert!(!audio_path.with_extension("error.txt").exists());
+}
+
+#[test]
+fn transcription_worker_suppresses_bracketed_artifact_transcripts() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230710.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::with_options(
+        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
+        TranscriptionWorkerOptions {
+            language: TranscriptionLanguage::Ko,
+            suppress_low_confidence_transcripts: true,
+        },
+    );
+
+    worker
+        .process_next(&mut queue)
+        .expect("process")
+        .expect("processed job");
+
+    assert_eq!(
+        queue.job(id).expect("job").status,
+        QueueJobStatus::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt"))
+            .expect("suppressed transcript")
+            .trim(),
+        ""
+    );
+}
+
+#[test]
+fn transcription_worker_can_keep_bracketed_text_when_suppression_is_disabled() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230711.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::with_options(
+        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
+        TranscriptionWorkerOptions {
+            language: TranscriptionLanguage::Ko,
+            suppress_low_confidence_transcripts: false,
+        },
+    );
+
+    worker
+        .process_next(&mut queue)
+        .expect("process")
+        .expect("processed job");
+
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
+        "[감사합니다]\n"
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_preserves_plain_speech() {
+    assert!(should_suppress_transcript_artifact("(웃음)"));
+    assert!(should_suppress_transcript_artifact("[감사합니다]"));
+    assert!(!should_suppress_transcript_artifact("감사합니다"));
+    assert!(!should_suppress_transcript_artifact(
+        "오늘 회의 내용을 정리하겠습니다."
+    ));
 }
 
 #[test]

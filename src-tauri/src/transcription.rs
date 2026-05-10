@@ -82,6 +82,13 @@ impl TranscriptionJobOutcome {
 pub struct TranscriptionWorker<T> {
     transcriber: T,
     language: TranscriptionLanguage,
+    suppress_low_confidence_transcripts: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TranscriptionWorkerOptions {
+    pub language: TranscriptionLanguage,
+    pub suppress_low_confidence_transcripts: bool,
 }
 
 impl<T> TranscriptionWorker<T> {
@@ -89,13 +96,25 @@ impl<T> TranscriptionWorker<T> {
         Self {
             transcriber,
             language: TranscriptionLanguage::Auto,
+            suppress_low_confidence_transcripts: true,
         }
     }
 
     pub fn with_language(transcriber: T, language: TranscriptionLanguage) -> Self {
+        Self::with_options(
+            transcriber,
+            TranscriptionWorkerOptions {
+                language,
+                suppress_low_confidence_transcripts: true,
+            },
+        )
+    }
+
+    pub fn with_options(transcriber: T, options: TranscriptionWorkerOptions) -> Self {
         Self {
             transcriber,
-            language,
+            language: options.language,
+            suppress_low_confidence_transcripts: options.suppress_low_confidence_transcripts,
         }
     }
 }
@@ -114,6 +133,13 @@ impl<T: Transcriber> TranscriptionWorker<T> {
 
         match self.transcriber.transcribe(request) {
             Ok(transcript) => {
+                let transcript = if self.suppress_low_confidence_transcripts
+                    && should_suppress_transcript_artifact(&transcript)
+                {
+                    String::new()
+                } else {
+                    transcript
+                };
                 TranscriptionSidecar::write_success(&chunk, &transcript)?;
                 Ok(TranscriptionJobOutcome::completed(job.id))
             }
@@ -142,6 +168,89 @@ impl<T: Transcriber> TranscriptionWorker<T> {
 
         Ok(Some(job.id))
     }
+}
+
+pub fn should_suppress_transcript_artifact(text: &str) -> bool {
+    let normalized = normalize_transcript_whitespace(text);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    if let Some(inner) = single_wrapped_phrase(&normalized) {
+        let inner = inner.trim();
+        if inner.is_empty() {
+            return false;
+        }
+        if inner.chars().count() <= 30 {
+            return true;
+        }
+        return contains_non_speech_marker(inner);
+    }
+
+    let lowercase = normalized.to_lowercase();
+    let compact = normalized.split_whitespace().collect::<String>();
+    let compact_lowercase = compact.to_lowercase();
+    let common_hallucinations = [
+        "thanks for watching",
+        "thank you for watching",
+        "시청해주셔서감사합니다",
+        "시청해 주셔서 감사합니다",
+        "끝까지시청해주셔서감사합니다",
+    ];
+
+    common_hallucinations
+        .iter()
+        .any(|marker| lowercase == *marker || compact_lowercase == marker.replace(' ', ""))
+}
+
+fn normalize_transcript_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn single_wrapped_phrase(text: &str) -> Option<&str> {
+    let pairs = [
+        ('(', ')'),
+        ('[', ']'),
+        ('{', '}'),
+        ('（', '）'),
+        ('【', '】'),
+    ];
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    let (last_index, last) = text.char_indices().next_back()?;
+    if last_index == 0 {
+        return None;
+    }
+
+    pairs
+        .iter()
+        .find(|(open, close)| first == *open && last == *close)
+        .map(|_| {
+            let start = first.len_utf8();
+            &text[start..last_index]
+        })
+}
+
+fn contains_non_speech_marker(text: &str) -> bool {
+    let lowercase = text.to_lowercase();
+    [
+        "웃음",
+        "웃음소리",
+        "음악",
+        "박수",
+        "소음",
+        "잡음",
+        "무음",
+        "침묵",
+        "laughter",
+        "laugh",
+        "music",
+        "applause",
+        "noise",
+        "silence",
+    ]
+    .iter()
+    .any(|marker| lowercase.contains(marker))
 }
 
 pub fn apply_outcome(

@@ -5,7 +5,9 @@ use std::thread::{self, JoinHandle};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::settings::{TranscriptionLanguage, expand_user_path};
-use crate::transcription::{configure_whisper_language, resample_linear};
+use crate::transcription::{
+    configure_whisper_language, resample_linear, should_suppress_transcript_artifact,
+};
 
 /// Whisper requires roughly 1 second of audio for a meaningful pass; below
 /// this we skip the partial decode entirely so the live preview never spits
@@ -23,6 +25,7 @@ pub struct LivePartialRequest {
     pub chunk_id: u64,
     pub model_id: String,
     pub language: TranscriptionLanguage,
+    pub suppress_low_confidence_transcripts: bool,
     pub samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
 }
@@ -174,6 +177,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
             &request.samples,
             request.sample_rate,
             request.language,
+            request.suppress_low_confidence_transcripts,
         );
         let elapsed = started.elapsed();
         eprintln!(
@@ -277,6 +281,7 @@ fn run_whisper_partial(
     samples: &[f32],
     source_rate: u32,
     language: TranscriptionLanguage,
+    suppress_low_confidence_transcripts: bool,
 ) -> Result<Option<String>, String> {
     // Take only the trailing window. Re-decoding minutes of audio every
     // partial cycle would never keep up; the queue worker still gets the
@@ -320,7 +325,9 @@ fn run_whisper_partial(
         .join("")
         .trim()
         .to_string();
-    if text.is_empty() {
+    if text.is_empty()
+        || (suppress_low_confidence_transcripts && should_suppress_transcript_artifact(&text))
+    {
         Ok(None)
     } else {
         Ok(Some(text))

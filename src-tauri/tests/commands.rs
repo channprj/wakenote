@@ -30,7 +30,7 @@ struct StaticTranscriber {
 impl Default for StaticTranscriber {
     fn default() -> Self {
         Self {
-            expected_language: TranscriptionLanguage::Auto,
+            expected_language: TranscriptionLanguage::Ko,
         }
     }
 }

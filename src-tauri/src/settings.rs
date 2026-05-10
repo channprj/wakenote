@@ -47,7 +47,7 @@ impl TranscriptionLanguage {
 
 impl Default for TranscriptionLanguage {
     fn default() -> Self {
-        Self::Auto
+        Self::Ko
     }
 }
 
@@ -56,6 +56,7 @@ pub struct AppSettings {
     pub recording_enabled: bool,
     pub transcription_enabled: bool,
     pub transcription_language: TranscriptionLanguage,
+    pub suppress_low_confidence_transcripts: bool,
     pub pause_all: bool,
     pub selected_microphone: String,
     pub selected_microphone_label: String,
@@ -87,6 +88,7 @@ pub struct SettingsPatch {
     pub recording_enabled: Option<bool>,
     pub transcription_enabled: Option<bool>,
     pub transcription_language: Option<TranscriptionLanguage>,
+    pub suppress_low_confidence_transcripts: Option<bool>,
     pub pause_all: Option<bool>,
     pub selected_microphone: Option<String>,
     pub selected_microphone_label: Option<String>,
@@ -209,6 +211,9 @@ impl AppSettings {
         if let Some(value) = patch.transcription_language {
             self.transcription_language = value;
         }
+        if let Some(value) = patch.suppress_low_confidence_transcripts {
+            self.suppress_low_confidence_transcripts = value;
+        }
         if let Some(value) = patch.pause_all {
             self.pause_all = value;
         }
@@ -287,7 +292,8 @@ impl Default for AppSettings {
         Self {
             recording_enabled: true,
             transcription_enabled: true,
-            transcription_language: TranscriptionLanguage::Auto,
+            transcription_language: TranscriptionLanguage::Ko,
+            suppress_low_confidence_transcripts: true,
             pause_all: false,
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),

@@ -165,7 +165,8 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
     assert_eq!(settings.threshold_dbfs, -60.0);
-    assert_eq!(settings.transcription_language, TranscriptionLanguage::Auto);
+    assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
+    assert!(settings.suppress_low_confidence_transcripts);
     assert_eq!(settings.attack_ms, 300);
     assert_eq!(settings.release_ms, 1_500);
     assert_eq!(settings.pre_roll_ms, 300);
@@ -217,6 +218,18 @@ fn settings_patch_updates_transcription_language() {
     });
 
     assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
+}
+
+#[test]
+fn settings_patch_updates_low_confidence_transcript_suppression() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        suppress_low_confidence_transcripts: Some(false),
+        ..SettingsPatch::default()
+    });
+
+    assert!(!settings.suppress_low_confidence_transcripts);
 }
 
 #[test]

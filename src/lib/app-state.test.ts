@@ -149,6 +149,16 @@ describe("app state derivation", () => {
     expect(shouldPollSnapshot(activeInputErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
   });
 
+  it("keeps polling while launch auto-start is pending from an idle snapshot", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models, {
+        launchAutoStartPending: true,
+      }),
+    ).toBe(true);
+  });
+
   it("changes the polling dependency key when polling inputs change", () => {
     const snapshot = mockSnapshot();
     const baseKey = pollSnapshotDependencyKey(snapshot.status, snapshot.queue, snapshot.models);
@@ -215,6 +225,8 @@ describe("app state derivation", () => {
     expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
     expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
     expect(snapshot.settings.max_chunk_ms).toBe(120_000);
+    expect(snapshot.settings.transcription_language).toBe("ko");
+    expect(snapshot.settings.suppress_low_confidence_transcripts).toBe(true);
     expect(snapshot.settings.show_dock_icon).toBe(true);
     expect(snapshot.settings.show_tray_icon).toBe(true);
     expect(snapshot.settings.start_live_input_on_launch).toBe(true);

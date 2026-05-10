@@ -17,7 +17,8 @@ use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
-    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, WhisperTranscriber, apply_outcome,
+    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, TranscriptionWorkerOptions,
+    WhisperTranscriber, apply_outcome,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -38,6 +39,7 @@ pub enum LiveTranscriptEvent {
         chunk_id: u64,
         model_id: String,
         language: TranscriptionLanguage,
+        suppress_low_confidence_transcripts: bool,
         sample_rate: u32,
         samples: Arc<Vec<f32>>,
     },
@@ -203,6 +205,7 @@ pub struct StartedTranscriptionJob {
     pub job: crate::queue::QueueJob,
     pub model_directory: std::path::PathBuf,
     pub language: TranscriptionLanguage,
+    pub suppress_low_confidence_transcripts: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -665,8 +668,15 @@ impl AppBackend {
         let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
             return Ok(self.queue.snapshot());
         };
-        let worker =
-            TranscriptionWorker::with_language(transcriber, self.settings.transcription_language);
+        let worker = TranscriptionWorker::with_options(
+            transcriber,
+            TranscriptionWorkerOptions {
+                language: self.settings.transcription_language,
+                suppress_low_confidence_transcripts: self
+                    .settings
+                    .suppress_low_confidence_transcripts,
+            },
+        );
         let outcome = worker
             .process_started_job(&job)
             .unwrap_or_else(|error| TranscriptionJobOutcome::failed(job.id, error.to_string()));
@@ -678,7 +688,14 @@ impl AppBackend {
         transcriber: T,
     ) -> Result<QueueSnapshot, String> {
         while let Some(started) = self.start_next_transcription_job() {
-            let worker = TranscriptionWorker::with_language(transcriber.clone(), started.language);
+            let worker = TranscriptionWorker::with_options(
+                transcriber.clone(),
+                TranscriptionWorkerOptions {
+                    language: started.language,
+                    suppress_low_confidence_transcripts: started
+                        .suppress_low_confidence_transcripts,
+                },
+            );
             let outcome = worker
                 .process_started_job(&started.job)
                 .unwrap_or_else(|error| {
@@ -709,6 +726,7 @@ impl AppBackend {
             job,
             model_directory: self.model_directory_path(),
             language: self.settings.transcription_language,
+            suppress_low_confidence_transcripts: self.settings.suppress_low_confidence_transcripts,
         })
     }
 
@@ -852,6 +870,9 @@ impl AppBackend {
                         chunk_id,
                         model_id: self.settings.selected_model.clone(),
                         language: self.settings.transcription_language,
+                        suppress_low_confidence_transcripts: self
+                            .settings
+                            .suppress_low_confidence_transcripts,
                         sample_rate,
                         samples,
                     });

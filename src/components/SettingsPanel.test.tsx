@@ -122,6 +122,16 @@ describe("settings panel", () => {
     expect(autoStartSwitch).toContain('aria-checked="false"');
   });
 
+  it("shows a low-confidence transcript suppression toggle in general controls", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.suppress_low_confidence_transcripts = false;
+
+    const markup = renderSettingsPanel(snapshot);
+    const suppressionSwitch = switchTag(markup, "Hide low-confidence transcripts");
+
+    expect(suppressionSwitch).toContain('aria-checked="false"');
+  });
+
   it("shows VAD gate as unavailable and forced off until VAD is implemented", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.vad_enabled = true;

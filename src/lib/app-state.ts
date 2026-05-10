@@ -79,11 +79,13 @@ export function shouldPollSnapshot(
   status: AppStatus,
   queue: QueueSnapshot,
   models: ModelDescriptor[] = [],
+  options: { launchAutoStartPending?: boolean } = {},
 ) {
   const canProcessPendingTranscription =
     status.mode === "recording_and_transcription" || status.mode === "transcription_only";
 
   return (
+    options.launchAutoStartPending ||
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
     status.live_input_active ||
     status.runtime_warning?.startsWith("Live input stream error:") ||
@@ -97,12 +99,14 @@ export function pollSnapshotDependencyKey(
   status: AppStatus,
   queue: QueueSnapshot,
   models: ModelDescriptor[] = [],
+  options: { launchAutoStartPending?: boolean } = {},
 ) {
   return JSON.stringify({
     mode: status.mode,
     trayState: status.tray_state,
     liveInputActive: status.live_input_active,
     runtimeWarning: status.runtime_warning ?? null,
+    launchAutoStartPending: Boolean(options.launchAutoStartPending),
     pendingCount: queue.pending_count,
     runningCount: queue.running_count,
     pendingJobs: queue.jobs
@@ -120,7 +124,8 @@ export function defaultSettings(): AppSettings {
   return {
     recording_enabled: true,
     transcription_enabled: true,
-    transcription_language: "auto",
+    transcription_language: "ko",
+    suppress_low_confidence_transcripts: true,
     pause_all: false,
     selected_microphone: "default",
     selected_microphone_label: "System Default",

@@ -68,6 +68,8 @@ const sections = [
   { id: "about", label: "About", icon: Info },
 ];
 
+const launchAutoStartPollWindowMs = 130_000;
+
 function transcriptEntriesFromRecent(
   recentTranscripts: AppSnapshot["recent_transcripts"],
 ): TranscriptEntry[] {
@@ -88,6 +90,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [dismissedWarningKey, setDismissedWarningKey] = useState<string | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
+  const launchAutoStartPollUntilMs = useRef(Date.now() + launchAutoStartPollWindowMs);
   const transcriptDispatch = useRef((event: TranscriptEvent) => {
     setTranscriptLog((entries) => reduceTranscriptLog(entries, event));
   });
@@ -198,14 +201,29 @@ export default function App() {
     }
   }
 
+  const launchAutoStartPending =
+    snapshot.settings.start_live_input_on_launch &&
+    snapshot.settings.recording_enabled &&
+    !snapshot.settings.pause_all &&
+    !snapshot.status.live_input_active &&
+    Date.now() <= launchAutoStartPollUntilMs.current;
+
   const pollingDependencyKey = pollSnapshotDependencyKey(
     snapshot.status,
     snapshot.queue,
     snapshot.models,
+    { launchAutoStartPending },
   );
 
   useEffect(() => {
-    if (!shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models)) {
+    if (
+      !shouldPollSnapshot(
+        snapshot.status,
+        snapshot.queue,
+        snapshot.models,
+        { launchAutoStartPending },
+      )
+    ) {
       return;
     }
 

@@ -47,6 +47,7 @@ export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
   transcription_language: TranscriptionLanguage;
+  suppress_low_confidence_transcripts: boolean;
   pause_all: boolean;
   selected_microphone: string;
   selected_microphone_label: string;

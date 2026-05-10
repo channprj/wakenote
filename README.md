@@ -75,6 +75,8 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 | Save root | `~/Documents/WakeNote` | any directory |
 | Default model | `whisper-medium` | from registry |
 | Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
+| Transcription language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
+| Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start input on launch | `on` | `on` / `off` |
 
 Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ranges on every patch.
