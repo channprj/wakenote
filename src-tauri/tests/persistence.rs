@@ -56,7 +56,9 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert!(loaded.save_root_confirmed);
     assert!(loaded.transcription_enabled);
     assert!(!loaded.calibration_completed);
-    assert_eq!(loaded.attack_ms, 300);
+    assert_eq!(loaded.attack_ms, 200);
+    assert_eq!(loaded.pre_roll_ms, 400);
+    assert_eq!(loaded.post_roll_ms, 400);
     assert_eq!(loaded.selected_model, "whisper-medium");
     assert!(loaded.start_live_input_on_launch);
     assert!(loaded.suppress_low_confidence_transcripts);
