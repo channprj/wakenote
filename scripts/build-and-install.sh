@@ -5,7 +5,8 @@
 #   scripts/build-and-install.sh --path ~/Applications
 #   scripts/build-and-install.sh --debug            # debug build
 #   scripts/build-and-install.sh --no-build         # install an already-built bundle
-#   scripts/build-and-install.sh --launch           # open the installed app after install
+#   scripts/build-and-install.sh --open             # open the installed app after install
+#   scripts/build-and-install.sh --launch           # alias for --open
 
 set -euo pipefail
 
@@ -53,9 +54,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --path=*) INSTALL_PATH="${1#--path=}"; shift ;;
     --no-build) DO_BUILD=0; shift ;;
-    --launch) LAUNCH_AFTER_INSTALL=1; shift ;;
+    --launch|--open) LAUNCH_AFTER_INSTALL=1; shift ;;
     -h|--help)
-      sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
