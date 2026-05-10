@@ -1153,12 +1153,12 @@ fn derive_tray_state(
     recording: bool,
     has_error: bool,
 ) -> TrayState {
-    if transcribing {
-        return TrayState::Transcribing;
-    }
-
     if recording {
         return TrayState::Recording;
+    }
+
+    if transcribing {
+        return TrayState::Transcribing;
     }
 
     if has_error {
@@ -1289,5 +1289,13 @@ mod tests {
         let models = selectable_model_ids(&tmp.path().to_string_lossy());
 
         assert!(!models.contains("local-downloading"));
+    }
+
+    #[test]
+    fn tray_state_prefers_active_recording_over_running_transcription() {
+        assert_eq!(
+            derive_tray_state(AppMode::RecordingAndTranscription, true, true, true, false),
+            TrayState::Recording
+        );
     }
 }
