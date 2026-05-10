@@ -1,8 +1,8 @@
 use chrono::{TimeZone, Utc};
-use sagwan::recorder::{
+use wakenote::recorder::{
     ChunkMetadata, Recorder, RecordingRequest, TranscriptionSidecar, TranscriptionStatus,
 };
-use sagwan::settings::{AppSettings, AudioFormat};
+use wakenote::settings::{AppSettings, AudioFormat};
 
 fn wav_settings() -> AppSettings {
     AppSettings {

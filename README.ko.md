@@ -1,12 +1,12 @@
-# Sagwan
+# WakeNote
 
 [English README](./README.md)
 
 **macOS 전용 음성 활성화 로컬 transcription 앱.**
 
-Sagwan은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하다가 dBFS 임계값을 넘으면 자동으로 녹음 청크를 시작하고, 청크가 끝나면 로컬 Whisper로 transcription을 수행합니다. 오디오, 텍스트, 메타데이터는 모두 같은 폴더(날짜별 디렉터리) 안에 나란히 저장되어 노트·스크립트·백업 도구로 바로 grep할 수 있습니다.
+WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하다가 dBFS 임계값을 넘으면 자동으로 녹음 청크를 시작하고, 청크가 끝나면 로컬 Whisper로 transcription을 수행합니다. 오디오, 텍스트, 메타데이터는 모두 같은 폴더(날짜별 디렉터리) 안에 나란히 저장되어 노트·스크립트·백업 도구로 바로 grep할 수 있습니다.
 
-기술 스택은 Tauri 2 (Rust 백엔드) + React 19 + TypeScript + Tailwind CSS v4입니다. Transcription은 `whisper-rs` (whisper.cpp)로 오프라인 추론하며, 오디오 캡처는 `cpal`을 사용합니다. 기본 테마 색상은 코발트 블루 `#0047AB`입니다.
+기술 스택은 Tauri 2 (Rust 백엔드) + React 19 + TypeScript + Tailwind CSS v4입니다. Transcription은 `whisper-rs` (whisper.cpp)로 오프라인 추론하며, 오디오 캡처는 `cpal`을 사용합니다. 기본 테마 색상은 블랙 `#000`입니다.
 
 ## 핵심 특징
 
@@ -17,7 +17,7 @@ Sagwan은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하�
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
 - **macOS 트레이 + Floating overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 녹음 또는 transcription 중일 때만 나타납니다.
-- **첫 실행 onboarding** — 마이크, 저장 폴더, 모델, 캘리브레이션 단계는 각각 명시적으로 확인되어야 complete 처리됩니다. 캘리브레이션 단계는 라이브 신호 기반으로 제안된 threshold를 사용자가 Apply해야 통과합니다.
+- **첫 실행 onboarding** — 마이크, 저장 폴더, 모델, 캘리브레이션 단계는 각각 명시적으로 확인되어야 complete 처리됩니다. 캘리브레이션이 끝나면 라이브 신호 기반 suggested threshold가 자동 적용됩니다.
 
 ## 동작 흐름
 
@@ -50,7 +50,7 @@ Sagwan은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하�
 ## 출력 파일 구조
 
 ```
-~/Documents/Sagwan/
+~/Documents/WakeNote/
 └── 20260509/
     ├── 142301.m4a          # 오디오 (또는 .wav)
     ├── 142301.json         # ChunkMetadata: model, device, sample_rate,
@@ -70,11 +70,11 @@ Sagwan은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하�
 | Pre-roll | `300 ms` | `0 … 1 500` |
 | Post-roll | `300 ms` | `0 … 2 000` |
 | Min chunk | `500 ms` | `100 … 5 000` |
-| Max chunk | `300 000 ms` (5분) | `10 000 … 900 000` |
+| Max chunk | `120 000 ms` (2분) | `10 000 … 900 000` |
 | 오디오 포맷 | `m4a` | `m4a` / `wav` |
-| 저장 루트 | `~/Documents/Sagwan` | 임의 디렉터리 |
+| 저장 루트 | `~/Documents/WakeNote` | 임의 디렉터리 |
 | 기본 모델 | `whisper-medium` | 레지스트리 내 모델 |
-| 모델 디렉터리 | `~/Library/Application Support/Sagwan/models` | 임의 디렉터리 |
+| 모델 디렉터리 | `~/Library/Application Support/WakeNote/models` | 임의 디렉터리 |
 
 설정은 `<app_data_dir>/settings.json`에 저장되며, patch가 적용될 때마다 안전 범위로 clamp됩니다.
 
@@ -112,7 +112,7 @@ pnpm tauri build
 ## 디렉터리 구조
 
 ```
-sagwan/
+wakenote/
 ├── index.html                      Vite 진입점
 ├── package.json                    pnpm + Vite + Vitest + Tauri 스크립트
 ├── vite.config.ts

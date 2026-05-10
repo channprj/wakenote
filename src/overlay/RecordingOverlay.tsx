@@ -19,7 +19,7 @@ async function stopLiveCapture() {
     await invoke("stop_live_capture");
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.warn("[sagwan overlay] stop_live_capture failed:", err);
+    console.warn("[wakenote overlay] stop_live_capture failed:", err);
   }
 }
 

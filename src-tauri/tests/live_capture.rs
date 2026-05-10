@@ -1,7 +1,7 @@
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::Duration;
 
-use sagwan::live_capture::{
+use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CandidateInputDevice,
     LiveCaptureError, LiveCaptureRuntime, resolve_input_device_from_candidates,
 };

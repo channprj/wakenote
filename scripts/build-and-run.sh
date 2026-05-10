@@ -14,22 +14,27 @@ cd "${PROJECT_ROOT}"
 MODE="release"
 RUN_AFTER_BUILD=1
 
-quit_running_sagwan() {
-  if ! pgrep -x '[sS]agwan' >/dev/null 2>&1; then
+running_wakenote_process() {
+  pgrep -x sagwan >/dev/null 2>&1 || pgrep -x wakenote >/dev/null 2>&1
+}
+
+quit_running_wakenote() {
+  if ! running_wakenote_process; then
     return
   fi
 
-  echo "==> Quitting running Sagwan"
+  echo "==> Quitting running WakeNote"
+  osascript -e 'tell application id "com.chann.wakenote" to quit' >/dev/null 2>&1 || true
   osascript -e 'tell application id "com.chann.sagwan" to quit' >/dev/null 2>&1 || true
 
   for _ in {1..20}; do
-    if ! pgrep -x '[sS]agwan' >/dev/null 2>&1; then
+    if ! running_wakenote_process; then
       return
     fi
     sleep 0.5
   done
 
-  echo "error: Sagwan is still running. Quit it and rerun this script." >&2
+  echo "error: WakeNote is still running. Quit it and rerun this script." >&2
   exit 1
 }
 
@@ -69,10 +74,10 @@ else
   pnpm tauri build
 fi
 
-APP_BUNDLE_RELEASE="${PROJECT_ROOT}/src-tauri/target/release/bundle/macos/Sagwan.app"
-APP_BUNDLE_DEBUG="${PROJECT_ROOT}/src-tauri/target/debug/bundle/macos/Sagwan.app"
-BIN_RELEASE="${PROJECT_ROOT}/src-tauri/target/release/sagwan"
-BIN_DEBUG="${PROJECT_ROOT}/src-tauri/target/debug/sagwan"
+APP_BUNDLE_RELEASE="${PROJECT_ROOT}/src-tauri/target/release/bundle/macos/WakeNote.app"
+APP_BUNDLE_DEBUG="${PROJECT_ROOT}/src-tauri/target/debug/bundle/macos/WakeNote.app"
+BIN_RELEASE="${PROJECT_ROOT}/src-tauri/target/release/wakenote"
+BIN_DEBUG="${PROJECT_ROOT}/src-tauri/target/debug/wakenote"
 
 if [[ "${MODE}" == "debug" ]]; then
   APP_BUNDLE="${APP_BUNDLE_DEBUG}"
@@ -91,7 +96,7 @@ fi
 
 echo "==> Launching app"
 if [[ "$(uname -s)" == "Darwin" && -d "${APP_BUNDLE}" ]]; then
-  quit_running_sagwan
+  quit_running_wakenote
   open "${APP_BUNDLE}"
 elif [[ -x "${BIN}" ]]; then
   exec "${BIN}"

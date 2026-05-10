@@ -8,34 +8,36 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use sagwan::audio::list_input_devices;
-use sagwan::commands::{
-    AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, main_window_close_action, microphone_devices_from_input_devices,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_live_runtime_warning,
-};
-use sagwan::live_capture::{
-    AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
-};
-use sagwan::live_transcription::{LivePartialEvent, LivePartialRequest, LiveTranscriptionService};
-use sagwan::models::{ModelDescriptor, ModelStore};
-use sagwan::overlay::{self, OverlayState};
-use sagwan::queue::QueueSnapshot;
-use sagwan::recorder::ChunkMetadata;
-use sagwan::settings::{
-    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run,
-};
-use sagwan::transcription::{
-    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
-};
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
+use wakenote::audio::list_input_devices;
+use wakenote::commands::{
+    AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
+    MicrophoneDevice, RecentTranscript, main_window_close_action,
+    microphone_devices_from_input_devices, reveal_save_folder_request, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
+};
+use wakenote::live_capture::{
+    AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
+};
+use wakenote::live_transcription::{
+    LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
+};
+use wakenote::models::{ModelDescriptor, ModelStore};
+use wakenote::overlay::{self, OverlayState};
+use wakenote::queue::QueueSnapshot;
+use wakenote::recorder::ChunkMetadata;
+use wakenote::settings::{
+    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
+    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run,
+};
+use wakenote::transcription::{
+    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
+};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
@@ -48,7 +50,7 @@ const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
 const MAIN_WINDOW_LABEL: &str = "main";
-const MAIN_WINDOW_TITLE: &str = "Sagwan";
+const MAIN_WINDOW_TITLE: &str = "WakeNote";
 const MAIN_WINDOW_WIDTH: f64 = 1180.0;
 const MAIN_WINDOW_HEIGHT: f64 = 760.0;
 const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
@@ -112,7 +114,13 @@ fn update_settings(
     live_transcriber_state: State<'_, LiveTranscriberState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
-    let (launch_at_login_action, live_capture_action, prior_position, previous_model_directory) = {
+    let (
+        launch_at_login_action,
+        live_capture_action,
+        prior_position,
+        previous_model_directory,
+        previous_show_dock_icon,
+    ) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         (
@@ -120,6 +128,7 @@ fn update_settings(
             live_capture_runtime_action_for_patch(&settings, &patch),
             settings.floating_overlay_position,
             settings.model_directory.clone(),
+            settings.show_dock_icon,
         )
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
@@ -136,6 +145,14 @@ fn update_settings(
                 service.update_model_directory(&settings.model_directory);
             }
         }
+    }
+    if settings.show_dock_icon != previous_show_dock_icon {
+        apply_dock_icon_visibility(&app, settings.show_dock_icon)
+            .map_err(|error| error.to_string())?;
+    }
+    if settings_window_should_open_on_launch(&settings) {
+        ensure_main_window_visible(&app, settings.show_dock_icon)
+            .map_err(|error| error.to_string())?;
     }
     dispatch_live_events(live_event_handler, live_events);
     apply_live_capture_runtime_action(
@@ -201,7 +218,7 @@ fn dispatch_live_events(handler: Option<LiveEventHandler>, events: Vec<LiveTrans
     }
 
     let Some(handler) = handler else {
-        eprintln!("[sagwan] WARN: live events generated before handler was set");
+        eprintln!("[wakenote] WARN: live events generated before handler was set");
         return;
     };
 
@@ -348,6 +365,12 @@ fn delete_model(
 fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.queue_snapshot())
+}
+
+#[tauri::command]
+fn recent_transcripts(state: State<'_, BackendState>) -> Result<Vec<RecentTranscript>, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(backend.recent_transcripts(3))
 }
 
 #[tauri::command]
@@ -656,14 +679,14 @@ fn wire_live_transcription(
         .lock()
         .map(|backend| backend.settings().model_directory)
         .unwrap_or_default();
-    eprintln!("[sagwan] wire_live_transcription: model_dir={model_directory}");
+    eprintln!("[wakenote] wire_live_transcription: model_dir={model_directory}");
 
     let app_for_partial = app_handle.clone();
     let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(
         move |event| match event {
             LivePartialEvent::Text(result) => {
                 eprintln!(
-                    "[sagwan] live partial -> FE chunk_id={} text='{}'",
+                    "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
                 );
                 if let Err(error) = app_for_partial.emit(
@@ -673,12 +696,12 @@ fn wire_live_transcription(
                         text: result.text,
                     },
                 ) {
-                    eprintln!("[sagwan] WARN failed to emit partial: {error}");
+                    eprintln!("[wakenote] WARN failed to emit partial: {error}");
                 }
             }
             LivePartialEvent::ModelMissing { chunk_id, model_id } => {
                 eprintln!(
-                    "[sagwan] live partial: model missing chunk_id={chunk_id} model={model_id}"
+                    "[wakenote] live partial: model missing chunk_id={chunk_id} model={model_id}"
                 );
                 let error = format!(
                     "Live transcription model {model_id} is not installed. Open Models tab to download it.",
@@ -691,12 +714,12 @@ fn wire_live_transcription(
                         error,
                     },
                 ) {
-                    eprintln!("[sagwan] WARN failed to emit live-failed: {emit_error}");
+                    eprintln!("[wakenote] WARN failed to emit live-failed: {emit_error}");
                 }
             }
             LivePartialEvent::EngineError { chunk_id, message } => {
                 eprintln!(
-                    "[sagwan] live partial: engine error chunk_id={chunk_id} message={message}"
+                    "[wakenote] live partial: engine error chunk_id={chunk_id} message={message}"
                 );
                 if let Err(emit_error) = app_for_partial.emit(
                     EVENT_LIVE_FAILED,
@@ -706,7 +729,7 @@ fn wire_live_transcription(
                         error: format!("Live partial decode failed: {message}"),
                     },
                 ) {
-                    eprintln!("[sagwan] WARN failed to emit live-failed: {emit_error}");
+                    eprintln!("[wakenote] WARN failed to emit live-failed: {emit_error}");
                 }
             }
         },
@@ -719,13 +742,13 @@ fn wire_live_transcription(
 
     let app_for_handler = app_handle.clone();
     let service_for_handler = service.clone();
-    let handler: sagwan::commands::LiveEventHandler = Arc::new(move |event| match event {
+    let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
         LiveTranscriptEvent::Started {
             chunk_id,
             started_at,
             overlay_position,
         } => {
-            eprintln!("[sagwan] handler: emit started chunk_id={chunk_id}");
+            eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
             if let Err(error) = overlay::show_overlay_on_main_thread(
                 &app_for_handler,
                 OverlayState::Recording,
@@ -741,7 +764,7 @@ fn wire_live_transcription(
                     started_at: started_at.to_rfc3339(),
                 },
             ) {
-                eprintln!("[sagwan] WARN emit started failed: {error}");
+                eprintln!("[wakenote] WARN emit started failed: {error}");
             }
         }
         LiveTranscriptEvent::SamplesReady {
@@ -752,7 +775,7 @@ fn wire_live_transcription(
             samples,
         } => {
             eprintln!(
-                "[sagwan] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
+                "[wakenote] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
                 samples.len()
             );
             service_for_handler.submit(LivePartialRequest {
@@ -770,10 +793,9 @@ fn wire_live_transcription(
             will_transcribe,
         } => {
             eprintln!(
-                "[sagwan] handler: emit committed chunk_id={chunk_id} path={}",
+                "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
-            service_for_handler.cancel_chunk(chunk_id);
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_COMMITTED,
                 LiveCommittedPayload {
@@ -781,7 +803,7 @@ fn wire_live_transcription(
                     audio_path: audio_path.to_string_lossy().to_string(),
                 },
             ) {
-                eprintln!("[sagwan] WARN emit committed failed: {error}");
+                eprintln!("[wakenote] WARN emit committed failed: {error}");
             }
             let overlay_result = if will_transcribe {
                 overlay::show_overlay_on_main_thread(
@@ -817,19 +839,19 @@ fn kick_transcription_worker(
     }
 
     thread::spawn(move || {
-        eprintln!("[sagwan] queue worker thread started");
+        eprintln!("[wakenote] queue worker thread started");
         loop {
             let Some(started) = (match backend_state.lock() {
                 Ok(mut backend) => backend.start_next_transcription_job(),
                 Err(_) => break,
             }) else {
-                eprintln!("[sagwan] queue worker: no pending jobs, exiting loop");
+                eprintln!("[wakenote] queue worker: no pending jobs, exiting loop");
                 break;
             };
 
             let audio_path = started.job.audio_path.clone();
             eprintln!(
-                "[sagwan] queue worker: processing job id={} path={} model={}",
+                "[wakenote] queue worker: processing job id={} path={} model={}",
                 started.job.id,
                 audio_path.display(),
                 started.job.model_id
@@ -855,11 +877,11 @@ fn kick_transcription_worker(
             let outcome = worker
                 .process_started_job(&started.job)
                 .unwrap_or_else(|error| {
-                    eprintln!("[sagwan] queue worker: process_started_job error: {error}");
+                    eprintln!("[wakenote] queue worker: process_started_job error: {error}");
                     TranscriptionJobOutcome::failed(started.job.id, error.to_string())
                 });
             eprintln!(
-                "[sagwan] queue worker: job id={} outcome={:?}",
+                "[wakenote] queue worker: job id={} outcome={:?}",
                 started.job.id, outcome.status
             );
 
@@ -926,13 +948,13 @@ fn emit_outcome_to_frontend(
                 .unwrap_or_default();
             if text.is_empty() {
                 eprintln!(
-                    "[sagwan] emit_outcome_to_frontend: empty sidecar at {}",
+                    "[wakenote] emit_outcome_to_frontend: empty sidecar at {}",
                     transcript_path.display()
                 );
                 return;
             }
             eprintln!(
-                "[sagwan] emit final chunk_id={:?} path={} text_len={}",
+                "[wakenote] emit final chunk_id={:?} path={} text_len={}",
                 chunk_id,
                 audio_path_str,
                 text.len()
@@ -945,12 +967,12 @@ fn emit_outcome_to_frontend(
                     text,
                 },
             ) {
-                eprintln!("[sagwan] WARN emit final failed: {error}");
+                eprintln!("[wakenote] WARN emit final failed: {error}");
             }
         }
         TranscriptionJobStatus::Failed(error) => {
             eprintln!(
-                "[sagwan] emit failed chunk_id={:?} path={} error={}",
+                "[wakenote] emit failed chunk_id={:?} path={} error={}",
                 chunk_id, audio_path_str, error
             );
             if let Err(emit_error) = app.emit(
@@ -961,7 +983,7 @@ fn emit_outcome_to_frontend(
                     error: error.clone(),
                 },
             ) {
-                eprintln!("[sagwan] WARN emit failed event failed: {emit_error}");
+                eprintln!("[wakenote] WARN emit failed event failed: {emit_error}");
             }
         }
     }
@@ -1028,11 +1050,48 @@ fn apply_launch_at_login_preference(_app: &AppHandle, _enabled: bool) -> Result<
     Ok(())
 }
 
-fn ensure_main_window_visible(app: &AppHandle) -> tauri::Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockIconRuntimeMode {
+    Visible,
+    Hidden,
+}
+
+fn dock_icon_runtime_mode(settings: &AppSettings) -> DockIconRuntimeMode {
+    if settings.show_dock_icon {
+        DockIconRuntimeMode::Visible
+    } else {
+        DockIconRuntimeMode::Hidden
+    }
+}
+
+fn settings_window_should_open_on_launch(settings: &AppSettings) -> bool {
+    !settings.show_tray_icon
+}
+
+fn apply_dock_icon_visibility(app: &AppHandle, show_dock_icon: bool) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        app.set_activation_policy(tauri::ActivationPolicy::Regular)?;
-        app.set_dock_visibility(true)?;
+        let mode = if show_dock_icon {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        app.set_activation_policy(mode)?;
+        app.set_dock_visibility(show_dock_icon)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, show_dock_icon);
+    }
+
+    Ok(())
+}
+
+fn ensure_main_window_visible(app: &AppHandle, show_dock_icon: bool) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        apply_dock_icon_visibility(app, show_dock_icon)?;
         app.show()?;
     }
 
@@ -1102,14 +1161,16 @@ fn main() {
                 None,
             ))?;
 
-            ensure_main_window_visible(app.handle())?;
-
             let backend = app
                 .path()
                 .app_data_dir()
                 .ok()
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
+            let initial_settings_for_runtime = backend.settings();
+            let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
+            let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
+            ensure_main_window_visible(app.handle(), show_dock_icon)?;
             let backend_state = Arc::new(Mutex::new(backend));
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
@@ -1192,6 +1253,7 @@ fn main() {
             cancel_model_download,
             delete_model,
             queue_snapshot,
+            recent_transcripts,
             enqueue_audio_file,
             enqueue_backlog,
             retry_job,
@@ -1204,7 +1266,7 @@ fn main() {
             stop_live_capture
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Sagwan");
+        .expect("failed to run WakeNote");
 }
 
 fn setup_tray(
@@ -1319,12 +1381,12 @@ fn setup_tray(
     let presentation = initial_settings
         .zip(initial_status)
         .map(|(settings, status)| tray_runtime_presentation(settings, status))
-        .unwrap_or_else(|| sagwan::commands::TrayRuntimePresentation {
-            icon: tray_presentation_for_state(sagwan::commands::TrayState::Listening),
+        .unwrap_or_else(|| wakenote::commands::TrayRuntimePresentation {
+            icon: tray_presentation_for_state(wakenote::commands::TrayState::Listening),
             visible: true,
         });
     let icon = Image::new_owned(presentation.icon.rgba.to_vec(), 1, 1);
-    let tray = TrayIconBuilder::with_id("sagwan")
+    let tray = TrayIconBuilder::with_id("wakenote")
         .tooltip(presentation.icon.tooltip)
         .icon(icon)
         .icon_as_template(false)
@@ -1347,7 +1409,7 @@ fn setup_tray(
 }
 
 fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
-    let Some(tray) = app.tray_by_id("sagwan") else {
+    let Some(tray) = app.tray_by_id("wakenote") else {
         return;
     };
     let presentation = tray_runtime_presentation(settings, status);
@@ -1407,7 +1469,16 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             }
         }
         "open-settings" => {
-            if let Err(error) = ensure_main_window_visible(app) {
+            let show_dock_icon = app
+                .try_state::<BackendState>()
+                .and_then(|state| {
+                    state
+                        .lock()
+                        .ok()
+                        .map(|backend| backend.settings().show_dock_icon)
+                })
+                .unwrap_or(true);
+            if let Err(error) = ensure_main_window_visible(app, show_dock_icon) {
                 eprintln!("[window] failed to open settings window: {error}");
             }
         }
@@ -1443,6 +1514,30 @@ mod tests {
             MAIN_WINDOW_MIN_WIDTH as u32,
             MAIN_WINDOW_MIN_HEIGHT as u32,
         ));
+    }
+
+    #[test]
+    fn dock_icon_runtime_mode_follows_setting() {
+        let mut settings = AppSettings::default();
+        assert_eq!(
+            dock_icon_runtime_mode(&settings),
+            DockIconRuntimeMode::Visible
+        );
+
+        settings.show_dock_icon = false;
+        assert_eq!(
+            dock_icon_runtime_mode(&settings),
+            DockIconRuntimeMode::Hidden
+        );
+    }
+
+    #[test]
+    fn hidden_menu_bar_icon_requires_settings_window_on_launch() {
+        let mut settings = AppSettings::default();
+        assert!(!settings_window_should_open_on_launch(&settings));
+
+        settings.show_tray_icon = false;
+        assert!(settings_window_should_open_on_launch(&settings));
     }
 
     #[test]

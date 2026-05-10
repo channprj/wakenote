@@ -43,6 +43,12 @@ function isDisabled(button: string) {
   return /\sdisabled(=""|\s|>)/.test(button);
 }
 
+function switchTag(markup: string, label: string) {
+  const match = markup.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`));
+  expect(match, `expected ${label} switch`).not.toBeNull();
+  return match?.[0] ?? "";
+}
+
 describe("settings panel", () => {
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {
     const snapshot = mockSnapshot();
@@ -104,6 +110,44 @@ describe("settings panel", () => {
     expect(markup).toContain("Transcription Language");
     expect(markup).toContain('<option value="auto">Auto-detect</option>');
     expect(markup).toContain('<option value="ko" selected="">Korean</option>');
+  });
+
+  it("shows VAD gate as unavailable and forced off until VAD is implemented", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.vad_enabled = true;
+
+    const markup = renderSettingsPanel(snapshot, "privacy");
+    const vadSwitch = switchTag(markup, "VAD gate");
+
+    expect(vadSwitch).toContain('aria-checked="false"');
+    expect(isDisabled(vadSwitch)).toBe(true);
+  });
+
+  it("shows dock and menu bar icon visibility controls in advanced settings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.show_dock_icon = false;
+    snapshot.settings.show_tray_icon = false;
+
+    const markup = renderSettingsPanel(snapshot, "advanced");
+    const dockSwitch = switchTag(markup, "Show Dock icon");
+    const menuBarSwitch = switchTag(markup, "Show menu bar icon");
+
+    expect(dockSwitch).toContain('aria-checked="false"');
+    expect(menuBarSwitch).toContain('aria-checked="false"');
+  });
+
+  it("shows quick max chunk duration presets for transcription-friendly chunking", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.max_chunk_ms = 120_000;
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup).toContain("Max Chunk");
+    expect(markup).toContain("2 min");
+    expect(markup).toContain("1 min");
+    expect(markup).toContain("3 min");
+    expect(markup).toContain("5 min");
+    expect(markup).toContain('aria-pressed="true"');
   });
 
   it("disables process next until the selected model is usable", () => {
@@ -171,7 +215,7 @@ describe("settings panel", () => {
 
   it("shows an explicit save root confirmation action until storage is confirmed", () => {
     const snapshot = mockSnapshot();
-    snapshot.settings.save_root = "~/Documents/Sagwan";
+    snapshot.settings.save_root = "~/Documents/WakeNote";
     snapshot.settings.save_root_confirmed = false;
 
     const unconfirmedMarkup = renderSettingsPanel(snapshot, "storage");
@@ -183,7 +227,7 @@ describe("settings panel", () => {
 
     expect(isDisabled(buttonTag(blankMarkup, "Confirm Save Root"))).toBe(true);
 
-    snapshot.settings.save_root = "/tmp/sagwan-recordings";
+    snapshot.settings.save_root = "/tmp/wakenote-recordings";
     snapshot.settings.save_root_confirmed = true;
     const confirmedMarkup = renderSettingsPanel(snapshot, "storage");
 

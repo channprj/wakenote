@@ -22,7 +22,7 @@ export function TrayPreview({
           <AudioWaveform />
         </div>
         <div>
-          <strong>Sagwan</strong>
+          <strong>WakeNote</strong>
           <span>{status.active_microphone}</span>
         </div>
         <Badge tone={status.tray_state === "paused" ? "warning" : "primary"}>

@@ -22,10 +22,12 @@ export function Switch({
   checked,
   onCheckedChange,
   label,
+  disabled = false,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -35,7 +37,12 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       data-state={checked ? "checked" : "unchecked"}
-      onClick={() => onCheckedChange(!checked)}
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) {
+          onCheckedChange(!checked);
+        }
+      }}
     >
       <span />
     </button>

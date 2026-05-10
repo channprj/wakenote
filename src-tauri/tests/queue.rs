@@ -1,4 +1,4 @@
-use sagwan::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
+use wakenote::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
 
 #[test]
 fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
@@ -40,12 +40,17 @@ fn skipping_failed_or_cancelled_jobs_clears_stale_errors() {
     queue
         .cancel_current("user cancelled")
         .expect("cancel current");
-    queue.mark_failed(failed, "model missing").expect("fail job");
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("fail job");
 
     queue.skip(cancelled).expect("skip cancelled job");
     queue.skip(failed).expect("skip failed job");
 
-    assert_eq!(queue.job(cancelled).unwrap().status, QueueJobStatus::Skipped);
+    assert_eq!(
+        queue.job(cancelled).unwrap().status,
+        QueueJobStatus::Skipped
+    );
     assert_eq!(queue.job(cancelled).unwrap().error, None);
     assert_eq!(queue.job(failed).unwrap().status, QueueJobStatus::Skipped);
     assert_eq!(queue.job(failed).unwrap().error, None);

@@ -5,6 +5,6 @@
   <key>LSRequiresCarbon</key>
   <false/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Sagwan uses microphone access for voice-activated recording and local transcription.</string>
+  <string>WakeNote uses microphone access for voice-activated recording and local transcription.</string>
 </dict>
 </plist>

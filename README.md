@@ -1,12 +1,12 @@
-# Sagwan
+# WakeNote
 
 [한국어 README](./README.ko.md)
 
 **Voice-activated local transcription for macOS.**
 
-Sagwan is a menu-bar app that listens to a chosen microphone, automatically opens a recording chunk when the input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
+WakeNote is a menu-bar app that listens to a chosen microphone, automatically opens a recording chunk when the input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
 
-The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp); audio capture goes through `cpal`. The default theme color is Cobalt Blue `#0047AB`.
+The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp); audio capture goes through `cpal`. The default theme color is black `#000`.
 
 ## Highlights
 
@@ -17,7 +17,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
 - **macOS tray + floating overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay only appears when recording or transcribing.
-- **First-run onboarding** — microphone, save folder, model, and calibration steps must each be confirmed before they count as complete; the suggested threshold from live calibration is what unlocks the calibration step.
+- **First-run onboarding** — microphone, save folder, model, and calibration steps must each be confirmed before they count as complete; completed calibration automatically applies the suggested live threshold.
 
 ## How it works
 
@@ -50,7 +50,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 ## Output layout
 
 ```
-~/Documents/Sagwan/
+~/Documents/WakeNote/
 └── 20260509/
     ├── 142301.m4a          # audio (or .wav)
     ├── 142301.json         # ChunkMetadata: model, device, sample rate,
@@ -70,11 +70,11 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 | Pre-roll | `300 ms` | `0 … 1 500` |
 | Post-roll | `300 ms` | `0 … 2 000` |
 | Min chunk | `500 ms` | `100 … 5 000` |
-| Max chunk | `300 000 ms` (5 min) | `10 000 … 900 000` |
+| Max chunk | `120 000 ms` (2 min) | `10 000 … 900 000` |
 | Audio format | `m4a` | `m4a` / `wav` |
-| Save root | `~/Documents/Sagwan` | any directory |
+| Save root | `~/Documents/WakeNote` | any directory |
 | Default model | `whisper-medium` | from registry |
-| Model directory | `~/Library/Application Support/Sagwan/models` | any directory |
+| Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
 
 Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ranges on every patch.
 
@@ -84,7 +84,7 @@ Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ran
 - Node.js 20+ and `pnpm` 10 (the repo pins `pnpm@10.33.4` via `packageManager`).
 - Rust toolchain (stable, `edition = "2024"`).
 - Xcode Command Line Tools — needed for `afconvert` (M4A encoding) and the Tauri build chain.
-- Microphone permission for the Sagwan app on first launch.
+- Microphone permission for the WakeNote app on first launch.
 
 ## Getting started
 
@@ -112,7 +112,7 @@ The browser dev fallback (`pnpm dev`) renders the React UI against a mock snapsh
 ## Project layout
 
 ```
-sagwan/
+wakenote/
 ├── index.html                      Vite entry
 ├── package.json                    pnpm + Vite + Vitest + Tauri scripts
 ├── vite.config.ts

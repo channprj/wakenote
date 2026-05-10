@@ -124,7 +124,7 @@ export function defaultSettings(): AppSettings {
     pause_all: false,
     selected_microphone: "default",
     selected_microphone_label: "System Default",
-    save_root: "~/Documents/Sagwan",
+    save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     audio_format: "m4a",
     threshold_dbfs: -60,
@@ -134,15 +134,16 @@ export function defaultSettings(): AppSettings {
     pre_roll_ms: 300,
     post_roll_ms: 300,
     min_chunk_ms: 500,
-    max_chunk_ms: 300000,
+    max_chunk_ms: 120000,
     selected_model: "whisper-medium",
-    model_directory: "~/Library/Application Support/Sagwan/models",
+    model_directory: "~/Library/Application Support/WakeNote/models",
     vad_enabled: false,
     launch_at_login: false,
+    show_dock_icon: true,
     show_tray_icon: true,
     show_floating_overlay: true,
     floating_overlay_position: "top",
-    theme_primary_color: "#0047AB",
+    theme_primary_color: "#000",
   };
 }
 
@@ -241,5 +242,6 @@ export function mockSnapshot(): AppSnapshot {
     ],
     models: mockModels(),
     queue,
+    recent_transcripts: [],
   };
 }

@@ -1,18 +1,18 @@
 use std::{collections::HashSet, path::PathBuf};
 
-use sagwan::audio::input_devices_from_labels;
-use sagwan::commands::{
+use wakenote::audio::input_devices_from_labels;
+use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
     main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
     tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
     with_live_runtime_warning, with_runtime_warning,
 };
-use sagwan::models::{ModelStatus, ModelStore};
-use sagwan::recorder::ChunkMetadata;
-use sagwan::settings::{
+use wakenote::models::{ModelStatus, ModelStore};
+use wakenote::recorder::ChunkMetadata;
+use wakenote::settings::{
     AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
 };
-use sagwan::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
+use wakenote::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
 fn epoch_local_path_parts() -> (String, String) {
     let local = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH.with_timezone(&chrono::Local);
@@ -89,6 +89,12 @@ fn write_ready_local_model(model_directory: &std::path::Path, model_id: &str) {
     .expect("ready model");
 }
 
+fn write_transcript_sidecar(save_root: &std::path::Path, relative_path: &str, text: &str) {
+    let path = save_root.join(relative_path);
+    std::fs::create_dir_all(path.parent().expect("sidecar parent")).expect("sidecar dir");
+    std::fs::write(path, text).expect("sidecar text");
+}
+
 #[test]
 fn backend_derives_four_product_modes_from_independent_toggles() {
     let mut backend = AppBackend::default();
@@ -124,6 +130,32 @@ fn backend_derives_four_product_modes_from_independent_toggles() {
     });
     assert_eq!(backend.app_status().mode, AppMode::Paused);
     assert_eq!(backend.app_status().tray_state, TrayState::Paused);
+}
+
+#[test]
+fn backend_reads_three_newest_transcript_sidecars_from_save_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    write_transcript_sidecar(tmp.path(), "20260509/090000.txt", "first transcript\n");
+    write_transcript_sidecar(tmp.path(), "20260509/090100.txt", "second transcript\n");
+    write_transcript_sidecar(tmp.path(), "20260509/090200.txt", "third transcript\n");
+    write_transcript_sidecar(tmp.path(), "20260509/090300.txt", "fourth transcript\n");
+    write_transcript_sidecar(tmp.path(), "20260509/090400.error.txt", "error text\n");
+
+    let transcripts = backend.recent_transcripts(3);
+
+    assert_eq!(
+        transcripts
+            .iter()
+            .map(|transcript| transcript.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["fourth transcript", "third transcript", "second transcript"]
+    );
 }
 
 #[test]
@@ -590,7 +622,7 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
     assert_eq!(snapshot.pending_count, 0);
     assert_eq!(
         snapshot.jobs[0].status,
-        sagwan::queue::QueueJobStatus::Completed
+        wakenote::queue::QueueJobStatus::Completed
     );
     assert_eq!(
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
@@ -687,7 +719,7 @@ fn backend_process_next_transcription_skips_unusable_pending_job_models() {
             .find(|job| job.audio_path == missing_audio)
             .expect("missing job")
             .status,
-        sagwan::queue::QueueJobStatus::Pending
+        wakenote::queue::QueueJobStatus::Pending
     );
     assert_eq!(
         snapshot
@@ -696,7 +728,7 @@ fn backend_process_next_transcription_skips_unusable_pending_job_models() {
             .find(|job| job.audio_path == ready_audio)
             .expect("ready job")
             .status,
-        sagwan::queue::QueueJobStatus::Completed
+        wakenote::queue::QueueJobStatus::Completed
     );
     assert_eq!(
         std::fs::read_to_string(ready_audio.with_extension("txt")).expect("transcript"),
@@ -747,7 +779,7 @@ fn backend_processes_all_pending_transcription_jobs_with_worker_loop() {
         snapshot
             .jobs
             .iter()
-            .all(|job| job.status == sagwan::queue::QueueJobStatus::Completed)
+            .all(|job| job.status == wakenote::queue::QueueJobStatus::Completed)
     );
     assert_eq!(
         std::fs::read_to_string(first_audio.with_extension("txt")).expect("first transcript"),
@@ -812,7 +844,7 @@ fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
     assert_eq!(snapshot.pending_count, 1);
     assert_eq!(
         snapshot.jobs[0].status,
-        sagwan::queue::QueueJobStatus::Pending
+        wakenote::queue::QueueJobStatus::Pending
     );
     assert!(!audio_path.with_extension("txt").exists());
 }
@@ -838,7 +870,7 @@ fn backend_default_transcription_worker_waits_when_model_is_missing() {
     assert_eq!(snapshot.failed_count, 0);
     assert_eq!(
         snapshot.jobs[0].status,
-        sagwan::queue::QueueJobStatus::Pending
+        wakenote::queue::QueueJobStatus::Pending
     );
     assert_eq!(backend.app_status().tray_state, TrayState::Idle);
     assert!(audio_path.exists());
@@ -853,7 +885,7 @@ fn backend_manual_transcription_waits_when_model_directory_has_no_usable_model()
     std::fs::write(&audio_path, b"wav bytes").expect("audio");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
-        model_directory: Some("~/Library/Application Support/Sagwan/models".to_string()),
+        model_directory: Some("~/Library/Application Support/WakeNote/models".to_string()),
         ..SettingsPatch::default()
     });
     backend.enqueue_audio_file(
@@ -869,7 +901,7 @@ fn backend_manual_transcription_waits_when_model_directory_has_no_usable_model()
     assert_eq!(snapshot.failed_count, 0);
     assert_eq!(
         snapshot.jobs[0].status,
-        sagwan::queue::QueueJobStatus::Pending
+        wakenote::queue::QueueJobStatus::Pending
     );
     assert!(!audio_path.with_extension("error.txt").exists());
 }
@@ -1396,11 +1428,11 @@ fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
     assert_eq!(colors.len(), states.len());
     assert_eq!(
         tray_presentation_for_state(TrayState::Listening).rgba,
-        [0, 71, 171, 255]
+        [0, 0, 0, 255]
     );
     assert_eq!(
         tray_presentation_for_state(TrayState::Recording).tooltip,
-        "Sagwan: Recording"
+        "WakeNote: Recording"
     );
 }
 
@@ -1410,7 +1442,7 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
 
     let visible = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert!(visible.visible);
-    assert_eq!(visible.icon.tooltip, "Sagwan: Idle");
+    assert_eq!(visible.icon.tooltip, "WakeNote: Idle");
 
     backend.update_settings(SettingsPatch {
         show_tray_icon: Some(false),
@@ -1419,7 +1451,7 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
 
     let hidden = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert!(!hidden.visible);
-    assert_eq!(hidden.icon.tooltip, "Sagwan: Idle");
+    assert_eq!(hidden.icon.tooltip, "WakeNote: Idle");
 }
 
 #[test]
@@ -1484,12 +1516,12 @@ fn reveal_save_folder_request_uses_current_save_root() {
     assert_eq!(request.path, tmp.path());
 
     backend.update_settings(SettingsPatch {
-        save_root: Some("~/Documents/Sagwan".to_string()),
+        save_root: Some("~/Documents/WakeNote".to_string()),
         ..SettingsPatch::default()
     });
     let request = reveal_save_folder_request(&backend.settings());
 
-    assert_eq!(request.path, PathBuf::from(home).join("Documents/Sagwan"));
+    assert_eq!(request.path, PathBuf::from(home).join("Documents/WakeNote"));
 }
 
 #[test]

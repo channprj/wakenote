@@ -1,6 +1,6 @@
 use std::io::{Cursor, Read};
 
-use sagwan::models::{
+use wakenote::models::{
     ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore, ModelStoreError,
 };
 
@@ -113,11 +113,13 @@ fn model_store_delete_removes_model_file() {
     store.delete_model("whisper-tiny").expect("delete");
 
     assert!(!path.exists());
-    assert!(!store
-        .load_download_state()
-        .expect("download state")
-        .downloads
-        .contains_key("whisper-tiny"));
+    assert!(
+        !store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .contains_key("whisper-tiny")
+    );
 }
 
 #[test]
@@ -140,11 +142,13 @@ fn model_store_delete_clears_stale_download_error_without_model_file() {
         .expect("delete stale state");
 
     assert!(!tmp.path().join("whisper-test.download").exists());
-    assert!(!store
-        .load_download_state()
-        .expect("download state")
-        .downloads
-        .contains_key("whisper-test"));
+    assert!(
+        !store
+            .load_download_state()
+            .expect("download state")
+            .downloads
+            .contains_key("whisper-test")
+    );
 }
 
 #[test]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::audio::{dbfs_from_samples, GateConfig, GateDecision, SpeechGate};
+use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_samples};
 use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
 use crate::settings::AppSettings;
 
@@ -325,10 +325,8 @@ impl CaptureProcessor {
         let Some(chunk_id) = self.current_chunk_id else {
             return;
         };
-        let active_duration_ms = active_duration_ms(
-            self.active_samples.len(),
-            self.config.sample_rate,
-        );
+        let active_duration_ms =
+            active_duration_ms(self.active_samples.len(), self.config.sample_rate);
         if active_duration_ms < LIVE_PARTIAL_INTERVAL_MS {
             return;
         }

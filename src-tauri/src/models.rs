@@ -418,9 +418,10 @@ impl ModelStore {
             .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
         let resume_from = self.partial_download_bytes(&model.id)?;
         let agent = ureq::AgentBuilder::new().redirects(10).build();
-        let mut request = agent
-            .get(url)
-            .set("User-Agent", &format!("sagwan/{}", env!("CARGO_PKG_VERSION")));
+        let mut request = agent.get(url).set(
+            "User-Agent",
+            &format!("wakenote/{}", env!("CARGO_PKG_VERSION")),
+        );
         if resume_from > 0 {
             request = request.set("Range", &format!("bytes={resume_from}-"));
         }
@@ -806,7 +807,9 @@ mod tests {
             "regression: pre-fix bogus tiny checksum must never reappear",
         );
 
-        let medium = registry.get("whisper-medium").expect("whisper-medium entry");
+        let medium = registry
+            .get("whisper-medium")
+            .expect("whisper-medium entry");
         let medium_hash = medium
             .checksum_sha256
             .as_deref()
@@ -843,11 +846,8 @@ mod tests {
         let model = descriptor("whisper-test", Some(&expected));
 
         std::fs::create_dir_all(tmp.path()).expect("models dir");
-        std::fs::write(
-            store.temp_download_path("whisper-test"),
-            vec![0xFF_u8; 100],
-        )
-        .expect("stale partial");
+        std::fs::write(store.temp_download_path("whisper-test"), vec![0xFF_u8; 100])
+            .expect("stale partial");
 
         let downloaded = store
             .install_model_reader_inner(

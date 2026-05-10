@@ -74,6 +74,7 @@ pub struct AppSettings {
     pub model_directory: String,
     pub vad_enabled: bool,
     pub launch_at_login: bool,
+    pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     pub show_floating_overlay: bool,
     pub floating_overlay_position: FloatingOverlayPosition,
@@ -102,6 +103,7 @@ pub struct SettingsPatch {
     pub model_directory: Option<String>,
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
+    pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub show_floating_overlay: Option<bool>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
@@ -253,6 +255,9 @@ impl AppSettings {
         if let Some(value) = patch.launch_at_login {
             self.launch_at_login = value;
         }
+        if let Some(value) = patch.show_dock_icon {
+            self.show_dock_icon = value;
+        }
         if let Some(value) = patch.show_tray_icon {
             self.show_tray_icon = value;
         }
@@ -277,7 +282,7 @@ impl Default for AppSettings {
             pause_all: false,
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
-            save_root: "~/Documents/Sagwan".to_string(),
+            save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
             threshold_dbfs: -60.0,
@@ -287,15 +292,16 @@ impl Default for AppSettings {
             pre_roll_ms: 300,
             post_roll_ms: 300,
             min_chunk_ms: 500,
-            max_chunk_ms: 300_000,
+            max_chunk_ms: 120_000,
             selected_model: "whisper-medium".to_string(),
-            model_directory: "~/Library/Application Support/Sagwan/models".to_string(),
+            model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
             vad_enabled: false,
             launch_at_login: false,
+            show_dock_icon: true,
             show_tray_icon: true,
             show_floating_overlay: true,
             floating_overlay_position: FloatingOverlayPosition::Top,
-            theme_primary_color: "#0047AB".to_string(),
+            theme_primary_color: "#000".to_string(),
         }
     }
 }

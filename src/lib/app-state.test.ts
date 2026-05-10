@@ -212,7 +212,12 @@ describe("app state derivation", () => {
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 
-    expect(snapshot.settings.theme_primary_color).toBe("#0047AB");
+    expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
+    expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
+    expect(snapshot.settings.max_chunk_ms).toBe(120_000);
+    expect(snapshot.settings.show_dock_icon).toBe(true);
+    expect(snapshot.settings.show_tray_icon).toBe(true);
+    expect(snapshot.settings.theme_primary_color).toBe("#000");
     expect(snapshot.microphones[0].id).toBe("default");
     expect(snapshot.models.map((model) => model.id)).toContain("whisper-medium");
     expect(snapshot.status.threshold_dbfs).toBe(-60);
@@ -223,5 +228,6 @@ describe("app state derivation", () => {
       noise_floor_dbfs: -120,
       suggested_threshold_dbfs: -90,
     });
+    expect(snapshot.recent_transcripts).toEqual([]);
   });
 });

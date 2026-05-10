@@ -18,22 +18,27 @@ INSTALL_PATH="/Applications"
 DO_BUILD=1
 LAUNCH_AFTER_INSTALL=0
 
-quit_running_sagwan() {
-  if ! pgrep -x '[sS]agwan' >/dev/null 2>&1; then
+running_wakenote_process() {
+  pgrep -x sagwan >/dev/null 2>&1 || pgrep -x wakenote >/dev/null 2>&1
+}
+
+quit_running_wakenote() {
+  if ! running_wakenote_process; then
     return
   fi
 
-  echo "==> Quitting running Sagwan"
+  echo "==> Quitting running WakeNote"
+  osascript -e 'tell application id "com.chann.wakenote" to quit' >/dev/null 2>&1 || true
   osascript -e 'tell application id "com.chann.sagwan" to quit' >/dev/null 2>&1 || true
 
   for _ in {1..20}; do
-    if ! pgrep -x '[sS]agwan' >/dev/null 2>&1; then
+    if ! running_wakenote_process; then
       return
     fi
     sleep 0.5
   done
 
-  echo "error: Sagwan is still running. Quit it and rerun this script." >&2
+  echo "error: WakeNote is still running. Quit it and rerun this script." >&2
   exit 1
 }
 
@@ -88,9 +93,9 @@ if [[ "${DO_BUILD}" -eq 1 ]]; then
 fi
 
 if [[ "${MODE}" == "debug" ]]; then
-  APP_BUNDLE="${PROJECT_ROOT}/src-tauri/target/debug/bundle/macos/Sagwan.app"
+  APP_BUNDLE="${PROJECT_ROOT}/src-tauri/target/debug/bundle/macos/WakeNote.app"
 else
-  APP_BUNDLE="${PROJECT_ROOT}/src-tauri/target/release/bundle/macos/Sagwan.app"
+  APP_BUNDLE="${PROJECT_ROOT}/src-tauri/target/release/bundle/macos/WakeNote.app"
 fi
 
 if [[ ! -d "${APP_BUNDLE}" ]]; then
@@ -106,9 +111,10 @@ if [[ ! -d "${INSTALL_PATH}" ]]; then
   mkdir -p "${INSTALL_PATH}"
 fi
 
-DEST="${INSTALL_PATH%/}/Sagwan.app"
+DEST="${INSTALL_PATH%/}/WakeNote.app"
+LEGACY_DEST="${INSTALL_PATH%/}/Sagwan.app"
 
-quit_running_sagwan
+quit_running_wakenote
 
 SUDO=""
 if [[ ! -w "${INSTALL_PATH}" ]]; then
@@ -124,6 +130,11 @@ fi
 if [[ -d "${DEST}" ]]; then
   echo "==> Removing existing bundle at ${DEST}"
   ${SUDO} rm -rf "${DEST}"
+fi
+
+if [[ -d "${LEGACY_DEST}" ]]; then
+  echo "==> Removing legacy bundle at ${LEGACY_DEST}"
+  ${SUDO} rm -rf "${LEGACY_DEST}"
 fi
 
 echo "==> Installing to ${DEST}"

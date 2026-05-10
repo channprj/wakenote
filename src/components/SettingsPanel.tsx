@@ -13,7 +13,13 @@ const durationFields = [
   ["pre_roll_ms", "Pre-roll", 0, 1500],
   ["post_roll_ms", "Post-roll", 0, 2000],
   ["min_chunk_ms", "Min Chunk", 100, 5000],
-  ["max_chunk_ms", "Max Chunk", 10000, 900000],
+] as const;
+
+const maxChunkPresets = [
+  { label: "1 min", value: 60_000 },
+  { label: "2 min", value: 120_000 },
+  { label: "3 min", value: 180_000 },
+  { label: "5 min", value: 300_000 },
 ] as const;
 
 const transcriptionLanguageOptions: Array<{
@@ -139,11 +145,15 @@ export function SettingsPanel({
                 value={settings[key]}
                 min={min}
                 max={max}
-                step={key === "max_chunk_ms" ? 1000 : 50}
+                step={50}
                 suffix=" ms"
                 onValueChange={(value) => onPatch({ [key]: value })}
               />
             ))}
+            <MaxChunkControl
+              value={settings.max_chunk_ms}
+              onChange={(max_chunk_ms) => onPatch({ max_chunk_ms })}
+            />
           </div>
         </div>
       </Section>
@@ -232,7 +242,12 @@ export function SettingsPanel({
             checked={settings.launch_at_login}
             onChange={(launch_at_login) => onPatch({ launch_at_login })}
           />
-          <ToggleRow label="VAD gate" checked={settings.vad_enabled} onChange={(vad_enabled) => onPatch({ vad_enabled })} />
+          <ToggleRow
+            label="VAD gate"
+            checked={false}
+            disabled
+            onChange={() => {}}
+          />
           <div className="privacy-note">
             <Badge tone="success">Offline</Badge>
             <span>Local models keep audio and text on device.</span>
@@ -247,7 +262,12 @@ export function SettingsPanel({
       <Section title="Advanced" eyebrow="Runtime controls">
         <div className="settings-list">
           <ToggleRow
-            label="Show tray icon"
+            label="Show Dock icon"
+            checked={settings.show_dock_icon}
+            onChange={(show_dock_icon) => onPatch({ show_dock_icon })}
+          />
+          <ToggleRow
+            label="Show menu bar icon"
             checked={settings.show_tray_icon}
             onChange={(show_tray_icon) => onPatch({ show_tray_icon })}
           />
@@ -288,7 +308,7 @@ export function SettingsPanel({
 
   if (activeSection === "about") {
     return (
-      <Section title="About" eyebrow="Sagwan 0.1.0">
+      <Section title="About" eyebrow="WakeNote 0.1.0">
         <div className="about-grid">
           <div>
             <span>Stack</span>
@@ -296,7 +316,7 @@ export function SettingsPanel({
           </div>
           <div>
             <span>Primary</span>
-            <strong>#0047AB</strong>
+            <strong>#000</strong>
           </div>
           <div>
             <span>Active Model</span>
@@ -428,15 +448,61 @@ function ToggleRow({
   label,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="toggle-row">
       <span>{label}</span>
-      <Switch label={label} checked={checked} onCheckedChange={onChange} />
+      <Switch label={label} checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
+}
+
+function MaxChunkControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="max-chunk-control">
+      <Slider
+        label="Max Chunk"
+        value={value}
+        min={10_000}
+        max={900_000}
+        step={1_000}
+        suffix={` ms (${formatChunkDuration(value)})`}
+        onValueChange={onChange}
+      />
+      <div className="max-chunk-presets" aria-label="Max chunk presets">
+        {maxChunkPresets.map((preset) => (
+          <Button
+            key={preset.value}
+            type="button"
+            variant="secondary"
+            size="sm"
+            aria-pressed={value === preset.value}
+            onClick={() => onChange(preset.value)}
+          >
+            {preset.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatChunkDuration(value: number) {
+  if (value % 60_000 === 0) {
+    return `${value / 60_000} min`;
+  }
+
+  return `${Math.round(value / 1_000)} sec`;
 }

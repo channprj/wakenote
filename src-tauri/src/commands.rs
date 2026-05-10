@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -86,27 +87,27 @@ pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
     match state {
         TrayState::Idle => TrayPresentation {
             rgba: [100, 116, 139, 255],
-            tooltip: "Sagwan: Idle",
+            tooltip: "WakeNote: Idle",
         },
         TrayState::Listening => TrayPresentation {
-            rgba: [0, 71, 171, 255],
-            tooltip: "Sagwan: Listening",
+            rgba: [0, 0, 0, 255],
+            tooltip: "WakeNote: Listening",
         },
         TrayState::Recording => TrayPresentation {
             rgba: [22, 163, 74, 255],
-            tooltip: "Sagwan: Recording",
+            tooltip: "WakeNote: Recording",
         },
         TrayState::Transcribing => TrayPresentation {
             rgba: [217, 119, 6, 255],
-            tooltip: "Sagwan: Transcribing",
+            tooltip: "WakeNote: Transcribing",
         },
         TrayState::Paused => TrayPresentation {
             rgba: [71, 85, 105, 255],
-            tooltip: "Sagwan: Paused",
+            tooltip: "WakeNote: Paused",
         },
         TrayState::Error => TrayPresentation {
             rgba: [220, 38, 38, 255],
-            tooltip: "Sagwan: Error",
+            tooltip: "WakeNote: Error",
         },
     }
 }
@@ -189,6 +190,12 @@ pub struct AppStatus {
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
     pub queue: QueueSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentTranscript {
+    pub transcript_path: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +467,19 @@ impl AppBackend {
 
     pub fn queue_snapshot(&self) -> QueueSnapshot {
         self.queue.snapshot()
+    }
+
+    pub fn recent_transcripts(&self, limit: usize) -> Vec<RecentTranscript> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let save_root = self.save_root_path();
+        let mut transcripts = Vec::new();
+        collect_transcript_sidecars(&save_root, &mut transcripts);
+        transcripts.sort_by(|left, right| right.transcript_path.cmp(&left.transcript_path));
+        transcripts.truncate(limit);
+        transcripts
     }
 
     pub fn start_capture_session(
@@ -812,7 +832,7 @@ impl AppBackend {
                     chunk_id,
                     started_at,
                 } => {
-                    eprintln!("[sagwan] capture: ChunkStarted chunk_id={chunk_id}");
+                    eprintln!("[wakenote] capture: ChunkStarted chunk_id={chunk_id}");
                     self.emit_live_event(LiveTranscriptEvent::Started {
                         chunk_id,
                         started_at,
@@ -825,7 +845,7 @@ impl AppBackend {
                     samples,
                 } => {
                     eprintln!(
-                        "[sagwan] capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
+                        "[wakenote] capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
                         samples.len()
                     );
                     self.emit_live_event(LiveTranscriptEvent::SamplesReady {
@@ -839,7 +859,7 @@ impl AppBackend {
                 CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } => {
                     let model_id = self.transcription_model_for_completed_chunk(&chunk);
                     eprintln!(
-                        "[sagwan] capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
+                        "[wakenote] capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
                         chunk.audio_path.display(),
                         model_id
                     );
@@ -890,6 +910,48 @@ impl AppBackend {
             .transcription_enabled
             .then(|| self.settings.selected_model.clone())
     }
+}
+
+fn collect_transcript_sidecars(root: &Path, transcripts: &mut Vec<RecentTranscript>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_transcript_sidecars(&path, transcripts);
+            continue;
+        }
+
+        if !is_transcript_sidecar(&path) {
+            continue;
+        }
+
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        transcripts.push(RecentTranscript {
+            transcript_path: path.to_string_lossy().to_string(),
+            text,
+        });
+    }
+}
+
+fn is_transcript_sidecar(path: &Path) -> bool {
+    if path.extension().and_then(|extension| extension.to_str()) != Some("txt") {
+        return false;
+    }
+
+    !path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .is_some_and(|file_name| file_name.ends_with(".error.txt"))
 }
 
 pub fn microphone_devices_from_input_devices(

@@ -55,6 +55,21 @@ describe("reduceTranscriptLog", () => {
     });
   });
 
+  it("keeps a late live partial visible after the chunk is committed", () => {
+    const entries = apply([
+      { type: "started", chunk_id: 3, started_at: "2026-05-09T08:00:00Z" },
+      { type: "committed", chunk_id: 3, audio_path: "/tmp/3.m4a" },
+      { type: "partial", chunk_id: 3, text: "한국어 회의 내용을 실시간으로 표시합니다." },
+    ]);
+
+    expect(entries[0]).toMatchObject({
+      chunk_id: 3,
+      status: "partial",
+      text: "한국어 회의 내용을 실시간으로 표시합니다.",
+      audio_path: "/tmp/3.m4a",
+    });
+  });
+
   it("matches finals to existing entries by audio_path when chunk_id is unknown", () => {
     const entries = apply([
       { type: "started", chunk_id: 7, started_at: "2026-05-09T08:00:00Z" },

@@ -55,6 +55,7 @@ import {
   visibleWarningForDismissedKey,
 } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
+import appIcon from "./assets/wakenote-app.png";
 
 const sections = [
   { id: "general", label: "General", icon: Settings2 },
@@ -66,6 +67,19 @@ const sections = [
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
   { id: "about", label: "About", icon: Info },
 ];
+
+function transcriptEntriesFromRecent(
+  recentTranscripts: AppSnapshot["recent_transcripts"],
+): TranscriptEntry[] {
+  return [...recentTranscripts].reverse().map((transcript, index) => ({
+    chunk_id: -1 - index,
+    status: "final",
+    text: transcript.text,
+    started_at: "",
+    audio_path: transcript.transcript_path,
+    error: null,
+  }));
+}
 
 export default function App() {
   const [activeSection, setActiveSection] = useState("general");
@@ -152,7 +166,7 @@ export default function App() {
       for (const [eventName, parse] of subscriptions) {
         const unlisten = await listen(eventName, (rawEvent) => {
           // eslint-disable-next-line no-console
-          console.log(`[sagwan FE] received ${eventName}:`, rawEvent.payload);
+          console.log(`[wakenote FE] received ${eventName}:`, rawEvent.payload);
           const next = parse(rawEvent.payload);
           if (next) {
             dispatch(next);
@@ -165,7 +179,7 @@ export default function App() {
         }
       }
       // eslint-disable-next-line no-console
-      console.log("[sagwan FE] live transcription listeners registered");
+      console.log("[wakenote FE] live transcription listeners registered");
     })();
 
     return () => {
@@ -230,17 +244,20 @@ export default function App() {
     setDismissedWarningKey((current) => nextDismissedWarningKey(statusPresentation.warning, current));
   }, [statusPresentation.warning?.key]);
   const visibleWarning = visibleWarningForDismissedKey(statusPresentation.warning, dismissedWarningKey);
+  const footerTranscriptEntries = [
+    ...transcriptEntriesFromRecent(snapshot.recent_transcripts),
+    ...transcriptLog,
+  ];
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand__mark">
-            <AudioWaveform />
+            <img src={appIcon} alt="" />
           </div>
           <div>
-            <strong>Sagwan</strong>
-            <span>Local transcription</span>
+            <strong>WakeNote</strong>
           </div>
         </div>
         <nav aria-label="Settings sections">
@@ -352,7 +369,7 @@ export default function App() {
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />
         <TranscriptFooter
-          entries={transcriptLog}
+          entries={footerTranscriptEntries}
           liveActive={snapshot.status.live_input_active}
         />
       </main>

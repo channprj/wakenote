@@ -1,9 +1,9 @@
 use chrono::{TimeZone, Utc};
-use sagwan::capture::{
+use wakenote::capture::{
     CaptureController, CaptureControllerConfig, CaptureControllerEvent, CaptureProcessor,
     CaptureProcessorConfig,
 };
-use sagwan::settings::{AppSettings, AudioFormat};
+use wakenote::settings::{AppSettings, AudioFormat};
 
 fn settings() -> AppSettings {
     AppSettings {

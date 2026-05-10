@@ -1,14 +1,14 @@
 use chrono::{TimeZone, Utc};
-use sagwan::audio::{
+use wakenote::audio::{
     GateConfig, GateDecision, SpeechGate, dbfs_from_rms, input_devices_from_labels,
 };
-use sagwan::models::{ModelStatus, default_model_registry};
-use sagwan::settings::{
+use wakenote::models::{ModelStatus, default_model_registry};
+use wakenote::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
     TranscriptionLanguage, expand_user_path, launch_at_login_action_for_patch,
     live_capture_runtime_action_for_patch, live_capture_should_run,
 };
-use sagwan::storage::{OutputBasename, next_available_output};
+use wakenote::storage::{OutputBasename, next_available_output};
 
 #[test]
 fn dbfs_conversion_clamps_silence_and_reports_full_scale() {
@@ -135,21 +135,21 @@ fn user_paths_expand_current_home_tilde_without_rewriting_other_paths() {
     let home = std::env::var_os("HOME").expect("HOME should be set for path expansion tests");
 
     assert_eq!(
-        expand_user_path("~/Documents/Sagwan"),
-        std::path::PathBuf::from(&home).join("Documents/Sagwan")
+        expand_user_path("~/Documents/WakeNote"),
+        std::path::PathBuf::from(&home).join("Documents/WakeNote")
     );
     assert_eq!(expand_user_path("~"), std::path::PathBuf::from(&home));
     assert_eq!(
-        expand_user_path("/tmp/sagwan"),
-        std::path::PathBuf::from("/tmp/sagwan")
+        expand_user_path("/tmp/wakenote"),
+        std::path::PathBuf::from("/tmp/wakenote")
     );
     assert_eq!(
-        expand_user_path("relative/sagwan"),
-        std::path::PathBuf::from("relative/sagwan")
+        expand_user_path("relative/wakenote"),
+        std::path::PathBuf::from("relative/wakenote")
     );
     assert_eq!(
-        expand_user_path("~other/sagwan"),
-        std::path::PathBuf::from("~other/sagwan")
+        expand_user_path("~other/wakenote"),
+        std::path::PathBuf::from("~other/wakenote")
     );
 }
 
@@ -169,8 +169,28 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.release_ms, 1_500);
     assert_eq!(settings.pre_roll_ms, 300);
     assert_eq!(settings.post_roll_ms, 300);
+    assert_eq!(settings.max_chunk_ms, 120_000);
     assert_eq!(settings.selected_model, "whisper-medium");
-    assert_eq!(settings.theme_primary_color, "#0047AB");
+    assert_eq!(settings.save_root, "~/Documents/WakeNote");
+    assert_eq!(
+        settings.model_directory,
+        "~/Library/Application Support/WakeNote/models"
+    );
+    assert!(settings.show_dock_icon);
+    assert!(settings.show_tray_icon);
+    assert_eq!(settings.theme_primary_color, "#000");
+}
+
+#[test]
+fn settings_patch_updates_dock_icon_visibility() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        show_dock_icon: Some(false),
+        ..SettingsPatch::default()
+    });
+
+    assert!(!settings.show_dock_icon);
 }
 
 #[test]
@@ -214,11 +234,11 @@ fn settings_patch_marks_non_empty_save_root_confirmed() {
     let mut settings = AppSettings::default();
 
     settings.apply_patch(SettingsPatch {
-        save_root: Some("/tmp/sagwan-recordings".to_string()),
+        save_root: Some("/tmp/wakenote-recordings".to_string()),
         ..SettingsPatch::default()
     });
 
-    assert_eq!(settings.save_root, "/tmp/sagwan-recordings");
+    assert_eq!(settings.save_root, "/tmp/wakenote-recordings");
     assert!(settings.save_root_confirmed);
 
     settings.apply_patch(SettingsPatch {

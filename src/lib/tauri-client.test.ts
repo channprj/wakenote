@@ -49,15 +49,15 @@ describe("tauri live capture client", () => {
   });
 
   it("marks browser fallback save root patches confirmed only when non-empty", async () => {
-    const confirmed = await saveSettingsPatch({ save_root: "/tmp/confirmed-sagwan" });
-    expect(confirmed.settings.save_root).toBe("/tmp/confirmed-sagwan");
+    const confirmed = await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
+    expect(confirmed.settings.save_root).toBe("/tmp/confirmed-wakenote");
     expect(confirmed.settings.save_root_confirmed).toBe(true);
 
     const blank = await saveSettingsPatch({ save_root: "   " });
     expect(blank.settings.save_root).toBe("   ");
     expect(blank.settings.save_root_confirmed).toBe(false);
 
-    await saveSettingsPatch({ save_root: "/tmp/confirmed-sagwan" });
+    await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
   it("simulates live browser fallback level snapshots while input is active", async () => {

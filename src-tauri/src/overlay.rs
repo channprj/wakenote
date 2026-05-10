@@ -92,7 +92,7 @@ fn apply_panel_behaviour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     use tauri_nspanel::{CollectionBehavior, PanelLevel, WebviewWindowExt, tauri_panel};
 
     tauri_panel! {
-        panel!(SagwanOverlayPanel {
+        panel!(WakeNoteOverlayPanel {
             config: {
                 can_become_key_window: false,
                 can_become_main_window: false,
@@ -102,7 +102,7 @@ fn apply_panel_behaviour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
         })
     }
 
-    let panel = window.to_panel::<SagwanOverlayPanel>()?;
+    let panel = window.to_panel::<WakeNoteOverlayPanel>()?;
 
     panel.set_level(PanelLevel::Status.value());
     panel.set_collection_behavior(

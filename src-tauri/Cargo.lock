@@ -2858,27 +2858,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "sagwan"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "cpal",
- "hound",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tempfile",
- "thiserror 2.0.18",
- "ureq",
- "whisper-rs",
-]
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4205,6 +4184,27 @@ checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "wakenote"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cpal",
+ "hound",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq",
+ "whisper-rs",
 ]
 
 [[package]]

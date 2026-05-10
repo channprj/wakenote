@@ -1,7 +1,7 @@
-use sagwan::commands::AppBackend;
-use sagwan::persistence::AppPersistence;
-use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
-use sagwan::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch};
+use wakenote::commands::AppBackend;
+use wakenote::persistence::AppPersistence;
+use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
+use wakenote::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch};
 
 #[test]
 fn persistence_round_trips_settings_json() {
@@ -13,7 +13,7 @@ fn persistence_round_trips_settings_json() {
         threshold_dbfs: Some(-38.0),
         selected_microphone: Some("input-1-usb-mic".to_string()),
         selected_microphone_label: Some("USB Mic".to_string()),
-        save_root: Some("/tmp/sagwan-recordings".to_string()),
+        save_root: Some("/tmp/wakenote-recordings".to_string()),
         ..SettingsPatch::default()
     });
 
@@ -27,7 +27,7 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.threshold_dbfs, -38.0);
     assert_eq!(loaded.selected_microphone, "input-1-usb-mic");
     assert_eq!(loaded.selected_microphone_label, "USB Mic");
-    assert_eq!(loaded.save_root, "/tmp/sagwan-recordings");
+    assert_eq!(loaded.save_root, "/tmp/wakenote-recordings");
     assert!(loaded.save_root_confirmed);
 }
 
@@ -40,7 +40,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
         r#"{
           "recording_enabled": false,
           "threshold_dbfs": -39.5,
-          "save_root": "/tmp/legacy-sagwan"
+          "save_root": "/tmp/legacy-wakenote"
         }"#,
     )
     .expect("legacy settings");
@@ -52,14 +52,17 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
 
     assert!(!loaded.recording_enabled);
     assert_eq!(loaded.threshold_dbfs, -39.5);
-    assert_eq!(loaded.save_root, "/tmp/legacy-sagwan");
+    assert_eq!(loaded.save_root, "/tmp/legacy-wakenote");
     assert!(loaded.save_root_confirmed);
     assert!(loaded.transcription_enabled);
     assert!(!loaded.calibration_completed);
     assert_eq!(loaded.attack_ms, 300);
     assert_eq!(loaded.selected_model, "whisper-medium");
-    assert_eq!(loaded.theme_primary_color, "#0047AB");
-    assert_eq!(loaded.floating_overlay_position, FloatingOverlayPosition::Top);
+    assert_eq!(loaded.theme_primary_color, "#000");
+    assert_eq!(
+        loaded.floating_overlay_position,
+        FloatingOverlayPosition::Top
+    );
 }
 
 #[test]
@@ -78,7 +81,10 @@ fn persistence_round_trips_floating_overlay_position() {
         .load_settings()
         .expect("load settings")
         .expect("settings");
-    assert_eq!(loaded.floating_overlay_position, FloatingOverlayPosition::Bottom);
+    assert_eq!(
+        loaded.floating_overlay_position,
+        FloatingOverlayPosition::Bottom
+    );
 }
 
 #[test]

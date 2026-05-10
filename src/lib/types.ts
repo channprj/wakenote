@@ -65,6 +65,7 @@ export interface AppSettings {
   model_directory: string;
   vad_enabled: boolean;
   launch_at_login: boolean;
+  show_dock_icon: boolean;
   show_tray_icon: boolean;
   show_floating_overlay: boolean;
   floating_overlay_position: FloatingOverlayPosition;
@@ -112,6 +113,11 @@ export interface QueueSnapshot {
   failed_count: number;
 }
 
+export interface RecentTranscript {
+  transcript_path: string;
+  text: string;
+}
+
 export interface LevelSnapshot {
   current_dbfs: number;
   peak_dbfs: number;
@@ -138,4 +144,5 @@ export interface AppSnapshot {
   microphones: MicrophoneDevice[];
   models: ModelDescriptor[];
   queue: QueueSnapshot;
+  recent_transcripts: RecentTranscript[];
 }

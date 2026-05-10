@@ -17,6 +17,7 @@ import type {
   ModelDescriptor,
   QueueJob,
   QueueSnapshot,
+  RecentTranscript,
   SettingsPatch,
 } from "./types";
 
@@ -189,15 +190,16 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     return browserSnapshot;
   }
 
-  const [settings, status, microphones, models, queue] = await Promise.all([
+  const [settings, status, microphones, models, queue, recent_transcripts] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
+    invoke<RecentTranscript[]>("recent_transcripts"),
   ]);
 
-  return { settings, status, microphones, models, queue };
+  return { settings, status, microphones, models, queue, recent_transcripts };
 }
 
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
@@ -420,24 +422,32 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
       return browserSnapshot;
     }
 
-    let processed = false;
+    let processedAudioPath = "";
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (processed || job.status !== "pending" || !isUsableBrowserModel(job.model_id, models)) {
+      if (processedAudioPath || job.status !== "pending" || !isUsableBrowserModel(job.model_id, models)) {
         return job;
       }
 
-      processed = true;
+      processedAudioPath = job.audio_path;
       return { ...job, status: "completed" as const, error: null };
     });
-    if (!processed) {
+    if (processedAudioPath.length === 0) {
       return browserSnapshot;
     }
 
     const queue = queueFromJobs(jobs);
+    const transcriptPath = processedAudioPath.replace(/\.(m4a|wav)$/i, ".txt");
     browserSnapshot = {
       ...browserSnapshot,
       queue,
       status: statusFrom(settings, queue),
+      recent_transcripts: [
+        {
+          transcript_path: transcriptPath,
+          text: `Browser fallback transcript for ${processedAudioPath.split("/").pop()}`,
+        },
+        ...(browserSnapshot.recent_transcripts ?? []),
+      ].slice(0, 3),
     };
     return browserSnapshot;
   }
@@ -510,7 +520,7 @@ export async function chooseSaveRoot(): Promise<AppSnapshot> {
   const selected = await open({
     directory: true,
     multiple: false,
-    title: "Choose Sagwan Save Folder",
+    title: "Choose WakeNote Save Folder",
   });
   if (typeof selected !== "string") {
     return loadSnapshot();

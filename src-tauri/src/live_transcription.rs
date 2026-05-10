@@ -56,7 +56,6 @@ struct LiveTranscriptionState {
     pending: Option<LivePartialRequest>,
     in_flight_chunk_id: Option<u64>,
     closed: bool,
-    cancelled_chunks: Vec<u64>,
     model_directory: PathBuf,
     loaded_model: Option<LoadedModel>,
 }
@@ -74,7 +73,6 @@ impl LiveTranscriptionService {
                 pending: None,
                 in_flight_chunk_id: None,
                 closed: false,
-                cancelled_chunks: Vec::new(),
                 model_directory,
                 loaded_model: None,
             }),
@@ -100,23 +98,6 @@ impl LiveTranscriptionService {
         }
         state.pending = Some(request);
         self.inner.cond.notify_one();
-    }
-
-    /// Mark a chunk as cancelled; any in-flight or queued work for that
-    /// chunk_id will be discarded by the worker before emitting.
-    pub fn cancel_chunk(&self, chunk_id: u64) {
-        let Ok(mut state) = self.inner.state.lock() else {
-            return;
-        };
-        state.cancelled_chunks.push(chunk_id);
-        if state.pending.as_ref().map(|p| p.chunk_id) == Some(chunk_id) {
-            state.pending = None;
-        }
-        // Trim history; we only need recent ids.
-        if state.cancelled_chunks.len() > 64 {
-            let drop = state.cancelled_chunks.len() - 64;
-            state.cancelled_chunks.drain(..drop);
-        }
     }
 
     pub fn update_model_directory(&self, dir: impl AsRef<Path>) {
@@ -145,7 +126,7 @@ impl Drop for LiveTranscriptionService {
 }
 
 fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallback) {
-    eprintln!("[sagwan] live_transcription worker thread started");
+    eprintln!("[wakenote] live_transcription worker thread started");
     // Track (chunk_id, model_id) of the most recent ModelMissing emission so
     // we only surface the failure once per chunk — partials fire every few
     // seconds and the UI doesn't need a steady stream of identical errors.
@@ -154,19 +135,10 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
         let request = match wait_for_request(&inner) {
             Some(request) => request,
             None => {
-                eprintln!("[sagwan] live_transcription worker exiting (closed)");
+                eprintln!("[wakenote] live_transcription worker exiting (closed)");
                 return;
             }
         };
-
-        if is_cancelled(&inner, request.chunk_id) {
-            eprintln!(
-                "[sagwan] live_transcription: dropping cancelled chunk_id={}",
-                request.chunk_id
-            );
-            mark_idle(&inner);
-            continue;
-        }
 
         let context = match ensure_context(&inner, &request.model_id) {
             Some(context) => {
@@ -175,7 +147,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
             }
             None => {
                 eprintln!(
-                    "[sagwan] live_transcription: model not loadable for id={}",
+                    "[wakenote] live_transcription: model not loadable for id={}",
                     request.model_id
                 );
                 let already_warned =
@@ -205,14 +177,10 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
         );
         let elapsed = started.elapsed();
         eprintln!(
-            "[sagwan] live_transcription: chunk_id={} decode took {:?}",
+            "[wakenote] live_transcription: chunk_id={} decode took {:?}",
             request.chunk_id, elapsed
         );
         mark_idle(&inner);
-
-        if is_cancelled(&inner, request.chunk_id) {
-            continue;
-        }
 
         match result {
             Ok(Some(text)) => {
@@ -252,14 +220,6 @@ fn mark_idle(inner: &Arc<LiveTranscriptionInner>) {
     }
 }
 
-fn is_cancelled(inner: &Arc<LiveTranscriptionInner>, chunk_id: u64) -> bool {
-    inner
-        .state
-        .lock()
-        .map(|state| state.cancelled_chunks.contains(&chunk_id))
-        .unwrap_or(false)
-}
-
 fn ensure_context(
     inner: &Arc<LiveTranscriptionInner>,
     model_id: &str,
@@ -281,14 +241,14 @@ fn ensure_context(
     }
     if !model_path.exists() {
         eprintln!(
-            "[sagwan] live_transcription: model file missing at {}",
+            "[wakenote] live_transcription: model file missing at {}",
             model_path.display()
         );
         return None;
     }
 
     eprintln!(
-        "[sagwan] live_transcription: loading model {} (this can take 5-15s)",
+        "[wakenote] live_transcription: loading model {} (this can take 5-15s)",
         model_path.display()
     );
     let context = match WhisperContext::new_with_params(
@@ -297,7 +257,7 @@ fn ensure_context(
     ) {
         Ok(ctx) => ctx,
         Err(error) => {
-            eprintln!("[sagwan] live_transcription: WhisperContext load error: {error}");
+            eprintln!("[wakenote] live_transcription: WhisperContext load error: {error}");
             return None;
         }
     };

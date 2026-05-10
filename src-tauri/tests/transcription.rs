@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use sagwan::queue::{QueueJobStatus, TranscriptionQueue};
-use sagwan::settings::TranscriptionLanguage;
-use sagwan::transcription::{
+use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
+use wakenote::settings::TranscriptionLanguage;
+use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
     TranscriptionWorker, WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
 };
@@ -183,8 +183,8 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
 #[test]
 fn whisper_transcriber_expands_tilde_model_directory() {
     let home = std::env::var_os("HOME").expect("HOME should be set");
-    let audio_path = PathBuf::from("/tmp/sagwan-unused-audio.wav");
-    let transcriber = WhisperTranscriber::new("~/Library/Application Support/Sagwan/models");
+    let audio_path = PathBuf::from("/tmp/wakenote-unused-audio.wav");
+    let transcriber = WhisperTranscriber::new("~/Library/Application Support/WakeNote/models");
 
     let error = transcriber
         .transcribe(TranscriptionRequest {
@@ -198,7 +198,7 @@ fn whisper_transcriber_expands_tilde_model_directory() {
         error,
         TranscriptionError::ModelMissing(
             PathBuf::from(home)
-                .join("Library/Application Support/Sagwan/models")
+                .join("Library/Application Support/WakeNote/models")
                 .join("missing-model-for-tilde-expansion.bin")
         )
     );

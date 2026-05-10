@@ -199,12 +199,7 @@ impl SpeechGate {
         self.observe_window(dbfs, frame_start_ms, frame_end_ms)
     }
 
-    fn observe_window(
-        &mut self,
-        dbfs: f32,
-        signal_start_ms: u64,
-        time_ms: u64,
-    ) -> GateDecision {
+    fn observe_window(&mut self, dbfs: f32, signal_start_ms: u64, time_ms: u64) -> GateDecision {
         let signal_start_ms = signal_start_ms.min(time_ms);
         let above_threshold = dbfs >= self.config.threshold_dbfs;
 
