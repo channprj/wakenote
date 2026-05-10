@@ -1152,19 +1152,22 @@ tr:last-child td {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  min-width: 0;
 }
 
 .transcript-pagination__pages button {
   display: inline-grid;
   place-items: center;
-  width: 32px;
+  min-width: 92px;
   height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .transcript-pagination__pages button[aria-current="page"] {
@@ -1316,6 +1319,12 @@ tr:last-child td {
 
 .transcript-player-sheet audio {
   width: 100%;
+}
+
+.transcript-player-sheet__error {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .transcript-player-sheet p {

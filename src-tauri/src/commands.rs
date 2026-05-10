@@ -172,6 +172,29 @@ pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderReq
     }
 }
 
+pub fn audio_playback_content_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("m4a") => Some("audio/mp4"),
+        Some("wav") => Some("audio/wav"),
+        _ => None,
+    }
+}
+
+pub fn validate_audio_playback_file(path: &Path) -> Result<&'static str, String> {
+    let content_type = audio_playback_content_type(path)
+        .ok_or_else(|| "only m4a and wav recordings can be played".to_string())?;
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("recording path is not a file".to_string());
+    }
+    Ok(content_type)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MicrophoneDevice {
     pub id: String,
@@ -722,19 +745,39 @@ impl AppBackend {
     }
 
     pub fn start_next_transcription_job(&mut self) -> Option<StartedTranscriptionJob> {
+        self.start_transcription_jobs_up_to(1).into_iter().next()
+    }
+
+    pub fn start_transcription_jobs_up_to(
+        &mut self,
+        max_running: usize,
+    ) -> Vec<StartedTranscriptionJob> {
         if self.settings.pause_all || !self.settings.transcription_enabled {
-            return None;
+            return Vec::new();
         }
 
         let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
-        let job = self.queue.start_next_for_model_ids(&selectable_model_ids)?;
-        self.persist_queue();
-        Some(StartedTranscriptionJob {
-            job,
-            model_directory: self.model_directory_path(),
-            language: self.settings.transcription_language,
-            suppress_low_confidence_transcripts: self.settings.suppress_low_confidence_transcripts,
-        })
+        let model_directory = self.model_directory_path();
+        let language = self.settings.transcription_language;
+        let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
+        let mut started_jobs = Vec::new();
+
+        while let Some(job) = self
+            .queue
+            .start_next_for_model_ids_up_to(&selectable_model_ids, max_running)
+        {
+            started_jobs.push(StartedTranscriptionJob {
+                job,
+                model_directory: model_directory.clone(),
+                language,
+                suppress_low_confidence_transcripts,
+            });
+        }
+
+        if !started_jobs.is_empty() {
+            self.persist_queue();
+        }
+        started_jobs
     }
 
     pub fn finish_transcription_job(

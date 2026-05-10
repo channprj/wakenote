@@ -3,9 +3,9 @@ use std::{collections::HashSet, path::PathBuf};
 use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
-    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
-    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    with_live_runtime_warning, with_runtime_warning,
+    audio_playback_content_type, main_window_close_action, microphone_devices_from_input_devices,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::models::{ModelStatus, ModelStore};
 use wakenote::recorder::ChunkMetadata;
@@ -48,6 +48,22 @@ impl Transcriber for StaticTranscriber {
         assert!(request.audio_path.exists());
         Ok("queued transcript".to_string())
     }
+}
+
+#[test]
+fn audio_playback_accepts_recording_formats_only() {
+    assert_eq!(
+        audio_playback_content_type(&PathBuf::from("/tmp/recording.m4a")),
+        Some("audio/mp4")
+    );
+    assert_eq!(
+        audio_playback_content_type(&PathBuf::from("/tmp/recording.wav")),
+        Some("audio/wav")
+    );
+    assert_eq!(
+        audio_playback_content_type(&PathBuf::from("/tmp/transcript.txt")),
+        None
+    );
 }
 
 fn wav_settings_patch(save_root: &std::path::Path) -> SettingsPatch {
@@ -655,6 +671,47 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
     assert_eq!(
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
         "queued transcript\n"
+    );
+}
+
+#[test]
+fn backend_starts_parallel_transcription_jobs_up_to_limit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let first_audio = tmp.path().join("20260506").join("230912.wav");
+    let second_audio = tmp.path().join("20260506").join("230913.wav");
+    let third_audio = tmp.path().join("20260506").join("230914.wav");
+    std::fs::create_dir_all(first_audio.parent().unwrap()).expect("audio dir");
+    std::fs::write(&first_audio, b"first").expect("first audio");
+    std::fs::write(&second_audio, b"second").expect("second audio");
+    std::fs::write(&third_audio, b"third").expect("third audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&first_audio, Some("whisper-medium".to_string()));
+    backend.enqueue_audio_file(&second_audio, Some("whisper-medium".to_string()));
+    backend.enqueue_audio_file(&third_audio, Some("whisper-medium".to_string()));
+
+    let started = backend.start_transcription_jobs_up_to(2);
+    let snapshot = backend.queue_snapshot();
+
+    assert_eq!(started.len(), 2);
+    assert_eq!(started[0].job.audio_path, first_audio);
+    assert_eq!(started[1].job.audio_path, second_audio);
+    assert_eq!(snapshot.running_count, 2);
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|job| job.audio_path == third_audio)
+            .expect("third job")
+            .status,
+        wakenote::queue::QueueJobStatus::Pending
     );
 }
 

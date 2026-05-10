@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::sync::{
@@ -16,9 +16,10 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::list_input_devices;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, RecentTranscript, TrayState, main_window_close_action,
-    microphone_devices_from_input_devices, reveal_save_folder_request, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
+    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState,
+    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
+    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
+    validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::live_capture::{
     AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -59,6 +60,7 @@ const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
+const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -386,6 +388,15 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 fn recent_transcripts(state: State<'_, BackendState>) -> Result<Vec<RecentTranscript>, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.recent_transcripts(usize::MAX))
+}
+
+#[tauri::command]
+fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
+    let path = PathBuf::from(audio_path);
+    validate_audio_playback_file(&path)?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -865,41 +876,40 @@ fn kick_transcription_worker(
     }
 
     thread::spawn(move || {
-        eprintln!("[wakenote] queue worker thread started");
+        eprintln!(
+            "[wakenote] queue worker thread started max_parallel={MAX_PARALLEL_TRANSCRIPTIONS}"
+        );
+        let (outcome_tx, outcome_rx) = mpsc::channel();
+        let mut active_jobs = 0usize;
+
         loop {
-            let Some(started) = (match backend_state.lock() {
-                Ok(mut backend) => backend.start_next_transcription_job(),
+            let started_jobs = match backend_state.lock() {
+                Ok(mut backend) => {
+                    backend.start_transcription_jobs_up_to(MAX_PARALLEL_TRANSCRIPTIONS)
+                }
                 Err(_) => break,
-            }) else {
+            };
+            if started_jobs.is_empty() && active_jobs == 0 {
                 eprintln!("[wakenote] queue worker: no pending jobs, exiting loop");
                 break;
+            }
+
+            for started in started_jobs {
+                spawn_transcription_job(started, outcome_tx.clone());
+                active_jobs = active_jobs.saturating_add(1);
+            }
+
+            if active_jobs == 0 {
+                continue;
+            }
+
+            let Ok((audio_path, outcome)) = outcome_rx.recv() else {
+                eprintln!("[wakenote] queue worker: outcome channel closed");
+                break;
             };
-
-            let audio_path = started.job.audio_path.clone();
-            eprintln!(
-                "[wakenote] queue worker: processing job id={} path={} model={}",
-                started.job.id,
-                audio_path.display(),
-                started.job.model_id
-            );
-
-            let worker = TranscriptionWorker::with_options(
-                WhisperTranscriber::new(started.model_directory),
-                TranscriptionWorkerOptions {
-                    language: started.language,
-                    suppress_low_confidence_transcripts: started
-                        .suppress_low_confidence_transcripts,
-                },
-            );
-            let outcome = worker
-                .process_started_job(&started.job)
-                .unwrap_or_else(|error| {
-                    eprintln!("[wakenote] queue worker: process_started_job error: {error}");
-                    TranscriptionJobOutcome::failed(started.job.id, error.to_string())
-                });
             eprintln!(
                 "[wakenote] queue worker: job id={} outcome={:?}",
-                started.job.id, outcome.status
+                outcome.id, outcome.status
             );
 
             emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
@@ -910,11 +920,43 @@ fn kick_transcription_worker(
                 }
                 Err(_) => break,
             }
+            active_jobs = active_jobs.saturating_sub(1);
         }
 
         transcription_state.store(false, Ordering::Release);
 
         kick_transcription_worker_if_needed(app, backend_state, transcription_state);
+    });
+}
+
+fn spawn_transcription_job(
+    started: StartedTranscriptionJob,
+    outcome_tx: mpsc::Sender<(PathBuf, TranscriptionJobOutcome)>,
+) {
+    thread::spawn(move || {
+        let audio_path = started.job.audio_path.clone();
+        eprintln!(
+            "[wakenote] queue worker: processing job id={} path={} model={}",
+            started.job.id,
+            audio_path.display(),
+            started.job.model_id
+        );
+
+        let worker = TranscriptionWorker::with_options(
+            WhisperTranscriber::new(started.model_directory),
+            TranscriptionWorkerOptions {
+                language: started.language,
+                suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
+            },
+        );
+        let outcome = worker
+            .process_started_job(&started.job)
+            .unwrap_or_else(|error| {
+                eprintln!("[wakenote] queue worker: process_started_job error: {error}");
+                TranscriptionJobOutcome::failed(started.job.id, error.to_string())
+            });
+
+        let _ = outcome_tx.send((audio_path, outcome));
     });
 }
 
@@ -1281,6 +1323,7 @@ fn main() {
             delete_model,
             queue_snapshot,
             recent_transcripts,
+            allow_audio_playback,
             enqueue_audio_file,
             enqueue_backlog,
             retry_job,

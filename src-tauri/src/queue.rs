@@ -124,11 +124,15 @@ impl TranscriptionQueue {
     }
 
     pub fn start_next_for_model_ids(&mut self, model_ids: &HashSet<String>) -> Option<QueueJob> {
-        if self
-            .jobs
-            .iter()
-            .any(|job| job.status == QueueJobStatus::Running)
-        {
+        self.start_next_for_model_ids_up_to(model_ids, 1)
+    }
+
+    pub fn start_next_for_model_ids_up_to(
+        &mut self,
+        model_ids: &HashSet<String>,
+        max_running: usize,
+    ) -> Option<QueueJob> {
+        if max_running == 0 || self.running_job_count() >= max_running {
             return None;
         }
 
@@ -230,6 +234,13 @@ impl TranscriptionQueue {
 
     fn job_mut(&mut self, id: u64) -> Option<&mut QueueJob> {
         self.jobs.iter_mut().find(|job| job.id == id)
+    }
+
+    fn running_job_count(&self) -> usize {
+        self.jobs
+            .iter()
+            .filter(|job| job.status == QueueJobStatus::Running)
+            .count()
     }
 }
 

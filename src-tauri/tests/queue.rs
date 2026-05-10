@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use wakenote::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
 
 #[test]
@@ -101,6 +103,32 @@ fn queue_does_not_start_next_job_while_another_job_is_running() {
     assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Running);
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Pending);
     assert_eq!(queue.snapshot().running_count, 1);
+    assert_eq!(queue.snapshot().pending_count, 1);
+}
+
+#[test]
+fn queue_can_start_multiple_jobs_up_to_parallel_limit() {
+    let mut queue = TranscriptionQueue::new();
+    let first = queue.enqueue_file("/recordings/first.wav", "whisper-medium");
+    let second = queue.enqueue_file("/recordings/second.wav", "whisper-medium");
+    let third = queue.enqueue_file("/recordings/third.wav", "whisper-medium");
+    let selectable = HashSet::from(["whisper-medium".to_string()]);
+
+    let started_first = queue
+        .start_next_for_model_ids_up_to(&selectable, 2)
+        .expect("first parallel job");
+    let started_second = queue
+        .start_next_for_model_ids_up_to(&selectable, 2)
+        .expect("second parallel job");
+    let blocked_third = queue.start_next_for_model_ids_up_to(&selectable, 2);
+
+    assert_eq!(started_first.id, first);
+    assert_eq!(started_second.id, second);
+    assert_eq!(blocked_third, None);
+    assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(third).unwrap().status, QueueJobStatus::Pending);
+    assert_eq!(queue.snapshot().running_count, 2);
     assert_eq!(queue.snapshot().pending_count, 1);
 }
 

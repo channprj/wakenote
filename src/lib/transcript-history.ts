@@ -46,12 +46,14 @@ export function groupTranscriptsByDay(
   transcripts: RecentTranscript[],
 ): Array<TranscriptDayGroup<RecentTranscript>> {
   return groupByDay(
-    [...transcripts].sort((left, right) =>
-      right.recorded_at.localeCompare(left.recorded_at) ||
-      right.transcript_path.localeCompare(left.transcript_path),
-    ),
+    transcripts,
     (transcript) => transcriptDayFromTimestamp(transcript.recorded_at),
-  );
+  )
+    .map((group) => ({
+      ...group,
+      entries: [...group.entries].sort(compareTranscriptsChronologically),
+    }))
+    .sort((left, right) => compareTranscriptDaysDescending(left.day, right.day));
 }
 
 export function groupQueueJobsByDay(
@@ -96,6 +98,31 @@ function groupByDay<T>(
     day,
     entries: groupedEntries,
   }));
+}
+
+function compareTranscriptsChronologically(
+  left: RecentTranscript,
+  right: RecentTranscript,
+): number {
+  return (
+    timestampSortValue(left.recorded_at) - timestampSortValue(right.recorded_at) ||
+    left.transcript_path.localeCompare(right.transcript_path)
+  );
+}
+
+function compareTranscriptDaysDescending(left: string, right: string): number {
+  if (left === "Unknown") {
+    return 1;
+  }
+  if (right === "Unknown") {
+    return -1;
+  }
+  return right.localeCompare(left);
+}
+
+function timestampSortValue(value: string): number {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
 }
 
 function pad2(value: number): string {

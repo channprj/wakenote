@@ -29,7 +29,7 @@ describe("transcript history helpers", () => {
     ).toBe("old transcript");
   });
 
-  it("groups transcripts by local recording day in newest-day order", () => {
+  it("groups transcripts by newest local day with oldest entries first", () => {
     const transcripts: RecentTranscript[] = [
       {
         transcript_path: "/tmp/WakeNote/20260509/230000.txt",
@@ -43,11 +43,19 @@ describe("transcript history helpers", () => {
         recorded_at: "2026-05-10T01:00:00+09:00",
         text: "newer day",
       },
+      {
+        transcript_path: "/tmp/WakeNote/20260510/000000.txt",
+        audio_path: "/tmp/WakeNote/20260510/000000.m4a",
+        recorded_at: "2026-05-10T00:00:00+09:00",
+        text: "newer day first",
+      },
     ];
 
-    expect(groupTranscriptsByDay(transcripts).map((group) => group.day)).toEqual([
-      "2026-05-10",
-      "2026-05-09",
+    const groups = groupTranscriptsByDay(transcripts);
+    expect(groups.map((group) => group.day)).toEqual(["2026-05-10", "2026-05-09"]);
+    expect(groups[0].entries.map((entry) => entry.text)).toEqual([
+      "newer day first",
+      "newer day",
     ]);
   });
 

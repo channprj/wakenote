@@ -14,7 +14,7 @@ function transcript(overrides: Partial<RecentTranscript>): RecentTranscript {
 }
 
 describe("TranscriptsPanel", () => {
-  it("shows one date page at a time with standard pagination controls", () => {
+  it("shows one date page at a time with date pagination controls", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
         transcripts={[
@@ -44,10 +44,37 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain("new day transcript");
     expect(markup).not.toContain("middle day transcript");
     expect(markup).not.toContain("old day transcript");
-    expect(markup).toContain("Page 1 of 3");
+    expect(markup).toContain('aria-label="Go to 2026-05-10 transcripts"');
+    expect(markup).toContain(">2026-05-10</button>");
     expect(markup).toContain("Previous day");
     expect(markup).toContain("Next day");
     expect(markup).toContain('aria-current="page"');
+    expect(markup).not.toContain("Page 1 of 3");
+  });
+
+  it("renders transcripts in chronological order within the selected date", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/180000.txt",
+            audio_path: "/tmp/WakeNote/20260510/180000.m4a",
+            recorded_at: "2026-05-10T18:00:00+09:00",
+            text: "evening transcript",
+          }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/090000.txt",
+            audio_path: "/tmp/WakeNote/20260510/090000.m4a",
+            recorded_at: "2026-05-10T09:00:00+09:00",
+            text: "morning transcript",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup.indexOf("morning transcript")).toBeLessThan(
+      markup.indexOf("evening transcript"),
+    );
   });
 
   it("renders a right-side play button for each transcript with a recording", () => {

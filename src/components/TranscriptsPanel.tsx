@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, FileAudio, FileText, Play, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
 import { fileUrlFromPath, formatLocalTimestamp, groupTranscriptsByDay } from "../lib/transcript-history";
 import type { RecentTranscript } from "../lib/types";
 import { Badge, Button } from "./ui/primitives";
@@ -39,6 +40,7 @@ export function TranscriptsPanel({
         <>
           <TranscriptPagination
             activePage={activePage}
+            activeDay={activeGroup.day}
             groups={groups}
             onPageChange={setActivePage}
           />
@@ -63,6 +65,7 @@ export function TranscriptsPanel({
           </article>
           <TranscriptPagination
             activePage={activePage}
+            activeDay={activeGroup.day}
             groups={groups}
             onPageChange={setActivePage}
           />
@@ -125,10 +128,12 @@ function TranscriptEntryRow({
 
 function TranscriptPagination({
   activePage,
+  activeDay,
   groups,
   onPageChange,
 }: {
   activePage: number;
+  activeDay: string;
   groups: ReturnType<typeof groupTranscriptsByDay>;
   onPageChange: (page: number) => void;
 }) {
@@ -139,6 +144,11 @@ function TranscriptPagination({
   return (
     <nav className="transcript-pagination" aria-label="Transcript date pages">
       <Button
+        aria-label={
+          activePage > 0
+            ? `Previous day, ${groups[activePage - 1].day}`
+            : "Previous day"
+        }
         disabled={activePage === 0}
         onClick={() => onPageChange(Math.max(0, activePage - 1))}
         type="button"
@@ -151,17 +161,22 @@ function TranscriptPagination({
         {groups.map((group, index) => (
           <button
             aria-current={activePage === index ? "page" : undefined}
-            aria-label={`Go to page ${index + 1}, ${group.day}`}
+            aria-label={`Go to ${group.day} transcripts`}
             key={group.day}
             onClick={() => onPageChange(index)}
             type="button"
           >
-            {index + 1}
+            {group.day}
           </button>
         ))}
       </div>
-      <span>Page {activePage + 1} of {groups.length}</span>
+      <span>{activeDay} / {groups.length} days</span>
       <Button
+        aria-label={
+          activePage < groups.length - 1
+            ? `Next day, ${groups[activePage + 1].day}`
+            : "Next day"
+        }
         disabled={activePage === groups.length - 1}
         onClick={() => onPageChange(Math.min(groups.length - 1, activePage + 1))}
         type="button"
@@ -181,11 +196,39 @@ function TranscriptPlayerSheet({
   entry: RecentTranscript;
   onClose: () => void;
 }) {
-  if (!entry.audio_path) {
+  const audioPath = entry.audio_path;
+
+  if (!audioPath) {
     return null;
   }
 
   const timestamp = formatLocalTimestamp(entry.recorded_at);
+  const fallbackAudioSource = fileUrlFromPath(audioPath);
+  const [audioSource, setAudioSource] = useState(fallbackAudioSource);
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = fileUrlFromPath(audioPath);
+    setAudioSource(fallback);
+    setAudioError(null);
+
+    audioPlaybackUrlFromPath(audioPath)
+      .then((url) => {
+        if (!cancelled) {
+          setAudioSource(url);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAudioError(error instanceof Error ? error.message : "Could not prepare recording");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [audioPath]);
 
   return (
     <aside className="transcript-player-sheet" aria-label="Transcript player">
@@ -204,7 +247,10 @@ function TranscriptPlayerSheet({
           <X />
         </Button>
       </div>
-      <audio autoPlay controls src={fileUrlFromPath(entry.audio_path)} />
+      <audio autoPlay controls key={audioSource} preload="metadata" src={audioSource} />
+      {audioError ? (
+        <span className="transcript-player-sheet__error">{audioError}</span>
+      ) : null}
       <p>{entry.text}</p>
     </aside>
   );
