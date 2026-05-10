@@ -217,10 +217,11 @@ fn capture_processor_rolls_over_at_max_chunk_without_dropping_stream() {
 }
 
 #[test]
-fn capture_processor_rollover_does_not_duplicate_boundary_frame() {
+fn capture_processor_rollover_repeats_tail_context_for_next_chunk() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config_settings = settings();
     config_settings.attack_ms = 100;
+    config_settings.pre_roll_ms = 200;
     config_settings.max_chunk_ms = 500;
     let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
         save_root: tmp.path().to_path_buf(),
@@ -233,14 +234,23 @@ fn capture_processor_rollover_does_not_duplicate_boundary_frame() {
         app_version: "0.1.0".to_string(),
     });
 
-    for _ in 0..10 {
-        processor.process_samples(&[0.8; 1], 100).expect("speech");
+    for index in 0..10 {
+        let sample = 0.2 + (index as f32 * 0.05);
+        processor.process_samples(&[sample], 100).expect("speech");
     }
 
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 2);
-    assert_eq!(wav_sample_count(&chunks[0].audio_path), 5);
-    assert_eq!(wav_sample_count(&chunks[1].audio_path), 5);
+    let first = wav_samples(&chunks[0].audio_path);
+    let second = wav_samples(&chunks[1].audio_path);
+
+    assert_eq!(first.len(), 5);
+    assert_eq!(second.len(), 7);
+    assert_eq!(
+        &second[..2],
+        &first[3..],
+        "next chunk should begin with the previous chunk tail"
+    );
 }
 
 #[test]

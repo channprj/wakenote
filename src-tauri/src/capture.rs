@@ -235,19 +235,24 @@ impl CaptureProcessor {
                 next_started_at_ms,
             } => {
                 self.active_samples.extend_from_slice(&frame.samples);
+                let overlap_samples = self.rollover_overlap_samples();
+                let overlap_started_at_ms = next_started_at_ms.saturating_sub(active_duration_ms(
+                    overlap_samples.len(),
+                    self.config.sample_rate,
+                ));
                 self.commit_active_chunk(ended_at_ms)?;
                 let chunk_id = self.next_chunk_id;
                 self.next_chunk_id = self.next_chunk_id.saturating_add(1);
                 self.current_chunk_id = Some(chunk_id);
-                self.active_started_at_ms = Some(next_started_at_ms);
-                self.active_samples.clear();
+                self.active_started_at_ms = Some(overlap_started_at_ms);
+                self.active_samples = overlap_samples;
                 self.active_has_signal = false;
                 self.last_partial_emit_offset_ms = 0;
 
                 self.pending_events
                     .push(CaptureControllerEvent::ChunkStarted {
                         chunk_id,
-                        started_at: self.time_at(next_started_at_ms),
+                        started_at: self.time_at(overlap_started_at_ms),
                     });
             }
         }
@@ -319,6 +324,17 @@ impl CaptureProcessor {
         while let Some(frame) = self.pre_roll.pop_front() {
             self.active_samples.extend_from_slice(&frame.samples);
         }
+    }
+
+    fn rollover_overlap_samples(&self) -> Vec<f32> {
+        let overlap_count =
+            sample_count_for_duration_ms(self.config.settings.pre_roll_ms, self.config.sample_rate);
+        if overlap_count == 0 || self.active_samples.is_empty() {
+            return Vec::new();
+        }
+
+        let keep_count = overlap_count.min(self.active_samples.len());
+        self.active_samples[self.active_samples.len() - keep_count..].to_vec()
     }
 
     fn maybe_emit_live_partial(&mut self) {
@@ -394,6 +410,13 @@ fn active_duration_ms(sample_count: usize, sample_rate: u32) -> u64 {
         return 0;
     }
     ((sample_count as u128 * 1_000) / sample_rate as u128) as u64
+}
+
+fn sample_count_for_duration_ms(duration_ms: u64, sample_rate: u32) -> usize {
+    if duration_ms == 0 || sample_rate == 0 {
+        return 0;
+    }
+    ((duration_ms as u128 * sample_rate as u128) / 1_000) as usize
 }
 
 fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
