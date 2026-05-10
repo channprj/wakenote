@@ -1,14 +1,28 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
 use crate::commands::TrayState;
 use crate::settings::FloatingOverlayPosition;
 
 pub const OVERLAY_LABEL: &str = "overlay";
 pub const OVERLAY_EVENT: &str = "overlay-state";
+pub const OVERLAY_LEVEL_EVENT: &str = "overlay-level";
+pub const OVERLAY_WAVEFORM_BAR_COUNT: usize = 11;
 
 const OVERLAY_WIDTH_LOGICAL: f64 = 172.0;
 const OVERLAY_HEIGHT_LOGICAL: f64 = 36.0;
+
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(WakeNoteOverlayPanel {
+        config: {
+            can_become_key_window: false,
+            can_become_main_window: false,
+            is_floating_panel: true,
+            hides_on_deactivate: false
+        }
+    })
+}
 
 #[cfg(target_os = "macos")]
 const TOP_OFFSET_LOGICAL: f64 = 46.0;
@@ -55,16 +69,72 @@ struct OverlayStatePayload {
     position: FloatingOverlayPosition,
 }
 
+#[derive(Serialize, Clone)]
+struct OverlayLevelPayload {
+    levels: Vec<f32>,
+}
+
+#[cfg(target_os = "macos")]
 pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window(OVERLAY_LABEL).is_some() {
         return Ok(());
     }
 
-    let builder = tauri::WebviewWindowBuilder::new(
+    use tauri::{Size, WebviewUrl};
+    use tauri_nspanel::{CollectionBehavior, PanelBuilder, PanelLevel};
+
+    let panel = PanelBuilder::<_, WakeNoteOverlayPanel>::new(app, OVERLAY_LABEL)
+        .url(WebviewUrl::App("overlay.html".into()))
+        .title("WakeNote Overlay")
+        .level(PanelLevel::Status)
+        .size(Size::Logical(LogicalSize::new(
+            OVERLAY_WIDTH_LOGICAL,
+            OVERLAY_HEIGHT_LOGICAL,
+        )))
+        .has_shadow(false)
+        .transparent(true)
+        .no_activate(true)
+        .corner_radius(0.0)
+        .collection_behavior(
+            CollectionBehavior::new()
+                .can_join_all_spaces()
+                .full_screen_auxiliary()
+                .stationary(),
+        )
+        .with_window(|window| {
+            window
+                .resizable(false)
+                .decorations(false)
+                .visible(false)
+                .focused(false)
+                .accept_first_mouse(true)
+                .transparent(true)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .maximizable(false)
+                .minimizable(false)
+                .closable(false)
+        })
+        .build()?;
+
+    let _ = panel.hide();
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window(OVERLAY_LABEL).is_some() {
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
         app,
         OVERLAY_LABEL,
         tauri::WebviewUrl::App("overlay.html".into()),
     )
+    .title("WakeNote Overlay")
     .inner_size(OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL)
     .resizable(false)
     .decorations(false)
@@ -74,47 +144,11 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     .transparent(true)
     .shadow(false)
     .always_on_top(true)
-    .skip_taskbar(true);
-
-    let window = builder.build()?;
-
-    #[cfg(target_os = "macos")]
-    apply_panel_behaviour(&window)?;
-
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn apply_panel_behaviour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
-    use tauri_nspanel::{CollectionBehavior, PanelLevel, WebviewWindowExt, tauri_panel};
-
-    tauri_panel! {
-        panel!(WakeNoteOverlayPanel {
-            config: {
-                can_become_key_window: false,
-                can_become_main_window: false,
-                is_floating_panel: true,
-                hides_on_deactivate: false
-            }
-        })
-    }
-
-    let panel = window.to_panel::<WakeNoteOverlayPanel>()?;
-
-    panel.set_level(PanelLevel::Status.value());
-    panel.set_collection_behavior(
-        CollectionBehavior::new()
-            .can_join_all_spaces()
-            .full_screen_auxiliary()
-            .stationary()
-            .value(),
-    );
-    panel.set_has_shadow(false);
-    panel.set_corner_radius(0.0);
-    panel.set_floating_panel(true);
+    .skip_taskbar(true)
+    .maximizable(false)
+    .minimizable(false)
+    .closable(false)
+    .build()?;
 
     Ok(())
 }
@@ -141,7 +175,7 @@ pub fn show_overlay(
             FloatingOverlayPosition::Bottom => OverlayAnchor::Bottom,
             FloatingOverlayPosition::Off => return hide_overlay(app),
         };
-        let physical = calculate_position(
+        let logical = calculate_position(
             rect,
             anchor,
             (OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL),
@@ -150,7 +184,7 @@ pub fn show_overlay(
             OVERLAY_WIDTH_LOGICAL,
             OVERLAY_HEIGHT_LOGICAL,
         ))?;
-        window.set_position(physical)?;
+        window.set_position(logical)?;
     }
 
     window.show()?;
@@ -158,6 +192,14 @@ pub fn show_overlay(
     let _ = window.emit(OVERLAY_EVENT, payload.clone());
     let _ = app.emit(OVERLAY_EVENT, payload);
     Ok(())
+}
+
+pub fn emit_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
+    let payload = OverlayLevelPayload { levels };
+    if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
+        let _ = window.emit(OVERLAY_LEVEL_EVENT, payload.clone());
+    }
+    let _ = app.emit(OVERLAY_LEVEL_EVENT, payload);
 }
 
 pub fn show_overlay_on_main_thread(
@@ -231,7 +273,7 @@ pub(crate) fn calculate_position(
     monitor: MonitorRect,
     anchor: OverlayAnchor,
     size_logical: (f64, f64),
-) -> PhysicalPosition<i32> {
+) -> LogicalPosition<f64> {
     let (overlay_w, overlay_h) = size_logical;
     let scale = if monitor.scale_factor > 0.0 {
         monitor.scale_factor
@@ -252,9 +294,43 @@ pub(crate) fn calculate_position(
         }
     };
 
-    let logical = LogicalPosition::new(logical_x, logical_y);
-    let physical = logical.to_physical::<i32>(scale);
-    physical
+    LogicalPosition::new(logical_x, logical_y)
+}
+
+pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if samples.is_empty() {
+        return vec![0.0; count];
+    }
+
+    (0..count)
+        .map(|index| {
+            let start = index * samples.len() / count;
+            let end = ((index + 1) * samples.len() / count).min(samples.len());
+            if start >= end {
+                return 0.0;
+            }
+
+            let mut sum_squares = 0.0_f32;
+            let mut valid_count = 0usize;
+            for sample in &samples[start..end] {
+                if sample.is_finite() {
+                    let clamped = sample.clamp(-1.0, 1.0);
+                    sum_squares += clamped * clamped;
+                    valid_count += 1;
+                }
+            }
+            if valid_count == 0 || sum_squares <= f32::EPSILON {
+                return 0.0;
+            }
+
+            let rms = (sum_squares / valid_count as f32).sqrt().max(0.000_001);
+            let dbfs = 20.0 * rms.log10();
+            ((dbfs + 60.0) / 60.0).clamp(0.0, 1.0)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -273,33 +349,33 @@ mod tests {
     fn top_anchor_centers_horizontally_and_offsets_vertically() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
         let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        assert_eq!(pos.x, ((1920 - 172) / 2) as i32);
-        assert_eq!(pos.y, TOP_OFFSET_LOGICAL as i32);
+        assert_eq!(pos.x, ((1920 - 172) / 2) as f64);
+        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
     fn bottom_anchor_mirrors_top_offset() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
         let pos = calculate_position(monitor, OverlayAnchor::Bottom, (172.0, 36.0));
-        assert_eq!(pos.x, ((1920 - 172) / 2) as i32);
-        assert_eq!(pos.y, (1080.0 - 36.0 - BOTTOM_OFFSET_LOGICAL) as i32);
+        assert_eq!(pos.x, ((1920 - 172) / 2) as f64);
+        assert_eq!(pos.y, 1080.0 - 36.0 - BOTTOM_OFFSET_LOGICAL);
     }
 
     #[test]
     fn secondary_monitor_with_negative_origin_produces_absolute_coords() {
         let monitor = rect((-1920, 0), (1920, 1080), 1.0);
         let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        assert_eq!(pos.x, -1920 + ((1920 - 172) / 2) as i32);
-        assert_eq!(pos.y, TOP_OFFSET_LOGICAL as i32);
+        assert_eq!(pos.x, -1920.0 + ((1920 - 172) / 2) as f64);
+        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
-    fn high_dpi_monitor_returns_physical_coords() {
+    fn high_dpi_monitor_returns_logical_coords() {
         let monitor = rect((0, 0), (3840, 2160), 2.0);
         let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        // Logical width = 1920, logical x = (1920 - 172) / 2 = 874, physical = 874 * 2 = 1748
-        assert_eq!(pos.x, 1748);
-        assert_eq!(pos.y, (TOP_OFFSET_LOGICAL * 2.0) as i32);
+        // Logical width = 1920, logical x = (1920 - 172) / 2 = 874.
+        assert_eq!(pos.x, 874.0);
+        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
@@ -318,5 +394,37 @@ mod tests {
             overlay_state_for_tray_state(TrayState::Transcribing),
             OverlayState::Transcribing
         );
+    }
+
+    #[test]
+    fn waveform_levels_are_zero_for_empty_or_silent_samples() {
+        assert_eq!(waveform_levels_from_samples(&[], 3), vec![0.0, 0.0, 0.0]);
+        assert_eq!(
+            waveform_levels_from_samples(&[0.0; 30], 3),
+            vec![0.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn waveform_levels_are_bounded_and_follow_bucket_energy() {
+        let samples = (0..90).map(|index| index as f32 / 89.0).collect::<Vec<_>>();
+        let levels = waveform_levels_from_samples(&samples, OVERLAY_WAVEFORM_BAR_COUNT);
+
+        assert_eq!(levels.len(), OVERLAY_WAVEFORM_BAR_COUNT);
+        assert!(levels.iter().all(|level| (0.0..=1.0).contains(level)));
+        assert!(levels[0] < levels[OVERLAY_WAVEFORM_BAR_COUNT - 1]);
+    }
+
+    #[test]
+    fn waveform_levels_handle_full_scale_and_non_finite_samples() {
+        let full_scale = waveform_levels_from_samples(&[1.0; 90], OVERLAY_WAVEFORM_BAR_COUNT);
+        assert!(
+            full_scale
+                .iter()
+                .all(|level| (*level - 1.0).abs() < f32::EPSILON)
+        );
+
+        let invalid = waveform_levels_from_samples(&[f32::NAN, f32::INFINITY], 2);
+        assert_eq!(invalid, vec![0.0, 0.0]);
     }
 }

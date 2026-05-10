@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::image::Image;
@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::list_input_devices;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, RecentTranscript, main_window_close_action,
+    MicrophoneDevice, RecentTranscript, TrayState, main_window_close_action,
     microphone_devices_from_input_devices, reveal_save_folder_request, tray_menu_presentation,
     tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
 };
@@ -58,6 +58,7 @@ const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
 const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
+const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -227,6 +228,18 @@ fn dispatch_live_events(handler: Option<LiveEventHandler>, events: Vec<LiveTrans
     for event in events {
         handler(event);
     }
+}
+
+fn overlay_level_emit_due(last_emit: &Mutex<Instant>) -> bool {
+    let now = Instant::now();
+    let Ok(mut last_emit_at) = last_emit.lock() else {
+        return false;
+    };
+    if now.duration_since(*last_emit_at) < OVERLAY_LEVEL_EMIT_INTERVAL {
+        return false;
+    }
+    *last_emit_at = now;
+    true
 }
 
 async fn resolve_microphones_for_ui(selected_microphone: String) -> Vec<MicrophoneDevice> {
@@ -565,23 +578,40 @@ fn start_live_capture_runtime(
     let callback_backend = backend_arc.clone();
     let callback_transcription = transcription_state.clone();
     let callback_app = app.clone();
+    let callback_overlay_level_throttle = Arc::new(Mutex::new(
+        Instant::now()
+            .checked_sub(Duration::from_millis(100))
+            .unwrap_or_else(Instant::now),
+    ));
     let start_result = live_state.lock().map_err(|error| error.to_string())?.start(
         AudioInputConfig {
             device_id,
             sample_rate: Some(sample_rate),
         },
         move |frame| {
-            let (should_kick, handler, events) = if let Ok(mut backend) = callback_backend.lock() {
-                let should_kick = backend
-                    .process_audio_frame(frame)
-                    .map(|_| backend.should_process_transcriptions())
-                    .unwrap_or(false);
-                let (handler, events) = live_events_for_dispatch(&mut backend);
-                (should_kick, handler, events)
-            } else {
-                (false, None, Vec::new())
-            };
+            let waveform_levels = overlay::waveform_levels_from_samples(
+                &frame.samples,
+                overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+            );
+            let (should_kick, handler, events, emit_waveform) =
+                if let Ok(mut backend) = callback_backend.lock() {
+                    let status = backend.process_audio_frame(frame);
+                    let emit_waveform = status
+                        .as_ref()
+                        .map(|status| matches!(status.tray_state, TrayState::Recording))
+                        .unwrap_or(false);
+                    let should_kick = status
+                        .map(|_| backend.should_process_transcriptions())
+                        .unwrap_or(false);
+                    let (handler, events) = live_events_for_dispatch(&mut backend);
+                    (should_kick, handler, events, emit_waveform)
+                } else {
+                    (false, None, Vec::new(), false)
+                };
             dispatch_live_events(handler, events);
+            if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
+                overlay::emit_waveform_levels(&callback_app, waveform_levels);
+            }
             if should_kick {
                 kick_transcription_worker(
                     callback_app.clone(),

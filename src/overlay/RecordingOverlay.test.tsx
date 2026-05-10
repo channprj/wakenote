@@ -2,8 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { OverlayContent } from "./RecordingOverlay";
 
-function render(state: "hidden" | "recording" | "transcribing") {
-  return renderToStaticMarkup(<OverlayContent state={state} onStop={() => {}} />);
+function render(state: "hidden" | "recording" | "transcribing", levels?: number[]) {
+  return renderToStaticMarkup(<OverlayContent state={state} levels={levels} onStop={() => {}} />);
 }
 
 describe("recording overlay states", () => {
@@ -18,6 +18,16 @@ describe("recording overlay states", () => {
     expect(markup).toContain("overlay-waveform");
     expect(markup).toContain('aria-label="Stop recording"');
     expect(markup).toContain("lucide-x");
+  });
+
+  it("renders live waveform levels as fixed bar heights when recording", () => {
+    const markup = render("recording", [0, 0.5, 1]);
+    expect(markup.match(/class="overlay-waveform__bar"/g)?.length).toBe(11);
+    expect(markup).toContain("--bar-height:4px");
+    expect(markup).toContain("--bar-height:11px");
+    expect(markup).toContain("--bar-height:18px");
+    expect(markup).toContain('data-peak="true"');
+    expect(markup).not.toContain("animation-delay");
   });
 
   it("renders Loader2 spinner and Transcribing label when transcribing", () => {
