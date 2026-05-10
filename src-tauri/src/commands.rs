@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::audio::{InputDevice, LevelMonitor, LevelSnapshot, list_input_devices};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
@@ -197,6 +197,8 @@ pub struct AppStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecentTranscript {
     pub transcript_path: String,
+    pub audio_path: Option<String>,
+    pub recorded_at: String,
     pub text: String,
 }
 
@@ -480,7 +482,12 @@ impl AppBackend {
         let save_root = self.save_root_path();
         let mut transcripts = Vec::new();
         collect_transcript_sidecars(&save_root, &mut transcripts);
-        transcripts.sort_by(|left, right| right.transcript_path.cmp(&left.transcript_path));
+        transcripts.sort_by(|left, right| {
+            right
+                .recorded_at
+                .cmp(&left.recorded_at)
+                .then_with(|| right.transcript_path.cmp(&left.transcript_path))
+        });
         transcripts.truncate(limit);
         transcripts
     }
@@ -959,8 +966,67 @@ fn collect_transcript_sidecars(root: &Path, transcripts: &mut Vec<RecentTranscri
 
         transcripts.push(RecentTranscript {
             transcript_path: path.to_string_lossy().to_string(),
+            audio_path: audio_path_for_transcript(&path)
+                .map(|audio_path| audio_path.to_string_lossy().to_string()),
+            recorded_at: recorded_at_for_transcript(&path),
             text,
         });
+    }
+}
+
+fn audio_path_for_transcript(path: &Path) -> Option<PathBuf> {
+    ["m4a", "wav"]
+        .into_iter()
+        .map(|extension| path.with_extension(extension))
+        .find(|candidate| candidate.exists())
+}
+
+fn recorded_at_for_transcript(path: &Path) -> String {
+    path.with_extension("json")
+        .try_exists()
+        .ok()
+        .filter(|exists| *exists)
+        .and_then(|_| fs::read(path.with_extension("json")).ok())
+        .and_then(|bytes| serde_json::from_slice::<ChunkMetadata>(&bytes).ok())
+        .map(|metadata| metadata.started_at.to_rfc3339())
+        .or_else(|| recorded_at_from_path(path))
+        .unwrap_or_else(|| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .map(DateTime::<Utc>::from)
+                .map(|timestamp| timestamp.to_rfc3339())
+                .unwrap_or_default()
+        })
+}
+
+fn recorded_at_from_path(path: &Path) -> Option<String> {
+    let date_part = path.parent()?.file_name()?.to_str()?;
+    if date_part.len() != 8
+        || !date_part
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let stem = path.file_stem()?.to_str()?;
+    let time_part = stem.get(0..6)?;
+    if !time_part
+        .chars()
+        .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let date = NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()?;
+    let time = NaiveTime::parse_from_str(time_part, "%H%M%S").ok()?;
+    let local = date.and_time(time);
+    match Local.from_local_datetime(&local) {
+        chrono::LocalResult::Single(timestamp) => Some(timestamp.to_rfc3339()),
+        chrono::LocalResult::Ambiguous(timestamp, _) => Some(timestamp.to_rfc3339()),
+        chrono::LocalResult::None => {
+            Some(DateTime::<Utc>::from_naive_utc_and_offset(local, Utc).to_rfc3339())
+        }
     }
 }
 

@@ -159,6 +159,34 @@ fn backend_reads_three_newest_transcript_sidecars_from_save_root() {
 }
 
 #[test]
+fn backend_transcript_sidecars_include_recording_metadata_for_ui_links() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    write_transcript_sidecar(tmp.path(), "20260510/010203.txt", "linked transcript\n");
+    let audio_path = tmp.path().join("20260510/010203.m4a");
+    std::fs::write(&audio_path, b"audio").expect("audio file");
+
+    let transcripts = backend.recent_transcripts(1);
+
+    assert_eq!(transcripts[0].text, "linked transcript");
+    let audio_path_text = audio_path.to_string_lossy().to_string();
+    assert_eq!(
+        transcripts[0].audio_path.as_deref(),
+        Some(audio_path_text.as_str())
+    );
+    assert!(
+        transcripts[0]
+            .recorded_at
+            .starts_with("2026-05-10T01:02:03")
+    );
+}
+
+#[test]
 fn pause_all_overrides_enabled_toggles() {
     let mut backend = AppBackend::default();
 

@@ -444,10 +444,12 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
       recent_transcripts: [
         {
           transcript_path: transcriptPath,
+          audio_path: processedAudioPath,
+          recorded_at: new Date().toISOString(),
           text: `Browser fallback transcript for ${processedAudioPath.split("/").pop()}`,
         },
         ...(browserSnapshot.recent_transcripts ?? []),
-      ].slice(0, 3),
+      ],
     };
     return browserSnapshot;
   }

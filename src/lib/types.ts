@@ -117,6 +117,8 @@ export interface QueueSnapshot {
 
 export interface RecentTranscript {
   transcript_path: string;
+  audio_path: string | null;
+  recorded_at: string;
   text: string;
 }
 
