@@ -15,11 +15,9 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onStopLiveCapture={() => {}}
       onChooseSaveRoot={() => {}}
       onChooseModelDirectory={() => {}}
-      onRevealSaveFolder={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
       onCancelCurrent={() => {}}
-      onCancelCurrentOperation={() => {}}
       onProcessNextTranscription={() => {}}
       onRetry={() => {}}
       onSkip={() => {}}
@@ -168,6 +166,60 @@ describe("settings panel", () => {
     expect(markup).toContain("3 min");
     expect(markup).toContain("5 min");
     expect(markup).toContain('aria-pressed="true"');
+  });
+
+  it("puts live level details above general capture controls and removes tray preview copy", () => {
+    const snapshot = mockSnapshot();
+    snapshot.status.tray_state = "error";
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).not.toContain("tray-preview");
+    expect(markup.indexOf("Current")).toBeLessThan(markup.indexOf("Recording"));
+    expect(markup.indexOf("Peak")).toBeLessThan(markup.indexOf("Recording"));
+  });
+
+  it("shows all transcripts grouped by day with recording file links", () => {
+    const snapshot = mockSnapshot();
+    snapshot.recent_transcripts = [
+      {
+        transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+        audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+        recorded_at: "2026-05-10T01:02:03+09:00",
+        text: "daily transcript text",
+      },
+    ];
+
+    const markup = renderSettingsPanel(snapshot, "transcripts");
+
+    expect(markup).toContain("Transcripts");
+    expect(markup).toContain("2026-05-10");
+    expect(markup).toContain("daily transcript text");
+    expect(markup).toContain('href="file:///tmp/WakeNote/20260510/010203.m4a"');
+  });
+
+  it("groups history jobs by recording day", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toContain("2026-05-10");
+    expect(markup).toContain("/tmp/WakeNote/20260510/010203.m4a");
   });
 
   it("disables process next until the selected model is usable", () => {

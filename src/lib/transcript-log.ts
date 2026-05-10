@@ -20,6 +20,7 @@ export interface TranscriptEntry {
   status: TranscriptEntryStatus;
   text: string;
   started_at: string;
+  recorded_at: string;
   audio_path: string | null;
   error: string | null;
 }
@@ -54,6 +55,7 @@ export function reduceTranscriptLog(
         status: "listening",
         text: "",
         started_at: event.started_at,
+        recorded_at: event.started_at,
         audio_path: null,
         error: null,
       }));
@@ -65,6 +67,7 @@ export function reduceTranscriptLog(
           status: "partial",
           text: event.text,
           started_at: new Date().toISOString(),
+          recorded_at: new Date().toISOString(),
           audio_path: null,
           error: null,
         }));
@@ -89,6 +92,8 @@ export function reduceTranscriptLog(
         chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
         status: "final",
         text: event.text,
+        recorded_at:
+          entry?.recorded_at || entry?.started_at || new Date().toISOString(),
         audio_path: event.audio_path,
         error: null,
       }));
@@ -99,6 +104,8 @@ export function reduceTranscriptLog(
         chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
         status: "failed",
         text: entry?.text ?? "",
+        recorded_at:
+          entry?.recorded_at || entry?.started_at || new Date().toISOString(),
         audio_path: event.audio_path,
         error: event.error,
       }));
@@ -111,6 +118,7 @@ function defaultEntry(chunk_id: number | null, audio_path: string): TranscriptEn
     status: "queued",
     text: "",
     started_at: new Date().toISOString(),
+    recorded_at: new Date().toISOString(),
     audio_path,
     error: null,
   };

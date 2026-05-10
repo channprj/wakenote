@@ -1,5 +1,7 @@
 import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
+import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
+import { groupQueueJobsByDay } from "../lib/transcript-history";
 import type { QueueJobStatus, QueueSnapshot } from "../lib/types";
 
 function toneForStatus(status: string) {
@@ -56,6 +58,7 @@ export function QueuePanel({
   onSkip: (id: number) => void;
 }) {
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
+  const groupedJobs = groupQueueJobsByDay(queue.jobs);
 
   return (
     <div className="queue-panel">
@@ -119,42 +122,49 @@ export function QueuePanel({
                 </td>
               </tr>
             ) : (
-              queue.jobs.map((job) => {
-                const actions = queueJobActionState(job.status);
-                return (
-                  <tr key={job.id}>
-                    <td title={job.audio_path}>{job.audio_path}</td>
-                    <td>{job.model_id}</td>
-                    <td>
-                      <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="icon"
-                          title="Retry"
-                          onClick={() => onRetry(job.id)}
-                          disabled={!actions.canRetry}
-                        >
-                          <RotateCw />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          title="Skip"
-                          onClick={() => onSkip(job.id)}
-                          disabled={!actions.canSkip}
-                        >
-                          <SkipForward />
-                        </Button>
-                      </div>
-                    </td>
+              groupedJobs.map((group) => (
+                <Fragment key={group.day}>
+                  <tr className="table-group-row">
+                    <td colSpan={4}>{group.day}</td>
                   </tr>
-                );
-              })
+                  {group.entries.map((job) => {
+                    const actions = queueJobActionState(job.status);
+                    return (
+                      <tr key={job.id}>
+                        <td title={job.audio_path}>{job.audio_path}</td>
+                        <td>{job.model_id}</td>
+                        <td>
+                          <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
+                        </td>
+                        <td>
+                          <div className="row-actions">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              title="Retry"
+                              onClick={() => onRetry(job.id)}
+                              disabled={!actions.canRetry}
+                            >
+                              <RotateCw />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title="Skip"
+                              onClick={() => onSkip(job.id)}
+                              disabled={!actions.canSkip}
+                            >
+                              <SkipForward />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              ))
             )}
           </tbody>
         </table>

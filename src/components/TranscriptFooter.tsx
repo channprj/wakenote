@@ -1,12 +1,13 @@
 import { AlertCircle, AudioLines, CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, type ReactElement } from "react";
+import { appendRecentAge, formatLocalTimestamp } from "../lib/transcript-history";
 import type { TranscriptEntry, TranscriptEntryStatus } from "../lib/transcript-log";
 
 const statusLabel: Record<TranscriptEntryStatus, string> = {
   listening: "Listening",
   partial: "Live",
   queued: "Refining",
-  final: "Saved",
+  final: "Final",
   failed: "Review",
 };
 
@@ -23,9 +24,11 @@ const RECENT_TRANSCRIPT_LIMIT = 3;
 export function TranscriptFooter({
   entries,
   liveActive,
+  now = new Date(),
 }: {
   entries: TranscriptEntry[];
   liveActive: boolean;
+  now?: Date;
 }) {
   const visibleEntries = useMemo(() => newestTranscriptTextEntries(entries), [entries]);
   const listRef = useRef<HTMLOListElement>(null);
@@ -58,12 +61,12 @@ export function TranscriptFooter({
             <li key={`${entry.chunk_id}:${entry.audio_path ?? entry.started_at}`} data-status={entry.status}>
               <span className="transcript-footer__status">
                 {statusIcon[entry.status]}
-                {statusLabel[entry.status]}
+                {labelForEntry(entry)}
               </span>
               <span className="transcript-footer__text">
                 {entry.status === "failed"
                   ? (entry.error ?? "transcription failed")
-                  : entry.text || (
+                  : textForEntry(entry, now) || (
                       <em className="transcript-footer__placeholder">
                         {entry.status === "listening"
                           ? "listening to speech…"
@@ -77,6 +80,22 @@ export function TranscriptFooter({
       </ol>
     </footer>
   );
+}
+
+function labelForEntry(entry: TranscriptEntry): string {
+  if (entry.status !== "final") {
+    return statusLabel[entry.status];
+  }
+
+  return formatLocalTimestamp(entry.recorded_at || entry.started_at) || "Final";
+}
+
+function textForEntry(entry: TranscriptEntry, now: Date): string {
+  if (entry.status !== "final" || !entry.text) {
+    return entry.text;
+  }
+
+  return appendRecentAge(entry.text, entry.recorded_at || entry.started_at, now);
 }
 
 function newestTranscriptTextEntries(entries: TranscriptEntry[]): TranscriptEntry[] {

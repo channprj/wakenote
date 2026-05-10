@@ -9,6 +9,7 @@ function entry(overrides: Partial<TranscriptEntry>): TranscriptEntry {
     status: "partial",
     text: "",
     started_at: "2026-05-09T08:00:00Z",
+    recorded_at: "2026-05-09T08:00:00Z",
     audio_path: null,
     error: null,
     ...overrides,
@@ -20,6 +21,7 @@ describe("TranscriptFooter", () => {
     const markup = renderToStaticMarkup(
       <TranscriptFooter
         liveActive
+        now={new Date("2026-05-09T08:00:42Z")}
         entries={[entry({ text: "오늘 회의에서 액션 아이템을 정리합니다." })]}
       />,
     );
@@ -32,6 +34,7 @@ describe("TranscriptFooter", () => {
     const markup = renderToStaticMarkup(
       <TranscriptFooter
         liveActive
+        now={new Date("2026-05-09T08:00:42Z")}
         entries={[
           entry({ chunk_id: 1, text: "older segment" }),
           entry({ chunk_id: 2, text: "newer segment" }),
@@ -46,6 +49,7 @@ describe("TranscriptFooter", () => {
     const markup = renderToStaticMarkup(
       <TranscriptFooter
         liveActive
+        now={new Date("2026-05-09T08:00:42Z")}
         entries={[
           entry({ chunk_id: 1, status: "final", text: "first transcript" }),
           entry({ chunk_id: 2, status: "final", text: "second transcript" }),
@@ -65,6 +69,7 @@ describe("TranscriptFooter", () => {
     const markup = renderToStaticMarkup(
       <TranscriptFooter
         liveActive
+        now={new Date("2026-05-09T08:00:42Z")}
         entries={[
           entry({ chunk_id: 1, status: "listening", text: "" }),
           entry({ chunk_id: 2, status: "queued", text: "" }),
@@ -76,6 +81,28 @@ describe("TranscriptFooter", () => {
     expect(markup).toContain("decoded transcript");
     expect(markup).not.toContain("processing");
     expect(markup).not.toContain("listening to speech");
+  });
+
+  it("shows saved transcripts with timestamp labels and recent age suffixes", () => {
+    const recordedAt = new Date(2026, 4, 9, 8, 0, 0).toISOString();
+    const markup = renderToStaticMarkup(
+      <TranscriptFooter
+        liveActive={false}
+        now={new Date(2026, 4, 9, 8, 0, 42)}
+        entries={[
+          entry({
+            chunk_id: 7,
+            status: "final",
+            text: "final transcript",
+            recorded_at: recordedAt,
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("2026-05-09 08:00:00");
+    expect(markup).toContain("final transcript 42 seconds ago");
+    expect(markup).not.toContain("Saved");
   });
 
   it("scrolls the transcript list to the newest bottom row", () => {

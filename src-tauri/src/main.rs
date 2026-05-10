@@ -385,7 +385,7 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 #[tauri::command]
 fn recent_transcripts(state: State<'_, BackendState>) -> Result<Vec<RecentTranscript>, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.recent_transcripts(3))
+    Ok(backend.recent_transcripts(usize::MAX))
 }
 
 #[tauri::command]

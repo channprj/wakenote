@@ -2,7 +2,7 @@ import { CheckCircle2, FolderOpen, Play, RefreshCw, Square } from "lucide-react"
 import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
-import { TrayPreview } from "./TrayPreview";
+import { TranscriptsPanel } from "./TranscriptsPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import type { AppSnapshot, AppSettings } from "../lib/types";
@@ -45,11 +45,9 @@ export function SettingsPanel({
   onStopLiveCapture,
   onChooseSaveRoot,
   onChooseModelDirectory,
-  onRevealSaveFolder,
   onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
-  onCancelCurrentOperation,
   onProcessNextTranscription,
   onRetry,
   onSkip,
@@ -66,11 +64,9 @@ export function SettingsPanel({
   onStopLiveCapture: () => void;
   onChooseSaveRoot: () => void;
   onChooseModelDirectory: () => void;
-  onRevealSaveFolder: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
-  onCancelCurrentOperation: () => void;
   onProcessNextTranscription: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
@@ -233,6 +229,14 @@ export function SettingsPanel({
     );
   }
 
+  if (activeSection === "transcripts") {
+    return (
+      <Section title="Transcripts" eyebrow="Daily archive">
+        <TranscriptsPanel transcripts={snapshot.recent_transcripts} />
+      </Section>
+    );
+  }
+
   if (activeSection === "privacy") {
     return (
       <Section title="Privacy" eyebrow="Offline defaults">
@@ -333,6 +337,12 @@ export function SettingsPanel({
 
   return (
     <div className="general-grid">
+      <LevelMeter
+        settings={settings}
+        status={status}
+        onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
+        onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
+      />
       <Section
         title="General"
         eyebrow="Capture mode"
@@ -439,19 +449,6 @@ export function SettingsPanel({
           ) : null}
         </div>
       </Section>
-      <TrayPreview
-        settings={settings}
-        status={status}
-        onPatch={onPatch}
-        onRevealSaveFolder={onRevealSaveFolder}
-        onCancelCurrentOperation={onCancelCurrentOperation}
-      />
-      <LevelMeter
-        settings={settings}
-        status={status}
-        onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
-        onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
-      />
     </div>
   );
 }

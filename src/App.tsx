@@ -6,6 +6,7 @@ import {
   Folder,
   FolderOpen,
   Info,
+  Files,
   ListTodo,
   Mic,
   RadioTower,
@@ -26,7 +27,6 @@ import {
 } from "./lib/transcript-log";
 import {
   cancelModelDownload,
-  cancelCurrentOperation,
   cancelCurrentTranscription,
   chooseModelDirectory,
   chooseSaveRoot,
@@ -62,6 +62,7 @@ const sections = [
   { id: "models", label: "Models", icon: Brain },
   { id: "recording", label: "Recording", icon: Mic },
   { id: "storage", label: "Storage", icon: Folder },
+  { id: "transcripts", label: "Transcripts", icon: Files },
   { id: "privacy", label: "Privacy", icon: Shield },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
@@ -77,8 +78,9 @@ function transcriptEntriesFromRecent(
     chunk_id: -1 - index,
     status: "final",
     text: transcript.text,
-    started_at: "",
-    audio_path: transcript.transcript_path,
+    started_at: transcript.recorded_at,
+    recorded_at: transcript.recorded_at,
+    audio_path: transcript.audio_path,
     error: null,
   }));
 }
@@ -373,11 +375,9 @@ export default function App() {
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
           onChooseModelDirectory={() => void runAction(chooseModelDirectory)}
-          onRevealSaveFolder={() => void runAction(revealSaveFolder)}
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
-          onCancelCurrentOperation={() => void runAction(cancelCurrentOperation)}
           onProcessNextTranscription={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
