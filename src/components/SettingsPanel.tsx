@@ -376,6 +376,11 @@ export function SettingsPanel({
             checked={settings.transcription_enabled}
             onChange={(transcription_enabled) => onPatch({ transcription_enabled })}
           />
+          <ToggleRow
+            label="Start input on launch"
+            checked={settings.start_live_input_on_launch}
+            onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
+          />
           <Select
             label="Transcription Language"
             value={settings.transcription_language}

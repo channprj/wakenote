@@ -58,6 +58,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert!(!loaded.calibration_completed);
     assert_eq!(loaded.attack_ms, 300);
     assert_eq!(loaded.selected_model, "whisper-medium");
+    assert!(loaded.start_live_input_on_launch);
     assert_eq!(loaded.theme_primary_color, "#000");
     assert_eq!(
         loaded.floating_overlay_position,

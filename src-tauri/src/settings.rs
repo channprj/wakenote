@@ -74,6 +74,7 @@ pub struct AppSettings {
     pub model_directory: String,
     pub vad_enabled: bool,
     pub launch_at_login: bool,
+    pub start_live_input_on_launch: bool,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     pub show_floating_overlay: bool,
@@ -103,6 +104,7 @@ pub struct SettingsPatch {
     pub model_directory: Option<String>,
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
+    pub start_live_input_on_launch: Option<bool>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub show_floating_overlay: Option<bool>,
@@ -161,6 +163,10 @@ pub fn live_capture_runtime_action_for_patch(
 
 pub fn live_capture_should_run(settings: &AppSettings) -> bool {
     settings.recording_enabled && !settings.pause_all
+}
+
+pub fn live_capture_should_start_on_launch(settings: &AppSettings) -> bool {
+    settings.start_live_input_on_launch && live_capture_should_run(settings)
 }
 
 pub fn expand_user_path(path: impl AsRef<str>) -> PathBuf {
@@ -255,6 +261,9 @@ impl AppSettings {
         if let Some(value) = patch.launch_at_login {
             self.launch_at_login = value;
         }
+        if let Some(value) = patch.start_live_input_on_launch {
+            self.start_live_input_on_launch = value;
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
@@ -297,6 +306,7 @@ impl Default for AppSettings {
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
             vad_enabled: false,
             launch_at_login: false,
+            start_live_input_on_launch: true,
             show_dock_icon: true,
             show_tray_icon: true,
             show_floating_overlay: true,

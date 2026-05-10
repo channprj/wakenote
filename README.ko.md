@@ -75,6 +75,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 | 저장 루트 | `~/Documents/WakeNote` | 임의 디렉터리 |
 | 기본 모델 | `whisper-medium` | 레지스트리 내 모델 |
 | 모델 디렉터리 | `~/Library/Application Support/WakeNote/models` | 임의 디렉터리 |
+| 실행 시 입력 자동 시작 | `on` | `on` / `off` |
 
 설정은 `<app_data_dir>/settings.json`에 저장되며, patch가 적용될 때마다 안전 범위로 clamp됩니다.
 

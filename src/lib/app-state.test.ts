@@ -217,6 +217,7 @@ describe("app state derivation", () => {
     expect(snapshot.settings.max_chunk_ms).toBe(120_000);
     expect(snapshot.settings.show_dock_icon).toBe(true);
     expect(snapshot.settings.show_tray_icon).toBe(true);
+    expect(snapshot.settings.start_live_input_on_launch).toBe(true);
     expect(snapshot.settings.theme_primary_color).toBe("#000");
     expect(snapshot.microphones[0].id).toBe("default");
     expect(snapshot.models.map((model) => model.id)).toContain("whisper-medium");

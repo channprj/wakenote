@@ -139,6 +139,7 @@ export function defaultSettings(): AppSettings {
     model_directory: "~/Library/Application Support/WakeNote/models",
     vad_enabled: false,
     launch_at_login: false,
+    start_live_input_on_launch: true,
     show_dock_icon: true,
     show_tray_icon: true,
     show_floating_overlay: true,

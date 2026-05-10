@@ -112,6 +112,16 @@ describe("settings panel", () => {
     expect(markup).toContain('<option value="ko" selected="">Korean</option>');
   });
 
+  it("shows an auto-start live input toggle in general controls", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.start_live_input_on_launch = false;
+
+    const markup = renderSettingsPanel(snapshot);
+    const autoStartSwitch = switchTag(markup, "Start input on launch");
+
+    expect(autoStartSwitch).toContain('aria-checked="false"');
+  });
+
   it("shows VAD gate as unavailable and forced off until VAD is implemented", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.vad_enabled = true;

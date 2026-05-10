@@ -33,7 +33,7 @@ use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
     SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run,
+    live_capture_should_start_on_launch,
 };
 use wakenote::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker, WhisperTranscriber,
@@ -1204,7 +1204,7 @@ fn main() {
             let app_handle_for_initial = app.handle().clone();
             if initial_settings
                 .as_ref()
-                .is_some_and(live_capture_should_run)
+                .is_some_and(live_capture_should_start_on_launch)
             {
                 let app_handle_for_capture = app.handle().clone();
                 let backend_state_for_capture = backend_state.clone();

@@ -65,6 +65,7 @@ export interface AppSettings {
   model_directory: string;
   vad_enabled: boolean;
   launch_at_login: boolean;
+  start_live_input_on_launch: boolean;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   show_floating_overlay: boolean;
