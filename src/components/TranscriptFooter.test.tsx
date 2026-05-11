@@ -105,6 +105,52 @@ describe("TranscriptFooter", () => {
     expect(markup).not.toContain("Saved");
   });
 
+  it("wraps the final-status timestamp in a clickable file:// link to the audio recording", () => {
+    const recordedAt = new Date(2026, 4, 9, 8, 0, 0).toISOString();
+    const audioPath = "/Users/me/Documents/WakeNote/20260509/080000.m4a";
+    const markup = renderToStaticMarkup(
+      <TranscriptFooter
+        liveActive={false}
+        now={new Date(2026, 4, 9, 8, 0, 42)}
+        entries={[
+          entry({
+            chunk_id: 7,
+            status: "final",
+            text: "final transcript",
+            recorded_at: recordedAt,
+            audio_path: audioPath,
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(
+      `<a href="file:///Users/me/Documents/WakeNote/20260509/080000.m4a" title="${audioPath}">2026-05-09 08:00:00</a>`,
+    );
+  });
+
+  it("renders the final-status timestamp without a link when audio_path is null", () => {
+    const recordedAt = new Date(2026, 4, 9, 8, 0, 0).toISOString();
+    const markup = renderToStaticMarkup(
+      <TranscriptFooter
+        liveActive={false}
+        now={new Date(2026, 4, 9, 8, 0, 42)}
+        entries={[
+          entry({
+            chunk_id: 8,
+            status: "final",
+            text: "no audio transcript",
+            recorded_at: recordedAt,
+            audio_path: null,
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("2026-05-09 08:00:00");
+    expect(markup).not.toContain("<a ");
+  });
+
   it("scrolls the transcript list to the newest bottom row", () => {
     const list = {
       scrollHeight: 480,

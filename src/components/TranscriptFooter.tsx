@@ -1,6 +1,10 @@
 import { AlertCircle, AudioLines, CheckCircle2, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useRef, type ReactElement } from "react";
-import { appendRecentAge, formatLocalTimestamp } from "../lib/transcript-history";
+import { useEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
+import {
+  appendRecentAge,
+  fileUrlFromPath,
+  formatLocalTimestamp,
+} from "../lib/transcript-history";
 import type { TranscriptEntry, TranscriptEntryStatus } from "../lib/transcript-log";
 
 const statusLabel: Record<TranscriptEntryStatus, string> = {
@@ -82,12 +86,20 @@ export function TranscriptFooter({
   );
 }
 
-function labelForEntry(entry: TranscriptEntry): string {
+function labelForEntry(entry: TranscriptEntry): ReactNode {
   if (entry.status !== "final") {
     return statusLabel[entry.status];
   }
 
-  return formatLocalTimestamp(entry.recorded_at || entry.started_at) || "Final";
+  const timestamp = formatLocalTimestamp(entry.recorded_at || entry.started_at) || "Final";
+  if (entry.audio_path) {
+    return (
+      <a href={fileUrlFromPath(entry.audio_path)} title={entry.audio_path}>
+        {timestamp}
+      </a>
+    );
+  }
+  return timestamp;
 }
 
 function textForEntry(entry: TranscriptEntry, now: Date): string {

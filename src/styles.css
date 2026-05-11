@@ -1032,6 +1032,15 @@ svg {
   color: var(--muted);
 }
 
+.transcript-footer__status a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.transcript-footer__status a:hover {
+  text-decoration: underline;
+}
+
 .transcript-footer__text {
   color: var(--text);
   overflow-wrap: anywhere;
