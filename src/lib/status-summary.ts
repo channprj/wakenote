@@ -132,6 +132,31 @@ export function queueJobStatusBadgeTone(status: QueueJobStatus | string): Status
   }
 }
 
+// Aggregate-count tone palette shared by QueuePanel's queue-stats banner cells and per-day
+// group-row chips. Distinct from queueJobStatusBadgeTone because it encodes per-bucket
+// attention semantics ("any pending work means backlog → warning") rather than per-row
+// lifecycle semantics ("a pending job is just waiting → neutral"). Mapping: failed /
+// cancelled → danger (needs action), pending / skipped → warning (backlog or acknowledged
+// gap), running → primary (in flight), completed → success (happy-path throughput). Falls
+// back to "neutral" for unknown strings so the call site can stay total over future
+// QueueJobStatus additions.
+export function queueStatsCellTone(status: QueueJobStatus | string): StatusTone {
+  switch (status) {
+    case "failed":
+    case "cancelled":
+      return "danger";
+    case "pending":
+    case "skipped":
+      return "warning";
+    case "running":
+      return "primary";
+    case "completed":
+      return "success";
+    default:
+      return "neutral";
+  }
+}
+
 // Canonical ModelStatus → Badge tone mapping shared between ModelManager's per-model row Badge
 // and SettingsPanel's Models section header Badge (the selected-model label). Mirrors PRD §3.5
 // model state machine semantics: ready/installed → success (usable now), downloading/verifying/

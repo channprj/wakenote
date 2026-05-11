@@ -2,7 +2,7 @@ import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide
 import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
-import { queueJobStatusBadgeTone } from "../lib/status-summary";
+import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
   countCancelledQueueJobs,
   countCompletedQueueJobs,
@@ -142,42 +142,42 @@ export function QueuePanel({
     <div className="queue-panel">
       <div className="queue-stats">
         <div
-          data-tone={queue.pending_count > 0 ? "warning" : undefined}
+          data-tone={queue.pending_count > 0 ? queueStatsCellTone("pending") : undefined}
           title={pendingBreakdown || undefined}
         >
           <span>Pending</span>
           <strong>{queue.pending_count}</strong>
         </div>
         <div
-          data-tone={skippedCount > 0 ? "warning" : undefined}
+          data-tone={skippedCount > 0 ? queueStatsCellTone("skipped") : undefined}
           title={skippedBreakdown || undefined}
         >
           <span>Skipped</span>
           <strong>{skippedCount}</strong>
         </div>
         <div
-          data-tone={queue.running_count > 0 ? "primary" : undefined}
+          data-tone={queue.running_count > 0 ? queueStatsCellTone("running") : undefined}
           title={runningBreakdown || undefined}
         >
           <span>Running</span>
           <strong>{queue.running_count}</strong>
         </div>
         <div
-          data-tone={queue.failed_count > 0 ? "danger" : undefined}
+          data-tone={queue.failed_count > 0 ? queueStatsCellTone("failed") : undefined}
           title={failedBreakdown || undefined}
         >
           <span>Failed</span>
           <strong>{queue.failed_count}</strong>
         </div>
         <div
-          data-tone={cancelledCount > 0 ? "danger" : undefined}
+          data-tone={cancelledCount > 0 ? queueStatsCellTone("cancelled") : undefined}
           title={cancelledBreakdown || undefined}
         >
           <span>Cancelled</span>
           <strong>{cancelledCount}</strong>
         </div>
         <div
-          data-tone={completedCount > 0 ? "success" : undefined}
+          data-tone={completedCount > 0 ? queueStatsCellTone("completed") : undefined}
           title={completedBreakdown || undefined}
         >
           <span>Completed</span>
@@ -247,37 +247,37 @@ export function QueuePanel({
                       {pendingCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="warning">{pendingCount} pending</span>
+                          <span data-tone={queueStatsCellTone("pending")}>{pendingCount} pending</span>
                         </>
                       ) : null}
                       {runningCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="primary">{runningCount} running</span>
+                          <span data-tone={queueStatsCellTone("running")}>{runningCount} running</span>
                         </>
                       ) : null}
                       {groupCompletedCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="success">{groupCompletedCount} completed</span>
+                          <span data-tone={queueStatsCellTone("completed")}>{groupCompletedCount} completed</span>
                         </>
                       ) : null}
                       {failedCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="danger">{failedCount} failed</span>
+                          <span data-tone={queueStatsCellTone("failed")}>{failedCount} failed</span>
                         </>
                       ) : null}
                       {cancelledCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="danger">{cancelledCount} cancelled</span>
+                          <span data-tone={queueStatsCellTone("cancelled")}>{cancelledCount} cancelled</span>
                         </>
                       ) : null}
                       {skippedCount > 0 ? (
                         <>
                           {" · "}
-                          <span data-tone="warning">{skippedCount} skipped</span>
+                          <span data-tone={queueStatsCellTone("skipped")}>{skippedCount} skipped</span>
                         </>
                       ) : null}
                     </td>

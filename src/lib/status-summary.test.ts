@@ -6,6 +6,7 @@ import {
   nextDismissedWarningKey,
   queueCardTone,
   queueJobStatusBadgeTone,
+  queueStatsCellTone,
   runtimeCardTone,
   trayStateBadgeTone,
   visibleWarningForDismissedKey,
@@ -466,5 +467,44 @@ describe("queueJobStatusBadgeTone", () => {
   it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
     expect(queueJobStatusBadgeTone("unknown")).toBe("neutral");
     expect(queueJobStatusBadgeTone("")).toBe("neutral");
+  });
+});
+
+describe("queueStatsCellTone", () => {
+  it("maps pending to warning (any backlog signals attention)", () => {
+    expect(queueStatsCellTone("pending")).toBe("warning");
+  });
+
+  it("maps skipped to warning (acknowledged gap in the queue)", () => {
+    expect(queueStatsCellTone("skipped")).toBe("warning");
+  });
+
+  it("maps running to primary (queue is in flight)", () => {
+    expect(queueStatsCellTone("running")).toBe("primary");
+  });
+
+  it("maps failed to danger (needs retry)", () => {
+    expect(queueStatsCellTone("failed")).toBe("danger");
+  });
+
+  it("maps cancelled to danger (needs retry to re-enter the queue)", () => {
+    expect(queueStatsCellTone("cancelled")).toBe("danger");
+  });
+
+  it("maps completed to success (happy-path throughput)", () => {
+    expect(queueStatsCellTone("completed")).toBe("success");
+  });
+
+  it("falls back to neutral for unknown strings so the call site stays total", () => {
+    expect(queueStatsCellTone("unknown")).toBe("neutral");
+    expect(queueStatsCellTone("")).toBe("neutral");
+  });
+
+  it("diverges from queueJobStatusBadgeTone for pending (warning vs neutral)", () => {
+    // Per iter-73: the aggregate-bucket tone encodes "backlog → attention" while the
+    // per-row Badge tone encodes "this single job is waiting → no signal". Pinning the
+    // divergence here protects against a refactor that accidentally unifies them.
+    expect(queueStatsCellTone("pending")).toBe("warning");
+    expect(queueJobStatusBadgeTone("pending")).toBe("neutral");
   });
 });
