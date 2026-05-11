@@ -2,7 +2,7 @@ import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide
 import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
-import { groupQueueJobsByDay } from "../lib/transcript-history";
+import { formatAudioPathLabel, groupQueueJobsByDay } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
 function toneForStatus(status: string) {
@@ -134,7 +134,7 @@ export function QueuePanel({
                     const actions = queueJobActionState(job.status);
                     return (
                       <tr key={job.id}>
-                        <td title={job.audio_path}>{job.audio_path}</td>
+                        <td title={job.audio_path}>{formatAudioPathLabel(job.audio_path)}</td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td>
                           <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>

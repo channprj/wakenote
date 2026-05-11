@@ -71,6 +71,25 @@ export function transcriptDayFromAudioPath(audioPath: string): string {
   return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
+export function formatAudioPathLabel(audioPath: string): string {
+  if (!audioPath) {
+    return audioPath;
+  }
+
+  const segments = audioPath.split("/");
+  const last = segments[segments.length - 1];
+  if (!last) {
+    return audioPath;
+  }
+
+  const parent = segments.length >= 2 ? segments[segments.length - 2] : "";
+  if (/^\d{8}$/.test(parent)) {
+    return `${parent}/${last}`;
+  }
+
+  return last;
+}
+
 export function fileUrlFromPath(path: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) {
     return path;

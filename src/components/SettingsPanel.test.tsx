@@ -222,6 +222,31 @@ describe("settings panel", () => {
     expect(markup).toContain("/tmp/WakeNote/20260510/010203.m4a");
   });
 
+  it("renders shortened audio path labels in the history queue with the full path in the tooltip", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/Users/me/Documents/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toContain('title="/Users/me/Documents/WakeNote/20260510/010203.m4a"');
+    expect(markup).toMatch(/<td[^>]*>20260510\/010203\.m4a<\/td>/);
+    expect(markup).not.toMatch(/<td[^>]*>\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a</);
+  });
+
   it("renders the friendly model display name in the history queue and the models eyebrow", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

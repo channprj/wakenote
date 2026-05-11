@@ -3,6 +3,7 @@ import type { RecentTranscript } from "./types";
 import {
   appendRecentAge,
   fileUrlFromPath,
+  formatAudioPathLabel,
   formatLocalTimestamp,
   groupTranscriptsByDay,
   transcriptDayFromAudioPath,
@@ -66,5 +67,24 @@ describe("transcript history helpers", () => {
     expect(fileUrlFromPath("/tmp/WakeNote/20260510/010203 voice.m4a")).toBe(
       "file:///tmp/WakeNote/20260510/010203%20voice.m4a",
     );
+  });
+
+  it("shortens save-root audio paths to the YYYYMMDD/basename pair", () => {
+    expect(
+      formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203.m4a"),
+    ).toBe("20260510/010203.m4a");
+    expect(
+      formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203-001.wav"),
+    ).toBe("20260510/010203-001.wav");
+  });
+
+  it("falls back to the basename when the parent dir is not an 8-digit date", () => {
+    expect(formatAudioPathLabel("/tmp/imported/pending.wav")).toBe("pending.wav");
+    expect(formatAudioPathLabel("/tmp/2026/010203.m4a")).toBe("010203.m4a");
+    expect(formatAudioPathLabel("standalone.m4a")).toBe("standalone.m4a");
+  });
+
+  it("returns the input unchanged when there is nothing to shorten", () => {
+    expect(formatAudioPathLabel("")).toBe("");
   });
 });
