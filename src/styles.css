@@ -1297,6 +1297,15 @@ tr:last-child td {
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
+.queue-panel tbody td > a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.queue-panel tbody td > a:hover {
+  text-decoration: underline;
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;

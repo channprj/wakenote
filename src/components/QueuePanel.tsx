@@ -9,6 +9,7 @@ import {
   countPendingQueueJobs,
   countRunningQueueJobs,
   countSkippedQueueJobs,
+  fileUrlFromPath,
   formatAudioPathLabel,
   groupQueueJobsByDay,
   summarizeQueueJobsByDay,
@@ -301,7 +302,11 @@ export function QueuePanel({
                     const rowTone = toneForStatus(job.status);
                     return (
                       <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
-                        <td title={job.audio_path}>{formatAudioPathLabel(job.audio_path)}</td>
+                        <td>
+                          <a href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
+                            {formatAudioPathLabel(job.audio_path)}
+                          </a>
+                        </td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td title={job.error ?? undefined}>
                           <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>

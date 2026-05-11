@@ -365,11 +365,39 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toContain('title="/Users/me/Documents/WakeNote/20260510/010203.m4a"');
-    expect(markup).toMatch(/<td[^>]*>2026-05-10\/01:02:03\.m4a<\/td>/);
+    expect(markup).toMatch(/<td><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a><\/td>/);
     expect(markup).not.toMatch(/<td[^>]*>\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a</);
     // The Audio cell now uses YYYY-MM-DD to match the day-group row format;
     // the raw 20260510/ prefix must never reach the visible cell text.
     expect(markup).not.toMatch(/<td[^>]*>20260510\/01:02:03\.m4a</);
+  });
+
+  it("wraps the history queue Audio cell in a file:// link so users can open the recording", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/Users/me/Documents/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toContain(
+      'href="file:///Users/me/Documents/WakeNote/20260510/010203.m4a"',
+    );
+    expect(markup).toMatch(
+      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a">\s*2026-05-10\/01:02:03\.m4a\s*<\/a>/,
+    );
   });
 
   it("renders the friendly model display name in the history queue and the models eyebrow", () => {
@@ -1482,19 +1510,19 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<tr data-tone="primary"><td[^>]*>2026-05-10\/01:02:03\.m4a<\/td>/,
+      /<tr data-tone="primary"><td><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a><\/td>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="danger"><td[^>]*>2026-05-10\/02:03:04\.m4a<\/td>/,
+      /<tr data-tone="danger"><td><a [^>]*>2026-05-10\/02:03:04\.m4a<\/a><\/td>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="success"><td[^>]*>2026-05-10\/03:04:05\.m4a<\/td>/,
+      /<tr data-tone="success"><td><a [^>]*>2026-05-10\/03:04:05\.m4a<\/a><\/td>/,
     );
     // Pending rows stay untoned (neutral) so they don't compete with actionable
     // rows for visual attention; assert the tr opens with just the React key
     // markup and no data-tone attribute precedes the Audio cell.
     expect(markup).toMatch(
-      /<tr><td[^>]*>2026-05-10\/04:05:06\.m4a<\/td>/,
+      /<tr><td><a [^>]*>2026-05-10\/04:05:06\.m4a<\/a><\/td>/,
     );
   });
 
