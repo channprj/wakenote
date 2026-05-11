@@ -223,6 +223,7 @@ export function QueuePanel({
             ) : (
               groupedJobs.map((group) => {
                 const pendingCount = countPendingQueueJobs(group.entries);
+                const groupCompletedCount = countCompletedQueueJobs(group.entries);
                 const failedCount = countFailedQueueJobs(group.entries);
                 const cancelledCount = countCancelledQueueJobs(group.entries);
                 const skippedCount = countSkippedQueueJobs(group.entries);
@@ -235,6 +236,12 @@ export function QueuePanel({
                         <>
                           {" · "}
                           <span data-tone="warning">{pendingCount} pending</span>
+                        </>
+                      ) : null}
+                      {groupCompletedCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="success">{groupCompletedCount} completed</span>
                         </>
                       ) : null}
                       {failedCount > 0 ? (

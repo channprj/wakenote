@@ -1273,6 +1273,10 @@ tr:last-child td {
   color: var(--warning);
 }
 
+.table-group-row td span[data-tone="success"] {
+  color: var(--success);
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;
