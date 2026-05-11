@@ -5,6 +5,7 @@ import {
   modelStatusBadgeTone,
   nextDismissedWarningKey,
   queueCardTone,
+  queueJobStatusBadgeTone,
   runtimeCardTone,
   trayStateBadgeTone,
   visibleWarningForDismissedKey,
@@ -434,5 +435,36 @@ describe("modelStatusBadgeTone", () => {
   it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
     expect(modelStatusBadgeTone("unknown")).toBe("neutral");
     expect(modelStatusBadgeTone("")).toBe("neutral");
+  });
+});
+
+describe("queueJobStatusBadgeTone", () => {
+  it("maps running to primary (job is in flight)", () => {
+    expect(queueJobStatusBadgeTone("running")).toBe("primary");
+  });
+
+  it("maps completed to success (happy-path throughput)", () => {
+    expect(queueJobStatusBadgeTone("completed")).toBe("success");
+  });
+
+  it("maps failed to danger (needs retry)", () => {
+    expect(queueJobStatusBadgeTone("failed")).toBe("danger");
+  });
+
+  it("maps cancelled to danger (needs retry to re-enter the queue)", () => {
+    expect(queueJobStatusBadgeTone("cancelled")).toBe("danger");
+  });
+
+  it("maps skipped to warning (acknowledged but not done)", () => {
+    expect(queueJobStatusBadgeTone("skipped")).toBe("warning");
+  });
+
+  it("maps pending to neutral (waiting, no signal)", () => {
+    expect(queueJobStatusBadgeTone("pending")).toBe("neutral");
+  });
+
+  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
+    expect(queueJobStatusBadgeTone("unknown")).toBe("neutral");
+    expect(queueJobStatusBadgeTone("")).toBe("neutral");
   });
 });

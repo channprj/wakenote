@@ -2,6 +2,7 @@ import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide
 import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
+import { queueJobStatusBadgeTone } from "../lib/status-summary";
 import {
   countCancelledQueueJobs,
   countCompletedQueueJobs,
@@ -17,22 +18,6 @@ import {
   summarizeQueueJobsByDay,
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
-
-export function toneForStatus(status: string) {
-  if (status === "running") {
-    return "primary";
-  }
-  if (status === "failed" || status === "cancelled") {
-    return "danger";
-  }
-  if (status === "completed") {
-    return "success";
-  }
-  if (status === "skipped") {
-    return "warning";
-  }
-  return "neutral";
-}
 
 export function queueJobActionState(status: QueueJobStatus) {
   return {
@@ -301,10 +286,10 @@ export function QueuePanel({
                     const actions = queueJobActionState(job.status);
                     const retryReason = queueJobRetryDisabledReason(job.status);
                     const skipReason = queueJobSkipDisabledReason(job.status);
-                    const rowTone = toneForStatus(job.status);
+                    const rowTone = queueJobStatusBadgeTone(job.status);
                     const sidecarPath = queueJobSidecarPath(job.audio_path, job.status);
                     const statusBadge = (
-                      <Badge tone={toneForStatus(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
+                      <Badge tone={queueJobStatusBadgeTone(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
                     );
                     return (
                       <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>

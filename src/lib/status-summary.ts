@@ -1,5 +1,12 @@
 import { countCompletedQueueJobs } from "./transcript-history";
-import type { AppMode, AppSnapshot, ModelStatus, QueueSnapshot, TrayState } from "./types";
+import type {
+  AppMode,
+  AppSnapshot,
+  ModelStatus,
+  QueueJobStatus,
+  QueueSnapshot,
+  TrayState,
+} from "./types";
 
 export type StatusTone = "neutral" | "success" | "warning" | "danger" | "primary";
 
@@ -100,6 +107,29 @@ const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
 // error → danger. Falls back to "neutral" for unknown strings to keep the Badge contract total.
 export function trayStateBadgeTone(state: TrayState | string): StatusTone {
   return (trayCopy as Record<string, { tone: StatusTone } | undefined>)[state]?.tone ?? "neutral";
+}
+
+// Canonical QueueJobStatus → Badge tone mapping for the QueuePanel per-row status Badge.
+// Mirrors the iter-68 trayStateBadgeTone / iter-72 modelStatusBadgeTone pattern so all
+// per-row Badge tones in the app derive from a single shared helper family. Lifecycle
+// semantics: running → primary (in flight), completed → success (happy path), failed /
+// cancelled → danger (needs attention), skipped → warning (acknowledged but not done),
+// pending → neutral (waiting, no signal). Falls back to "neutral" for unknown strings
+// to keep the Badge contract total when the backend introduces future QueueJobStatus values.
+export function queueJobStatusBadgeTone(status: QueueJobStatus | string): StatusTone {
+  switch (status) {
+    case "running":
+      return "primary";
+    case "completed":
+      return "success";
+    case "failed":
+    case "cancelled":
+      return "danger";
+    case "skipped":
+      return "warning";
+    default:
+      return "neutral";
+  }
 }
 
 // Canonical ModelStatus → Badge tone mapping shared between ModelManager's per-model row Badge

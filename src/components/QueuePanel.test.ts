@@ -6,7 +6,6 @@ import {
   queueJobRetryDisabledReason,
   queueJobSkipDisabledReason,
   queueToolbarActionState,
-  toneForStatus,
 } from "./QueuePanel";
 import type { QueueJobStatus } from "../lib/types";
 
@@ -124,22 +123,6 @@ describe("queue job retry disabled reason", () => {
     "describes retry availability for %s jobs",
     (status, reason) => {
       expect(queueJobRetryDisabledReason(status)).toBe(reason);
-    },
-  );
-});
-
-describe("tone for status", () => {
-  it.each([
-    ["pending", "neutral"],
-    ["running", "primary"],
-    ["completed", "success"],
-    ["failed", "danger"],
-    ["cancelled", "danger"],
-    ["skipped", "warning"],
-  ] satisfies Array<[QueueJobStatus, string]>)(
-    "maps %s jobs to the %s tone",
-    (status, tone) => {
-      expect(toneForStatus(status)).toBe(tone);
     },
   );
 });
