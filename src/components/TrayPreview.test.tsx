@@ -2,6 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
+import type { TrayState } from "../lib/types";
 import { openSettingsDisabledReason, TrayPreview } from "./TrayPreview";
 
 function collectButtons(node: ReactNode, buttons: ReactElement[] = []): ReactElement[] {
@@ -74,5 +75,29 @@ describe("tray preview", () => {
 
     const revealMarkup = renderToStaticMarkup(buttonByText(preview, "Reveal Save Folder"));
     expect(revealMarkup).not.toContain("title=");
+  });
+
+  describe.each<[TrayState, string]>([
+    ["idle", "ui-badge--neutral"],
+    ["listening", "ui-badge--primary"],
+    ["recording", "ui-badge--success"],
+    ["transcribing", "ui-badge--warning"],
+    ["paused", "ui-badge--warning"],
+    ["error", "ui-badge--danger"],
+  ])("tray-state Badge tone for %s", (trayState, expectedToneClass) => {
+    it(`derives the ${expectedToneClass} class from the shared trayStateBadgeTone helper`, () => {
+      const snapshot = mockSnapshot();
+      const preview = TrayPreview({
+        settings: snapshot.settings,
+        status: { ...snapshot.status, tray_state: trayState },
+        onPatch: vi.fn(),
+        onRevealSaveFolder: vi.fn(),
+        onCancelCurrentOperation: vi.fn(),
+      });
+      const markup = renderToStaticMarkup(preview);
+      expect(markup).toMatch(
+        new RegExp(`<span class="ui-badge ${expectedToneClass}">[^<]*</span>`),
+      );
+    });
   });
 });

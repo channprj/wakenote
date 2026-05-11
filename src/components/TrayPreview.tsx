@@ -1,5 +1,6 @@
 import { AudioWaveform, FolderOpen, Mic, Pause, Settings, Square, XCircle } from "lucide-react";
 import { humanizeTrayState } from "../lib/transcript-history";
+import { trayStateBadgeTone } from "../lib/status-summary";
 import { Badge, Button } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
@@ -30,7 +31,7 @@ export function TrayPreview({
           <strong>WakeNote</strong>
           <span>{status.active_microphone}</span>
         </div>
-        <Badge tone={status.tray_state === "paused" ? "warning" : "primary"}>
+        <Badge tone={trayStateBadgeTone(status.tray_state)}>
           {humanizeTrayState(status.tray_state)}
         </Badge>
       </header>
