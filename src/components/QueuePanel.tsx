@@ -249,7 +249,12 @@ export function QueuePanel({
                           <span data-tone="danger">{cancelledCount} cancelled</span>
                         </>
                       ) : null}
-                      {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
+                      {skippedCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="warning">{skippedCount} skipped</span>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                   {group.entries.map((job) => {
