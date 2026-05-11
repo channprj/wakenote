@@ -243,7 +243,12 @@ export function QueuePanel({
                           <span data-tone="danger">{failedCount} failed</span>
                         </>
                       ) : null}
-                      {cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : ""}
+                      {cancelledCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="danger">{cancelledCount} cancelled</span>
+                        </>
+                      ) : null}
                       {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
                     </td>
                   </tr>
