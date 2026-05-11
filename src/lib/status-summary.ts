@@ -1,3 +1,4 @@
+import { countCompletedQueueJobs } from "./transcript-history";
 import type { AppMode, AppSnapshot, QueueSnapshot, TrayState } from "./types";
 
 export type StatusTone = "neutral" | "success" | "warning" | "danger" | "primary";
@@ -10,6 +11,7 @@ export interface CaptureStatusPresentation {
   microphone: string;
   threshold: string;
   queueSummary: string;
+  queueCompletedCount: number;
   levelSummary: string;
   runtimeWarning: string | null;
   warning: CaptureWarning | null;
@@ -24,13 +26,16 @@ export interface CaptureWarning {
 // Mirrors QueuePanel queue-stats' per-cell tone mapping at the App-level Queue summary card so
 // the workspace header signals the most attention-grabbing queue state without expanding the card
 // into multiple cells. Priority follows the iter-24 "most immediate blocker first" convention:
-// failed (danger, needs retry) > running (primary, in flight) > pending (warning, backlog) > none.
+// failed (danger, needs retry) > running (primary, in flight) > pending (warning, backlog) >
+// completed (success, happy-path throughput) > none.
 export function queueCardTone(
   queue: Pick<QueueSnapshot, "failed_count" | "running_count" | "pending_count">,
-): "danger" | "primary" | "warning" | undefined {
+  completedCount = 0,
+): "danger" | "primary" | "warning" | "success" | undefined {
   if (queue.failed_count > 0) return "danger";
   if (queue.running_count > 0) return "primary";
   if (queue.pending_count > 0) return "warning";
+  if (completedCount > 0) return "success";
   return undefined;
 }
 
@@ -76,6 +81,7 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
   const modeLabel = modeLabels[status.mode];
   const currentDbfs = status.live_input_active ? status.level.current_dbfs : -120;
   const peakDbfs = status.live_input_active ? status.level.peak_dbfs : -120;
+  const queueCompletedCount = countCompletedQueueJobs(queue.jobs);
 
   return {
     headline: state.headline,
@@ -84,7 +90,8 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
     modeLabel,
     microphone,
     threshold,
-    queueSummary: `${queue.pending_count} pending · ${queue.running_count} running · ${queue.failed_count} failed`,
+    queueSummary: `${queue.pending_count} pending · ${queue.running_count} running · ${queue.failed_count} failed · ${queueCompletedCount} completed`,
+    queueCompletedCount,
     levelSummary: `${Math.round(currentDbfs)} dBFS current · ${Math.round(peakDbfs)} dBFS peak`,
     runtimeWarning: status.runtime_warning ?? null,
     warning: activeWarning(snapshot),

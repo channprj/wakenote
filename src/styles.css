@@ -310,6 +310,10 @@ svg {
   color: var(--warning);
 }
 
+.status-cards div[data-tone="success"] strong {
+  color: var(--success);
+}
+
 .status-cards svg {
   color: var(--primary);
   font-size: 18px;

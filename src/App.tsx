@@ -320,7 +320,7 @@ export default function App() {
               <span>Level</span>
               <strong>{statusPresentation.levelSummary}</strong>
             </div>
-            <div data-tone={queueCardTone(snapshot.queue)}>
+            <div data-tone={queueCardTone(snapshot.queue, statusPresentation.queueCompletedCount)}>
               <ListTodo />
               <span>Queue</span>
               <strong>{statusPresentation.queueSummary}</strong>

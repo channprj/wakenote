@@ -23,13 +23,16 @@ describe("App branding", () => {
     expect(markup).not.toMatch(/<span class="ui-badge[^"]*">idle<\/span>/);
   });
 
-  it("omits the Queue status-card data-tone attribute when no failed jobs exist", () => {
-    // Default mockSnapshot has queue.failed_count === 0, so the Queue card should render
-    // without a data-tone attribute (the danger-toned strong color is only emitted when
-    // failed_count > 0, mirroring QueuePanel queue-stats' per-stat tone signal).
+  it("omits the Queue status-card data-tone attribute when the queue is fully clean", () => {
+    // Default mockSnapshot has every queue counter === 0 (pending/running/failed/completed),
+    // so the Queue card should render without a data-tone attribute — the tone palette
+    // (danger/primary/warning/success) only kicks in when at least one counter is non-zero,
+    // mirroring QueuePanel queue-stats' per-stat tone signal.
     const markup = renderToStaticMarkup(<App />);
 
-    expect(markup).toMatch(/<span>Queue<\/span>\s*<strong>0 pending \xb7 0 running \xb7 0 failed<\/strong>/);
-    expect(markup).not.toMatch(/<div [^>]*data-tone="danger"[^>]*>\s*<svg[^>]*lucide-list-todo/);
+    expect(markup).toMatch(
+      /<span>Queue<\/span>\s*<strong>0 pending \xb7 0 running \xb7 0 failed \xb7 0 completed<\/strong>/,
+    );
+    expect(markup).not.toMatch(/<div [^>]*data-tone="(danger|primary|warning|success)"[^>]*>\s*<svg[^>]*lucide-list-todo/);
   });
 });

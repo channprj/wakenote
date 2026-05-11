@@ -17,7 +17,29 @@ describe("capture status presentation", () => {
       modeLabel: "Recording + transcription",
       microphone: "System Default",
       threshold: "-60 dBFS",
-      queueSummary: "0 pending · 0 running · 0 failed",
+      queueSummary: "0 pending · 0 running · 0 failed · 0 completed",
+      queueCompletedCount: 0,
+    });
+  });
+
+  it("counts completed jobs from queue.jobs and surfaces them in the queue summary", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation({
+        ...snapshot,
+        queue: {
+          ...snapshot.queue,
+          jobs: [
+            { id: 1, audio_path: "/tmp/a.m4a", model_id: "m", status: "completed" },
+            { id: 2, audio_path: "/tmp/b.m4a", model_id: "m", status: "completed" },
+            { id: 3, audio_path: "/tmp/c.m4a", model_id: "m", status: "pending" },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      queueSummary: "0 pending · 0 running · 0 failed · 2 completed",
+      queueCompletedCount: 2,
     });
   });
 
@@ -201,48 +223,68 @@ describe("capture status presentation", () => {
 });
 
 describe("queueCardTone", () => {
-  it("returns undefined when queue is clean (no failed, running, or pending)", () => {
+  it("returns undefined when queue is fully clean (no failed, running, pending, or completed)", () => {
     expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }),
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 0),
     ).toBeUndefined();
   });
 
   it("returns 'danger' when at least one failed job is present", () => {
     expect(
-      queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 }),
+      queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 }, 0),
     ).toBe("danger");
     expect(
-      queueCardTone({ failed_count: 42, running_count: 0, pending_count: 0 }),
+      queueCardTone({ failed_count: 42, running_count: 0, pending_count: 0 }, 0),
     ).toBe("danger");
   });
 
   it("returns 'primary' when running jobs exist and no failed jobs", () => {
     expect(
-      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 0 }),
+      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 0 }, 0),
     ).toBe("primary");
     expect(
-      queueCardTone({ failed_count: 0, running_count: 3, pending_count: 5 }),
+      queueCardTone({ failed_count: 0, running_count: 3, pending_count: 5 }, 0),
     ).toBe("primary");
   });
 
   it("returns 'warning' when only pending jobs exist", () => {
     expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }),
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }, 0),
     ).toBe("warning");
     expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 8 }),
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 8 }, 0),
     ).toBe("warning");
   });
 
-  it("prioritizes danger over running and pending", () => {
+  it("returns 'success' when only completed jobs exist (happy-path throughput signal)", () => {
     expect(
-      queueCardTone({ failed_count: 1, running_count: 1, pending_count: 1 }),
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 1),
+    ).toBe("success");
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 17),
+    ).toBe("success");
+  });
+
+  it("prioritizes danger over running, pending, and completed", () => {
+    expect(
+      queueCardTone({ failed_count: 1, running_count: 1, pending_count: 1 }, 1),
     ).toBe("danger");
   });
 
-  it("prioritizes running over pending when no failed jobs", () => {
+  it("prioritizes running over pending and completed when no failed jobs", () => {
     expect(
-      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 1 }),
+      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 1 }, 1),
     ).toBe("primary");
+  });
+
+  it("prioritizes pending over completed when no failed or running jobs", () => {
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }, 1),
+    ).toBe("warning");
+  });
+
+  it("defaults completedCount to 0 when omitted (backwards-compat)", () => {
+    expect(queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 })).toBeUndefined();
+    expect(queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 })).toBe("danger");
   });
 });
