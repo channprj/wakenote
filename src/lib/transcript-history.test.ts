@@ -3,6 +3,7 @@ import type { QueueJob, RecentTranscript } from "./types";
 import {
   appendRecentAge,
   countCancelledQueueJobs,
+  countCompletedQueueJobs,
   countFailedQueueJobs,
   countPendingQueueJobs,
   countSkippedQueueJobs,
@@ -206,6 +207,26 @@ describe("transcript history helpers", () => {
     expect(
       countCancelledQueueJobs([
         { id: 8, audio_path: "h", model_id: "m", status: "completed", error: null },
+      ]),
+    ).toBe(0);
+  });
+
+  it("counts only completed queue jobs, ignoring other terminal and in-flight statuses", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "a", model_id: "m", status: "completed", error: null },
+      { id: 2, audio_path: "b", model_id: "m", status: "completed", error: null },
+      { id: 3, audio_path: "c", model_id: "m", status: "failed", error: null },
+      { id: 4, audio_path: "d", model_id: "m", status: "cancelled", error: null },
+      { id: 5, audio_path: "e", model_id: "m", status: "skipped", error: null },
+      { id: 6, audio_path: "f", model_id: "m", status: "running", error: null },
+      { id: 7, audio_path: "g", model_id: "m", status: "pending", error: null },
+    ];
+
+    expect(countCompletedQueueJobs(jobs)).toBe(2);
+    expect(countCompletedQueueJobs([])).toBe(0);
+    expect(
+      countCompletedQueueJobs([
+        { id: 8, audio_path: "h", model_id: "m", status: "pending", error: null },
       ]),
     ).toBe(0);
   });

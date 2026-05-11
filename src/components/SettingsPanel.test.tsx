@@ -616,6 +616,78 @@ describe("settings panel", () => {
     expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
   });
 
+  it("surfaces a completed count in the queue stats banner alongside pending/running/failed", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 4,
+          audio_path: "/tmp/WakeNote/20260510/040506.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>3<\/strong>/,
+    );
+    expect(markup).toMatch(/<span>Pending<\/span>\s*<strong>1<\/strong>/);
+  });
+
+  it("renders zero completed jobs in the queue stats banner when no jobs have finished", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>0<\/strong>/,
+    );
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

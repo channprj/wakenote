@@ -4,6 +4,7 @@ import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
 import {
   countCancelledQueueJobs,
+  countCompletedQueueJobs,
   countFailedQueueJobs,
   countPendingQueueJobs,
   countSkippedQueueJobs,
@@ -69,6 +70,7 @@ export function QueuePanel({
 }) {
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
+  const completedCount = countCompletedQueueJobs(queue.jobs);
 
   return (
     <div className="queue-panel">
@@ -84,6 +86,10 @@ export function QueuePanel({
         <div>
           <span>Failed</span>
           <strong>{queue.failed_count}</strong>
+        </div>
+        <div>
+          <span>Completed</span>
+          <strong>{completedCount}</strong>
         </div>
       </div>
       <div className="toolbar">
