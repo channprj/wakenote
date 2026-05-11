@@ -526,6 +526,51 @@ describe("settings panel", () => {
     expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
   });
 
+  it("appends a cancelled count to the day group row only when cancelled jobs exist that day", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 4,
+          audio_path: "/tmp/WakeNote/20260509/235959.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs \xb7 2 cancelled/);
+    expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
+  });
+
   it("appends a skipped count to the day group row only when skipped jobs exist that day", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

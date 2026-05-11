@@ -3,6 +3,7 @@ import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
 import {
+  countCancelledQueueJobs,
   countFailedQueueJobs,
   countPendingQueueJobs,
   countSkippedQueueJobs,
@@ -134,6 +135,7 @@ export function QueuePanel({
               groupedJobs.map((group) => {
                 const pendingCount = countPendingQueueJobs(group.entries);
                 const failedCount = countFailedQueueJobs(group.entries);
+                const cancelledCount = countCancelledQueueJobs(group.entries);
                 const skippedCount = countSkippedQueueJobs(group.entries);
                 return (
                 <Fragment key={group.day}>
@@ -142,6 +144,7 @@ export function QueuePanel({
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
                       {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
                       {failedCount > 0 ? ` · ${failedCount} failed` : ""}
+                      {cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : ""}
                       {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
                     </td>
                   </tr>
