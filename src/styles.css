@@ -1269,6 +1269,10 @@ tr:last-child td {
   color: var(--danger);
 }
 
+.table-group-row td span[data-tone="warning"] {
+  color: var(--warning);
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;

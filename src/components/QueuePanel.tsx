@@ -231,7 +231,12 @@ export function QueuePanel({
                   <tr className="table-group-row">
                     <td colSpan={4}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
-                      {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
+                      {pendingCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="warning">{pendingCount} pending</span>
+                        </>
+                      ) : null}
                       {failedCount > 0 ? (
                         <>
                           {" · "}
