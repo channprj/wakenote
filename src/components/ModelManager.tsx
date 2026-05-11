@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Badge, Button, Progress } from "./ui/primitives";
+import { modelStatusBadgeTone } from "../lib/status-summary";
 import { humanizeModelStatus } from "../lib/transcript-history";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
 
@@ -35,22 +36,6 @@ export function formatLanguageList(codes: string[]): string {
     }
   }
   return labels.join(", ");
-}
-
-function statusTone(status: ModelStatus) {
-  switch (status) {
-    case "ready":
-    case "installed":
-      return "success";
-    case "downloading":
-    case "verifying":
-    case "extracting":
-      return "primary";
-    case "error":
-      return "danger";
-    default:
-      return "neutral";
-  }
 }
 
 function statusProgress(model: ModelDescriptor) {
@@ -190,7 +175,7 @@ export function ModelManager({
                     {model.engine} · {model.provider_runtime} · {formatModelSize(model.size_mb)}
                   </span>
                 </div>
-                <Badge tone={statusTone(model.status)}>{humanizeModelStatus(model.status)}</Badge>
+                <Badge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</Badge>
               </header>
               <Progress value={progress} />
               <div className="model-row__scores">

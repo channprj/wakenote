@@ -1980,4 +1980,36 @@ describe("settings panel", () => {
     const validMarkup = renderSettingsPanel(validSaveRoot, "storage");
     expect(buttonTag(validMarkup, "Confirm Save Root")).not.toContain("title=");
   });
+
+  it.each([
+    ["ready", "success"],
+    ["installed", "success"],
+    ["downloading", "primary"],
+    ["verifying", "primary"],
+    ["extracting", "primary"],
+    ["error", "danger"],
+    ["missing", "neutral"],
+    ["unloaded", "neutral"],
+  ] as const)(
+    "wires the Models section header Badge tone to the selected model's %s status (→ %s)",
+    (status, expectedTone) => {
+      const snapshot = mockSnapshot();
+      snapshot.models = snapshot.models.map((model) =>
+        model.id === snapshot.settings.selected_model ? { ...model, status } : model,
+      );
+      const markup = renderSettingsPanel(snapshot, "models");
+      expect(markup).toMatch(
+        new RegExp(`<span class="ui-badge ui-badge--${expectedTone}">Whisper Medium</span>`),
+      );
+    },
+  );
+
+  it("falls back to neutral on the Models section header Badge when the selected model is not in the registry", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.selected_model = "whisper-removed-from-registry";
+    const markup = renderSettingsPanel(snapshot, "models");
+    expect(markup).toMatch(
+      /<span class="ui-badge ui-badge--neutral">whisper-removed-from-registry<\/span>/,
+    );
+  });
 });

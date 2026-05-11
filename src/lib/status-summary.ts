@@ -1,5 +1,5 @@
 import { countCompletedQueueJobs } from "./transcript-history";
-import type { AppMode, AppSnapshot, QueueSnapshot, TrayState } from "./types";
+import type { AppMode, AppSnapshot, ModelStatus, QueueSnapshot, TrayState } from "./types";
 
 export type StatusTone = "neutral" | "success" | "warning" | "danger" | "primary";
 
@@ -100,6 +100,28 @@ const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
 // error → danger. Falls back to "neutral" for unknown strings to keep the Badge contract total.
 export function trayStateBadgeTone(state: TrayState | string): StatusTone {
   return (trayCopy as Record<string, { tone: StatusTone } | undefined>)[state]?.tone ?? "neutral";
+}
+
+// Canonical ModelStatus → Badge tone mapping shared between ModelManager's per-model row Badge
+// and SettingsPanel's Models section header Badge (the selected-model label). Mirrors PRD §3.5
+// model state machine semantics: ready/installed → success (usable now), downloading/verifying/
+// extracting → primary (active in-flight), error → danger (needs attention), missing/unloaded →
+// neutral (no signal). Falls back to "neutral" for unknown strings to keep the Badge contract
+// total when the backend introduces future ModelStatus values.
+export function modelStatusBadgeTone(status: ModelStatus | string): StatusTone {
+  switch (status) {
+    case "ready":
+    case "installed":
+      return "success";
+    case "downloading":
+    case "verifying":
+    case "extracting":
+      return "primary";
+    case "error":
+      return "danger";
+    default:
+      return "neutral";
+  }
 }
 
 const modeLabels: Record<AppMode, string> = {

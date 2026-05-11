@@ -6,6 +6,7 @@ import { TranscriptsPanel } from "./TranscriptsPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
+import { modelStatusBadgeTone } from "../lib/status-summary";
 import { fileUrlFromPath } from "../lib/transcript-history";
 import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
 
@@ -151,7 +152,15 @@ export function SettingsPanel({
       <Section
         title="Models"
         eyebrow="Local runtime"
-        actions={<Badge tone="primary">{formatModelLabel(settings.selected_model, models)}</Badge>}
+        actions={
+          <Badge
+            tone={modelStatusBadgeTone(
+              models.find((model) => model.id === settings.selected_model)?.status ?? "",
+            )}
+          >
+            {formatModelLabel(settings.selected_model, models)}
+          </Badge>
+        }
       >
         <ModelManager
           models={models}

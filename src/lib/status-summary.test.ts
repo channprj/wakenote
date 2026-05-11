@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureStatusPresentation,
   levelCardTone,
+  modelStatusBadgeTone,
   nextDismissedWarningKey,
   queueCardTone,
   runtimeCardTone,
@@ -394,5 +395,44 @@ describe("trayStateBadgeTone", () => {
   it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
     expect(trayStateBadgeTone("unknown")).toBe("neutral");
     expect(trayStateBadgeTone("")).toBe("neutral");
+  });
+});
+
+describe("modelStatusBadgeTone", () => {
+  it("maps ready to success (model is usable now)", () => {
+    expect(modelStatusBadgeTone("ready")).toBe("success");
+  });
+
+  it("maps installed to success (model is usable now)", () => {
+    expect(modelStatusBadgeTone("installed")).toBe("success");
+  });
+
+  it("maps downloading to primary (active in-flight)", () => {
+    expect(modelStatusBadgeTone("downloading")).toBe("primary");
+  });
+
+  it("maps verifying to primary (active in-flight)", () => {
+    expect(modelStatusBadgeTone("verifying")).toBe("primary");
+  });
+
+  it("maps extracting to primary (active in-flight)", () => {
+    expect(modelStatusBadgeTone("extracting")).toBe("primary");
+  });
+
+  it("maps error to danger (needs attention)", () => {
+    expect(modelStatusBadgeTone("error")).toBe("danger");
+  });
+
+  it("maps missing to neutral (no installation signal)", () => {
+    expect(modelStatusBadgeTone("missing")).toBe("neutral");
+  });
+
+  it("maps unloaded to neutral (model is present but not in memory)", () => {
+    expect(modelStatusBadgeTone("unloaded")).toBe("neutral");
+  });
+
+  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
+    expect(modelStatusBadgeTone("unknown")).toBe("neutral");
+    expect(modelStatusBadgeTone("")).toBe("neutral");
   });
 });
