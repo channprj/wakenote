@@ -1,8 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
-import { SettingsPanel } from "./SettingsPanel";
-import type { AppSnapshot } from "../lib/types";
+import {
+  SettingsPanel,
+  confirmSaveRootDisabledReason,
+  startLiveCaptureDisabledReason,
+  stopLiveCaptureDisabledReason,
+} from "./SettingsPanel";
+import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
 
 function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
   return renderToStaticMarkup(
@@ -1828,5 +1833,99 @@ describe("settings panel", () => {
 
     expect(markup).not.toContain('<a href="file://');
     expect(markup).toContain("<code>   /YYYYMMDD/HHMMSS.");
+  });
+
+  it("derives why-disabled tooltip text for the Start Input button across blocker states", () => {
+    type StartSettings = Pick<AppSettings, "pause_all" | "recording_enabled">;
+    type StartStatus = Pick<AppStatus, "live_input_active" | "runtime_warning">;
+    const baseSettings: StartSettings = { pause_all: false, recording_enabled: true };
+    const baseStatus: StartStatus = { live_input_active: false, runtime_warning: null };
+
+    expect(startLiveCaptureDisabledReason(baseSettings, baseStatus, true)).toBeNull();
+    expect(
+      startLiveCaptureDisabledReason(
+        baseSettings,
+        { live_input_active: true, runtime_warning: null },
+        true,
+      ),
+    ).toBe("Input is already running");
+    expect(
+      startLiveCaptureDisabledReason(
+        baseSettings,
+        {
+          live_input_active: true,
+          runtime_warning: "Live input stream error: default input stream disconnected",
+        },
+        true,
+      ),
+    ).toBeNull();
+    expect(
+      startLiveCaptureDisabledReason({ ...baseSettings, pause_all: true }, baseStatus, true),
+    ).toBe("All capture is paused");
+    expect(
+      startLiveCaptureDisabledReason(
+        { ...baseSettings, recording_enabled: false },
+        baseStatus,
+        true,
+      ),
+    ).toBe("Recording is disabled");
+    expect(startLiveCaptureDisabledReason(baseSettings, baseStatus, false)).toBe(
+      "No microphone available",
+    );
+
+    // priority: live_input_active comes before pause_all
+    expect(
+      startLiveCaptureDisabledReason(
+        { pause_all: true, recording_enabled: true },
+        { live_input_active: true, runtime_warning: null },
+        true,
+      ),
+    ).toBe("Input is already running");
+  });
+
+  it("derives why-disabled tooltip text for the Stop Input button", () => {
+    expect(stopLiveCaptureDisabledReason({ live_input_active: false })).toBe("Input is not running");
+    expect(stopLiveCaptureDisabledReason({ live_input_active: true })).toBeNull();
+  });
+
+  it("derives why-disabled tooltip text for the Confirm Save Root button", () => {
+    expect(confirmSaveRootDisabledReason({ save_root: "" })).toBe("Enter a save folder first");
+    expect(confirmSaveRootDisabledReason({ save_root: "   " })).toBe("Enter a save folder first");
+    expect(confirmSaveRootDisabledReason({ save_root: "~/Documents/WakeNote" })).toBeNull();
+  });
+
+  it("renders why-disabled tooltips on Start Input, Stop Input, and Confirm Save Root buttons", () => {
+    const stopped = mockSnapshot();
+    const stoppedMarkup = renderSettingsPanel(stopped);
+    const stopButton = buttonTag(stoppedMarkup, "Stop Input");
+    expect(stopButton).toContain('title="Input is not running"');
+    // Start Input has no reason here (idle, mic available, recording on, not paused)
+    expect(buttonTag(stoppedMarkup, "Start Input")).not.toContain("title=");
+
+    const paused = mockSnapshot();
+    paused.settings.pause_all = true;
+    const pausedMarkup = renderSettingsPanel(paused);
+    expect(buttonTag(pausedMarkup, "Start Input")).toContain('title="All capture is paused"');
+
+    const active = mockSnapshot();
+    active.status.live_input_active = true;
+    active.status.tray_state = "listening";
+    const activeMarkup = renderSettingsPanel(active);
+    expect(buttonTag(activeMarkup, "Start Input")).toContain('title="Input is already running"');
+    expect(buttonTag(activeMarkup, "Stop Input")).not.toContain("title=");
+
+    const blankSaveRoot = mockSnapshot();
+    blankSaveRoot.settings.save_root = "   ";
+    blankSaveRoot.settings.save_root_confirmed = false;
+    const blankMarkup = renderSettingsPanel(blankSaveRoot, "storage");
+    expect(buttonTag(blankMarkup, "Confirm Save Root")).toContain(
+      'title="Enter a save folder first"',
+    );
+
+    const validSaveRoot = mockSnapshot();
+    validSaveRoot.settings.save_root = "~/Documents/WakeNote";
+    validSaveRoot.settings.save_root_confirmed = false;
+    const validMarkup = renderSettingsPanel(validSaveRoot, "storage");
+    expect(buttonTag(validMarkup, "Confirm Save Root")).not.toContain("title=");
   });
 });

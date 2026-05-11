@@ -7,7 +7,7 @@ import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
 import { fileUrlFromPath } from "../lib/transcript-history";
-import type { AppSnapshot, AppSettings } from "../lib/types";
+import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
 
 const durationFields = [
   ["attack_ms", "Attack", 50, 2000],
@@ -33,6 +33,38 @@ export function renderSaveRoot(saveRoot: string) {
       {saveRoot}
     </a>
   );
+}
+
+function isLiveInputStreamErrored(status: Pick<AppStatus, "runtime_warning">): boolean {
+  return Boolean(status.runtime_warning?.startsWith("Live input stream error:"));
+}
+
+export function startLiveCaptureDisabledReason(
+  settings: Pick<AppSettings, "pause_all" | "recording_enabled">,
+  status: Pick<AppStatus, "live_input_active" | "runtime_warning">,
+  canStartWithMicrophone: boolean,
+): string | null {
+  if (status.live_input_active && !isLiveInputStreamErrored(status)) {
+    return "Input is already running";
+  }
+  if (settings.pause_all) return "All capture is paused";
+  if (!settings.recording_enabled) return "Recording is disabled";
+  if (!canStartWithMicrophone) return "No microphone available";
+  return null;
+}
+
+export function stopLiveCaptureDisabledReason(
+  status: Pick<AppStatus, "live_input_active">,
+): string | null {
+  if (!status.live_input_active) return "Input is not running";
+  return null;
+}
+
+export function confirmSaveRootDisabledReason(
+  settings: Pick<AppSettings, "save_root">,
+): string | null {
+  if (settings.save_root.trim().length === 0) return "Enter a save folder first";
+  return null;
 }
 
 const transcriptionLanguageOptions: Array<{
@@ -101,12 +133,14 @@ export function SettingsPanel({
   const hasProcessablePendingJob = queue.jobs.some(
     (job) => job.status === "pending" && usableModelIds.has(job.model_id),
   );
-  const liveInputStreamErrored = status.runtime_warning?.startsWith("Live input stream error:");
-  const liveCaptureDisabled =
-    settings.pause_all ||
-    !settings.recording_enabled ||
-    !canStartWithMicrophone ||
-    (status.live_input_active && !liveInputStreamErrored);
+  const startLiveCaptureReason = startLiveCaptureDisabledReason(
+    settings,
+    status,
+    canStartWithMicrophone,
+  );
+  const liveCaptureDisabled = startLiveCaptureReason !== null;
+  const stopLiveCaptureReason = stopLiveCaptureDisabledReason(status);
+  const confirmSaveRootReason = confirmSaveRootDisabledReason(settings);
 
   if (activeSection === "models") {
     return (
@@ -183,6 +217,7 @@ export function SettingsPanel({
                 type="button"
                 variant="secondary"
                 disabled={settings.save_root.trim().length === 0}
+                title={confirmSaveRootReason ?? undefined}
                 onClick={() => onPatch({ save_root: settings.save_root })}
               >
                 <CheckCircle2 data-icon="inline-start" />
@@ -343,6 +378,7 @@ export function SettingsPanel({
               size="sm"
               onClick={onStartLiveCapture}
               disabled={liveCaptureDisabled}
+              title={startLiveCaptureReason ?? undefined}
             >
               <Play data-icon="inline-start" />
               Start Input
@@ -353,6 +389,7 @@ export function SettingsPanel({
               size="sm"
               onClick={onStopLiveCapture}
               disabled={!status.live_input_active}
+              title={stopLiveCaptureReason ?? undefined}
             >
               <Square data-icon="inline-start" />
               Stop Input
