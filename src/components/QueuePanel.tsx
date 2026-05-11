@@ -129,6 +129,7 @@ export function QueuePanel({
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
   const completedCount = countCompletedQueueJobs(queue.jobs);
+  const cancelledCount = countCancelledQueueJobs(queue.jobs);
   const pendingBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "pending"),
   );
@@ -137,6 +138,9 @@ export function QueuePanel({
   );
   const failedBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "failed"),
+  );
+  const cancelledBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "cancelled"),
   );
   const completedBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "completed"),
@@ -165,6 +169,13 @@ export function QueuePanel({
         >
           <span>Failed</span>
           <strong>{queue.failed_count}</strong>
+        </div>
+        <div
+          data-tone={cancelledCount > 0 ? "danger" : undefined}
+          title={cancelledBreakdown || undefined}
+        >
+          <span>Cancelled</span>
+          <strong>{cancelledCount}</strong>
         </div>
         <div
           data-tone={completedCount > 0 ? "success" : undefined}

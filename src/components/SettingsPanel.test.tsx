@@ -1181,7 +1181,135 @@ describe("settings panel", () => {
 
     expect(markup).not.toMatch(/title="[^"]*"><span>Running/);
     expect(markup).not.toMatch(/title="[^"]*"><span>Failed/);
+    expect(markup).not.toMatch(/title="[^"]*"><span>Cancelled/);
     expect(markup).not.toMatch(/title="[^"]*"><span>Completed/);
+  });
+
+  it("renders a Cancelled cell in the queue stats banner counting cancelled jobs", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div class="queue-stats">[\s\S]*?<span>Cancelled<\/span>\s*<strong>2<\/strong>/,
+    );
+  });
+
+  it("tones the queue-stats Cancelled cell with danger when the count is non-zero", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div data-tone="danger"[^>]*><span>Cancelled<\/span>\s*<strong>1<\/strong>/,
+    );
+  });
+
+  it("leaves the queue-stats Cancelled cell untoned when no jobs are cancelled", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).not.toMatch(/data-tone="danger"><span>Cancelled/);
+    expect(markup).toMatch(/<div><span>Cancelled<\/span>\s*<strong>0<\/strong>/);
+  });
+
+  it("exposes a per-day breakdown tooltip on the Cancelled cell when cancelled jobs exist", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/170000.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "cancelled",
+          error: "cancelled by user",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /title="2026-05-10: 2 \xb7 2026-05-09: 1"><span>Cancelled<\/span>/,
+    );
   });
 
   it("decorates each queue row with a status-derived data-tone for left-edge accent styling", () => {
