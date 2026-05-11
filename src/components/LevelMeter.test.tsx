@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
+import type { TrayState } from "../lib/types";
 import { LevelMeter, calibrateDisabledReason } from "./LevelMeter";
 
-function renderLevelMeter(liveInputActive: boolean) {
+function renderLevelMeter(liveInputActive: boolean, trayState?: TrayState) {
   const snapshot = mockSnapshot();
 
   return renderToStaticMarkup(
@@ -12,7 +13,7 @@ function renderLevelMeter(liveInputActive: boolean) {
       status={{
         ...snapshot.status,
         live_input_active: liveInputActive,
-        tray_state: liveInputActive ? "listening" : "idle",
+        tray_state: trayState ?? (liveInputActive ? "listening" : "idle"),
         level: {
           current_dbfs: -22,
           peak_dbfs: -18,
@@ -76,9 +77,28 @@ describe("level meter", () => {
     expect(inactive).not.toMatch(/<span class="ui-badge[^"]*">idle<\/span>/);
 
     const active = renderLevelMeter(true);
-    expect(active).toMatch(/<span class="ui-badge ui-badge--success">Listening<\/span>/);
+    expect(active).toMatch(/<span class="ui-badge ui-badge--primary">Listening<\/span>/);
     expect(active).not.toMatch(/<span class="ui-badge[^"]*">listening<\/span>/);
   });
+
+  describe.each<[TrayState, string, string]>([
+    ["idle", "neutral", "Idle"],
+    ["listening", "primary", "Listening"],
+    ["recording", "success", "Recording"],
+    ["transcribing", "warning", "Transcribing"],
+    ["paused", "warning", "Paused"],
+    ["error", "danger", "Error"],
+  ])(
+    "tones the tray_state Badge via trayStateBadgeTone for every tray_state value",
+    (trayState, expectedTone, expectedText) => {
+      it(`renders ui-badge--${expectedTone} for tray_state=${trayState}`, () => {
+        const markup = renderLevelMeter(trayState !== "idle", trayState);
+        expect(markup).toMatch(
+          new RegExp(`<span class="ui-badge ui-badge--${expectedTone}">${expectedText}</span>`),
+        );
+      });
+    },
+  );
 
   it("surfaces a 'why disabled' title on the Calibrate button when live input is inactive", () => {
     const inactive = renderLevelMeter(false);
