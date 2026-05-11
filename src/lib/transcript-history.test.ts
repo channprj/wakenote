@@ -12,6 +12,7 @@ import {
   formatLocalTimestamp,
   groupQueueJobsByDay,
   groupTranscriptsByDay,
+  humanizeBasenameTime,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -76,23 +77,36 @@ describe("transcript history helpers", () => {
     );
   });
 
-  it("shortens save-root audio paths to the YYYYMMDD/basename pair", () => {
+  it("shortens save-root audio paths to the YYYYMMDD/basename pair with humanized time", () => {
     expect(
       formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203.m4a"),
-    ).toBe("20260510/010203.m4a");
+    ).toBe("20260510/01:02:03.m4a");
     expect(
       formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203-001.wav"),
-    ).toBe("20260510/010203-001.wav");
+    ).toBe("20260510/01:02:03-001.wav");
   });
 
   it("falls back to the basename when the parent dir is not an 8-digit date", () => {
     expect(formatAudioPathLabel("/tmp/imported/pending.wav")).toBe("pending.wav");
-    expect(formatAudioPathLabel("/tmp/2026/010203.m4a")).toBe("010203.m4a");
+    expect(formatAudioPathLabel("/tmp/2026/010203.m4a")).toBe("01:02:03.m4a");
     expect(formatAudioPathLabel("standalone.m4a")).toBe("standalone.m4a");
   });
 
   it("returns the input unchanged when there is nothing to shorten", () => {
     expect(formatAudioPathLabel("")).toBe("");
+  });
+
+  it("humanizes leading HHMMSS in basenames followed by an extension or collision suffix", () => {
+    expect(humanizeBasenameTime("010203.m4a")).toBe("01:02:03.m4a");
+    expect(humanizeBasenameTime("235959.wav")).toBe("23:59:59.wav");
+    expect(humanizeBasenameTime("010203-001.wav")).toBe("01:02:03-001.wav");
+  });
+
+  it("leaves basenames without a leading HHMMSS unchanged", () => {
+    expect(humanizeBasenameTime("pending.wav")).toBe("pending.wav");
+    expect(humanizeBasenameTime("standalone.m4a")).toBe("standalone.m4a");
+    expect(humanizeBasenameTime("123456789.m4a")).toBe("123456789.m4a");
+    expect(humanizeBasenameTime("")).toBe("");
   });
 
   it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {

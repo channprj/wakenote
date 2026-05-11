@@ -335,9 +335,9 @@ describe("settings panel", () => {
     snapshot.status.queue = snapshot.queue;
 
     const markup = renderSettingsPanel(snapshot, "history");
-    const earliestIndex = markup.indexOf("20260510/091500.m4a");
-    const middleIndex = markup.indexOf("20260510/120000.m4a");
-    const latestIndex = markup.indexOf("20260510/183000.m4a");
+    const earliestIndex = markup.indexOf("20260510/09:15:00.m4a");
+    const middleIndex = markup.indexOf("20260510/12:00:00.m4a");
+    const latestIndex = markup.indexOf("20260510/18:30:00.m4a");
 
     expect(earliestIndex).toBeGreaterThanOrEqual(0);
     expect(middleIndex).toBeGreaterThan(earliestIndex);
@@ -365,7 +365,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toContain('title="/Users/me/Documents/WakeNote/20260510/010203.m4a"');
-    expect(markup).toMatch(/<td[^>]*>20260510\/010203\.m4a<\/td>/);
+    expect(markup).toMatch(/<td[^>]*>20260510\/01:02:03\.m4a<\/td>/);
     expect(markup).not.toMatch(/<td[^>]*>\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a</);
   });
 
@@ -1181,19 +1181,19 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<tr data-tone="primary"><td[^>]*>20260510\/010203\.m4a<\/td>/,
+      /<tr data-tone="primary"><td[^>]*>20260510\/01:02:03\.m4a<\/td>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="danger"><td[^>]*>20260510\/020304\.m4a<\/td>/,
+      /<tr data-tone="danger"><td[^>]*>20260510\/02:03:04\.m4a<\/td>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="success"><td[^>]*>20260510\/030405\.m4a<\/td>/,
+      /<tr data-tone="success"><td[^>]*>20260510\/03:04:05\.m4a<\/td>/,
     );
     // Pending rows stay untoned (neutral) so they don't compete with actionable
     // rows for visual attention; assert the tr opens with just the React key
     // markup and no data-tone attribute precedes the Audio cell.
     expect(markup).toMatch(
-      /<tr><td[^>]*>20260510\/040506\.m4a<\/td>/,
+      /<tr><td[^>]*>20260510\/04:05:06\.m4a<\/td>/,
     );
   });
 
