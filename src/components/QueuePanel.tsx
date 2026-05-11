@@ -73,6 +73,35 @@ export function cancelCurrentDisabledReason(
   return "No running job to cancel";
 }
 
+export function queueJobRetryDisabledReason(status: QueueJobStatus): string | null {
+  if (queueJobActionState(status).canRetry) {
+    return null;
+  }
+  if (status === "running") {
+    return "Job is still running";
+  }
+  if (status === "completed") {
+    return "Job already completed";
+  }
+  if (status === "skipped") {
+    return "Job was skipped";
+  }
+  return "Job has not run yet";
+}
+
+export function queueJobSkipDisabledReason(status: QueueJobStatus): string | null {
+  if (queueJobActionState(status).canSkip) {
+    return null;
+  }
+  if (status === "running") {
+    return "Job is still running";
+  }
+  if (status === "completed") {
+    return "Job already completed";
+  }
+  return "Job already skipped";
+}
+
 export function QueuePanel({
   queue,
   models,
@@ -210,6 +239,8 @@ export function QueuePanel({
                   </tr>
                   {group.entries.map((job) => {
                     const actions = queueJobActionState(job.status);
+                    const retryReason = queueJobRetryDisabledReason(job.status);
+                    const skipReason = queueJobSkipDisabledReason(job.status);
                     return (
                       <tr key={job.id}>
                         <td title={job.audio_path}>{formatAudioPathLabel(job.audio_path)}</td>
@@ -223,7 +254,7 @@ export function QueuePanel({
                               type="button"
                               variant="secondary"
                               size="icon"
-                              title="Retry"
+                              title={retryReason ?? "Retry"}
                               onClick={() => onRetry(job.id)}
                               disabled={!actions.canRetry}
                             >
@@ -233,7 +264,7 @@ export function QueuePanel({
                               type="button"
                               variant="ghost"
                               size="icon"
-                              title="Skip"
+                              title={skipReason ?? "Skip"}
                               onClick={() => onSkip(job.id)}
                               disabled={!actions.canSkip}
                             >

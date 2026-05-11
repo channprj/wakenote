@@ -1051,6 +1051,46 @@ describe("settings panel", () => {
     expect(buttonTag(readyMarkup, "Process Next")).not.toMatch(/\stitle="/);
   });
 
+  it("annotates disabled per-row Retry and Skip buttons with the reason on hover", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/running.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "running",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/imported/done.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/imported/failed.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "boom",
+        },
+      ],
+      pending_count: 0,
+      running_count: 1,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toContain('title="Job is still running"');
+    expect(markup).toContain('title="Job already completed"');
+    expect(markup).toMatch(/title="Retry"[^>]*>(?:(?!<\/button>)[\s\S])*?<svg/);
+    expect(markup).toMatch(/title="Skip"[^>]*>(?:(?!<\/button>)[\s\S])*?<svg/);
+  });
+
   it("shows an explicit save root confirmation action until storage is confirmed", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.save_root = "~/Documents/WakeNote";

@@ -3,6 +3,8 @@ import {
   cancelCurrentDisabledReason,
   processNextDisabledReason,
   queueJobActionState,
+  queueJobRetryDisabledReason,
+  queueJobSkipDisabledReason,
   queueToolbarActionState,
 } from "./QueuePanel";
 import type { QueueJobStatus } from "../lib/types";
@@ -107,4 +109,36 @@ describe("cancel current disabled reason", () => {
       "No running job to cancel",
     );
   });
+});
+
+describe("queue job retry disabled reason", () => {
+  it.each([
+    ["failed", null],
+    ["cancelled", null],
+    ["pending", "Job has not run yet"],
+    ["running", "Job is still running"],
+    ["completed", "Job already completed"],
+    ["skipped", "Job was skipped"],
+  ] satisfies Array<[QueueJobStatus, string | null]>)(
+    "describes retry availability for %s jobs",
+    (status, reason) => {
+      expect(queueJobRetryDisabledReason(status)).toBe(reason);
+    },
+  );
+});
+
+describe("queue job skip disabled reason", () => {
+  it.each([
+    ["pending", null],
+    ["failed", null],
+    ["cancelled", null],
+    ["running", "Job is still running"],
+    ["completed", "Job already completed"],
+    ["skipped", "Job already skipped"],
+  ] satisfies Array<[QueueJobStatus, string | null]>)(
+    "describes skip availability for %s jobs",
+    (status, reason) => {
+      expect(queueJobSkipDisabledReason(status)).toBe(reason);
+    },
+  );
 });
