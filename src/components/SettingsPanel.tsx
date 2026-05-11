@@ -5,6 +5,7 @@ import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
+import { formatModelLabel } from "../lib/models";
 import type { AppSnapshot, AppSettings } from "../lib/types";
 
 const durationFields = [
@@ -100,7 +101,7 @@ export function SettingsPanel({
       <Section
         title="Models"
         eyebrow="Local runtime"
-        actions={<Badge tone="primary">{settings.selected_model}</Badge>}
+        actions={<Badge tone="primary">{formatModelLabel(settings.selected_model, models)}</Badge>}
       >
         <ModelManager
           models={models}
@@ -215,6 +216,7 @@ export function SettingsPanel({
       <Section title="History" eyebrow="Transcription queue">
         <QueuePanel
           queue={queue}
+          models={models}
           canProcessTranscription={
             !settings.pause_all && settings.transcription_enabled && hasProcessablePendingJob
           }

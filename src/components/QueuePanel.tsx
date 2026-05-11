@@ -1,8 +1,9 @@
 import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
 import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
+import { formatModelLabel } from "../lib/models";
 import { groupQueueJobsByDay } from "../lib/transcript-history";
-import type { QueueJobStatus, QueueSnapshot } from "../lib/types";
+import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
 function toneForStatus(status: string) {
   if (status === "running") {
@@ -40,6 +41,7 @@ export function queueToolbarActionState(
 
 export function QueuePanel({
   queue,
+  models,
   canProcessTranscription,
   onImportAudioFiles,
   onEnqueueBacklog,
@@ -49,6 +51,7 @@ export function QueuePanel({
   onSkip,
 }: {
   queue: QueueSnapshot;
+  models: ModelDescriptor[];
   canProcessTranscription: boolean;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
@@ -132,7 +135,7 @@ export function QueuePanel({
                     return (
                       <tr key={job.id}>
                         <td title={job.audio_path}>{job.audio_path}</td>
-                        <td>{job.model_id}</td>
+                        <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td>
                           <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
                         </td>

@@ -222,6 +222,36 @@ describe("settings panel", () => {
     expect(markup).toContain("/tmp/WakeNote/20260510/010203.m4a");
   });
 
+  it("renders the friendly model display name in the history queue and the models eyebrow", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: "whisper-tiny",
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const historyMarkup = renderSettingsPanel(snapshot, "history");
+
+    expect(historyMarkup).toContain("Whisper Tiny");
+    expect(historyMarkup).toContain('title="whisper-tiny"');
+    expect(historyMarkup).not.toMatch(/<td[^>]*>whisper-tiny</);
+
+    const modelsMarkup = renderSettingsPanel(snapshot, "models");
+
+    expect(modelsMarkup).toContain("Whisper Medium");
+    expect(modelsMarkup).not.toMatch(/ui-badge--primary[^>]*>whisper-medium</);
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {
