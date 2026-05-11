@@ -6,14 +6,14 @@
 
 WakeNote is a menu-bar app that listens to a chosen microphone, automatically opens a recording chunk when the input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
 
-The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp); audio capture goes through `cpal`. The default theme color is black `#000`.
+The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp) with Metal GPU acceleration on macOS builds; audio capture goes through `cpal`. The default theme color is black `#000`.
 
 ## Highlights
 
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
-- **Whisper model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default registry ships `whisper-medium` and `whisper-tiny` from `ggerganov/whisper.cpp`.
+- **Whisper model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable registry ships `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`.
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
 - **macOS tray + floating overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay only appears when recording or transcribing.
@@ -142,7 +142,7 @@ wakenote/
 ## Known limitations
 
 - macOS only. M4A encoding shells out to `/usr/bin/afconvert`; on other platforms only `.wav` would be available, and Tauri auto-launch / tray-icon assumptions are macOS-flavored.
-- Whisper inference is CPU-bound through `whisper-rs`. Large models will be slower than real time on lower-end Macs; pick `whisper-tiny` for fast feedback or `whisper-medium` for accuracy.
+- Whisper inference uses `whisper-rs` with Metal GPU acceleration on macOS when available. Large models can still be slower or memory-heavy on lower-end Macs; pick `whisper-tiny` for fast feedback, `whisper-small` for a Korean-capable middle ground, or `whisper-medium`/`whisper-large` for accuracy.
 - `afconvert` is invoked synchronously per chunk; very long max-chunk values will block the worker for longer.
 - Warning-banner dismissal is session-local; closing the app forgets the dismissed state.
 
