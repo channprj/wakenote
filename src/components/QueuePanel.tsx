@@ -13,6 +13,7 @@ import {
   formatAudioPathLabel,
   groupQueueJobsByDay,
   humanizeQueueJobStatus,
+  queueJobSidecarPath,
   summarizeQueueJobsByDay,
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
@@ -301,6 +302,10 @@ export function QueuePanel({
                     const retryReason = queueJobRetryDisabledReason(job.status);
                     const skipReason = queueJobSkipDisabledReason(job.status);
                     const rowTone = toneForStatus(job.status);
+                    const sidecarPath = queueJobSidecarPath(job.audio_path, job.status);
+                    const statusBadge = (
+                      <Badge tone={toneForStatus(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
+                    );
                     return (
                       <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
                         <td>
@@ -310,7 +315,13 @@ export function QueuePanel({
                         </td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td title={job.error ?? undefined}>
-                          <Badge tone={toneForStatus(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
+                          {sidecarPath ? (
+                            <a href={fileUrlFromPath(sidecarPath)} title={sidecarPath}>
+                              {statusBadge}
+                            </a>
+                          ) : (
+                            statusBadge
+                          )}
                         </td>
                         <td>
                           <div className="row-actions">

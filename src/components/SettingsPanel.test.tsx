@@ -458,10 +458,58 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/td>/,
+      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>\s*<\/td>/,
     );
     expect(markup).toMatch(
-      /<td>\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/td>/,
+      /<td>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/a>\s*<\/td>/,
+    );
+  });
+
+  it("wraps the history queue status badge in a link to the transcript sidecar", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/Users/me/Documents/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/Users/me/Documents/WakeNote/20260510/010204.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "decoder error",
+        },
+        {
+          id: 3,
+          audio_path: "/Users/me/Documents/WakeNote/20260510/010205.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    // Completed → links to .txt sidecar with raw path as hover tooltip.
+    expect(markup).toMatch(
+      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt">\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/a>/,
+    );
+    // Failed → links to .error.txt sidecar; the row's existing error tooltip stays on the td.
+    expect(markup).toMatch(
+      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt">\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>/,
+    );
+    // Pending → no sidecar yet, so the badge renders unwrapped.
+    expect(markup).toMatch(
+      /<td>\s*<span class="ui-badge ui-badge--neutral[^"]*">Pending<\/span>\s*<\/td>/,
     );
   });
 

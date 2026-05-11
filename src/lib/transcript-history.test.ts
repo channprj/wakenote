@@ -16,6 +16,7 @@ import {
   humanizeBasenameTime,
   humanizeDateSegment,
   humanizeQueueJobStatus,
+  queueJobSidecarPath,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -133,6 +134,35 @@ describe("transcript history helpers", () => {
     expect(humanizeQueueJobStatus("cancelled")).toBe("Cancelled");
     expect(humanizeQueueJobStatus("skipped")).toBe("Skipped");
     expect(humanizeQueueJobStatus("")).toBe("");
+  });
+
+  it("derives sidecar transcript paths only for completed and failed queue jobs", () => {
+    const audio = "/Users/me/Documents/WakeNote/20260510/010203.m4a";
+    expect(queueJobSidecarPath(audio, "completed")).toBe(
+      "/Users/me/Documents/WakeNote/20260510/010203.txt",
+    );
+    expect(queueJobSidecarPath(audio, "failed")).toBe(
+      "/Users/me/Documents/WakeNote/20260510/010203.error.txt",
+    );
+    expect(queueJobSidecarPath(audio, "pending")).toBeNull();
+    expect(queueJobSidecarPath(audio, "running")).toBeNull();
+    expect(queueJobSidecarPath(audio, "cancelled")).toBeNull();
+    expect(queueJobSidecarPath(audio, "skipped")).toBeNull();
+  });
+
+  it("swaps both m4a and wav extensions and preserves collision suffixes", () => {
+    expect(
+      queueJobSidecarPath("/tmp/WakeNote/20260510/010203-001.wav", "completed"),
+    ).toBe("/tmp/WakeNote/20260510/010203-001.txt");
+    expect(
+      queueJobSidecarPath("/tmp/WakeNote/20260510/010203.WAV", "failed"),
+    ).toBe("/tmp/WakeNote/20260510/010203.error.txt");
+  });
+
+  it("returns null when the audio path lacks a supported extension", () => {
+    expect(queueJobSidecarPath("/tmp/import/notes.mp3", "completed")).toBeNull();
+    expect(queueJobSidecarPath("/tmp/import/recording", "failed")).toBeNull();
+    expect(queueJobSidecarPath("", "completed")).toBeNull();
   });
 
   it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {

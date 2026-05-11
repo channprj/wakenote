@@ -1,4 +1,4 @@
-import type { QueueJob, RecentTranscript } from "./types";
+import type { QueueJob, QueueJobStatus, RecentTranscript } from "./types";
 
 export interface TranscriptDayGroup<T> {
   day: string;
@@ -182,6 +182,28 @@ export function humanizeQueueJobStatus(status: string): string {
     return status;
   }
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function queueJobSidecarPath(
+  audioPath: string,
+  status: QueueJobStatus,
+): string | null {
+  // Completed jobs write `.txt`; failed jobs write `.error.txt` (PRD §3.2).
+  // Other statuses (pending/running/cancelled/skipped) have no sidecar yet.
+  if (status === "completed") {
+    return swapAudioExtension(audioPath, ".txt");
+  }
+  if (status === "failed") {
+    return swapAudioExtension(audioPath, ".error.txt");
+  }
+  return null;
+}
+
+function swapAudioExtension(audioPath: string, replacement: string): string | null {
+  if (!/\.(m4a|wav)$/i.test(audioPath)) {
+    return null;
+  }
+  return audioPath.replace(/\.(m4a|wav)$/i, replacement);
 }
 
 export function fileUrlFromPath(path: string): string {
