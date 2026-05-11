@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureStatusPresentation,
   nextDismissedWarningKey,
+  queueCardTone,
   visibleWarningForDismissedKey,
 } from "./status-summary";
 import { mockSnapshot } from "./app-state";
@@ -196,5 +197,16 @@ describe("capture status presentation", () => {
     expect(nextDismissedWarningKey({ key: "runtime:a", message: "a", tone: "warning" }, "runtime:a")).toBe(
       "runtime:a",
     );
+  });
+});
+
+describe("queueCardTone", () => {
+  it("returns undefined when no failed jobs are present", () => {
+    expect(queueCardTone({ failed_count: 0 })).toBeUndefined();
+  });
+
+  it("returns 'danger' when at least one failed job is present", () => {
+    expect(queueCardTone({ failed_count: 1 })).toBe("danger");
+    expect(queueCardTone({ failed_count: 42 })).toBe("danger");
   });
 });

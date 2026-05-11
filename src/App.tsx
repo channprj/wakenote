@@ -52,6 +52,7 @@ import {
 import {
   captureStatusPresentation,
   nextDismissedWarningKey,
+  queueCardTone,
   visibleWarningForDismissedKey,
 } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
@@ -319,7 +320,7 @@ export default function App() {
               <span>Level</span>
               <strong>{statusPresentation.levelSummary}</strong>
             </div>
-            <div>
+            <div data-tone={queueCardTone(snapshot.queue)}>
               <ListTodo />
               <span>Queue</span>
               <strong>{statusPresentation.queueSummary}</strong>

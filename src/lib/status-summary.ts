@@ -1,4 +1,4 @@
-import type { AppMode, AppSnapshot, TrayState } from "./types";
+import type { AppMode, AppSnapshot, QueueSnapshot, TrayState } from "./types";
 
 export type StatusTone = "neutral" | "success" | "warning" | "danger" | "primary";
 
@@ -19,6 +19,12 @@ export interface CaptureWarning {
   key: string;
   message: string;
   tone: "warning" | "danger";
+}
+
+// Mirrors QueuePanel queue-stats' failed-count tone signal at the App-level Queue summary card
+// so the user sees a danger accent in the workspace header (not only inside the Queue section).
+export function queueCardTone(queue: Pick<QueueSnapshot, "failed_count">): "danger" | undefined {
+  return queue.failed_count > 0 ? "danger" : undefined;
 }
 
 export function visibleWarningForDismissedKey(

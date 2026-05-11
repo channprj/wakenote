@@ -298,6 +298,10 @@ svg {
   border-color: rgba(217, 119, 6, 0.3);
 }
 
+.status-cards div[data-tone="danger"] strong {
+  color: var(--danger);
+}
+
 .status-cards svg {
   color: var(--primary);
   font-size: 18px;
