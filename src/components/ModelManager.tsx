@@ -2,6 +2,40 @@ import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "
 import { Badge, Button, Progress } from "./ui/primitives";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  ko: "Korean",
+  en: "English",
+  ja: "Japanese",
+  zh: "Chinese",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  multi: "Multilingual",
+};
+
+export function formatModelSize(sizeMb: number): string {
+  if (!Number.isFinite(sizeMb) || sizeMb < 0) {
+    return "—";
+  }
+  if (sizeMb >= 1024) {
+    return `${(sizeMb / 1024).toFixed(1)} GB`;
+  }
+  return `${sizeMb} MB`;
+}
+
+export function formatLanguageList(codes: string[]): string {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const code of codes) {
+    const label = LANGUAGE_LABELS[code] ?? code;
+    if (!seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  return labels.join(", ");
+}
+
 function statusTone(status: ModelStatus) {
   switch (status) {
     case "ready":
@@ -82,7 +116,7 @@ export function ModelManager({
                 <div>
                   <strong>{model.display_name}</strong>
                   <span>
-                    {model.engine} · {model.provider_runtime} · {model.size_mb} MB
+                    {model.engine} · {model.provider_runtime} · {formatModelSize(model.size_mb)}
                   </span>
                 </div>
                 <Badge tone={statusTone(model.status)}>{model.status}</Badge>
@@ -91,7 +125,7 @@ export function ModelManager({
               <div className="model-row__scores">
                 <span>Speed {model.speed_score}/10</span>
                 <span>Accuracy {model.accuracy_score}/10</span>
-                <span>{model.languages.join(", ")}</span>
+                <span>{formatLanguageList(model.languages)}</span>
                 <span>{model.offline ? "Offline" : "Cloud/API"}</span>
                 {model.download_error ? <span>{model.download_error}</span> : null}
               </div>

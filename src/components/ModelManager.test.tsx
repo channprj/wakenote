@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { defaultSettings, mockModels } from "../lib/app-state";
 import type { ModelDescriptor, ModelStatus } from "../lib/types";
-import { ModelManager } from "./ModelManager";
+import { ModelManager, formatLanguageList, formatModelSize } from "./ModelManager";
 
 function renderModel(
   status: ModelStatus,
@@ -120,4 +120,55 @@ describe("model manager actions", () => {
       expect(isDisabled(buttonTag(markup, "Delete"))).toBe(false);
     },
   );
+});
+
+describe("formatModelSize", () => {
+  it("renders sizes below 1 GiB as MB", () => {
+    expect(formatModelSize(75)).toBe("75 MB");
+    expect(formatModelSize(465)).toBe("465 MB");
+    expect(formatModelSize(1023)).toBe("1023 MB");
+  });
+
+  it("renders sizes at or above 1 GiB as GB with one decimal", () => {
+    expect(formatModelSize(1024)).toBe("1.0 GB");
+    expect(formatModelSize(1031)).toBe("1.0 GB");
+    expect(formatModelSize(1465)).toBe("1.4 GB");
+    expect(formatModelSize(1550)).toBe("1.5 GB");
+  });
+
+  it("renders invalid sizes as an em-dash placeholder", () => {
+    expect(formatModelSize(Number.NaN)).toBe("—");
+    expect(formatModelSize(-1)).toBe("—");
+  });
+
+  it("is rendered into the model row metadata strip", () => {
+    const markup = renderModel("ready", { size_mb: 1465 });
+
+    expect(markup).toContain("1.4 GB");
+    expect(markup).not.toContain("1465 MB");
+  });
+});
+
+describe("formatLanguageList", () => {
+  it("maps known language codes to human-readable labels", () => {
+    expect(formatLanguageList(["ko", "en", "multi"])).toBe(
+      "Korean, English, Multilingual",
+    );
+    expect(formatLanguageList(["ja", "zh"])).toBe("Japanese, Chinese");
+  });
+
+  it("preserves unknown codes as-is", () => {
+    expect(formatLanguageList(["xx", "en"])).toBe("xx, English");
+  });
+
+  it("deduplicates labels so codes that map to the same name are not repeated", () => {
+    expect(formatLanguageList(["en", "en"])).toBe("English");
+  });
+
+  it("renders friendly labels in the model row", () => {
+    const markup = renderModel("ready", { languages: ["ko", "en", "multi"] });
+
+    expect(markup).toContain("Korean, English, Multilingual");
+    expect(markup).not.toContain(">ko, en, multi<");
+  });
 });
