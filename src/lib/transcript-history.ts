@@ -59,7 +59,9 @@ export function groupTranscriptsByDay(
 export function groupQueueJobsByDay(
   jobs: QueueJob[],
 ): Array<TranscriptDayGroup<QueueJob>> {
-  return groupByDay(jobs, (job) => transcriptDayFromAudioPath(job.audio_path));
+  return groupByDay(jobs, (job) => transcriptDayFromAudioPath(job.audio_path)).sort(
+    (left, right) => compareTranscriptDaysDescending(left.day, right.day),
+  );
 }
 
 export function transcriptDayFromAudioPath(audioPath: string): string {
@@ -130,13 +132,22 @@ function compareTranscriptsChronologically(
 }
 
 function compareTranscriptDaysDescending(left: string, right: string): number {
-  if (left === "Unknown") {
-    return 1;
-  }
-  if (right === "Unknown") {
+  const leftIsDate = isYearMonthDayLabel(left);
+  const rightIsDate = isYearMonthDayLabel(right);
+  if (leftIsDate && !rightIsDate) {
     return -1;
   }
+  if (!leftIsDate && rightIsDate) {
+    return 1;
+  }
+  if (!leftIsDate && !rightIsDate) {
+    return left.localeCompare(right);
+  }
   return right.localeCompare(left);
+}
+
+function isYearMonthDayLabel(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function timestampSortValue(value: string): number {

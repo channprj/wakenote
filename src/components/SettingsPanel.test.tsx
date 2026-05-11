@@ -260,6 +260,48 @@ describe("settings panel", () => {
     expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?!s)/);
   });
 
+  it("sorts history queue day groups newest first regardless of insertion order", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260509/235959.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/imported/standalone.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 2,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+    const newerDayIndex = markup.indexOf("2026-05-10 \xb7");
+    const olderDayIndex = markup.indexOf("2026-05-09 \xb7");
+    const importedDayIndex = markup.indexOf("Imported \xb7");
+
+    expect(newerDayIndex).toBeGreaterThanOrEqual(0);
+    expect(olderDayIndex).toBeGreaterThan(newerDayIndex);
+    expect(importedDayIndex).toBeGreaterThan(olderDayIndex);
+  });
+
   it("renders shortened audio path labels in the history queue with the full path in the tooltip", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

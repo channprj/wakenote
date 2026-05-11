@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { RecentTranscript } from "./types";
+import type { QueueJob, RecentTranscript } from "./types";
 import {
   appendRecentAge,
   fileUrlFromPath,
   formatAudioPathLabel,
   formatLocalTimestamp,
+  groupQueueJobsByDay,
   groupTranscriptsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -86,5 +87,42 @@ describe("transcript history helpers", () => {
 
   it("returns the input unchanged when there is nothing to shorten", () => {
     expect(formatAudioPathLabel("")).toBe("");
+  });
+
+  it("orders queue day groups newest first with Imported pushed below dated days", () => {
+    const jobs: QueueJob[] = [
+      {
+        id: 1,
+        audio_path: "/tmp/imported/standalone.wav",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 2,
+        audio_path: "/tmp/WakeNote/20260509/230000.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+      {
+        id: 3,
+        audio_path: "/tmp/WakeNote/20260510/010000.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+    ];
+
+    const groups = groupQueueJobsByDay(jobs);
+
+    expect(groups.map((group) => group.day)).toEqual([
+      "2026-05-10",
+      "2026-05-09",
+      "Imported",
+    ]);
+    expect(groups[0].entries.map((entry) => entry.id)).toEqual([3]);
+    expect(groups[1].entries.map((entry) => entry.id)).toEqual([2]);
+    expect(groups[2].entries.map((entry) => entry.id)).toEqual([1]);
   });
 });
