@@ -130,6 +130,7 @@ export function QueuePanel({
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
   const completedCount = countCompletedQueueJobs(queue.jobs);
   const cancelledCount = countCancelledQueueJobs(queue.jobs);
+  const skippedCount = countSkippedQueueJobs(queue.jobs);
   const pendingBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "pending"),
   );
@@ -141,6 +142,9 @@ export function QueuePanel({
   );
   const cancelledBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "cancelled"),
+  );
+  const skippedBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "skipped"),
   );
   const completedBreakdown = summarizeQueueJobsByDay(
     queue.jobs.filter((job) => job.status === "completed"),
@@ -155,6 +159,13 @@ export function QueuePanel({
         >
           <span>Pending</span>
           <strong>{queue.pending_count}</strong>
+        </div>
+        <div
+          data-tone={skippedCount > 0 ? "warning" : undefined}
+          title={skippedBreakdown || undefined}
+        >
+          <span>Skipped</span>
+          <strong>{skippedCount}</strong>
         </div>
         <div
           data-tone={queue.running_count > 0 ? "primary" : undefined}

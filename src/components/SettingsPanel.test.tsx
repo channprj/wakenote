@@ -1182,6 +1182,7 @@ describe("settings panel", () => {
     expect(markup).not.toMatch(/title="[^"]*"><span>Running/);
     expect(markup).not.toMatch(/title="[^"]*"><span>Failed/);
     expect(markup).not.toMatch(/title="[^"]*"><span>Cancelled/);
+    expect(markup).not.toMatch(/title="[^"]*"><span>Skipped/);
     expect(markup).not.toMatch(/title="[^"]*"><span>Completed/);
   });
 
@@ -1309,6 +1310,133 @@ describe("settings panel", () => {
 
     expect(markup).toMatch(
       /title="2026-05-10: 2 \xb7 2026-05-09: 1"><span>Cancelled<\/span>/,
+    );
+  });
+
+  it("renders a Skipped cell in the queue stats banner counting skipped jobs", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div class="queue-stats">[\s\S]*?<span>Skipped<\/span>\s*<strong>2<\/strong>/,
+    );
+  });
+
+  it("tones the queue-stats Skipped cell with warning when the count is non-zero", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div data-tone="warning"[^>]*><span>Skipped<\/span>\s*<strong>1<\/strong>/,
+    );
+  });
+
+  it("leaves the queue-stats Skipped cell untoned when no jobs are skipped", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).not.toMatch(/data-tone="warning"><span>Skipped/);
+    expect(markup).toMatch(/<div><span>Skipped<\/span>\s*<strong>0<\/strong>/);
+  });
+
+  it("exposes a per-day breakdown tooltip on the Skipped cell when skipped jobs exist", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/170000.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "skipped",
+          error: "model unavailable",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /title="2026-05-10: 2 \xb7 2026-05-09: 1"><span>Skipped<\/span>/,
     );
   });
 
