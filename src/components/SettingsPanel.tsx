@@ -310,31 +310,6 @@ export function SettingsPanel({
     );
   }
 
-  if (activeSection === "about") {
-    return (
-      <Section title="About" eyebrow="WakeNote 0.1.0">
-        <div className="about-grid">
-          <div>
-            <span>Stack</span>
-            <strong>Tauri v2 · Rust · React · TypeScript</strong>
-          </div>
-          <div>
-            <span>Primary</span>
-            <strong>#000</strong>
-          </div>
-          <div>
-            <span>Active Model</span>
-            <strong>{settings.selected_model}</strong>
-          </div>
-          <div>
-            <span>Mode</span>
-            <strong>{status.mode}</strong>
-          </div>
-        </div>
-      </Section>
-    );
-  }
-
   return (
     <div className="general-grid">
       <LevelMeter

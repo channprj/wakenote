@@ -9,4 +9,10 @@ describe("App branding", () => {
     expect(markup).toContain("WakeNote");
     expect(markup).not.toContain("Voice-activated meeting notes");
   });
+
+  it("does not render the About menu item", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).not.toContain("About");
+  });
 });

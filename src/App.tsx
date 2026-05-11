@@ -5,7 +5,6 @@ import {
   Clock3,
   Folder,
   FolderOpen,
-  Info,
   Files,
   ListTodo,
   Mic,
@@ -66,7 +65,6 @@ const sections = [
   { id: "privacy", label: "Privacy", icon: Shield },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
-  { id: "about", label: "About", icon: Info },
 ];
 
 const launchAutoStartPollWindowMs = 130_000;
