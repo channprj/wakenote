@@ -4,6 +4,7 @@ import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
 import {
   countFailedQueueJobs,
+  countPendingQueueJobs,
   formatAudioPathLabel,
   groupQueueJobsByDay,
 } from "../lib/transcript-history";
@@ -130,12 +131,14 @@ export function QueuePanel({
               </tr>
             ) : (
               groupedJobs.map((group) => {
+                const pendingCount = countPendingQueueJobs(group.entries);
                 const failedCount = countFailedQueueJobs(group.entries);
                 return (
                 <Fragment key={group.day}>
                   <tr className="table-group-row">
                     <td colSpan={4}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
+                      {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
                       {failedCount > 0 ? ` · ${failedCount} failed` : ""}
                     </td>
                   </tr>

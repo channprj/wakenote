@@ -434,6 +434,53 @@ describe("settings panel", () => {
     );
   });
 
+  it("appends a pending count to the day group row only when pending jobs exist that day", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "boom",
+        },
+        {
+          id: 4,
+          audio_path: "/tmp/WakeNote/20260509/235959.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 2,
+      running_count: 0,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs \xb7 2 pending \xb7 1 failed/,
+    );
+    expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
+  });
+
   it("appends a failed count to the day group row only when failures exist that day", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

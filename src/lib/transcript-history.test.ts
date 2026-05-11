@@ -3,6 +3,7 @@ import type { QueueJob, RecentTranscript } from "./types";
 import {
   appendRecentAge,
   countFailedQueueJobs,
+  countPendingQueueJobs,
   fileUrlFromPath,
   formatAudioPathLabel,
   formatLocalTimestamp,
@@ -145,6 +146,26 @@ describe("transcript history helpers", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].day).toBe("Imported");
     expect(groups[0].entries.map((entry) => entry.id)).toEqual([3, 7]);
+  });
+
+  it("counts only pending queue jobs, ignoring other terminal and in-flight statuses", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "a", model_id: "m", status: "pending", error: null },
+      { id: 2, audio_path: "b", model_id: "m", status: "pending", error: null },
+      { id: 3, audio_path: "c", model_id: "m", status: "running", error: null },
+      { id: 4, audio_path: "d", model_id: "m", status: "failed", error: null },
+      { id: 5, audio_path: "e", model_id: "m", status: "cancelled", error: null },
+      { id: 6, audio_path: "f", model_id: "m", status: "skipped", error: null },
+      { id: 7, audio_path: "g", model_id: "m", status: "completed", error: null },
+    ];
+
+    expect(countPendingQueueJobs(jobs)).toBe(2);
+    expect(countPendingQueueJobs([])).toBe(0);
+    expect(
+      countPendingQueueJobs([
+        { id: 8, audio_path: "h", model_id: "m", status: "running", error: null },
+      ]),
+    ).toBe(0);
   });
 
   it("counts only failed queue jobs, ignoring other terminal and in-flight statuses", () => {

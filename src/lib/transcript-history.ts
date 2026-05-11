@@ -77,6 +77,16 @@ export function countFailedQueueJobs(jobs: QueueJob[]): number {
   return count;
 }
 
+export function countPendingQueueJobs(jobs: QueueJob[]): number {
+  let count = 0;
+  for (const job of jobs) {
+    if (job.status === "pending") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function transcriptDayFromAudioPath(audioPath: string): string {
   const match = audioPath.match(/(?:^|\/)(\d{4})(\d{2})(\d{2})(?:\/|$)/);
   if (!match) {
