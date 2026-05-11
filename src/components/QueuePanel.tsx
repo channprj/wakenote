@@ -83,11 +83,11 @@ export function QueuePanel({
           <span>Running</span>
           <strong>{queue.running_count}</strong>
         </div>
-        <div>
+        <div data-tone={queue.failed_count > 0 ? "danger" : undefined}>
           <span>Failed</span>
           <strong>{queue.failed_count}</strong>
         </div>
-        <div>
+        <div data-tone={completedCount > 0 ? "success" : undefined}>
           <span>Completed</span>
           <strong>{completedCount}</strong>
         </div>

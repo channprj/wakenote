@@ -789,6 +789,14 @@ svg {
   margin-top: 3px;
 }
 
+.queue-stats div[data-tone="danger"] strong {
+  color: var(--danger);
+}
+
+.queue-stats div[data-tone="success"] strong {
+  color: var(--success);
+}
+
 .level-meter__track {
   position: relative;
   display: grid;

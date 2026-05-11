@@ -688,6 +688,67 @@ describe("settings panel", () => {
     );
   });
 
+  it("tones the queue-stats Failed and Completed cells when their counts are non-zero", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "boom",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div data-tone="danger"><span>Failed<\/span>\s*<strong>1<\/strong>/,
+    );
+    expect(markup).toMatch(
+      /<div data-tone="success"><span>Completed<\/span>\s*<strong>1<\/strong>/,
+    );
+  });
+
+  it("leaves the queue-stats Failed and Completed cells untoned on a clean queue", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).not.toMatch(/data-tone="danger"><span>Failed/);
+    expect(markup).not.toMatch(/data-tone="success"><span>Completed/);
+    expect(markup).toMatch(/<div><span>Failed<\/span>\s*<strong>0<\/strong>/);
+    expect(markup).toMatch(/<div><span>Completed<\/span>\s*<strong>0<\/strong>/);
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {
