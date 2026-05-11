@@ -1579,6 +1579,15 @@ code {
   font-size: 12px;
 }
 
+.path-pattern code > a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.path-pattern code > a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 940px) {
   html,
   body,

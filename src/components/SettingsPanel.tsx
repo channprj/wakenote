@@ -6,6 +6,7 @@ import { TranscriptsPanel } from "./TranscriptsPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
+import { fileUrlFromPath } from "../lib/transcript-history";
 import type { AppSnapshot, AppSettings } from "../lib/types";
 
 const durationFields = [
@@ -22,6 +23,17 @@ const maxChunkPresets = [
   { label: "3 min", value: 180_000 },
   { label: "5 min", value: 300_000 },
 ] as const;
+
+export function renderSaveRoot(saveRoot: string) {
+  if (saveRoot.trim().length === 0) {
+    return saveRoot;
+  }
+  return (
+    <a href={fileUrlFromPath(saveRoot)} title={saveRoot}>
+      {saveRoot}
+    </a>
+  );
+}
 
 const transcriptionLanguageOptions: Array<{
   value: AppSettings["transcription_language"];
@@ -202,9 +214,9 @@ export function SettingsPanel({
           </Select>
           <div className="path-pattern">
             <span>Pattern</span>
-            <code>{settings.save_root}/YYYYMMDD/HHMMSS.{settings.audio_format}</code>
-            <code>{settings.save_root}/YYYYMMDD/HHMMSS.txt</code>
-            <code>{settings.save_root}/YYYYMMDD/HHMMSS.json</code>
+            <code>{renderSaveRoot(settings.save_root)}/YYYYMMDD/HHMMSS.{settings.audio_format}</code>
+            <code>{renderSaveRoot(settings.save_root)}/YYYYMMDD/HHMMSS.txt</code>
+            <code>{renderSaveRoot(settings.save_root)}/YYYYMMDD/HHMMSS.json</code>
           </div>
         </div>
       </Section>

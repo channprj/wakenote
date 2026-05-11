@@ -1801,4 +1801,32 @@ describe("settings panel", () => {
     expect(confirmedMarkup).toContain("Confirmed");
     expect(confirmedMarkup).not.toContain("Confirm Save Root");
   });
+
+  it("wraps the save root in a file:// link inside each path-pattern code block", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.save_root = "/tmp/wakenote-recordings";
+    snapshot.settings.audio_format = "m4a";
+
+    const markup = renderSettingsPanel(snapshot, "storage");
+
+    expect(markup).toContain(
+      '<code><a href="file:///tmp/wakenote-recordings" title="/tmp/wakenote-recordings">/tmp/wakenote-recordings</a>/YYYYMMDD/HHMMSS.m4a</code>',
+    );
+    expect(markup).toContain(
+      '<code><a href="file:///tmp/wakenote-recordings" title="/tmp/wakenote-recordings">/tmp/wakenote-recordings</a>/YYYYMMDD/HHMMSS.txt</code>',
+    );
+    expect(markup).toContain(
+      '<code><a href="file:///tmp/wakenote-recordings" title="/tmp/wakenote-recordings">/tmp/wakenote-recordings</a>/YYYYMMDD/HHMMSS.json</code>',
+    );
+  });
+
+  it("omits the file:// link wrap when save root is blank", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.save_root = "   ";
+
+    const markup = renderSettingsPanel(snapshot, "storage");
+
+    expect(markup).not.toContain('<a href="file://');
+    expect(markup).toContain("<code>   /YYYYMMDD/HHMMSS.");
+  });
 });
