@@ -87,6 +87,70 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
   };
 }
 
+function isActiveDownload(status: ModelStatus): boolean {
+  return status === "downloading" || status === "verifying" || status === "extracting";
+}
+
+function isUsable(status: ModelStatus): boolean {
+  return status === "ready" || status === "installed" || status === "unloaded";
+}
+
+export function modelSwitchDisabledReason(
+  model: Pick<ModelDescriptor, "status">,
+  isSelected: boolean,
+): string | null {
+  if (isSelected) return null;
+  if (isUsable(model.status)) return null;
+  if (isActiveDownload(model.status)) return "Model is still downloading";
+  if (model.status === "missing") return "Download the model before switching";
+  if (model.status === "error") return "Model has a download error";
+  return null;
+}
+
+export function modelDownloadDisabledReason(
+  model: Pick<ModelDescriptor, "status" | "download_url">,
+): string | null {
+  if (modelActionState(model).canDownload) return null;
+  if (isActiveDownload(model.status)) return "Download already in progress";
+  if (!model.download_url) return "No download URL available";
+  if (isUsable(model.status)) return "Model is already installed";
+  if (model.status === "error") return "Download failed — use Retry";
+  return null;
+}
+
+export function modelVerifyDisabledReason(
+  model: Pick<ModelDescriptor, "status">,
+): string | null {
+  if (!isActiveDownload(model.status)) return null;
+  return "Download in progress";
+}
+
+export function modelRetryDisabledReason(
+  model: Pick<ModelDescriptor, "status" | "download_url">,
+): string | null {
+  if (modelActionState(model).canRetry) return null;
+  if (isActiveDownload(model.status)) return "Download already in progress";
+  if (model.status === "error" && !model.download_url) return "No download URL available";
+  return "Nothing to retry";
+}
+
+export function modelCancelDownloadDisabledReason(
+  model: Pick<ModelDescriptor, "status">,
+): string | null {
+  if (isActiveDownload(model.status)) return null;
+  return "No active download";
+}
+
+export function modelDeleteDisabledReason(
+  model: Pick<ModelDescriptor, "status">,
+  isSelected: boolean,
+): string | null {
+  if (isSelected) return "Cannot delete the active model";
+  if (isActiveDownload(model.status)) return "Download in progress";
+  if (model.status === "missing") return "Model is not downloaded";
+  return null;
+}
+
 export function ModelManager({
   models,
   settings,
@@ -110,6 +174,12 @@ export function ModelManager({
         const selected = settings.selected_model === model.id;
         const progress = statusProgress(model);
         const actions = modelActionState(model);
+        const switchReason = modelSwitchDisabledReason(model, selected);
+        const downloadReason = modelDownloadDisabledReason(model);
+        const verifyReason = modelVerifyDisabledReason(model);
+        const retryReason = modelRetryDisabledReason(model);
+        const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
+        const deleteReason = modelDeleteDisabledReason(model, selected);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -138,6 +208,7 @@ export function ModelManager({
                 size="sm"
                 onClick={() => onPatch({ selected_model: model.id })}
                 disabled={selected ? false : !actions.canSwitch}
+                title={switchReason ?? undefined}
               >
                 <CheckCircle2 data-icon="inline-start" />
                 {selected ? "Active" : "Switch"}
@@ -146,7 +217,7 @@ export function ModelManager({
                 type="button"
                 variant="secondary"
                 size="icon"
-                title="Download"
+                title={downloadReason ?? "Download"}
                 onClick={() => onDownload(model.id)}
                 disabled={!actions.canDownload}
               >
@@ -156,7 +227,7 @@ export function ModelManager({
                 type="button"
                 variant="secondary"
                 size="icon"
-                title="Verify"
+                title={verifyReason ?? "Verify"}
                 onClick={() => onVerify(model.id)}
                 disabled={!actions.canVerify}
               >
@@ -166,7 +237,7 @@ export function ModelManager({
                 type="button"
                 variant="secondary"
                 size="icon"
-                title="Retry"
+                title={retryReason ?? "Retry"}
                 onClick={() => onDownload(model.id)}
                 disabled={!actions.canRetry}
               >
@@ -176,7 +247,7 @@ export function ModelManager({
                 type="button"
                 variant="ghost"
                 size="icon"
-                title="Cancel Download"
+                title={cancelDownloadReason ?? "Cancel Download"}
                 onClick={() => onCancelDownload(model.id)}
                 disabled={!actions.canCancelDownload}
               >
@@ -186,7 +257,7 @@ export function ModelManager({
                 type="button"
                 variant="ghost"
                 size="icon"
-                title="Delete"
+                title={deleteReason ?? "Delete"}
                 onClick={() => onDelete(model.id)}
                 disabled={selected || !actions.canDelete}
               >
