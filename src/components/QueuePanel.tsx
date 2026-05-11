@@ -136,7 +136,7 @@ export function QueuePanel({
                       <tr key={job.id}>
                         <td title={job.audio_path}>{formatAudioPathLabel(job.audio_path)}</td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
-                        <td>
+                        <td title={job.error ?? undefined}>
                           <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
                         </td>
                         <td>

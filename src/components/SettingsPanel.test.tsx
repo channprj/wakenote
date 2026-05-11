@@ -277,6 +277,41 @@ describe("settings panel", () => {
     expect(modelsMarkup).not.toMatch(/ui-badge--primary[^>]*>whisper-medium</);
   });
 
+  it("surfaces the queue job error as a hover tooltip on the status cell", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "model whisper-tiny is missing on disk",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/010204.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">failed<\/span>\s*<\/td>/,
+    );
+    expect(markup).toMatch(
+      /<td>\s*<span class="ui-badge ui-badge--success[^"]*">completed<\/span>\s*<\/td>/,
+    );
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {
