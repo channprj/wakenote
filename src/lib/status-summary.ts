@@ -21,10 +21,17 @@ export interface CaptureWarning {
   tone: "warning" | "danger";
 }
 
-// Mirrors QueuePanel queue-stats' failed-count tone signal at the App-level Queue summary card
-// so the user sees a danger accent in the workspace header (not only inside the Queue section).
-export function queueCardTone(queue: Pick<QueueSnapshot, "failed_count">): "danger" | undefined {
-  return queue.failed_count > 0 ? "danger" : undefined;
+// Mirrors QueuePanel queue-stats' per-cell tone mapping at the App-level Queue summary card so
+// the workspace header signals the most attention-grabbing queue state without expanding the card
+// into multiple cells. Priority follows the iter-24 "most immediate blocker first" convention:
+// failed (danger, needs retry) > running (primary, in flight) > pending (warning, backlog) > none.
+export function queueCardTone(
+  queue: Pick<QueueSnapshot, "failed_count" | "running_count" | "pending_count">,
+): "danger" | "primary" | "warning" | undefined {
+  if (queue.failed_count > 0) return "danger";
+  if (queue.running_count > 0) return "primary";
+  if (queue.pending_count > 0) return "warning";
+  return undefined;
 }
 
 export function visibleWarningForDismissedKey(

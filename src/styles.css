@@ -302,6 +302,14 @@ svg {
   color: var(--danger);
 }
 
+.status-cards div[data-tone="primary"] strong {
+  color: var(--primary);
+}
+
+.status-cards div[data-tone="warning"] strong {
+  color: var(--warning);
+}
+
 .status-cards svg {
   color: var(--primary);
   font-size: 18px;

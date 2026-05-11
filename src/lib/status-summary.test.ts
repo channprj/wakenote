@@ -201,12 +201,48 @@ describe("capture status presentation", () => {
 });
 
 describe("queueCardTone", () => {
-  it("returns undefined when no failed jobs are present", () => {
-    expect(queueCardTone({ failed_count: 0 })).toBeUndefined();
+  it("returns undefined when queue is clean (no failed, running, or pending)", () => {
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }),
+    ).toBeUndefined();
   });
 
   it("returns 'danger' when at least one failed job is present", () => {
-    expect(queueCardTone({ failed_count: 1 })).toBe("danger");
-    expect(queueCardTone({ failed_count: 42 })).toBe("danger");
+    expect(
+      queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 }),
+    ).toBe("danger");
+    expect(
+      queueCardTone({ failed_count: 42, running_count: 0, pending_count: 0 }),
+    ).toBe("danger");
+  });
+
+  it("returns 'primary' when running jobs exist and no failed jobs", () => {
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 0 }),
+    ).toBe("primary");
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 3, pending_count: 5 }),
+    ).toBe("primary");
+  });
+
+  it("returns 'warning' when only pending jobs exist", () => {
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }),
+    ).toBe("warning");
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 8 }),
+    ).toBe("warning");
+  });
+
+  it("prioritizes danger over running and pending", () => {
+    expect(
+      queueCardTone({ failed_count: 1, running_count: 1, pending_count: 1 }),
+    ).toBe("danger");
+  });
+
+  it("prioritizes running over pending when no failed jobs", () => {
+    expect(
+      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 1 }),
+    ).toBe("primary");
   });
 });
