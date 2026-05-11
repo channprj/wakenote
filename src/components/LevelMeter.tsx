@@ -5,6 +5,7 @@ import {
   calibrationShouldAutoApply,
   suggestedThresholdValue,
 } from "../lib/calibration";
+import { humanizeTrayState } from "../lib/transcript-history";
 import { Badge, Button, Progress } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
@@ -72,7 +73,7 @@ export function LevelMeter({
         <div>
           <span>State</span>
           <strong>
-            <Badge tone={active ? "success" : "neutral"}>{status.tray_state}</Badge>
+            <Badge tone={active ? "success" : "neutral"}>{humanizeTrayState(status.tray_state)}</Badge>
           </strong>
         </div>
       </div>

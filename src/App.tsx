@@ -19,6 +19,7 @@ import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptFooter } from "./components/TranscriptFooter";
 import { Badge, Button } from "./components/ui/primitives";
+import { humanizeTrayState } from "./lib/transcript-history";
 import {
   reduceTranscriptLog,
   type TranscriptEntry,
@@ -305,7 +306,7 @@ export default function App() {
             <div className="status-hero__copy">
               <div className="status-strip">
                 <Badge tone={statusPresentation.tone}>{statusPresentation.modeLabel}</Badge>
-                <Badge>{snapshot.status.tray_state}</Badge>
+                <Badge>{humanizeTrayState(snapshot.status.tray_state)}</Badge>
               </div>
               <h1>{statusPresentation.headline}</h1>
               <span>{statusPresentation.detail}</span>

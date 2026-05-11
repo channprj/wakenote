@@ -16,6 +16,7 @@ import {
   humanizeBasenameTime,
   humanizeDateSegment,
   humanizeQueueJobStatus,
+  humanizeTrayState,
   queueJobSidecarPath,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
@@ -134,6 +135,16 @@ describe("transcript history helpers", () => {
     expect(humanizeQueueJobStatus("cancelled")).toBe("Cancelled");
     expect(humanizeQueueJobStatus("skipped")).toBe("Skipped");
     expect(humanizeQueueJobStatus("")).toBe("");
+  });
+
+  it("title-cases each TrayState value for status badges", () => {
+    expect(humanizeTrayState("idle")).toBe("Idle");
+    expect(humanizeTrayState("listening")).toBe("Listening");
+    expect(humanizeTrayState("recording")).toBe("Recording");
+    expect(humanizeTrayState("transcribing")).toBe("Transcribing");
+    expect(humanizeTrayState("paused")).toBe("Paused");
+    expect(humanizeTrayState("error")).toBe("Error");
+    expect(humanizeTrayState("")).toBe("");
   });
 
   it("derives sidecar transcript paths only for completed and failed queue jobs", () => {

@@ -1,4 +1,4 @@
-import type { QueueJob, QueueJobStatus, RecentTranscript } from "./types";
+import type { QueueJob, QueueJobStatus, RecentTranscript, TrayState } from "./types";
 
 export interface TranscriptDayGroup<T> {
   day: string;
@@ -182,6 +182,14 @@ export function humanizeQueueJobStatus(status: string): string {
     return status;
   }
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function humanizeTrayState(state: TrayState | string): string {
+  // idle → Idle; matches humanizeQueueJobStatus's Title Case convention for status badges.
+  if (state.length === 0) {
+    return state;
+  }
+  return state.charAt(0).toUpperCase() + state.slice(1);
 }
 
 export function queueJobSidecarPath(

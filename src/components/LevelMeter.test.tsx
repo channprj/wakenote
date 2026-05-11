@@ -64,4 +64,14 @@ describe("level meter", () => {
     expect(isDisabled(buttonTag(active, "Reset"))).toBe(false);
     expect(hasButton(active, "Apply")).toBe(false);
   });
+
+  it("title-cases the tray_state Badge text to match QueuePanel's status badges", () => {
+    const inactive = renderLevelMeter(false);
+    expect(inactive).toMatch(/<span class="ui-badge ui-badge--neutral">Idle<\/span>/);
+    expect(inactive).not.toMatch(/<span class="ui-badge[^"]*">idle<\/span>/);
+
+    const active = renderLevelMeter(true);
+    expect(active).toMatch(/<span class="ui-badge ui-badge--success">Listening<\/span>/);
+    expect(active).not.toMatch(/<span class="ui-badge[^"]*">listening<\/span>/);
+  });
 });
