@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   captureStatusPresentation,
+  levelCardTone,
   nextDismissedWarningKey,
   queueCardTone,
   visibleWarningForDismissedKey,
@@ -286,5 +287,34 @@ describe("queueCardTone", () => {
   it("defaults completedCount to 0 when omitted (backwards-compat)", () => {
     expect(queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 })).toBeUndefined();
     expect(queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 })).toBe("danger");
+  });
+});
+
+describe("levelCardTone", () => {
+  it("returns undefined when live input is inactive regardless of current vs threshold", () => {
+    expect(levelCardTone(false, -50, -60)).toBeUndefined();
+    expect(levelCardTone(false, -30, -60)).toBeUndefined();
+    expect(levelCardTone(false, -120, -60)).toBeUndefined();
+  });
+
+  it("returns undefined when current dBFS is below threshold", () => {
+    expect(levelCardTone(true, -65, -60)).toBeUndefined();
+    expect(levelCardTone(true, -120, -60)).toBeUndefined();
+  });
+
+  it("returns 'primary' when current dBFS is equal to threshold (gate edge)", () => {
+    expect(levelCardTone(true, -60, -60)).toBe("primary");
+  });
+
+  it("returns 'primary' when current dBFS is above threshold (gate would open)", () => {
+    expect(levelCardTone(true, -50, -60)).toBe("primary");
+    expect(levelCardTone(true, -20, -60)).toBe("primary");
+    expect(levelCardTone(true, 0, -60)).toBe("primary");
+  });
+
+  it("tracks threshold changes (active input, varying threshold)", () => {
+    expect(levelCardTone(true, -50, -40)).toBeUndefined();
+    expect(levelCardTone(true, -50, -50)).toBe("primary");
+    expect(levelCardTone(true, -50, -60)).toBe("primary");
   });
 });

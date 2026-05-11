@@ -35,4 +35,16 @@ describe("App branding", () => {
     );
     expect(markup).not.toMatch(/<div [^>]*data-tone="(danger|primary|warning|success)"[^>]*>\s*<svg[^>]*lucide-list-todo/);
   });
+
+  it("omits the Level status-card data-tone attribute when live input is inactive", () => {
+    // Default mockSnapshot has live_input_active === false and current_dbfs === -120 (silence),
+    // so the Level card should render without a data-tone attribute — the primary tone only
+    // kicks in when capture is active AND current dBFS is at or above the trigger threshold.
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toMatch(
+      /<span>Level<\/span>\s*<strong>-120 dBFS current \xb7 -120 dBFS peak<\/strong>/,
+    );
+    expect(markup).not.toMatch(/<div [^>]*data-tone="primary"[^>]*>\s*<svg[^>]*lucide-activity/);
+  });
 });

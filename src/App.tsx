@@ -51,6 +51,7 @@ import {
 } from "./lib/app-state";
 import {
   captureStatusPresentation,
+  levelCardTone,
   nextDismissedWarningKey,
   queueCardTone,
   visibleWarningForDismissedKey,
@@ -315,7 +316,13 @@ export default function App() {
           </div>
 
           <div className="status-cards" aria-label="Capture status summary">
-            <div>
+            <div
+              data-tone={levelCardTone(
+                snapshot.status.live_input_active,
+                snapshot.status.level.current_dbfs,
+                snapshot.settings.threshold_dbfs,
+              )}
+            >
               <Activity />
               <span>Level</span>
               <strong>{statusPresentation.levelSummary}</strong>

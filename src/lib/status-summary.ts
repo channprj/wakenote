@@ -39,6 +39,20 @@ export function queueCardTone(
   return undefined;
 }
 
+// Mirrors the queueCardTone pattern for the App-level Level summary card: when live input is
+// active and the current dBFS is at or above the trigger threshold, the gate would open (speech
+// detected), so the card surfaces a primary tone to match the status-hero's "Listening" /
+// "Recording" cues. Silent input or below-threshold ambient noise returns undefined.
+export function levelCardTone(
+  liveInputActive: boolean,
+  currentDbfs: number,
+  thresholdDbfs: number,
+): "primary" | undefined {
+  if (!liveInputActive) return undefined;
+  if (currentDbfs >= thresholdDbfs) return "primary";
+  return undefined;
+}
+
 export function visibleWarningForDismissedKey(
   warning: CaptureWarning | null,
   dismissedWarningKey: string | null,
