@@ -59,9 +59,12 @@ export function groupTranscriptsByDay(
 export function groupQueueJobsByDay(
   jobs: QueueJob[],
 ): Array<TranscriptDayGroup<QueueJob>> {
-  return groupByDay(jobs, (job) => transcriptDayFromAudioPath(job.audio_path)).sort(
-    (left, right) => compareTranscriptDaysDescending(left.day, right.day),
-  );
+  return groupByDay(jobs, (job) => transcriptDayFromAudioPath(job.audio_path))
+    .map((group) => ({
+      ...group,
+      entries: [...group.entries].sort(compareQueueJobsChronologically),
+    }))
+    .sort((left, right) => compareTranscriptDaysDescending(left.day, right.day));
 }
 
 export function transcriptDayFromAudioPath(audioPath: string): string {
@@ -129,6 +132,29 @@ function compareTranscriptsChronologically(
     timestampSortValue(left.recorded_at) - timestampSortValue(right.recorded_at) ||
     left.transcript_path.localeCompare(right.transcript_path)
   );
+}
+
+function compareQueueJobsChronologically(left: QueueJob, right: QueueJob): number {
+  const leftKey = queueJobTimeKey(left.audio_path);
+  const rightKey = queueJobTimeKey(right.audio_path);
+  if (leftKey && rightKey) {
+    const diff = leftKey.localeCompare(rightKey);
+    if (diff !== 0) {
+      return diff;
+    }
+  } else if (leftKey && !rightKey) {
+    return -1;
+  } else if (!leftKey && rightKey) {
+    return 1;
+  }
+  return left.id - right.id;
+}
+
+function queueJobTimeKey(audioPath: string): string {
+  const segments = audioPath.split("/");
+  const basename = segments[segments.length - 1] ?? "";
+  const match = basename.match(/^(\d{6})/);
+  return match ? match[1] : "";
 }
 
 function compareTranscriptDaysDescending(left: string, right: string): number {

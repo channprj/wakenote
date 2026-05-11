@@ -89,6 +89,63 @@ describe("transcript history helpers", () => {
     expect(formatAudioPathLabel("")).toBe("");
   });
 
+  it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {
+    const jobs: QueueJob[] = [
+      {
+        id: 10,
+        audio_path: "/tmp/WakeNote/20260510/183000.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+      {
+        id: 11,
+        audio_path: "/tmp/WakeNote/20260510/091500.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+      {
+        id: 12,
+        audio_path: "/tmp/WakeNote/20260510/091500-001.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+    ];
+
+    const groups = groupQueueJobsByDay(jobs);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].day).toBe("2026-05-10");
+    expect(groups[0].entries.map((entry) => entry.id)).toEqual([11, 12, 10]);
+  });
+
+  it("falls back to job id when imported audio paths have no HHMMSS prefix", () => {
+    const jobs: QueueJob[] = [
+      {
+        id: 7,
+        audio_path: "/tmp/imported/alpha.wav",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 3,
+        audio_path: "/tmp/imported/beta.wav",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+    ];
+
+    const groups = groupQueueJobsByDay(jobs);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].day).toBe("Imported");
+    expect(groups[0].entries.map((entry) => entry.id)).toEqual([3, 7]);
+  });
+
   it("orders queue day groups newest first with Imported pushed below dated days", () => {
     const jobs: QueueJob[] = [
       {

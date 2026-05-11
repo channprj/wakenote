@@ -302,6 +302,48 @@ describe("settings panel", () => {
     expect(importedDayIndex).toBeGreaterThan(olderDayIndex);
   });
 
+  it("orders queue jobs within a day chronologically regardless of insertion order", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/183000.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/091500.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/120000.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+    const earliestIndex = markup.indexOf("20260510/091500.m4a");
+    const middleIndex = markup.indexOf("20260510/120000.m4a");
+    const latestIndex = markup.indexOf("20260510/183000.m4a");
+
+    expect(earliestIndex).toBeGreaterThanOrEqual(0);
+    expect(middleIndex).toBeGreaterThan(earliestIndex);
+    expect(latestIndex).toBeGreaterThan(middleIndex);
+  });
+
   it("renders shortened audio path labels in the history queue with the full path in the tooltip", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {
