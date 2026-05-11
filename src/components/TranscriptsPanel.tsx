@@ -128,6 +128,20 @@ function TranscriptEntryRow({
   );
 }
 
+export function previousDayDisabledReason(activePage: number): string | null {
+  if (activePage <= 0) {
+    return "Already on the latest day";
+  }
+  return null;
+}
+
+export function nextDayDisabledReason(activePage: number, groupsLength: number): string | null {
+  if (activePage >= groupsLength - 1) {
+    return "Already on the earliest day";
+  }
+  return null;
+}
+
 function TranscriptPagination({
   activePage,
   activeDay,
@@ -143,6 +157,9 @@ function TranscriptPagination({
     return null;
   }
 
+  const previousReason = previousDayDisabledReason(activePage);
+  const nextReason = nextDayDisabledReason(activePage, groups.length);
+
   return (
     <nav className="transcript-pagination" aria-label="Transcript date pages">
       <Button
@@ -153,6 +170,7 @@ function TranscriptPagination({
         }
         disabled={activePage === 0}
         onClick={() => onPageChange(Math.max(0, activePage - 1))}
+        title={previousReason ?? undefined}
         type="button"
         variant="secondary"
       >
@@ -181,6 +199,7 @@ function TranscriptPagination({
         }
         disabled={activePage === groups.length - 1}
         onClick={() => onPageChange(Math.min(groups.length - 1, activePage + 1))}
+        title={nextReason ?? undefined}
         type="button"
         variant="secondary"
       >
