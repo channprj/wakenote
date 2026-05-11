@@ -13,6 +13,7 @@ import {
   groupQueueJobsByDay,
   groupTranscriptsByDay,
   humanizeBasenameTime,
+  humanizeDateSegment,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -77,13 +78,13 @@ describe("transcript history helpers", () => {
     );
   });
 
-  it("shortens save-root audio paths to the YYYYMMDD/basename pair with humanized time", () => {
+  it("shortens save-root audio paths to a YYYY-MM-DD/HH:MM:SS pair with humanized date + time", () => {
     expect(
       formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203.m4a"),
-    ).toBe("20260510/01:02:03.m4a");
+    ).toBe("2026-05-10/01:02:03.m4a");
     expect(
       formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203-001.wav"),
-    ).toBe("20260510/01:02:03-001.wav");
+    ).toBe("2026-05-10/01:02:03-001.wav");
   });
 
   it("falls back to the basename when the parent dir is not an 8-digit date", () => {
@@ -107,6 +108,19 @@ describe("transcript history helpers", () => {
     expect(humanizeBasenameTime("standalone.m4a")).toBe("standalone.m4a");
     expect(humanizeBasenameTime("123456789.m4a")).toBe("123456789.m4a");
     expect(humanizeBasenameTime("")).toBe("");
+  });
+
+  it("humanizes 8-digit YYYYMMDD date segments into YYYY-MM-DD", () => {
+    expect(humanizeDateSegment("20260510")).toBe("2026-05-10");
+    expect(humanizeDateSegment("20260101")).toBe("2026-01-01");
+    expect(humanizeDateSegment("99991231")).toBe("9999-12-31");
+  });
+
+  it("leaves non-YYYYMMDD segments unchanged", () => {
+    expect(humanizeDateSegment("2026-05-10")).toBe("2026-05-10");
+    expect(humanizeDateSegment("Imported")).toBe("Imported");
+    expect(humanizeDateSegment("123456789")).toBe("123456789");
+    expect(humanizeDateSegment("")).toBe("");
   });
 
   it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {

@@ -150,7 +150,7 @@ export function formatAudioPathLabel(audioPath: string): string {
   const humanizedLast = humanizeBasenameTime(last);
   const parent = segments.length >= 2 ? segments[segments.length - 2] : "";
   if (/^\d{8}$/.test(parent)) {
-    return `${parent}/${humanizedLast}`;
+    return `${humanizeDateSegment(parent)}/${humanizedLast}`;
   }
 
   return humanizedLast;
@@ -159,6 +159,11 @@ export function formatAudioPathLabel(audioPath: string): string {
 export function humanizeBasenameTime(basename: string): string {
   // 010203.m4a → 01:02:03.m4a; 010203-001.wav → 01:02:03-001.wav
   return basename.replace(/^(\d{2})(\d{2})(\d{2})(?=[.\-])/, "$1:$2:$3");
+}
+
+export function humanizeDateSegment(segment: string): string {
+  // 20260510 → 2026-05-10; non-YYYYMMDD inputs pass through unchanged.
+  return segment.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 }
 
 export function fileUrlFromPath(path: string): string {
