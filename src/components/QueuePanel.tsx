@@ -232,7 +232,12 @@ export function QueuePanel({
                     <td colSpan={4}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
                       {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
-                      {failedCount > 0 ? ` · ${failedCount} failed` : ""}
+                      {failedCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="danger">{failedCount} failed</span>
+                        </>
+                      ) : null}
                       {cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : ""}
                       {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
                     </td>

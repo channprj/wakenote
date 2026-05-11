@@ -476,7 +476,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs \xb7 2 pending \xb7 1 failed/,
+      /table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs \xb7 2 pending[\s\S]*?1 failed/,
     );
     expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
   });
@@ -522,8 +522,50 @@ describe("settings panel", () => {
 
     const markup = renderSettingsPanel(snapshot, "history");
 
-    expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs \xb7 2 failed/);
+    expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-10 \xb7 3 jobs[\s\S]*?2 failed/);
     expect(markup).toMatch(/table-group-row[\s\S]*?2026-05-09 \xb7 1 job(?! \xb7)/);
+  });
+
+  it("renders the day group row failed count in danger tone when failures exist", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "boom",
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/235959.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /table-group-row[\s\S]*?<span data-tone="danger">1 failed<\/span>/,
+    );
+    expect(markup).toMatch(
+      /<tr class="table-group-row"><td colSpan="4">2026-05-09 \xb7 1 job<\/td>/,
+    );
   });
 
   it("appends a cancelled count to the day group row only when cancelled jobs exist that day", () => {

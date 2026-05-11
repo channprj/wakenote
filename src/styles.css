@@ -1265,6 +1265,10 @@ tr:last-child td {
   letter-spacing: 0.04em;
 }
 
+.table-group-row td span[data-tone="danger"] {
+  color: var(--danger);
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;
