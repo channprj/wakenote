@@ -93,6 +93,25 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain("transcript-entry__play");
   });
 
+  it("wraps the transcript timestamp in a file:// link to the .txt sidecar", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+            audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+            recorded_at: "2026-05-10T01:02:03+09:00",
+            text: "clickable transcript",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(
+      '<a href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>',
+    );
+  });
+
   it("shows a bottom sheet player while a transcript is selected for playback", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel

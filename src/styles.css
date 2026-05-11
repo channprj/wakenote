@@ -1450,6 +1450,16 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+.transcript-entry__meta a {
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.transcript-entry__meta a:hover {
+  text-decoration: underline;
+}
+
 .transcript-entry p {
   margin: 0;
   color: var(--text);

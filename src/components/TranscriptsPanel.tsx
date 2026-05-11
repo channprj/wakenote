@@ -97,7 +97,9 @@ function TranscriptEntryRow({
       <div className="transcript-entry__body">
         <div className="transcript-entry__meta">
           <FileText aria-hidden />
-          <span title={entry.transcript_path}>{timestamp || entry.transcript_path}</span>
+          <a href={fileUrlFromPath(entry.transcript_path)} title={entry.transcript_path}>
+            <span>{timestamp || entry.transcript_path}</span>
+          </a>
         </div>
         <p>{entry.text}</p>
       </div>
