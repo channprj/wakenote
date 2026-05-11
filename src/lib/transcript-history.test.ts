@@ -15,6 +15,7 @@ import {
   groupTranscriptsByDay,
   humanizeBasenameTime,
   humanizeDateSegment,
+  humanizeModelStatus,
   humanizeQueueJobStatus,
   humanizeTrayState,
   queueJobSidecarPath,
@@ -145,6 +146,18 @@ describe("transcript history helpers", () => {
     expect(humanizeTrayState("paused")).toBe("Paused");
     expect(humanizeTrayState("error")).toBe("Error");
     expect(humanizeTrayState("")).toBe("");
+  });
+
+  it("title-cases each ModelStatus value for the ModelManager badge", () => {
+    expect(humanizeModelStatus("installed")).toBe("Installed");
+    expect(humanizeModelStatus("missing")).toBe("Missing");
+    expect(humanizeModelStatus("downloading")).toBe("Downloading");
+    expect(humanizeModelStatus("verifying")).toBe("Verifying");
+    expect(humanizeModelStatus("extracting")).toBe("Extracting");
+    expect(humanizeModelStatus("ready")).toBe("Ready");
+    expect(humanizeModelStatus("unloaded")).toBe("Unloaded");
+    expect(humanizeModelStatus("error")).toBe("Error");
+    expect(humanizeModelStatus("")).toBe("");
   });
 
   it("derives sidecar transcript paths only for completed and failed queue jobs", () => {

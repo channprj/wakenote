@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Badge, Button, Progress } from "./ui/primitives";
+import { humanizeModelStatus } from "../lib/transcript-history";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
 
 const LANGUAGE_LABELS: Record<string, string> = {
@@ -119,7 +120,7 @@ export function ModelManager({
                     {model.engine} · {model.provider_runtime} · {formatModelSize(model.size_mb)}
                   </span>
                 </div>
-                <Badge tone={statusTone(model.status)}>{model.status}</Badge>
+                <Badge tone={statusTone(model.status)}>{humanizeModelStatus(model.status)}</Badge>
               </header>
               <Progress value={progress} />
               <div className="model-row__scores">

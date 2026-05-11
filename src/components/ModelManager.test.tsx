@@ -149,6 +149,31 @@ describe("formatModelSize", () => {
   });
 });
 
+describe("model status badge text", () => {
+  it.each([
+    ["ready", "Ready"],
+    ["installed", "Installed"],
+    ["missing", "Missing"],
+    ["downloading", "Downloading"],
+    ["verifying", "Verifying"],
+    ["extracting", "Extracting"],
+    ["unloaded", "Unloaded"],
+    ["error", "Error"],
+  ] satisfies [ModelStatus, string][])(
+    "renders %s as Title-Case '%s' in the badge",
+    (status, label) => {
+      const markup = renderModel(status);
+
+      expect(markup).toMatch(
+        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${label}</span>`),
+      );
+      expect(markup).not.toMatch(
+        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${status}</span>`),
+      );
+    },
+  );
+});
+
 describe("formatLanguageList", () => {
   it("maps known language codes to human-readable labels", () => {
     expect(formatLanguageList(["ko", "en", "multi"])).toBe(
