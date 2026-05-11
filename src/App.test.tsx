@@ -47,4 +47,18 @@ describe("App branding", () => {
     );
     expect(markup).not.toMatch(/<div [^>]*data-tone="primary"[^>]*>\s*<svg[^>]*lucide-activity/);
   });
+
+  it("omits the Runtime status-card data-tone attribute when no warning is present", () => {
+    // Default mockSnapshot has microphone_warning === null and runtime_warning === null, so the
+    // Runtime card should render without a data-tone attribute — the danger/warning palette only
+    // kicks in when activeWarning()'s severity inputs (microphone or runtime warning) are set.
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toMatch(
+      /<span>Runtime<\/span>\s*<strong>System Default<\/strong>/,
+    );
+    expect(markup).not.toMatch(
+      /<div [^>]*data-tone="(danger|warning)"[^>]*>\s*<svg[^>]*lucide-audio-waveform/,
+    );
+  });
 });

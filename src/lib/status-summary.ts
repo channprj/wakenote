@@ -53,6 +53,22 @@ export function levelCardTone(
   return undefined;
 }
 
+// Mirrors the activeWarning() severity classification for the App-level Runtime summary card:
+// a microphone fallback / interpretation failure projects danger (the capture pipeline cannot
+// confidently use the pinned input), a "Live input stream error:" runtime warning is also danger
+// (the stream broke mid-capture), and any other recoverable runtime warning (dropped frames, etc.)
+// projects warning. The absence of either field returns undefined so a healthy runtime stays plain.
+export function runtimeCardTone(
+  microphoneWarning: string | null | undefined,
+  runtimeWarning: string | null | undefined,
+): "danger" | "warning" | undefined {
+  if (microphoneWarning) return "danger";
+  if (runtimeWarning) {
+    return runtimeWarning.startsWith("Live input stream error:") ? "danger" : "warning";
+  }
+  return undefined;
+}
+
 export function visibleWarningForDismissedKey(
   warning: CaptureWarning | null,
   dismissedWarningKey: string | null,

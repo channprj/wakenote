@@ -4,6 +4,7 @@ import {
   levelCardTone,
   nextDismissedWarningKey,
   queueCardTone,
+  runtimeCardTone,
   visibleWarningForDismissedKey,
 } from "./status-summary";
 import { mockSnapshot } from "./app-state";
@@ -316,5 +317,50 @@ describe("levelCardTone", () => {
     expect(levelCardTone(true, -50, -40)).toBeUndefined();
     expect(levelCardTone(true, -50, -50)).toBe("primary");
     expect(levelCardTone(true, -50, -60)).toBe("primary");
+  });
+});
+
+describe("runtimeCardTone", () => {
+  it("returns undefined when both microphone and runtime warnings are absent", () => {
+    expect(runtimeCardTone(null, null)).toBeUndefined();
+    expect(runtimeCardTone(undefined, undefined)).toBeUndefined();
+    expect(runtimeCardTone(null, undefined)).toBeUndefined();
+  });
+
+  it("returns 'danger' when a microphone warning is present", () => {
+    expect(runtimeCardTone("Pinned microphone is unavailable", null)).toBe("danger");
+    expect(runtimeCardTone("Falling back to System Default", null)).toBe("danger");
+  });
+
+  it("returns 'danger' when the runtime warning is a live input stream error", () => {
+    expect(
+      runtimeCardTone(null, "Live input stream error: default input stream disconnected"),
+    ).toBe("danger");
+  });
+
+  it("returns 'warning' for other recoverable runtime warnings", () => {
+    expect(
+      runtimeCardTone(null, "Live input dropped 42 stale audio frames while processing was busy"),
+    ).toBe("warning");
+  });
+
+  it("prioritizes microphone warnings over runtime warnings", () => {
+    expect(
+      runtimeCardTone(
+        "Pinned microphone is unavailable",
+        "Live input stream error: default input stream disconnected",
+      ),
+    ).toBe("danger");
+    expect(
+      runtimeCardTone(
+        "Pinned microphone is unavailable",
+        "Live input dropped 42 stale audio frames while processing was busy",
+      ),
+    ).toBe("danger");
+  });
+
+  it("treats empty strings as absent (falsy) so a healthy runtime stays plain", () => {
+    expect(runtimeCardTone("", "")).toBeUndefined();
+    expect(runtimeCardTone("", null)).toBeUndefined();
   });
 });

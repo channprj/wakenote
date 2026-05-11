@@ -54,6 +54,7 @@ import {
   levelCardTone,
   nextDismissedWarningKey,
   queueCardTone,
+  runtimeCardTone,
   visibleWarningForDismissedKey,
 } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
@@ -332,7 +333,13 @@ export default function App() {
               <span>Queue</span>
               <strong>{statusPresentation.queueSummary}</strong>
             </div>
-            <div data-busy={busy}>
+            <div
+              data-busy={busy}
+              data-tone={runtimeCardTone(
+                snapshot.status.microphone_warning,
+                snapshot.status.runtime_warning,
+              )}
+            >
               <AudioWaveform />
               <span>Runtime</span>
               <strong>{busy ? "Syncing snapshot" : statusPresentation.microphone}</strong>
