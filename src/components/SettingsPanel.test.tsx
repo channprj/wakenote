@@ -6,6 +6,7 @@ import {
   confirmSaveRootDisabledReason,
   startLiveCaptureDisabledReason,
   stopLiveCaptureDisabledReason,
+  vadGateDisabledReason,
 } from "./SettingsPanel";
 import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
 
@@ -144,6 +145,22 @@ describe("settings panel", () => {
 
     expect(vadSwitch).toContain('aria-checked="false"');
     expect(isDisabled(vadSwitch)).toBe(true);
+  });
+
+  it("surfaces a why-disabled tooltip on the VAD gate switch", () => {
+    const snapshot = mockSnapshot();
+    const markup = renderSettingsPanel(snapshot, "privacy");
+    const vadSwitch = switchTag(markup, "VAD gate");
+
+    expect(vadSwitch).toContain(`title="${vadGateDisabledReason()}"`);
+  });
+
+  it("omits the why-disabled tooltip on enabled toggle rows", () => {
+    const snapshot = mockSnapshot();
+    const markup = renderSettingsPanel(snapshot, "privacy");
+    const launchSwitch = switchTag(markup, "Launch at login");
+
+    expect(launchSwitch).not.toContain("title=");
   });
 
   it("shows dock and menu bar icon visibility controls in advanced settings", () => {
@@ -1892,6 +1909,12 @@ describe("settings panel", () => {
     expect(confirmSaveRootDisabledReason({ save_root: "" })).toBe("Enter a save folder first");
     expect(confirmSaveRootDisabledReason({ save_root: "   " })).toBe("Enter a save folder first");
     expect(confirmSaveRootDisabledReason({ save_root: "~/Documents/WakeNote" })).toBeNull();
+  });
+
+  it("derives why-disabled tooltip text for the VAD gate toggle", () => {
+    expect(vadGateDisabledReason()).toBe(
+      "Planned for v1 — Silero VAD will gate non-speech noise",
+    );
   });
 
   it("renders why-disabled tooltips on Start Input, Stop Input, and Confirm Save Root buttons", () => {

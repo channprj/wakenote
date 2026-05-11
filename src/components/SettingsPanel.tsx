@@ -67,6 +67,10 @@ export function confirmSaveRootDisabledReason(
   return null;
 }
 
+export function vadGateDisabledReason(): string {
+  return "Planned for v1 — Silero VAD will gate non-speech noise";
+}
+
 const transcriptionLanguageOptions: Array<{
   value: AppSettings["transcription_language"];
   label: string;
@@ -300,6 +304,7 @@ export function SettingsPanel({
             checked={false}
             disabled
             onChange={() => {}}
+            title={vadGateDisabledReason()}
           />
           <div className="privacy-note">
             <Badge tone="success">Offline</Badge>
@@ -484,16 +489,24 @@ function ToggleRow({
   checked,
   onChange,
   disabled = false,
+  title,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <div className="toggle-row">
       <span>{label}</span>
-      <Switch label={label} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+      <Switch
+        label={label}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+        title={title}
+      />
     </div>
   );
 }
