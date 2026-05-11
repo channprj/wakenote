@@ -984,6 +984,73 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(readyJobModelMarkup, "Process Next"))).toBe(false);
   });
 
+  it("annotates disabled queue toolbar buttons with the reason on hover", () => {
+    const snapshot = mockSnapshot();
+    snapshot.models = snapshot.models.map((model) =>
+      model.id === snapshot.settings.selected_model ? { ...model, status: "ready" } : model,
+    );
+
+    snapshot.queue = {
+      jobs: [],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+    const emptyMarkup = renderSettingsPanel(snapshot, "history");
+    expect(buttonTag(emptyMarkup, "Process Next")).toContain('title="No pending jobs"');
+    expect(buttonTag(emptyMarkup, "Cancel Current")).toContain(
+      'title="No running job to cancel"',
+    );
+
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/in-flight.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "running",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 1,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+    const runningMarkup = renderSettingsPanel(snapshot, "history");
+    expect(buttonTag(runningMarkup, "Process Next")).toContain(
+      'title="A job is already running"',
+    );
+    expect(buttonTag(runningMarkup, "Cancel Current")).not.toMatch(/\stitle="/);
+
+    snapshot.settings.pause_all = true;
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/imported/pending.wav",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+    const pausedMarkup = renderSettingsPanel(snapshot, "history");
+    expect(buttonTag(pausedMarkup, "Process Next")).toContain(
+      'title="Transcription unavailable"',
+    );
+
+    snapshot.settings.pause_all = false;
+    const readyMarkup = renderSettingsPanel(snapshot, "history");
+    expect(isDisabled(buttonTag(readyMarkup, "Process Next"))).toBe(false);
+    expect(buttonTag(readyMarkup, "Process Next")).not.toMatch(/\stitle="/);
+  });
+
   it("shows an explicit save root confirmation action until storage is confirmed", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.save_root = "~/Documents/WakeNote";

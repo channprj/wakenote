@@ -48,6 +48,31 @@ export function queueToolbarActionState(
   };
 }
 
+export function processNextDisabledReason(
+  queue: Pick<QueueSnapshot, "pending_count" | "running_count">,
+  canProcessTranscription: boolean,
+): string | null {
+  if (canProcessTranscription && queue.pending_count > 0 && queue.running_count === 0) {
+    return null;
+  }
+  if (queue.running_count > 0) {
+    return "A job is already running";
+  }
+  if (queue.pending_count === 0) {
+    return "No pending jobs";
+  }
+  return "Transcription unavailable";
+}
+
+export function cancelCurrentDisabledReason(
+  queue: Pick<QueueSnapshot, "running_count">,
+): string | null {
+  if (queue.running_count > 0) {
+    return null;
+  }
+  return "No running job to cancel";
+}
+
 export function QueuePanel({
   queue,
   models,
@@ -70,6 +95,8 @@ export function QueuePanel({
   onSkip: (id: number) => void;
 }) {
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
+  const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
+  const cancelCurrentReason = cancelCurrentDisabledReason(queue);
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
   const completedCount = countCompletedQueueJobs(queue.jobs);
   const pendingBreakdown = summarizeQueueJobsByDay(
@@ -131,6 +158,7 @@ export function QueuePanel({
           variant="primary"
           onClick={onProcessNext}
           disabled={!toolbarActions.canProcessNext}
+          title={processNextReason ?? undefined}
         >
           <Play data-icon="inline-start" />
           Process Next
@@ -140,6 +168,7 @@ export function QueuePanel({
           variant="secondary"
           onClick={onCancelCurrent}
           disabled={!toolbarActions.canCancelCurrent}
+          title={cancelCurrentReason ?? undefined}
         >
           <Ban data-icon="inline-start" />
           Cancel Current

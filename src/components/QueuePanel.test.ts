@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { queueJobActionState, queueToolbarActionState } from "./QueuePanel";
+import {
+  cancelCurrentDisabledReason,
+  processNextDisabledReason,
+  queueJobActionState,
+  queueToolbarActionState,
+} from "./QueuePanel";
 import type { QueueJobStatus } from "../lib/types";
 
 describe("queue row actions", () => {
@@ -63,5 +68,43 @@ describe("queue toolbar actions", () => {
       canProcessNext: false,
       canCancelCurrent: true,
     });
+  });
+});
+
+describe("process next disabled reason", () => {
+  it("returns null while process next is operable", () => {
+    expect(
+      processNextDisabledReason({ pending_count: 1, running_count: 0 }, true),
+    ).toBeNull();
+  });
+
+  it("flags an in-flight job ahead of any other disabled reason", () => {
+    expect(
+      processNextDisabledReason({ pending_count: 1, running_count: 1 }, false),
+    ).toBe("A job is already running");
+  });
+
+  it("falls back to an empty-queue message when nothing is pending", () => {
+    expect(
+      processNextDisabledReason({ pending_count: 0, running_count: 0 }, true),
+    ).toBe("No pending jobs");
+  });
+
+  it("blames the transcription pipeline when pending work cannot be processed", () => {
+    expect(
+      processNextDisabledReason({ pending_count: 1, running_count: 0 }, false),
+    ).toBe("Transcription unavailable");
+  });
+});
+
+describe("cancel current disabled reason", () => {
+  it("returns null while a job is running", () => {
+    expect(cancelCurrentDisabledReason({ running_count: 1 })).toBeNull();
+  });
+
+  it("returns an empty-runner message when nothing is in flight", () => {
+    expect(cancelCurrentDisabledReason({ running_count: 0 })).toBe(
+      "No running job to cancel",
+    );
   });
 });
