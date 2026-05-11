@@ -10,6 +10,7 @@ import {
   countSkippedQueueJobs,
   formatAudioPathLabel,
   groupQueueJobsByDay,
+  summarizeQueueJobsByDay,
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
@@ -71,23 +72,47 @@ export function QueuePanel({
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
   const completedCount = countCompletedQueueJobs(queue.jobs);
+  const pendingBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "pending"),
+  );
+  const runningBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "running"),
+  );
+  const failedBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "failed"),
+  );
+  const completedBreakdown = summarizeQueueJobsByDay(
+    queue.jobs.filter((job) => job.status === "completed"),
+  );
 
   return (
     <div className="queue-panel">
       <div className="queue-stats">
-        <div data-tone={queue.pending_count > 0 ? "warning" : undefined}>
+        <div
+          data-tone={queue.pending_count > 0 ? "warning" : undefined}
+          title={pendingBreakdown || undefined}
+        >
           <span>Pending</span>
           <strong>{queue.pending_count}</strong>
         </div>
-        <div data-tone={queue.running_count > 0 ? "primary" : undefined}>
+        <div
+          data-tone={queue.running_count > 0 ? "primary" : undefined}
+          title={runningBreakdown || undefined}
+        >
           <span>Running</span>
           <strong>{queue.running_count}</strong>
         </div>
-        <div data-tone={queue.failed_count > 0 ? "danger" : undefined}>
+        <div
+          data-tone={queue.failed_count > 0 ? "danger" : undefined}
+          title={failedBreakdown || undefined}
+        >
           <span>Failed</span>
           <strong>{queue.failed_count}</strong>
         </div>
-        <div data-tone={completedCount > 0 ? "success" : undefined}>
+        <div
+          data-tone={completedCount > 0 ? "success" : undefined}
+          title={completedBreakdown || undefined}
+        >
           <span>Completed</span>
           <strong>{completedCount}</strong>
         </div>

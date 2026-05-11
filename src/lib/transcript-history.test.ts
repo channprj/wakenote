@@ -12,6 +12,7 @@ import {
   formatLocalTimestamp,
   groupQueueJobsByDay,
   groupTranscriptsByDay,
+  summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
 
@@ -286,5 +287,61 @@ describe("transcript history helpers", () => {
     expect(groups[0].entries.map((entry) => entry.id)).toEqual([3]);
     expect(groups[1].entries.map((entry) => entry.id)).toEqual([2]);
     expect(groups[2].entries.map((entry) => entry.id)).toEqual([1]);
+  });
+
+  it("summarizes queue job counts by day with descending-date ordering and Imported sink", () => {
+    expect(summarizeQueueJobsByDay([])).toBe("");
+
+    const singleDay: QueueJob[] = [
+      {
+        id: 1,
+        audio_path: "/tmp/WakeNote/20260510/010000.m4a",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 2,
+        audio_path: "/tmp/WakeNote/20260510/020000.m4a",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+    ];
+    expect(summarizeQueueJobsByDay(singleDay)).toBe("2026-05-10: 2");
+
+    const mixedDays: QueueJob[] = [
+      {
+        id: 3,
+        audio_path: "/tmp/imported/standalone.wav",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 4,
+        audio_path: "/tmp/WakeNote/20260509/230000.m4a",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 5,
+        audio_path: "/tmp/WakeNote/20260510/010000.m4a",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+      {
+        id: 6,
+        audio_path: "/tmp/WakeNote/20260510/020000.m4a",
+        model_id: "whisper-medium",
+        status: "pending",
+        error: null,
+      },
+    ];
+    expect(summarizeQueueJobsByDay(mixedDays)).toBe(
+      "2026-05-10: 2 · 2026-05-09: 1 · Imported: 1",
+    );
   });
 });

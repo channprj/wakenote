@@ -716,10 +716,10 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div data-tone="danger"><span>Failed<\/span>\s*<strong>1<\/strong>/,
+      /<div data-tone="danger"[^>]*><span>Failed<\/span>\s*<strong>1<\/strong>/,
     );
     expect(markup).toMatch(
-      /<div data-tone="success"><span>Completed<\/span>\s*<strong>1<\/strong>/,
+      /<div data-tone="success"[^>]*><span>Completed<\/span>\s*<strong>1<\/strong>/,
     );
   });
 
@@ -770,7 +770,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div data-tone="warning"><span>Pending<\/span>\s*<strong>1<\/strong>/,
+      /<div data-tone="warning"[^>]*><span>Pending<\/span>\s*<strong>1<\/strong>/,
     );
   });
 
@@ -819,7 +819,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div data-tone="primary"><span>Running<\/span>\s*<strong>1<\/strong>/,
+      /<div data-tone="primary"[^>]*><span>Running<\/span>\s*<strong>1<\/strong>/,
     );
   });
 
@@ -845,6 +845,80 @@ describe("settings panel", () => {
 
     expect(markup).not.toMatch(/data-tone="primary"><span>Running/);
     expect(markup).toMatch(/<div><span>Running<\/span>\s*<strong>0<\/strong>/);
+  });
+
+  it("exposes a per-day breakdown tooltip on each queue-stats cell with jobs", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/170000.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+        {
+          id: 4,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 3,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /title="2026-05-10: 2 \xb7 2026-05-09: 1"><span>Pending<\/span>/,
+    );
+    expect(markup).toMatch(
+      /title="2026-05-10: 1"><span>Completed<\/span>/,
+    );
+  });
+
+  it("omits queue-stats cell tooltips when no jobs are in that status", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).not.toMatch(/title="[^"]*"><span>Running/);
+    expect(markup).not.toMatch(/title="[^"]*"><span>Failed/);
+    expect(markup).not.toMatch(/title="[^"]*"><span>Completed/);
   });
 
   it("disables process next until the selected model is usable", () => {

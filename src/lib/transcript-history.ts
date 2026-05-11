@@ -117,6 +117,16 @@ export function countCompletedQueueJobs(jobs: QueueJob[]): number {
   return count;
 }
 
+export function summarizeQueueJobsByDay(jobs: QueueJob[]): string {
+  if (jobs.length === 0) {
+    return "";
+  }
+
+  return groupQueueJobsByDay(jobs)
+    .map((group) => `${group.day}: ${group.entries.length}`)
+    .join(" · ");
+}
+
 export function transcriptDayFromAudioPath(audioPath: string): string {
   const match = audioPath.match(/(?:^|\/)(\d{4})(\d{2})(\d{2})(?:\/|$)/);
   if (!match) {
