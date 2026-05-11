@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveProductMode,
   deriveTrayState,
+  mockModels,
   mockSnapshot,
   pollSnapshotDependencyKey,
   shouldPollSnapshot,
@@ -41,6 +42,22 @@ describe("app state derivation", () => {
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");
     expect(deriveTrayState("recording_only", false, true)).toBe("error");
+  });
+
+  it("keeps browser fallback models in sync with Korean-capable whisper options", () => {
+    const models = mockModels();
+    const ids = models.map((model) => model.id);
+
+    expect(ids).toEqual([
+      "whisper-large",
+      "whisper-medium",
+      "whisper-small",
+      "whisper-tiny",
+      "whisper-turbo",
+    ]);
+    for (const model of models) {
+      expect(model.languages).toContain("ko");
+    }
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {

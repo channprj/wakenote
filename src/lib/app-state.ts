@@ -156,6 +156,23 @@ export function defaultSettings(): AppSettings {
 export function mockModels(): ModelDescriptor[] {
   return [
     {
+      id: "whisper-large",
+      display_name: "Whisper Large",
+      engine: "whisper.cpp",
+      provider_runtime: "whisper-rs",
+      download_url: "https://blob.handy.computer/ggml-large-v3-q5_0.bin",
+      checksum_sha256:
+        "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+      size_mb: 1031,
+      languages: ["ko", "en", "multi"],
+      speed_score: 3,
+      accuracy_score: 9,
+      offline: true,
+      status: "missing",
+      download_progress: null,
+      download_error: null,
+    },
+    {
       id: "whisper-medium",
       display_name: "Whisper Medium",
       engine: "whisper.cpp",
@@ -163,11 +180,28 @@ export function mockModels(): ModelDescriptor[] {
       download_url:
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
       checksum_sha256:
-        "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e",
+        "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
       size_mb: 1465,
       languages: ["ko", "en", "multi"],
       speed_score: 5,
       accuracy_score: 8,
+      offline: true,
+      status: "missing",
+      download_progress: null,
+      download_error: null,
+    },
+    {
+      id: "whisper-small",
+      display_name: "Whisper Small",
+      engine: "whisper.cpp",
+      provider_runtime: "whisper-rs",
+      download_url: "https://blob.handy.computer/ggml-small.bin",
+      checksum_sha256:
+        "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+      size_mb: 465,
+      languages: ["ko", "en", "multi"],
+      speed_score: 8,
+      accuracy_score: 6,
       offline: true,
       status: "missing",
       download_progress: null,
@@ -181,11 +215,29 @@ export function mockModels(): ModelDescriptor[] {
       download_url:
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
       checksum_sha256:
-        "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2",
+        "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
       size_mb: 75,
       languages: ["ko", "en", "multi"],
       speed_score: 9,
       accuracy_score: 4,
+      offline: true,
+      status: "missing",
+      download_progress: null,
+      download_error: null,
+    },
+    {
+      id: "whisper-turbo",
+      display_name: "Whisper Turbo",
+      engine: "whisper.cpp",
+      provider_runtime: "whisper-rs",
+      download_url:
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+      checksum_sha256:
+        "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+      size_mb: 1550,
+      languages: ["ko", "en", "multi"],
+      speed_score: 8,
+      accuracy_score: 7,
       offline: true,
       status: "missing",
       download_progress: null,

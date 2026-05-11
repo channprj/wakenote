@@ -667,6 +667,28 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
     let mut registry = BTreeMap::new();
 
     registry.insert(
+        "whisper-small".to_string(),
+        ModelDescriptor {
+            id: "whisper-small".to_string(),
+            display_name: "Whisper Small".to_string(),
+            engine: "whisper.cpp".to_string(),
+            provider_runtime: "whisper-rs".to_string(),
+            download_url: Some("https://blob.handy.computer/ggml-small.bin".to_string()),
+            checksum_sha256: Some(
+                "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b".to_string(),
+            ),
+            size_mb: 465,
+            languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
+            speed_score: 8,
+            accuracy_score: 6,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
+    registry.insert(
         "whisper-medium".to_string(),
         ModelDescriptor {
             id: "whisper-medium".to_string(),
@@ -741,6 +763,28 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    registry.insert(
+        "whisper-large".to_string(),
+        ModelDescriptor {
+            id: "whisper-large".to_string(),
+            display_name: "Whisper Large".to_string(),
+            engine: "whisper.cpp".to_string(),
+            provider_runtime: "whisper-rs".to_string(),
+            download_url: Some("https://blob.handy.computer/ggml-large-v3-q5_0.bin".to_string()),
+            checksum_sha256: Some(
+                "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1".to_string(),
+            ),
+            size_mb: 1_031,
+            languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
+            speed_score: 3,
+            accuracy_score: 9,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
     registry
 }
 
@@ -751,10 +795,14 @@ mod tests {
 
     const WHISPER_TINY_SHA256: &str =
         "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
+    const WHISPER_SMALL_SHA256: &str =
+        "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
     const WHISPER_MEDIUM_SHA256: &str =
         "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208";
     const WHISPER_TURBO_SHA256: &str =
         "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
+    const WHISPER_LARGE_SHA256: &str =
+        "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1";
     // Pre-fix bogus values that shipped to users; never reintroduce.
     const WHISPER_TINY_BOGUS_SHA256: &str =
         "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2";
@@ -788,9 +836,9 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_uses_real_huggingface_sha256() {
+    fn default_registry_uses_pinned_remote_sha256() {
         let registry = default_model_registry();
-        assert_eq!(registry.len(), 3, "registry should ship three models");
+        assert_eq!(registry.len(), 5, "registry should ship five models");
 
         let tiny = registry.get("whisper-tiny").expect("whisper-tiny entry");
         let tiny_hash = tiny
@@ -806,6 +854,17 @@ mod tests {
             tiny_hash, WHISPER_TINY_BOGUS_SHA256,
             "regression: pre-fix bogus tiny checksum must never reappear",
         );
+
+        let small = registry.get("whisper-small").expect("whisper-small entry");
+        let small_hash = small
+            .checksum_sha256
+            .as_deref()
+            .expect("whisper-small must have a checksum");
+        assert!(
+            is_lowercase_hex_64(small_hash),
+            "small checksum must be 64 lowercase hex chars: {small_hash}",
+        );
+        assert_eq!(small_hash, WHISPER_SMALL_SHA256);
 
         let medium = registry
             .get("whisper-medium")
@@ -834,6 +893,17 @@ mod tests {
             "turbo checksum must be 64 lowercase hex chars: {turbo_hash}",
         );
         assert_eq!(turbo_hash, WHISPER_TURBO_SHA256);
+
+        let large = registry.get("whisper-large").expect("whisper-large entry");
+        let large_hash = large
+            .checksum_sha256
+            .as_deref()
+            .expect("whisper-large must have a checksum");
+        assert!(
+            is_lowercase_hex_64(large_hash),
+            "large checksum must be 64 lowercase hex chars: {large_hash}",
+        );
+        assert_eq!(large_hash, WHISPER_LARGE_SHA256);
     }
 
     #[test]

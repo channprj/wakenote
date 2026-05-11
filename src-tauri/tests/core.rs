@@ -479,6 +479,14 @@ fn live_capture_should_start_on_launch_respects_auto_start_toggle() {
 fn default_model_registry_includes_whisper_medium_and_fast_local_fallback() {
     let registry = default_model_registry();
 
+    let small = registry.get("whisper-small").expect("small model");
+    assert_eq!(small.display_name, "Whisper Small");
+    assert!(small.languages.iter().any(|language| language == "ko"));
+    assert_eq!(small.size_mb, 465);
+    assert!(small.offline);
+    assert_eq!(small.status, ModelStatus::Missing);
+    assert!(small.checksum_sha256.is_some());
+
     let medium = registry.get("whisper-medium").expect("medium model");
     assert_eq!(medium.display_name, "Whisper Medium");
     assert!(medium.offline);
@@ -488,6 +496,7 @@ fn default_model_registry_includes_whisper_medium_and_fast_local_fallback() {
     let fast = registry.get("whisper-tiny").expect("fast fallback");
     assert!(fast.speed_score > medium.speed_score);
     assert!(fast.offline);
+    assert!(fast.languages.iter().any(|language| language == "ko"));
 
     let turbo = registry.get("whisper-turbo").expect("turbo model");
     assert_eq!(turbo.display_name, "Whisper Turbo");
@@ -495,15 +504,28 @@ fn default_model_registry_includes_whisper_medium_and_fast_local_fallback() {
     assert_eq!(turbo.status, ModelStatus::Missing);
     assert!(turbo.speed_score > medium.speed_score);
     assert!(turbo.accuracy_score < medium.accuracy_score);
+    assert!(turbo.languages.iter().any(|language| language == "ko"));
+
+    let large = registry.get("whisper-large").expect("large model");
+    assert_eq!(large.display_name, "Whisper Large");
+    assert!(large.languages.iter().any(|language| language == "ko"));
+    assert_eq!(large.size_mb, 1_031);
+    assert!(large.offline);
+    assert_eq!(large.status, ModelStatus::Missing);
+    assert!(large.accuracy_score >= medium.accuracy_score);
+    assert!(large.checksum_sha256.is_some());
 }
 
 #[test]
-fn default_registry_uses_real_huggingface_sha256() {
-    // Pin the exact SHA256 checksums published by Hugging Face for each
-    // bundled whisper.cpp model. Bumping or changing any of these strings
-    // means the binary content has shifted; verify against
-    // `curl -L <url> | shasum -a 256` before updating.
+fn default_registry_uses_pinned_remote_sha256() {
+    // Pin the exact SHA256 checksums for each bundled whisper.cpp model.
+    // Bumping or changing any of these strings means the binary content has
+    // shifted; verify against `curl -L <url> | shasum -a 256` before updating.
     const EXPECTED: &[(&str, &str)] = &[
+        (
+            "whisper-small",
+            "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+        ),
         (
             "whisper-medium",
             "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
@@ -515,6 +537,10 @@ fn default_registry_uses_real_huggingface_sha256() {
         (
             "whisper-turbo",
             "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        ),
+        (
+            "whisper-large",
+            "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
         ),
     ];
 
