@@ -797,6 +797,10 @@ svg {
   color: var(--success);
 }
 
+.queue-stats div[data-tone="warning"] strong {
+  color: var(--warning);
+}
+
 .level-meter__track {
   position: relative;
   display: grid;

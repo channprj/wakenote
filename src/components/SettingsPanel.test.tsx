@@ -749,6 +749,55 @@ describe("settings panel", () => {
     expect(markup).toMatch(/<div><span>Completed<\/span>\s*<strong>0<\/strong>/);
   });
 
+  it("tones the queue-stats Pending cell with warning when the count is non-zero", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<div data-tone="warning"><span>Pending<\/span>\s*<strong>1<\/strong>/,
+    );
+  });
+
+  it("leaves the queue-stats Pending cell untoned when no jobs are pending", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).not.toMatch(/data-tone="warning"><span>Pending/);
+    expect(markup).toMatch(/<div><span>Pending<\/span>\s*<strong>0<\/strong>/);
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

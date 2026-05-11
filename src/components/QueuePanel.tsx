@@ -75,7 +75,7 @@ export function QueuePanel({
   return (
     <div className="queue-panel">
       <div className="queue-stats">
-        <div>
+        <div data-tone={queue.pending_count > 0 ? "warning" : undefined}>
           <span>Pending</span>
           <strong>{queue.pending_count}</strong>
         </div>
