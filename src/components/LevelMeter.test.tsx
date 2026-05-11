@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
-import { LevelMeter } from "./LevelMeter";
+import { LevelMeter, calibrateDisabledReason } from "./LevelMeter";
 
 function renderLevelMeter(liveInputActive: boolean) {
   const snapshot = mockSnapshot();
@@ -44,6 +44,11 @@ function isDisabled(button: string) {
   return /\sdisabled(=""|\s|>)/.test(button);
 }
 
+function titleOf(button: string): string | null {
+  const match = button.match(/\stitle="([^"]*)"/);
+  return match ? match[1] : null;
+}
+
 describe("level meter", () => {
   it("only shows live levels and calibration actions while live input is active", () => {
     const inactive = renderLevelMeter(false);
@@ -73,5 +78,25 @@ describe("level meter", () => {
     const active = renderLevelMeter(true);
     expect(active).toMatch(/<span class="ui-badge ui-badge--success">Listening<\/span>/);
     expect(active).not.toMatch(/<span class="ui-badge[^"]*">listening<\/span>/);
+  });
+
+  it("surfaces a 'why disabled' title on the Calibrate button when live input is inactive", () => {
+    const inactive = renderLevelMeter(false);
+    expect(titleOf(buttonTag(inactive, "Calibrate"))).toBe("Start input to calibrate");
+
+    const active = renderLevelMeter(true);
+    expect(titleOf(buttonTag(active, "Calibrate"))).toBeNull();
+  });
+});
+
+describe("calibrateDisabledReason", () => {
+  it("returns a reason when live input is inactive", () => {
+    expect(calibrateDisabledReason({ live_input_active: false })).toBe(
+      "Start input to calibrate",
+    );
+  });
+
+  it("returns null when live input is active", () => {
+    expect(calibrateDisabledReason({ live_input_active: true })).toBeNull();
   });
 });

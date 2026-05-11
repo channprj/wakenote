@@ -13,6 +13,13 @@ function meterPosition(dbfs: number) {
   return `${Math.max(0, Math.min(100, ((dbfs + 90) / 90) * 100))}%`;
 }
 
+export function calibrateDisabledReason(
+  status: Pick<AppStatus, "live_input_active">,
+): string | null {
+  if (!status.live_input_active) return "Start input to calibrate";
+  return null;
+}
+
 export function LevelMeter({
   settings,
   status,
@@ -25,6 +32,7 @@ export function LevelMeter({
   onResetThreshold: () => void;
 }) {
   const active = status.live_input_active;
+  const calibrateReason = calibrateDisabledReason(status);
   const [calibrationStartMs, setCalibrationStartMs] = useState<number | null>(null);
   const [calibrationApplied, setCalibrationApplied] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -125,6 +133,7 @@ export function LevelMeter({
             setCalibrationApplied(false);
           }}
           disabled={!active}
+          title={calibrateReason ?? undefined}
         >
           <TimerReset data-icon="inline-start" />
           Calibrate
