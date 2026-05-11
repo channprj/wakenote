@@ -470,12 +470,14 @@ export function SettingsPanel({
           </Select>
           {!selectedMicrophoneAvailable ? (
             fallbackMicrophone ? (
-              <div className="warning-banner">
+              <div className="warning-banner warning-banner--warning">
                 {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
                 {fallbackMicrophone.label}.
               </div>
             ) : (
-              <div className="warning-banner">No available input device is selected.</div>
+              <div className="warning-banner warning-banner--danger">
+                No available input device is selected.
+              </div>
             )
           ) : null}
         </div>

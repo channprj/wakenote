@@ -78,6 +78,35 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(markup, "Start Input"))).toBe(false);
     expect(markup).toContain("Missing AirPods is unavailable");
     expect(markup).toContain("Start Input will use System Default");
+    expect(markup).toMatch(
+      /<div class="warning-banner warning-banner--warning">\s*Missing AirPods is unavailable/,
+    );
+    expect(markup).not.toMatch(/warning-banner--danger[^"]*">[\s\S]*?Missing AirPods is unavailable/);
+  });
+
+  it("flags the microphone banner as danger when no fallback input is available", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.selected_microphone = "input-9-missing-airpods";
+    snapshot.settings.selected_microphone_label = "Missing AirPods";
+    snapshot.microphones = [];
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toMatch(
+      /<div class="warning-banner warning-banner--danger">\s*No available input device is selected\.\s*<\/div>/,
+    );
+    expect(markup).not.toMatch(
+      /<div class="warning-banner warning-banner--warning">\s*No available input device is selected/,
+    );
+  });
+
+  it("omits the microphone warning banner entirely when the selected mic is available", () => {
+    const snapshot = mockSnapshot();
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).not.toContain("is unavailable");
+    expect(markup).not.toContain("No available input device is selected");
+    expect(markup).not.toMatch(/warning-banner--danger/);
   });
 
   it("disables redundant live input start and stop actions while preserving error recovery", () => {
