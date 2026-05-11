@@ -2,7 +2,11 @@ import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide
 import { Fragment } from "react";
 import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
-import { formatAudioPathLabel, groupQueueJobsByDay } from "../lib/transcript-history";
+import {
+  countFailedQueueJobs,
+  formatAudioPathLabel,
+  groupQueueJobsByDay,
+} from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
 function toneForStatus(status: string) {
@@ -125,11 +129,14 @@ export function QueuePanel({
                 </td>
               </tr>
             ) : (
-              groupedJobs.map((group) => (
+              groupedJobs.map((group) => {
+                const failedCount = countFailedQueueJobs(group.entries);
+                return (
                 <Fragment key={group.day}>
                   <tr className="table-group-row">
                     <td colSpan={4}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
+                      {failedCount > 0 ? ` · ${failedCount} failed` : ""}
                     </td>
                   </tr>
                   {group.entries.map((job) => {
@@ -169,7 +176,8 @@ export function QueuePanel({
                     );
                   })}
                 </Fragment>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

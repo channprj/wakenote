@@ -67,6 +67,16 @@ export function groupQueueJobsByDay(
     .sort((left, right) => compareTranscriptDaysDescending(left.day, right.day));
 }
 
+export function countFailedQueueJobs(jobs: QueueJob[]): number {
+  let count = 0;
+  for (const job of jobs) {
+    if (job.status === "failed") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function transcriptDayFromAudioPath(audioPath: string): string {
   const match = audioPath.match(/(?:^|\/)(\d{4})(\d{2})(\d{2})(?:\/|$)/);
   if (!match) {
