@@ -12,6 +12,7 @@ import {
   fileUrlFromPath,
   formatAudioPathLabel,
   groupQueueJobsByDay,
+  humanizeQueueJobStatus,
   summarizeQueueJobsByDay,
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
@@ -309,7 +310,7 @@ export function QueuePanel({
                         </td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td title={job.error ?? undefined}>
-                          <Badge tone={toneForStatus(job.status)}>{job.status}</Badge>
+                          <Badge tone={toneForStatus(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
                         </td>
                         <td>
                           <div className="row-actions">

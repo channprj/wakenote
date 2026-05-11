@@ -176,6 +176,14 @@ export function humanizeDateSegment(segment: string): string {
   return segment.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 }
 
+export function humanizeQueueJobStatus(status: string): string {
+  // pending → Pending; matches the banner cell labels' Title Case convention.
+  if (status.length === 0) {
+    return status;
+  }
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 export function fileUrlFromPath(path: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) {
     return path;

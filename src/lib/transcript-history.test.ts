@@ -15,6 +15,7 @@ import {
   groupTranscriptsByDay,
   humanizeBasenameTime,
   humanizeDateSegment,
+  humanizeQueueJobStatus,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -122,6 +123,16 @@ describe("transcript history helpers", () => {
     expect(humanizeDateSegment("Imported")).toBe("Imported");
     expect(humanizeDateSegment("123456789")).toBe("123456789");
     expect(humanizeDateSegment("")).toBe("");
+  });
+
+  it("title-cases each QueueJobStatus value to match the banner cell labels", () => {
+    expect(humanizeQueueJobStatus("pending")).toBe("Pending");
+    expect(humanizeQueueJobStatus("running")).toBe("Running");
+    expect(humanizeQueueJobStatus("completed")).toBe("Completed");
+    expect(humanizeQueueJobStatus("failed")).toBe("Failed");
+    expect(humanizeQueueJobStatus("cancelled")).toBe("Cancelled");
+    expect(humanizeQueueJobStatus("skipped")).toBe("Skipped");
+    expect(humanizeQueueJobStatus("")).toBe("");
   });
 
   it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {

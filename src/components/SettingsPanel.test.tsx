@@ -458,11 +458,47 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">failed<\/span>\s*<\/td>/,
+      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/td>/,
     );
     expect(markup).toMatch(
-      /<td>\s*<span class="ui-badge ui-badge--success[^"]*">completed<\/span>\s*<\/td>/,
+      /<td>\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/td>/,
     );
+  });
+
+  it("title-cases every QueueJobStatus value in the per-row Badge text", () => {
+    const snapshot = mockSnapshot();
+    const statuses: { id: number; status: "pending" | "running" | "completed" | "failed" | "cancelled" | "skipped"; label: string }[] = [
+      { id: 1, status: "pending", label: "Pending" },
+      { id: 2, status: "running", label: "Running" },
+      { id: 3, status: "completed", label: "Completed" },
+      { id: 4, status: "failed", label: "Failed" },
+      { id: 5, status: "cancelled", label: "Cancelled" },
+      { id: 6, status: "skipped", label: "Skipped" },
+    ];
+    snapshot.queue = {
+      jobs: statuses.map(({ id, status }) => ({
+        id,
+        audio_path: `/tmp/WakeNote/20260510/0102${String(id).padStart(2, "0")}.m4a`,
+        model_id: snapshot.settings.selected_model,
+        status,
+        error: null,
+      })),
+      pending_count: 1,
+      running_count: 1,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    for (const { status, label } of statuses) {
+      expect(markup).toMatch(
+        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${label}</span>`),
+      );
+      expect(markup).not.toMatch(
+        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${status}</span>`),
+      );
+    }
   });
 
   it("appends a pending count to the day group row only when pending jobs exist that day", () => {
