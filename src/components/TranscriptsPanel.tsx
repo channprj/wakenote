@@ -237,7 +237,9 @@ function TranscriptPlayerSheet({
       <div className="transcript-player-sheet__header">
         <div>
           <span>Now playing</span>
-          <strong>{timestamp || entry.audio_path}</strong>
+          <a href={fileUrlFromPath(audioPath)} title={audioPath}>
+            <strong>{timestamp || audioPath}</strong>
+          </a>
         </div>
         <Button
           aria-label="Close player"

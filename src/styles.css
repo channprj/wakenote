@@ -1534,6 +1534,15 @@ tr:last-child td {
   font-size: 14px;
 }
 
+.transcript-player-sheet__header a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.transcript-player-sheet__header a:hover {
+  text-decoration: underline;
+}
+
 .transcript-player-sheet audio {
   width: 100%;
 }

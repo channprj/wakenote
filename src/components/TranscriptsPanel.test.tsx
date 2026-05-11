@@ -129,4 +129,24 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain('src="file:///tmp/WakeNote/20260510/010203.m4a"');
     expect(markup).toContain("Now playing");
   });
+
+  it("wraps the player sheet header strong in a file:// link to the recording", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        initialPlayingTranscriptPath="/tmp/WakeNote/20260510/010203.txt"
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+            audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+            recorded_at: "2026-05-10T01:02:03+09:00",
+            text: "clickable header transcript",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain(
+      '<a href="file:///tmp/WakeNote/20260510/010203.m4a" title="/tmp/WakeNote/20260510/010203.m4a"><strong>2026-05-10 01:02:03</strong></a>',
+    );
+  });
 });
