@@ -5,6 +5,7 @@ import {
   nextDismissedWarningKey,
   queueCardTone,
   runtimeCardTone,
+  trayStateBadgeTone,
   visibleWarningForDismissedKey,
 } from "./status-summary";
 import { mockSnapshot } from "./app-state";
@@ -362,5 +363,36 @@ describe("runtimeCardTone", () => {
   it("treats empty strings as absent (falsy) so a healthy runtime stays plain", () => {
     expect(runtimeCardTone("", "")).toBeUndefined();
     expect(runtimeCardTone("", null)).toBeUndefined();
+  });
+});
+
+describe("trayStateBadgeTone", () => {
+  it("maps idle to neutral (the default tray-state Badge tone)", () => {
+    expect(trayStateBadgeTone("idle")).toBe("neutral");
+  });
+
+  it("maps listening to primary (capture monitoring is live)", () => {
+    expect(trayStateBadgeTone("listening")).toBe("primary");
+  });
+
+  it("maps recording to success (speech gate has opened)", () => {
+    expect(trayStateBadgeTone("recording")).toBe("success");
+  });
+
+  it("maps transcribing to warning (worker is busy processing the queue)", () => {
+    expect(trayStateBadgeTone("transcribing")).toBe("warning");
+  });
+
+  it("maps paused to warning (operator-visible attention state)", () => {
+    expect(trayStateBadgeTone("paused")).toBe("warning");
+  });
+
+  it("maps error to danger (needs attention)", () => {
+    expect(trayStateBadgeTone("error")).toBe("danger");
+  });
+
+  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
+    expect(trayStateBadgeTone("unknown")).toBe("neutral");
+    expect(trayStateBadgeTone("")).toBe("neutral");
   });
 });

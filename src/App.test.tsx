@@ -23,6 +23,19 @@ describe("App branding", () => {
     expect(markup).not.toMatch(/<span class="ui-badge[^"]*">idle<\/span>/);
   });
 
+  it("tones the status-hero tray_state Badge by tray_state (idle → neutral on default mockSnapshot)", () => {
+    // Default mockSnapshot's deriveTrayState returns "idle", which maps to ui-badge--neutral via
+    // trayStateBadgeTone — making the tone-aware wiring explicit so non-idle states (listening,
+    // recording, transcribing, paused, error) automatically surface their semantic Badge color.
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toMatch(/<span class="ui-badge ui-badge--neutral">Idle<\/span>/);
+    // Negative-leak: the Idle Badge must not accidentally pick up any non-neutral tone class.
+    expect(markup).not.toMatch(
+      /<span class="ui-badge ui-badge--(primary|success|warning|danger)">Idle<\/span>/,
+    );
+  });
+
   it("omits the Queue status-card data-tone attribute when the queue is fully clean", () => {
     // Default mockSnapshot has every queue counter === 0 (pending/running/failed/completed),
     // so the Queue card should render without a data-tone attribute — the tone palette

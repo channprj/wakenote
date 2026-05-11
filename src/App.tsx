@@ -55,6 +55,7 @@ import {
   nextDismissedWarningKey,
   queueCardTone,
   runtimeCardTone,
+  trayStateBadgeTone,
   visibleWarningForDismissedKey,
 } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
@@ -309,7 +310,9 @@ export default function App() {
             <div className="status-hero__copy">
               <div className="status-strip">
                 <Badge tone={statusPresentation.tone}>{statusPresentation.modeLabel}</Badge>
-                <Badge>{humanizeTrayState(snapshot.status.tray_state)}</Badge>
+                <Badge tone={trayStateBadgeTone(snapshot.status.tray_state)}>
+                  {humanizeTrayState(snapshot.status.tray_state)}
+                </Badge>
               </div>
               <h1>{statusPresentation.headline}</h1>
               <span>{statusPresentation.detail}</span>

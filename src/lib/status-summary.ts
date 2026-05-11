@@ -92,6 +92,16 @@ const trayCopy: Record<TrayState, { headline: string; tone: StatusTone }> = {
   error: { headline: "Needs attention", tone: "danger" },
 };
 
+// Reuses the trayCopy mapping that already drives the first status-strip Badge tone via
+// captureStatusPresentation, but bypasses captureStatusPresentation's live_input_active override
+// (which forces idle recording_*/recording_and_transcription to neutral). The second Badge always
+// renders the raw tray_state literal (humanizeTrayState), so its tone should track the literal too:
+// idle → neutral, listening → primary, recording → success, transcribing/paused → warning,
+// error → danger. Falls back to "neutral" for unknown strings to keep the Badge contract total.
+export function trayStateBadgeTone(state: TrayState | string): StatusTone {
+  return (trayCopy as Record<string, { tone: StatusTone } | undefined>)[state]?.tone ?? "neutral";
+}
+
 const modeLabels: Record<AppMode, string> = {
   recording_and_transcription: "Recording + transcription",
   recording_only: "Recording only",
