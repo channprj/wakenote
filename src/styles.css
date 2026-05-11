@@ -1277,6 +1277,22 @@ tr:last-child td {
   color: var(--success);
 }
 
+.queue-panel tr[data-tone="danger"] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.queue-panel tr[data-tone="warning"] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.queue-panel tr[data-tone="success"] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--success);
+}
+
+.queue-panel tr[data-tone="primary"] > td:first-child {
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
 .empty-cell {
   color: var(--muted);
   text-align: center;

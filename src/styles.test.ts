@@ -6,7 +6,11 @@ const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("model row styling", () => {
   it("does not add a thicker selected-state left border", () => {
-    expect(css).not.toMatch(/\.model-row\[data-selected="true"\][\s\S]*?inset\s+3px\s+0\s+0/);
+    // Constrain the search to the .model-row[data-selected="true"] rule body
+    // (no `}` between the selector and the forbidden declaration) so unrelated
+    // downstream rules that legitimately use `inset 3px 0 0` (e.g. the queue
+    // row tone accents) don't trip this assertion.
+    expect(css).not.toMatch(/\.model-row\[data-selected="true"\][^}]*?inset\s+3px\s+0\s+0/);
   });
 });
 

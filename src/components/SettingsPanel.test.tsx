@@ -1139,6 +1139,64 @@ describe("settings panel", () => {
     expect(markup).not.toMatch(/title="[^"]*"><span>Completed/);
   });
 
+  it("decorates each queue row with a status-derived data-tone for left-edge accent styling", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "running",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "failed",
+          error: "boom",
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260510/030405.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 4,
+          audio_path: "/tmp/WakeNote/20260510/040506.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "pending",
+          error: null,
+        },
+      ],
+      pending_count: 1,
+      running_count: 1,
+      failed_count: 1,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /<tr data-tone="primary"><td[^>]*>20260510\/010203\.m4a<\/td>/,
+    );
+    expect(markup).toMatch(
+      /<tr data-tone="danger"><td[^>]*>20260510\/020304\.m4a<\/td>/,
+    );
+    expect(markup).toMatch(
+      /<tr data-tone="success"><td[^>]*>20260510\/030405\.m4a<\/td>/,
+    );
+    // Pending rows stay untoned (neutral) so they don't compete with actionable
+    // rows for visual attention; assert the tr opens with just the React key
+    // markup and no data-tone attribute precedes the Audio cell.
+    expect(markup).toMatch(
+      /<tr><td[^>]*>20260510\/040506\.m4a<\/td>/,
+    );
+  });
+
   it("disables process next until the selected model is usable", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

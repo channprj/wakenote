@@ -14,7 +14,7 @@ import {
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
-function toneForStatus(status: string) {
+export function toneForStatus(status: string) {
   if (status === "running") {
     return "primary";
   }
@@ -268,8 +268,9 @@ export function QueuePanel({
                     const actions = queueJobActionState(job.status);
                     const retryReason = queueJobRetryDisabledReason(job.status);
                     const skipReason = queueJobSkipDisabledReason(job.status);
+                    const rowTone = toneForStatus(job.status);
                     return (
-                      <tr key={job.id}>
+                      <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
                         <td title={job.audio_path}>{formatAudioPathLabel(job.audio_path)}</td>
                         <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
                         <td title={job.error ?? undefined}>
