@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::PathBuf};
 
+use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
@@ -7,6 +8,7 @@ use wakenote::commands::{
     reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
     tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
 };
+use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
@@ -253,6 +255,65 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
             .audio_path
             .ends_with(format!("{dir}/{stem}.wav"))
     );
+}
+
+#[test]
+fn backend_uses_frame_capture_time_for_recording_filename() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_capture_session_with_device(10, base_time, "default", "System Default", false)
+        .expect("start capture session");
+
+    for end_ms in [60_100, 60_200] {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: vec![0.8],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("speech frame");
+    }
+    for end_ms in [60_300, 60_400, 60_500] {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: vec![0.0],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("silence frame");
+    }
+
+    let expected_started_at = base_time + chrono::Duration::seconds(60);
+    let expected_local = expected_started_at.with_timezone(&chrono::Local);
+    let expected_dir = expected_local.format("%Y%m%d").to_string();
+    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{expected_dir}/{expected_stem}.wav"))
+    );
+
+    let metadata_path = snapshot.jobs[0].audio_path.with_extension("json");
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(metadata_path).expect("metadata"))
+            .expect("metadata json");
+    assert_eq!(metadata.started_at, expected_started_at);
 }
 
 #[test]

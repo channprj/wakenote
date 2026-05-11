@@ -5,6 +5,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use thiserror::Error;
 
@@ -15,6 +16,7 @@ const CPAL_STREAM_READY_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct AudioFrame {
     pub samples: Vec<f32>,
     pub duration_ms: u64,
+    pub captured_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -545,5 +547,6 @@ fn emit_f32_frame(
     on_frame(AudioFrame {
         samples: mono,
         duration_ms: duration_ms.max(1),
+        captured_at: Utc::now(),
     });
 }

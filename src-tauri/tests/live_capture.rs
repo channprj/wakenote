@@ -17,6 +17,15 @@ struct FakeHandle {
     runtime_error: Arc<Mutex<Option<String>>>,
 }
 
+fn audio_frame(samples: Vec<f32>, duration_ms: u64) -> AudioFrame {
+    AudioFrame {
+        samples,
+        duration_ms,
+        captured_at: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
+            + chrono::Duration::milliseconds(duration_ms as i64),
+    }
+}
+
 impl AudioStreamHandle for FakeHandle {
     fn runtime_error(&self) -> Option<String> {
         self.runtime_error.lock().ok()?.clone()
@@ -65,10 +74,7 @@ fn live_capture_runtime_starts_once_and_delivers_audio_frames() {
             received_tx.send(frame).expect("received frame");
         })
         .expect("start");
-    emitter.emit(AudioFrame {
-        samples: vec![0.1, -0.1, 0.2],
-        duration_ms: 20,
-    });
+    emitter.emit(audio_frame(vec![0.1, -0.1, 0.2], 20));
 
     let received = received_rx
         .recv_timeout(Duration::from_secs(1))
@@ -116,19 +122,13 @@ fn live_capture_runtime_does_not_block_input_callback_when_processing_is_busy() 
 
     let first_emitter = emitter.clone();
     let first = std::thread::spawn(move || {
-        first_emitter.emit(AudioFrame {
-            samples: vec![0.1],
-            duration_ms: 10,
-        });
+        first_emitter.emit(audio_frame(vec![0.1], 10));
     });
     assert_eq!(entered_rx.recv_timeout(Duration::from_secs(1)), Ok(10));
 
     let second_emitter = emitter.clone();
     let second = std::thread::spawn(move || {
-        second_emitter.emit(AudioFrame {
-            samples: vec![0.2],
-            duration_ms: 20,
-        });
+        second_emitter.emit(audio_frame(vec![0.2], 20));
         returned_tx.send(()).expect("returned");
     });
 
@@ -167,17 +167,11 @@ fn live_capture_runtime_drops_stale_frames_when_processing_falls_behind() {
         })
         .expect("start");
 
-    emitter.emit(AudioFrame {
-        samples: vec![0.1],
-        duration_ms: 0,
-    });
+    emitter.emit(audio_frame(vec![0.1], 0));
     assert_eq!(entered_rx.recv_timeout(Duration::from_secs(1)), Ok(0));
 
     for duration_ms in 1..=600 {
-        emitter.emit(AudioFrame {
-            samples: vec![0.2],
-            duration_ms,
-        });
+        emitter.emit(audio_frame(vec![0.2], duration_ms));
     }
 
     {

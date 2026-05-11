@@ -102,6 +102,21 @@ impl CaptureController {
         Ok(self.drain_new_events())
     }
 
+    pub fn process_samples_at(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+        captured_at: DateTime<Utc>,
+    ) -> Result<Vec<CaptureControllerEvent>, RecorderError> {
+        if !self.is_listening() {
+            return Ok(Vec::new());
+        }
+
+        self.processor
+            .process_samples_at(samples, duration_ms, captured_at)?;
+        Ok(self.drain_new_events())
+    }
+
     pub fn update_settings(
         &mut self,
         settings: AppSettings,
@@ -179,8 +194,33 @@ impl CaptureProcessor {
         samples: &[f32],
         duration_ms: u64,
     ) -> Result<(), RecorderError> {
+        let frame_start_ms = self.elapsed_ms;
+        let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
+        self.process_samples_window(samples, duration_ms, frame_start_ms, frame_end_ms)
+    }
+
+    pub fn process_samples_at(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+        captured_at: DateTime<Utc>,
+    ) -> Result<(), RecorderError> {
+        let observed_end_ms = offset_from_base_ms(self.config.base_time, captured_at);
+        let synthetic_end_ms = self.elapsed_ms.saturating_add(duration_ms);
+        let frame_end_ms = observed_end_ms.max(synthetic_end_ms);
+        let frame_start_ms = frame_end_ms.saturating_sub(duration_ms);
+        self.process_samples_window(samples, duration_ms, frame_start_ms, frame_end_ms)
+    }
+
+    fn process_samples_window(
+        &mut self,
+        samples: &[f32],
+        duration_ms: u64,
+        frame_start_ms: u64,
+        frame_end_ms: u64,
+    ) -> Result<(), RecorderError> {
         if self.config.settings.pause_all || !self.config.settings.recording_enabled {
-            self.elapsed_ms = self.elapsed_ms.saturating_add(duration_ms);
+            self.elapsed_ms = self.elapsed_ms.max(frame_end_ms);
             return Ok(());
         }
 
@@ -188,8 +228,6 @@ impl CaptureProcessor {
             samples: samples.to_vec(),
             duration_ms,
         };
-        let frame_start_ms = self.elapsed_ms;
-        let frame_end_ms = frame_start_ms.saturating_add(duration_ms);
         let dbfs = dbfs_from_samples(samples);
         let above_threshold = dbfs >= self.config.settings.threshold_dbfs;
         let decision = self.gate.observe_frame(dbfs, frame_start_ms, frame_end_ms);
@@ -417,6 +455,14 @@ fn sample_count_for_duration_ms(duration_ms: u64, sample_rate: u32) -> usize {
         return 0;
     }
     ((duration_ms as u128 * sample_rate as u128) / 1_000) as usize
+}
+
+fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> u64 {
+    captured_at
+        .signed_duration_since(base_time)
+        .num_milliseconds()
+        .try_into()
+        .unwrap_or(0)
 }
 
 fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {

@@ -595,7 +595,7 @@ impl AppBackend {
             .ok_or_else(|| "capture session is not running".to_string())?;
         self.level_monitor.observe_samples(&frame.samples);
         let events = capture
-            .process_samples(&frame.samples, frame.duration_ms)
+            .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
         self.handle_capture_events(events);
         Ok(self.app_status())
@@ -606,10 +606,16 @@ impl AppBackend {
         samples: &[f32],
         duration_ms: u64,
     ) -> Result<AppStatus, String> {
-        self.process_audio_frame(AudioFrame {
-            samples: samples.to_vec(),
-            duration_ms,
-        })
+        let capture = self
+            .capture
+            .as_mut()
+            .ok_or_else(|| "capture session is not running".to_string())?;
+        self.level_monitor.observe_samples(samples);
+        let events = capture
+            .process_samples(samples, duration_ms)
+            .map_err(|error| error.to_string())?;
+        self.handle_capture_events(events);
+        Ok(self.app_status())
     }
 
     pub fn enqueue_audio_file(
