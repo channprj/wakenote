@@ -79,7 +79,7 @@ export function QueuePanel({
           <span>Pending</span>
           <strong>{queue.pending_count}</strong>
         </div>
-        <div>
+        <div data-tone={queue.running_count > 0 ? "primary" : undefined}>
           <span>Running</span>
           <strong>{queue.running_count}</strong>
         </div>

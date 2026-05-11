@@ -801,6 +801,10 @@ svg {
   color: var(--warning);
 }
 
+.queue-stats div[data-tone="primary"] strong {
+  color: var(--primary);
+}
+
 .level-meter__track {
   position: relative;
   display: grid;
