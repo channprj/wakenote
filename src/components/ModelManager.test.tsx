@@ -167,6 +167,20 @@ describe("formatModelSize", () => {
   });
 });
 
+describe("model download error rendering", () => {
+  it("wraps download_error in a danger-toned span when present", () => {
+    const markup = renderModel("error", { download_error: "network unavailable" });
+
+    expect(markup).toContain('<span data-tone="danger">network unavailable</span>');
+  });
+
+  it("omits the toned span when download_error is null", () => {
+    const markup = renderModel("ready", { download_error: null });
+
+    expect(markup).not.toContain('data-tone="danger"');
+  });
+});
+
 describe("model status badge text", () => {
   it.each([
     ["ready", "Ready"],

@@ -198,7 +198,9 @@ export function ModelManager({
                 <span>Accuracy {model.accuracy_score}/10</span>
                 <span>{formatLanguageList(model.languages)}</span>
                 <span>{model.offline ? "Offline" : "Cloud/API"}</span>
-                {model.download_error ? <span>{model.download_error}</span> : null}
+                {model.download_error ? (
+                  <span data-tone="danger">{model.download_error}</span>
+                ) : null}
               </div>
             </div>
             <div className="model-row__actions">

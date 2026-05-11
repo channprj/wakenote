@@ -1212,6 +1212,10 @@ svg {
   gap: 10px;
 }
 
+.model-row__scores span[data-tone="danger"] {
+  color: var(--danger);
+}
+
 .model-row__actions {
   align-content: start;
   align-self: start;
