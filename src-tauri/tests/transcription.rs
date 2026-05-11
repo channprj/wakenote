@@ -5,7 +5,8 @@ use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
     TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome,
-    decode_audio_for_whisper, should_suppress_transcript_artifact,
+    decode_audio_for_whisper, default_whisper_context_parameters,
+    should_suppress_transcript_artifact,
 };
 
 #[derive(Clone)]
@@ -273,6 +274,25 @@ fn whisper_transcriber_expands_tilde_model_directory() {
                 .join("missing-model-for-tilde-expansion.bin")
         )
     );
+}
+
+#[test]
+fn whisper_context_parameters_prefer_gpu_on_macos_builds() {
+    let params = default_whisper_context_parameters();
+
+    #[cfg(target_os = "macos")]
+    assert!(
+        params.use_gpu,
+        "macOS whisper builds should use Metal GPU acceleration"
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        !params.use_gpu,
+        "non-macOS builds should stay CPU-only unless a platform GPU backend is compiled"
+    );
+
+    assert_eq!(params.gpu_device, 0);
 }
 
 #[test]

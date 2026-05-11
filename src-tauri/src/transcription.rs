@@ -318,12 +318,18 @@ pub(crate) fn configure_whisper_language(
     }
 }
 
+pub fn default_whisper_context_parameters() -> WhisperContextParameters<'static> {
+    let mut params = WhisperContextParameters::default();
+    params.gpu_device(0);
+    params
+}
+
 fn run_whisper(
     model_path: &Path,
     samples: &[f32],
     language: TranscriptionLanguage,
 ) -> Result<String, TranscriptionError> {
-    let context = WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
+    let context = WhisperContext::new_with_params(model_path, default_whisper_context_parameters())
         .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
     let mut state = context
         .create_state()
