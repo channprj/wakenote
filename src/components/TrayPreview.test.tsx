@@ -2,7 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
-import { TrayPreview } from "./TrayPreview";
+import { openSettingsDisabledReason, TrayPreview } from "./TrayPreview";
 
 function collectButtons(node: ReactNode, buttons: ReactElement[] = []): ReactElement[] {
   if (Array.isArray(node)) {
@@ -50,5 +50,29 @@ describe("tray preview", () => {
       onCancelCurrentOperation,
     );
     expect(buttonByText(preview, "Open Settings").props.disabled).toBe(true);
+  });
+
+  it("derives why-disabled tooltip text for the Open Settings button", () => {
+    expect(openSettingsDisabledReason()).toBe("Settings panel is already open");
+  });
+
+  it("surfaces a why-disabled tooltip on the always-disabled Open Settings button", () => {
+    const snapshot = mockSnapshot();
+    const preview = TrayPreview({
+      settings: snapshot.settings,
+      status: snapshot.status,
+      onPatch: vi.fn(),
+      onRevealSaveFolder: vi.fn(),
+      onCancelCurrentOperation: vi.fn(),
+    });
+
+    const openSettings = buttonByText(preview, "Open Settings") as ReactElement<{
+      disabled?: boolean;
+      title?: string;
+    }>;
+    expect(openSettings.props.title).toBe(openSettingsDisabledReason());
+
+    const revealMarkup = renderToStaticMarkup(buttonByText(preview, "Reveal Save Folder"));
+    expect(revealMarkup).not.toContain("title=");
   });
 });

@@ -3,6 +3,10 @@ import { humanizeTrayState } from "../lib/transcript-history";
 import { Badge, Button } from "./ui/primitives";
 import type { AppSettings, AppStatus } from "../lib/types";
 
+export function openSettingsDisabledReason(): string {
+  return "Settings panel is already open";
+}
+
 export function TrayPreview({
   settings,
   status,
@@ -43,7 +47,7 @@ export function TrayPreview({
           <FolderOpen />
           Reveal Save Folder
         </button>
-        <button disabled>
+        <button disabled title={openSettingsDisabledReason()}>
           <Settings />
           Open Settings
         </button>
