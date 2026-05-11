@@ -128,7 +128,9 @@ export function QueuePanel({
               groupedJobs.map((group) => (
                 <Fragment key={group.day}>
                   <tr className="table-group-row">
-                    <td colSpan={4}>{group.day}</td>
+                    <td colSpan={4}>
+                      {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
+                    </td>
                   </tr>
                   {group.entries.map((job) => {
                     const actions = queueJobActionState(job.status);
