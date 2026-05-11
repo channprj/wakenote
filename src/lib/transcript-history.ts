@@ -87,6 +87,16 @@ export function countPendingQueueJobs(jobs: QueueJob[]): number {
   return count;
 }
 
+export function countRunningQueueJobs(jobs: QueueJob[]): number {
+  let count = 0;
+  for (const job of jobs) {
+    if (job.status === "running") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function countSkippedQueueJobs(jobs: QueueJob[]): number {
   let count = 0;
   for (const job of jobs) {

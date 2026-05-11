@@ -7,6 +7,7 @@ import {
   countCompletedQueueJobs,
   countFailedQueueJobs,
   countPendingQueueJobs,
+  countRunningQueueJobs,
   countSkippedQueueJobs,
   formatAudioPathLabel,
   groupQueueJobsByDay,
@@ -223,6 +224,7 @@ export function QueuePanel({
             ) : (
               groupedJobs.map((group) => {
                 const pendingCount = countPendingQueueJobs(group.entries);
+                const runningCount = countRunningQueueJobs(group.entries);
                 const groupCompletedCount = countCompletedQueueJobs(group.entries);
                 const failedCount = countFailedQueueJobs(group.entries);
                 const cancelledCount = countCancelledQueueJobs(group.entries);
@@ -236,6 +238,12 @@ export function QueuePanel({
                         <>
                           {" · "}
                           <span data-tone="warning">{pendingCount} pending</span>
+                        </>
+                      ) : null}
+                      {runningCount > 0 ? (
+                        <>
+                          {" · "}
+                          <span data-tone="primary">{runningCount} running</span>
                         </>
                       ) : null}
                       {groupCompletedCount > 0 ? (

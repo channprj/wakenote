@@ -1277,6 +1277,10 @@ tr:last-child td {
   color: var(--success);
 }
 
+.table-group-row td span[data-tone="primary"] {
+  color: var(--primary);
+}
+
 .queue-panel tr[data-tone="danger"] > td:first-child {
   box-shadow: inset 3px 0 0 var(--danger);
 }

@@ -837,6 +837,48 @@ describe("settings panel", () => {
     );
   });
 
+  it("renders the day group row running count in primary tone when running jobs exist", () => {
+    const snapshot = mockSnapshot();
+    snapshot.queue = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "running",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "running",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/235959.m4a",
+          model_id: snapshot.settings.selected_model,
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 2,
+      failed_count: 0,
+    };
+    snapshot.status.queue = snapshot.queue;
+
+    const markup = renderSettingsPanel(snapshot, "history");
+
+    expect(markup).toMatch(
+      /table-group-row[\s\S]*?<span data-tone="primary">2 running<\/span>/,
+    );
+    expect(markup).toMatch(
+      /<tr class="table-group-row"><td colSpan="4">2026-05-09 \xb7 1 job \xb7 <span data-tone="success">1 completed<\/span><\/td>/,
+    );
+  });
+
   it("surfaces a completed count in the queue stats banner alongside pending/running/failed", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {
