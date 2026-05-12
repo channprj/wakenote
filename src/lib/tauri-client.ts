@@ -32,6 +32,7 @@ let browserCaptureSessionId = 0;
 let browserQueuedCaptureSessionId: number | null = null;
 let browserCaptureSessionTranscriptionRequested = false;
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
+const defaultRecentTranscriptLimit = 50;
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
@@ -190,16 +191,25 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     return browserSnapshot;
   }
 
-  const [settings, status, microphones, models, queue, recent_transcripts] = await Promise.all([
+  const [settings, status, microphones, models, queue] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
-    invoke<RecentTranscript[]>("recent_transcripts"),
   ]);
 
-  return { settings, status, microphones, models, queue, recent_transcripts };
+  return { settings, status, microphones, models, queue, recent_transcripts: [] };
+}
+
+export async function loadRecentTranscripts(
+  limit = defaultRecentTranscriptLimit,
+): Promise<RecentTranscript[]> {
+  if (!isTauriRuntime()) {
+    return browserSnapshot.recent_transcripts ?? [];
+  }
+
+  return invoke<RecentTranscript[]>("recent_transcripts", { limit });
 }
 
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {

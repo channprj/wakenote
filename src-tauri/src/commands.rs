@@ -498,21 +498,7 @@ impl AppBackend {
     }
 
     pub fn recent_transcripts(&self, limit: usize) -> Vec<RecentTranscript> {
-        if limit == 0 {
-            return Vec::new();
-        }
-
-        let save_root = self.save_root_path();
-        let mut transcripts = Vec::new();
-        collect_transcript_sidecars(&save_root, &mut transcripts);
-        transcripts.sort_by(|left, right| {
-            right
-                .recorded_at
-                .cmp(&left.recorded_at)
-                .then_with(|| right.transcript_path.cmp(&left.transcript_path))
-        });
-        transcripts.truncate(limit);
-        transcripts
+        recent_transcripts_from_save_root(&self.save_root_path(), limit)
     }
 
     pub fn start_capture_session(
@@ -989,38 +975,67 @@ impl AppBackend {
     }
 }
 
-fn collect_transcript_sidecars(root: &Path, transcripts: &mut Vec<RecentTranscript>) {
+pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<RecentTranscript> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut paths = Vec::new();
+    collect_transcript_sidecar_paths(root, &mut paths);
+    paths.sort_by(|left, right| {
+        transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
+    });
+    paths.truncate(limit);
+
+    paths
+        .into_iter()
+        .filter_map(|path| recent_transcript_from_sidecar(&path))
+        .collect()
+}
+
+fn collect_transcript_sidecar_paths(root: &Path, paths: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_transcript_sidecars(&path, transcripts);
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_transcript_sidecar_paths(&path, paths);
             continue;
         }
 
+        if !file_type.is_file() {
+            continue;
+        }
         if !is_transcript_sidecar(&path) {
             continue;
         }
 
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let text = text.trim().to_string();
-        if text.is_empty() {
-            continue;
-        }
-
-        transcripts.push(RecentTranscript {
-            transcript_path: path.to_string_lossy().to_string(),
-            audio_path: audio_path_for_transcript(&path)
-                .map(|audio_path| audio_path.to_string_lossy().to_string()),
-            recorded_at: recorded_at_for_transcript(&path),
-            text,
-        });
+        paths.push(path);
     }
+}
+
+fn recent_transcript_from_sidecar(path: &Path) -> Option<RecentTranscript> {
+    let text = fs::read_to_string(path).ok()?.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(RecentTranscript {
+        transcript_path: path.to_string_lossy().to_string(),
+        audio_path: audio_path_for_transcript(path)
+            .map(|audio_path| audio_path.to_string_lossy().to_string()),
+        recorded_at: recorded_at_for_transcript(path),
+        text,
+    })
+}
+
+fn transcript_path_sort_key(path: &Path) -> String {
+    recorded_at_from_path(path).unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
 fn audio_path_for_transcript(path: &Path) -> Option<PathBuf> {

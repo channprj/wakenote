@@ -35,6 +35,7 @@ import {
   deleteModel,
   downloadModel,
   enqueueBacklog,
+  loadRecentTranscripts,
   loadSnapshot,
   processNextTranscription,
   retryJob,
@@ -74,6 +75,17 @@ const sections = [
 
 const launchAutoStartPollWindowMs = 130_000;
 
+function preserveRecentTranscripts(current: AppSnapshot, next: AppSnapshot): AppSnapshot {
+  if (next.recent_transcripts.length > 0) {
+    return next;
+  }
+
+  return {
+    ...next,
+    recent_transcripts: current.recent_transcripts,
+  };
+}
+
 function transcriptEntriesFromRecent(
   recentTranscripts: AppSnapshot["recent_transcripts"],
 ): TranscriptEntry[] {
@@ -104,7 +116,8 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      setSnapshot(await loadSnapshot());
+      const next = await loadSnapshot();
+      setSnapshot((current) => preserveRecentTranscripts(current, next));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -112,8 +125,21 @@ export default function App() {
     }
   }
 
+  async function refreshTranscripts() {
+    try {
+      const recentTranscripts = await loadRecentTranscripts();
+      setSnapshot((current) => ({
+        ...current,
+        recent_transcripts: recentTranscripts,
+      }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   useEffect(() => {
     void refresh();
+    void refreshTranscripts();
   }, []);
 
   useEffect(() => {
@@ -200,11 +226,18 @@ export default function App() {
 
   async function refreshQuietly() {
     try {
-      setSnapshot(await loadSnapshot());
+      const next = await loadSnapshot();
+      setSnapshot((current) => preserveRecentTranscripts(current, next));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
+
+  useEffect(() => {
+    if (activeSection === "transcripts") {
+      void refreshTranscripts();
+    }
+  }, [activeSection]);
 
   const launchAutoStartPending =
     snapshot.settings.start_live_input_on_launch &&
@@ -242,7 +275,8 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      setSnapshot(await saveSettingsPatch(patch));
+      const next = await saveSettingsPatch(patch);
+      setSnapshot((current) => preserveRecentTranscripts(current, next));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -254,7 +288,8 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      setSnapshot(await action());
+      const next = await action();
+      setSnapshot((current) => preserveRecentTranscripts(current, next));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

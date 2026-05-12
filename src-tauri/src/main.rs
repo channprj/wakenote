@@ -33,8 +33,8 @@ use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_start_on_launch,
+    SettingsPatch, expand_user_path, launch_at_login_action_for_patch,
+    live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
 };
 use wakenote::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
@@ -61,6 +61,8 @@ const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
+const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
+const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -385,9 +387,21 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 }
 
 #[tauri::command]
-fn recent_transcripts(state: State<'_, BackendState>) -> Result<Vec<RecentTranscript>, String> {
-    let backend = state.lock().map_err(|error| error.to_string())?;
-    Ok(backend.recent_transcripts(usize::MAX))
+async fn recent_transcripts(
+    state: State<'_, BackendState>,
+    limit: Option<usize>,
+) -> Result<Vec<RecentTranscript>, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+    let limit = normalize_recent_transcript_limit(limit);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::commands::recent_transcripts_from_save_root(&save_root, limit)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1073,6 +1087,12 @@ fn launch_auto_start_retry_delay_secs(settings: &AppSettings) -> &'static [u64] 
     }
 }
 
+fn normalize_recent_transcript_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_RECENT_TRANSCRIPT_LIMIT)
+        .min(MAX_RECENT_TRANSCRIPT_LIMIT)
+}
+
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn apply_launch_at_login_preference(app: &AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -1639,6 +1659,20 @@ mod tests {
                 ..AppSettings::default()
             })
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn recent_transcript_limit_defaults_and_clamps_for_runtime_command() {
+        assert_eq!(
+            normalize_recent_transcript_limit(None),
+            DEFAULT_RECENT_TRANSCRIPT_LIMIT
+        );
+        assert_eq!(normalize_recent_transcript_limit(Some(0)), 0);
+        assert_eq!(normalize_recent_transcript_limit(Some(12)), 12);
+        assert_eq!(
+            normalize_recent_transcript_limit(Some(MAX_RECENT_TRANSCRIPT_LIMIT + 1)),
+            MAX_RECENT_TRANSCRIPT_LIMIT
         );
     }
 
