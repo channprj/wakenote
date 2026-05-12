@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_THRESHOLD_DBFS,
+  calibrationBadgePresentation,
   calibrationProgress,
   calibrationSettingsPatch,
   calibrationShouldAutoApply,
@@ -40,5 +41,60 @@ describe("calibration helpers", () => {
       threshold_dbfs: -60,
       calibration_completed: false,
     });
+  });
+});
+
+describe("calibrationBadgePresentation", () => {
+  it("renders an idle Calibration Badge before calibration starts", () => {
+    expect(calibrationBadgePresentation(null, 0, false)).toEqual({
+      tone: "neutral",
+      label: "Calibration",
+    });
+  });
+
+  it("renders a Calibrating Badge while progress is in flight", () => {
+    expect(calibrationBadgePresentation(1000, 0, false)).toEqual({
+      tone: "primary",
+      label: "Calibrating",
+    });
+    expect(calibrationBadgePresentation(1000, 50, false)).toEqual({
+      tone: "primary",
+      label: "Calibrating",
+    });
+    expect(calibrationBadgePresentation(1000, 99, false)).toEqual({
+      tone: "primary",
+      label: "Calibrating",
+    });
+  });
+
+  it("renders a Ready Badge at 100% before auto-apply finalizes", () => {
+    expect(calibrationBadgePresentation(1000, 100, false)).toEqual({
+      tone: "success",
+      label: "Ready",
+    });
+  });
+
+  it("renders an Applied Badge once the auto-apply has run", () => {
+    expect(calibrationBadgePresentation(1000, 100, true)).toEqual({
+      tone: "success",
+      label: "Applied",
+    });
+  });
+
+  it("favors the applied label over the percent-driven branches", () => {
+    // Defensive: even at percent < 100 an applied=true state should land on "Applied",
+    // not "Calibrating" — protects against a hypothetical state shape where the parent
+    // sets applied early.
+    expect(calibrationBadgePresentation(1000, 30, true)).toEqual({
+      tone: "success",
+      label: "Applied",
+    });
+  });
+
+  it("collapses Ready and Applied to success tone but distinguishes label", () => {
+    const ready = calibrationBadgePresentation(1000, 100, false);
+    const applied = calibrationBadgePresentation(1000, 100, true);
+    expect(ready.tone).toBe(applied.tone);
+    expect(ready.label).not.toBe(applied.label);
   });
 });

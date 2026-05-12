@@ -1,6 +1,7 @@
 import { Activity, Gauge, RotateCcw, TimerReset } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
+  calibrationBadgePresentation,
   calibrationProgress,
   calibrationShouldAutoApply,
   suggestedThresholdValue,
@@ -45,6 +46,11 @@ export function LevelMeter({
   const calibrationPercent =
     calibrationStartMs === null ? 0 : calibrationProgress(calibrationStartMs, nowMs, 10_000);
   const calibrationRunning = calibrationStartMs !== null && calibrationPercent < 100;
+  const calibrationBadge = calibrationBadgePresentation(
+    calibrationStartMs,
+    calibrationPercent,
+    calibrationApplied,
+  );
   const bars = Array.from({ length: 28 }, (_, index) => {
     const barDb = -90 + index * 3.2;
     return barDb <= currentDb;
@@ -109,19 +115,7 @@ export function LevelMeter({
         </div>
       </div>
       <div className="calibration-actions">
-        <Badge
-          tone={
-            calibrationStartMs === null ? "neutral" : calibrationPercent >= 100 ? "success" : "primary"
-          }
-        >
-          {calibrationStartMs === null
-            ? "Calibration"
-            : calibrationApplied
-              ? "Applied"
-              : calibrationPercent >= 100
-                ? "Ready"
-              : "Calibrating"}
-        </Badge>
+        <Badge tone={calibrationBadge.tone}>{calibrationBadge.label}</Badge>
         <Progress value={calibrationPercent} />
         <Button
           type="button"
