@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type { StatusTone } from "../../lib/status-summary";
 
 export function Button({
   className,
@@ -123,7 +124,9 @@ export function Badge({
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "success" | "warning" | "danger" | "primary";
+  // Aligned with the canonical StatusTone union from status-summary.ts so that
+  // future tone additions automatically reach this prop without a separate edit.
+  tone?: StatusTone;
 }) {
   return <span className={clsx("ui-badge", `ui-badge--${tone}`)}>{children}</span>;
 }
