@@ -133,6 +133,45 @@ export function countCompletedQueueJobs(jobs: QueueJob[]): number {
   return count;
 }
 
+export interface QueueDayBreakdownEntry {
+  status: QueueJobStatus;
+  count: number;
+}
+
+// Canonical per-day chip breakdown order for the QueuePanel group-row display.
+// Folds six previously inline `if (count > 0) <span data-tone=...>` ternary blocks
+// into one ordered array — only statuses with count > 0 are surfaced. The order
+// (pending → running → completed → failed → cancelled → skipped) is pinned by
+// existing SettingsPanel render tests and matches the lifecycle stages a user
+// expects to scan top-to-bottom (queued work first, then in-flight, then outcomes).
+const QUEUE_DAY_BREAKDOWN_ORDER: readonly QueueJobStatus[] = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "skipped",
+];
+
+export function queueDayBreakdown(jobs: QueueJob[]): QueueDayBreakdownEntry[] {
+  const counts: Record<QueueJobStatus, number> = {
+    pending: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+    skipped: 0,
+  };
+  for (const job of jobs) {
+    if (job.status in counts) {
+      counts[job.status] += 1;
+    }
+  }
+  return QUEUE_DAY_BREAKDOWN_ORDER
+    .map((status) => ({ status, count: counts[status] }))
+    .filter((entry) => entry.count > 0);
+}
+
 export function summarizeQueueJobsByDay(jobs: QueueJob[]): string {
   if (jobs.length === 0) {
     return "";

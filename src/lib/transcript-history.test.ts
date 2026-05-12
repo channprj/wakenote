@@ -18,6 +18,7 @@ import {
   humanizeModelStatus,
   humanizeQueueJobStatus,
   humanizeTrayState,
+  queueDayBreakdown,
   queueJobSidecarPath,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
@@ -457,5 +458,73 @@ describe("transcript history helpers", () => {
     expect(summarizeQueueJobsByDay(mixedDays)).toBe(
       "2026-05-10: 2 · 2026-05-09: 1 · Imported: 1",
     );
+  });
+
+  it("returns an empty queueDayBreakdown for an empty entries list", () => {
+    expect(queueDayBreakdown([])).toEqual([]);
+  });
+
+  it("filters zero-count statuses out of queueDayBreakdown", () => {
+    const jobs: QueueJob[] = [
+      {
+        id: 1,
+        audio_path: "/tmp/WakeNote/20260510/010101.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+    ];
+    expect(queueDayBreakdown(jobs)).toEqual([{ status: "completed", count: 1 }]);
+  });
+
+  it("preserves the canonical pending→running→completed→failed→cancelled→skipped order regardless of insertion order", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "/a", model_id: "m", status: "skipped", error: null },
+      { id: 2, audio_path: "/a", model_id: "m", status: "cancelled", error: null },
+      { id: 3, audio_path: "/a", model_id: "m", status: "failed", error: null },
+      { id: 4, audio_path: "/a", model_id: "m", status: "completed", error: null },
+      { id: 5, audio_path: "/a", model_id: "m", status: "running", error: null },
+      { id: 6, audio_path: "/a", model_id: "m", status: "pending", error: null },
+    ];
+    expect(queueDayBreakdown(jobs)).toEqual([
+      { status: "pending", count: 1 },
+      { status: "running", count: 1 },
+      { status: "completed", count: 1 },
+      { status: "failed", count: 1 },
+      { status: "cancelled", count: 1 },
+      { status: "skipped", count: 1 },
+    ]);
+  });
+
+  it("counts duplicates within each status bucket", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "/a", model_id: "m", status: "pending", error: null },
+      { id: 2, audio_path: "/a", model_id: "m", status: "pending", error: null },
+      { id: 3, audio_path: "/a", model_id: "m", status: "failed", error: "boom" },
+    ];
+    expect(queueDayBreakdown(jobs)).toEqual([
+      { status: "pending", count: 2 },
+      { status: "failed", count: 1 },
+    ]);
+  });
+
+  it("matches the count returned by the per-status count* helpers for the same entries", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "/a", model_id: "m", status: "pending", error: null },
+      { id: 2, audio_path: "/a", model_id: "m", status: "pending", error: null },
+      { id: 3, audio_path: "/a", model_id: "m", status: "running", error: null },
+      { id: 4, audio_path: "/a", model_id: "m", status: "completed", error: null },
+      { id: 5, audio_path: "/a", model_id: "m", status: "failed", error: null },
+      { id: 6, audio_path: "/a", model_id: "m", status: "cancelled", error: null },
+      { id: 7, audio_path: "/a", model_id: "m", status: "skipped", error: null },
+    ];
+    const breakdown = queueDayBreakdown(jobs);
+    const byStatus = new Map(breakdown.map((entry) => [entry.status, entry.count]));
+    expect(byStatus.get("pending")).toBe(countPendingQueueJobs(jobs));
+    expect(byStatus.get("running")).toBe(countRunningQueueJobs(jobs));
+    expect(byStatus.get("completed")).toBe(countCompletedQueueJobs(jobs));
+    expect(byStatus.get("failed")).toBe(countFailedQueueJobs(jobs));
+    expect(byStatus.get("cancelled")).toBe(countCancelledQueueJobs(jobs));
+    expect(byStatus.get("skipped")).toBe(countSkippedQueueJobs(jobs));
   });
 });

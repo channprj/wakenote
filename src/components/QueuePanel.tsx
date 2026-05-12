@@ -6,14 +6,12 @@ import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summa
 import {
   countCancelledQueueJobs,
   countCompletedQueueJobs,
-  countFailedQueueJobs,
-  countPendingQueueJobs,
-  countRunningQueueJobs,
   countSkippedQueueJobs,
   fileUrlFromPath,
   formatAudioPathLabel,
   groupQueueJobsByDay,
   humanizeQueueJobStatus,
+  queueDayBreakdown,
   queueJobSidecarPath,
   summarizeQueueJobsByDay,
 } from "../lib/transcript-history";
@@ -233,53 +231,18 @@ export function QueuePanel({
               </tr>
             ) : (
               groupedJobs.map((group) => {
-                const pendingCount = countPendingQueueJobs(group.entries);
-                const runningCount = countRunningQueueJobs(group.entries);
-                const groupCompletedCount = countCompletedQueueJobs(group.entries);
-                const failedCount = countFailedQueueJobs(group.entries);
-                const cancelledCount = countCancelledQueueJobs(group.entries);
-                const skippedCount = countSkippedQueueJobs(group.entries);
+                const breakdown = queueDayBreakdown(group.entries);
                 return (
                 <Fragment key={group.day}>
                   <tr className="table-group-row">
                     <td colSpan={4}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
-                      {pendingCount > 0 ? (
-                        <>
+                      {breakdown.map(({ status, count }) => (
+                        <Fragment key={status}>
                           {" · "}
-                          <span data-tone={queueStatsCellTone("pending")}>{pendingCount} pending</span>
-                        </>
-                      ) : null}
-                      {runningCount > 0 ? (
-                        <>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone("running")}>{runningCount} running</span>
-                        </>
-                      ) : null}
-                      {groupCompletedCount > 0 ? (
-                        <>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone("completed")}>{groupCompletedCount} completed</span>
-                        </>
-                      ) : null}
-                      {failedCount > 0 ? (
-                        <>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone("failed")}>{failedCount} failed</span>
-                        </>
-                      ) : null}
-                      {cancelledCount > 0 ? (
-                        <>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone("cancelled")}>{cancelledCount} cancelled</span>
-                        </>
-                      ) : null}
-                      {skippedCount > 0 ? (
-                        <>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone("skipped")}>{skippedCount} skipped</span>
-                        </>
-                      ) : null}
+                          <span data-tone={queueStatsCellTone(status)}>{count} {status}</span>
+                        </Fragment>
+                      ))}
                     </td>
                   </tr>
                   {group.entries.map((job) => {
