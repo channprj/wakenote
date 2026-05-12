@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { QueueJob, RecentTranscript } from "./types";
+import type { QueueJob, QueueSnapshot, RecentTranscript } from "./types";
 import {
   appendRecentAge,
   countCancelledQueueJobs,
@@ -20,6 +20,7 @@ import {
   humanizeTrayState,
   queueDayBreakdown,
   queueJobSidecarPath,
+  queueStatsBanner,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
 } from "./transcript-history";
@@ -526,5 +527,150 @@ describe("transcript history helpers", () => {
     expect(byStatus.get("failed")).toBe(countFailedQueueJobs(jobs));
     expect(byStatus.get("cancelled")).toBe(countCancelledQueueJobs(jobs));
     expect(byStatus.get("skipped")).toBe(countSkippedQueueJobs(jobs));
+  });
+
+  it("emits queueStatsBanner cells in the canonical pending→skipped→running→failed→cancelled→completed order", () => {
+    const queue: QueueSnapshot = {
+      jobs: [],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    expect(queueStatsBanner(queue).map((entry) => entry.status)).toEqual([
+      "pending",
+      "skipped",
+      "running",
+      "failed",
+      "cancelled",
+      "completed",
+    ]);
+  });
+
+  it("humanizes queueStatsBanner labels with Title Case for each banner cell", () => {
+    const queue: QueueSnapshot = {
+      jobs: [],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    expect(queueStatsBanner(queue).map((entry) => entry.label)).toEqual([
+      "Pending",
+      "Skipped",
+      "Running",
+      "Failed",
+      "Cancelled",
+      "Completed",
+    ]);
+  });
+
+  it("sources pending / running / failed counts from QueueSnapshot top-level counters even when jobs[] disagrees", () => {
+    // The backend may truncate jobs[] for display but keeps top-level counters authoritative.
+    // The banner must surface the authoritative count, not the visible-jobs[] count.
+    const queue: QueueSnapshot = {
+      jobs: [],
+      pending_count: 7,
+      running_count: 1,
+      failed_count: 3,
+    };
+    const banner = queueStatsBanner(queue);
+    const byStatus = new Map(banner.map((entry) => [entry.status, entry.count]));
+    expect(byStatus.get("pending")).toBe(7);
+    expect(byStatus.get("running")).toBe(1);
+    expect(byStatus.get("failed")).toBe(3);
+  });
+
+  it("derives skipped / cancelled / completed counts from jobs[] (no top-level counter exists)", () => {
+    const queue: QueueSnapshot = {
+      jobs: [
+        { id: 1, audio_path: "/a", model_id: "m", status: "skipped", error: null },
+        { id: 2, audio_path: "/a", model_id: "m", status: "skipped", error: null },
+        { id: 3, audio_path: "/a", model_id: "m", status: "cancelled", error: null },
+        { id: 4, audio_path: "/a", model_id: "m", status: "completed", error: null },
+        { id: 5, audio_path: "/a", model_id: "m", status: "completed", error: null },
+        { id: 6, audio_path: "/a", model_id: "m", status: "completed", error: null },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    const banner = queueStatsBanner(queue);
+    const byStatus = new Map(banner.map((entry) => [entry.status, entry.count]));
+    expect(byStatus.get("skipped")).toBe(2);
+    expect(byStatus.get("cancelled")).toBe(1);
+    expect(byStatus.get("completed")).toBe(3);
+  });
+
+  it("emits per-status title summaries built from summarizeQueueJobsByDay", () => {
+    const queue: QueueSnapshot = {
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/tmp/WakeNote/20260510/120000.m4a",
+          model_id: "m",
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 2,
+          audio_path: "/tmp/WakeNote/20260510/130000.m4a",
+          model_id: "m",
+          status: "completed",
+          error: null,
+        },
+        {
+          id: 3,
+          audio_path: "/tmp/WakeNote/20260509/120000.m4a",
+          model_id: "m",
+          status: "completed",
+          error: null,
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 0,
+    };
+    const banner = queueStatsBanner(queue);
+    const completed = banner.find((entry) => entry.status === "completed");
+    expect(completed?.title).toBe("2026-05-10: 2 · 2026-05-09: 1");
+    // Statuses with zero matching jobs yield an empty title.
+    expect(banner.find((entry) => entry.status === "pending")?.title).toBe("");
+  });
+
+  it("pins the banner ordering as distinct from queueDayBreakdown's lifecycle order", () => {
+    // Banner: pending → skipped → running → failed → cancelled → completed
+    // Lifecycle (queueDayBreakdown): pending → running → completed → failed → cancelled → skipped
+    // The two surfaces serve different display semantics; they must NOT share an ordered-list helper.
+    const queue: QueueSnapshot = {
+      jobs: [
+        { id: 1, audio_path: "/a", model_id: "m", status: "pending", error: null },
+        { id: 2, audio_path: "/a", model_id: "m", status: "running", error: null },
+        { id: 3, audio_path: "/a", model_id: "m", status: "completed", error: null },
+        { id: 4, audio_path: "/a", model_id: "m", status: "failed", error: null },
+        { id: 5, audio_path: "/a", model_id: "m", status: "cancelled", error: null },
+        { id: 6, audio_path: "/a", model_id: "m", status: "skipped", error: null },
+      ],
+      pending_count: 1,
+      running_count: 1,
+      failed_count: 1,
+    };
+    const bannerOrder = queueStatsBanner(queue).map((entry) => entry.status);
+    const lifecycleOrder = queueDayBreakdown(queue.jobs).map((entry) => entry.status);
+    expect(bannerOrder).not.toEqual(lifecycleOrder);
+    expect(bannerOrder).toEqual([
+      "pending",
+      "skipped",
+      "running",
+      "failed",
+      "cancelled",
+      "completed",
+    ]);
+    expect(lifecycleOrder).toEqual([
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+      "skipped",
+    ]);
   });
 });

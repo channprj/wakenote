@@ -4,16 +4,13 @@ import { Badge, Button } from "./ui/primitives";
 import { formatModelLabel } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
-  countCancelledQueueJobs,
-  countCompletedQueueJobs,
-  countSkippedQueueJobs,
   fileUrlFromPath,
   formatAudioPathLabel,
   groupQueueJobsByDay,
   humanizeQueueJobStatus,
   queueDayBreakdown,
   queueJobSidecarPath,
-  summarizeQueueJobsByDay,
+  queueStatsBanner,
 } from "../lib/transcript-history";
 import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
 
@@ -114,73 +111,21 @@ export function QueuePanel({
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
   const groupedJobs = groupQueueJobsByDay(queue.jobs);
-  const completedCount = countCompletedQueueJobs(queue.jobs);
-  const cancelledCount = countCancelledQueueJobs(queue.jobs);
-  const skippedCount = countSkippedQueueJobs(queue.jobs);
-  const pendingBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "pending"),
-  );
-  const runningBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "running"),
-  );
-  const failedBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "failed"),
-  );
-  const cancelledBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "cancelled"),
-  );
-  const skippedBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "skipped"),
-  );
-  const completedBreakdown = summarizeQueueJobsByDay(
-    queue.jobs.filter((job) => job.status === "completed"),
-  );
+  const statsBanner = queueStatsBanner(queue);
 
   return (
     <div className="queue-panel">
       <div className="queue-stats">
-        <div
-          data-tone={queue.pending_count > 0 ? queueStatsCellTone("pending") : undefined}
-          title={pendingBreakdown || undefined}
-        >
-          <span>Pending</span>
-          <strong>{queue.pending_count}</strong>
-        </div>
-        <div
-          data-tone={skippedCount > 0 ? queueStatsCellTone("skipped") : undefined}
-          title={skippedBreakdown || undefined}
-        >
-          <span>Skipped</span>
-          <strong>{skippedCount}</strong>
-        </div>
-        <div
-          data-tone={queue.running_count > 0 ? queueStatsCellTone("running") : undefined}
-          title={runningBreakdown || undefined}
-        >
-          <span>Running</span>
-          <strong>{queue.running_count}</strong>
-        </div>
-        <div
-          data-tone={queue.failed_count > 0 ? queueStatsCellTone("failed") : undefined}
-          title={failedBreakdown || undefined}
-        >
-          <span>Failed</span>
-          <strong>{queue.failed_count}</strong>
-        </div>
-        <div
-          data-tone={cancelledCount > 0 ? queueStatsCellTone("cancelled") : undefined}
-          title={cancelledBreakdown || undefined}
-        >
-          <span>Cancelled</span>
-          <strong>{cancelledCount}</strong>
-        </div>
-        <div
-          data-tone={completedCount > 0 ? queueStatsCellTone("completed") : undefined}
-          title={completedBreakdown || undefined}
-        >
-          <span>Completed</span>
-          <strong>{completedCount}</strong>
-        </div>
+        {statsBanner.map(({ status, label, count, title }) => (
+          <div
+            key={status}
+            data-tone={count > 0 ? queueStatsCellTone(status) : undefined}
+            title={title || undefined}
+          >
+            <span>{label}</span>
+            <strong>{count}</strong>
+          </div>
+        ))}
       </div>
       <div className="toolbar">
         <Button type="button" variant="secondary" onClick={onImportAudioFiles}>

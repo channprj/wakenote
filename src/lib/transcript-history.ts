@@ -2,6 +2,7 @@ import type {
   ModelStatus,
   QueueJob,
   QueueJobStatus,
+  QueueSnapshot,
   RecentTranscript,
   TrayState,
 } from "./types";
@@ -170,6 +171,52 @@ export function queueDayBreakdown(jobs: QueueJob[]): QueueDayBreakdownEntry[] {
   return QUEUE_DAY_BREAKDOWN_ORDER
     .map((status) => ({ status, count: counts[status] }))
     .filter((entry) => entry.count > 0);
+}
+
+export interface QueueStatsBannerEntry {
+  status: QueueJobStatus;
+  label: string;
+  count: number;
+  title: string;
+}
+
+// Canonical queue-stats banner cell order for QueuePanel's top-level summary row.
+// Deliberately different from QUEUE_DAY_BREAKDOWN_ORDER (which follows the job
+// lifecycle): the banner groups attention-worthy statuses together (Pending +
+// Skipped, then Running, then Failed + Cancelled, then Completed) so users can
+// scan backlog/in-flight/outcomes in a single glance. Iter-81's learnings
+// explicitly noted these two orderings serve different display semantics and
+// must NOT share an ordered-list helper.
+const QUEUE_STATS_BANNER_ORDER: readonly QueueJobStatus[] = [
+  "pending",
+  "skipped",
+  "running",
+  "failed",
+  "cancelled",
+  "completed",
+];
+
+export function queueStatsBanner(queue: QueueSnapshot): QueueStatsBannerEntry[] {
+  // Mixed data sources are intentional: QueueSnapshot exposes pending_count /
+  // running_count / failed_count as canonical top-level counters from the
+  // backend, while skipped / cancelled / completed counts are derived from
+  // jobs[] because no top-level counter exists for them. Preserving that mix
+  // (vs. deriving all six from jobs[]) keeps the banner consistent with the
+  // backend's authoritative counters even if jobs[] is truncated for display.
+  const counts: Record<QueueJobStatus, number> = {
+    pending: queue.pending_count,
+    skipped: countSkippedQueueJobs(queue.jobs),
+    running: queue.running_count,
+    failed: queue.failed_count,
+    cancelled: countCancelledQueueJobs(queue.jobs),
+    completed: countCompletedQueueJobs(queue.jobs),
+  };
+  return QUEUE_STATS_BANNER_ORDER.map((status) => ({
+    status,
+    label: humanizeQueueJobStatus(status),
+    count: counts[status],
+    title: summarizeQueueJobsByDay(queue.jobs.filter((job) => job.status === status)),
+  }));
 }
 
 export function summarizeQueueJobsByDay(jobs: QueueJob[]): string {
