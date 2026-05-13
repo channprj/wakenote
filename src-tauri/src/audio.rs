@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -278,6 +279,205 @@ fn rms_from_samples(samples: &[f32]) -> f32 {
     energy.sqrt()
 }
 
+/// Threshold above which a frame is considered to contain real audio rather
+/// than digital silence. A working ADC delivers some ambient noise floor; only
+/// a wedged stream produces exactly-zero RMS (which clamps to -120 dBFS).
+pub const MIC_NONZERO_DBFS: f32 = -119.0;
+
+/// Tunables for [`MicHealthMonitor`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MicHealthConfig {
+    /// Grace period after capture start during which no recovery action fires.
+    pub startup_grace: Duration,
+    /// How long the stream must stay digitally silent before a recovery action.
+    pub stall_threshold: Duration,
+    /// Settle window after a recovery action before re-evaluating.
+    pub recovery_cooldown: Duration,
+    /// Total recovery attempts allowed before giving up.
+    pub max_attempts: u32,
+}
+
+impl Default for MicHealthConfig {
+    fn default() -> Self {
+        Self {
+            startup_grace: Duration::from_millis(1_500),
+            stall_threshold: Duration::from_millis(3_000),
+            recovery_cooldown: Duration::from_millis(3_500),
+            max_attempts: 2,
+        }
+    }
+}
+
+/// Action requested by [`MicHealthMonitor::tick`] when the input stream looks
+/// wedged. Higher layers translate these into capture restart / device-fallback
+/// orchestration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MicHealthAction {
+    /// Restart the live stream with the currently-selected device.
+    RestartCurrent { reason: String },
+    /// Restart the live stream forced onto the system default device.
+    FallbackToDefault { reason: String },
+    /// Recovery attempts exhausted; surface a microphone warning.
+    GiveUp { reason: String },
+}
+
+/// Result of a tick — either no action needed or a recovery action to perform.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MicHealthVerdict {
+    Healthy,
+    AwaitingFirstFrame,
+    InCooldown,
+    Action(MicHealthAction),
+    Exhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MicHealthState {
+    Idle,
+    Watching,
+    Cooldown,
+    Exhausted,
+}
+
+#[derive(Debug, Clone)]
+pub struct MicHealthMonitor {
+    config: MicHealthConfig,
+    state: MicHealthState,
+    capture_started_at: Option<Instant>,
+    last_nonzero_at: Option<Instant>,
+    cooldown_until: Option<Instant>,
+    attempts: u32,
+    currently_default_device: bool,
+}
+
+impl Default for MicHealthMonitor {
+    fn default() -> Self {
+        Self::with_config(MicHealthConfig::default())
+    }
+}
+
+impl MicHealthMonitor {
+    pub fn with_config(config: MicHealthConfig) -> Self {
+        Self {
+            config,
+            state: MicHealthState::Idle,
+            capture_started_at: None,
+            last_nonzero_at: None,
+            cooldown_until: None,
+            attempts: 0,
+            currently_default_device: true,
+        }
+    }
+
+    /// Reset and start watching a new capture session.
+    ///
+    /// `using_default_device` controls whether the next recovery action escalates
+    /// straight to `GiveUp` (we are already on the default device) or first tries
+    /// `FallbackToDefault` after `RestartCurrent` fails.
+    pub fn capture_started(&mut self, now: Instant, using_default_device: bool) {
+        self.state = MicHealthState::Watching;
+        self.capture_started_at = Some(now);
+        self.last_nonzero_at = None;
+        self.cooldown_until = None;
+        self.attempts = 0;
+        self.currently_default_device = using_default_device;
+    }
+
+    /// Mark the session as stopped; subsequent ticks return [`MicHealthVerdict::Healthy`].
+    pub fn capture_stopped(&mut self) {
+        self.state = MicHealthState::Idle;
+        self.capture_started_at = None;
+        self.last_nonzero_at = None;
+        self.cooldown_until = None;
+    }
+
+    /// Record a single observed frame.
+    pub fn observe_frame(&mut self, dbfs: f32, now: Instant) {
+        if matches!(self.state, MicHealthState::Idle) {
+            return;
+        }
+        if dbfs > MIC_NONZERO_DBFS {
+            self.last_nonzero_at = Some(now);
+            // Healthy frames imply the stream is alive; clear cooldown so the
+            // next stall can be acted on immediately.
+            if matches!(self.state, MicHealthState::Cooldown) {
+                if let Some(cooldown_until) = self.cooldown_until {
+                    if now >= cooldown_until {
+                        self.state = MicHealthState::Watching;
+                        self.cooldown_until = None;
+                        self.attempts = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Inspect the current state and emit a recovery verdict.
+    pub fn tick(&mut self, now: Instant) -> MicHealthVerdict {
+        match self.state {
+            MicHealthState::Idle => MicHealthVerdict::Healthy,
+            MicHealthState::Exhausted => MicHealthVerdict::Exhausted,
+            MicHealthState::Cooldown => {
+                let Some(cooldown_until) = self.cooldown_until else {
+                    self.state = MicHealthState::Watching;
+                    return MicHealthVerdict::Healthy;
+                };
+                if now < cooldown_until {
+                    return MicHealthVerdict::InCooldown;
+                }
+                self.state = MicHealthState::Watching;
+                self.cooldown_until = None;
+                self.evaluate(now)
+            }
+            MicHealthState::Watching => self.evaluate(now),
+        }
+    }
+
+    fn evaluate(&mut self, now: Instant) -> MicHealthVerdict {
+        let Some(started_at) = self.capture_started_at else {
+            return MicHealthVerdict::Healthy;
+        };
+
+        let session_age = now.saturating_duration_since(started_at);
+        if session_age < self.config.startup_grace {
+            return MicHealthVerdict::AwaitingFirstFrame;
+        }
+
+        let silence_anchor = self.last_nonzero_at.unwrap_or(started_at);
+        let silence_age = now.saturating_duration_since(silence_anchor);
+        if silence_age < self.config.stall_threshold {
+            return MicHealthVerdict::Healthy;
+        }
+
+        if self.attempts >= self.config.max_attempts {
+            self.state = MicHealthState::Exhausted;
+            return MicHealthVerdict::Action(MicHealthAction::GiveUp {
+                reason: stall_reason(silence_age),
+            });
+        }
+
+        self.attempts = self.attempts.saturating_add(1);
+        self.cooldown_until = Some(now + self.config.recovery_cooldown);
+        self.state = MicHealthState::Cooldown;
+
+        let reason = stall_reason(silence_age);
+        if !self.currently_default_device && self.attempts >= 2 {
+            MicHealthVerdict::Action(MicHealthAction::FallbackToDefault { reason })
+        } else if self.currently_default_device && self.attempts >= self.config.max_attempts {
+            // Already on default; can't escalate to a different device — surface the warning.
+            self.state = MicHealthState::Exhausted;
+            MicHealthVerdict::Action(MicHealthAction::GiveUp { reason })
+        } else {
+            MicHealthVerdict::Action(MicHealthAction::RestartCurrent { reason })
+        }
+    }
+}
+
+fn stall_reason(silence_age: Duration) -> String {
+    let secs = silence_age.as_secs_f32();
+    format!("no audio input detected for {secs:.1}s")
+}
+
 fn percentile(samples: &VecDeque<f32>, percentile: f32) -> Option<f32> {
     if samples.is_empty() {
         return None;
@@ -287,4 +487,143 @@ fn percentile(samples: &VecDeque<f32>, percentile: f32) -> Option<f32> {
     sorted.sort_by(|left, right| left.total_cmp(right));
     let index = ((sorted.len() - 1) as f32 * percentile).round() as usize;
     sorted.get(index).copied()
+}
+
+#[cfg(test)]
+mod mic_health_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn fast_config() -> MicHealthConfig {
+        MicHealthConfig {
+            startup_grace: Duration::from_millis(100),
+            stall_threshold: Duration::from_millis(300),
+            recovery_cooldown: Duration::from_millis(200),
+            max_attempts: 2,
+        }
+    }
+
+    #[test]
+    fn idle_when_capture_not_started() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let now = Instant::now();
+        assert_eq!(monitor.tick(now), MicHealthVerdict::Healthy);
+    }
+
+    #[test]
+    fn awaiting_first_frame_during_grace_period() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+        let verdict = monitor.tick(started + Duration::from_millis(50));
+        assert_eq!(verdict, MicHealthVerdict::AwaitingFirstFrame);
+    }
+
+    #[test]
+    fn healthy_while_nonzero_frames_keep_arriving() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+        for offset_ms in (50..=500).step_by(50) {
+            monitor.observe_frame(-60.0, started + Duration::from_millis(offset_ms));
+        }
+        let verdict = monitor.tick(started + Duration::from_millis(500));
+        assert_eq!(verdict, MicHealthVerdict::Healthy);
+    }
+
+    #[test]
+    fn pinned_device_escalates_restart_then_fallback_then_giveup() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        // Only digitally-silent frames.
+        for offset_ms in (0..=500).step_by(50) {
+            monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
+        }
+
+        let first = monitor.tick(started + Duration::from_millis(500));
+        assert!(matches!(
+            first,
+            MicHealthVerdict::Action(MicHealthAction::RestartCurrent { .. })
+        ));
+
+        let cooldown = monitor.tick(started + Duration::from_millis(550));
+        assert_eq!(cooldown, MicHealthVerdict::InCooldown);
+
+        let second = monitor.tick(started + Duration::from_millis(1_200));
+        assert!(matches!(
+            second,
+            MicHealthVerdict::Action(MicHealthAction::FallbackToDefault { .. })
+        ));
+
+        let third = monitor.tick(started + Duration::from_millis(1_900));
+        assert!(matches!(
+            third,
+            MicHealthVerdict::Action(MicHealthAction::GiveUp { .. })
+        ));
+        assert_eq!(
+            monitor.tick(started + Duration::from_millis(2_500)),
+            MicHealthVerdict::Exhausted
+        );
+    }
+
+    #[test]
+    fn default_device_skips_fallback_to_default_and_gives_up_on_second_wedge() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, true);
+
+        for offset_ms in (0..=500).step_by(50) {
+            monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
+        }
+
+        let first = monitor.tick(started + Duration::from_millis(500));
+        assert!(matches!(
+            first,
+            MicHealthVerdict::Action(MicHealthAction::RestartCurrent { .. })
+        ));
+
+        let second = monitor.tick(started + Duration::from_millis(1_200));
+        assert!(matches!(
+            second,
+            MicHealthVerdict::Action(MicHealthAction::GiveUp { .. })
+        ));
+    }
+
+    #[test]
+    fn nonzero_frame_during_cooldown_returns_to_healthy() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        for offset_ms in (0..=500).step_by(50) {
+            monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
+        }
+
+        let first = monitor.tick(started + Duration::from_millis(500));
+        assert!(matches!(
+            first,
+            MicHealthVerdict::Action(MicHealthAction::RestartCurrent { .. })
+        ));
+
+        // Cooldown elapses, then a healthy frame arrives.
+        monitor.observe_frame(-65.0, started + Duration::from_millis(800));
+
+        let after = monitor.tick(started + Duration::from_millis(900));
+        assert_eq!(after, MicHealthVerdict::Healthy);
+    }
+
+    #[test]
+    fn observe_frame_after_capture_stopped_is_a_no_op() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+        monitor.capture_stopped();
+        monitor.observe_frame(-60.0, started + Duration::from_millis(50));
+        assert_eq!(
+            monitor.tick(started + Duration::from_millis(500)),
+            MicHealthVerdict::Healthy
+        );
+    }
 }

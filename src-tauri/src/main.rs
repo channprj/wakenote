@@ -13,7 +13,7 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
-use wakenote::audio::list_input_devices;
+use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
     MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState,
@@ -61,6 +61,7 @@ const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
+const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
 const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 200;
 
@@ -571,19 +572,29 @@ fn start_live_capture_runtime(
         settings
     };
 
-    let resolve_device_id = if settings.selected_microphone == "default" {
-        settings.selected_microphone.as_str()
-    } else {
-        "default"
+    // Recovery override (set by the watchdog when falling back to default after
+    // a wedged pinned stream) takes precedence over the persisted selection for
+    // this single start. The override is one-shot — `take_microphone_recovery_override`
+    // clears it so subsequent restarts honour the user's pinned device again.
+    let recovery_override = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        backend.take_microphone_recovery_override()
     };
-    let resolved = match resolve_capture_device_with_timeout(resolve_device_id.to_string()) {
+    let recovery_override_active = recovery_override.is_some();
+    let requested_device_id =
+        recovery_override.unwrap_or_else(|| settings.selected_microphone.clone());
+    let resolved = match resolve_capture_device_with_timeout(requested_device_id.clone()) {
         Ok(resolved) => resolved,
         Err(error) => {
             let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
             return Ok(backend.capture_start_failed(format!("Microphone unavailable: {error}")));
         }
     };
-    let used_fallback_device = settings.selected_microphone != resolved.device_id;
+    // True if the device we actually opened diverges from the user's pinned
+    // selection — either because the watchdog overrode it or because cpal had
+    // to fall back when the pinned device was unavailable.
+    let used_fallback_device =
+        recovery_override_active || settings.selected_microphone != resolved.device_id;
 
     let (device_id, sample_rate, handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
@@ -1054,6 +1065,90 @@ fn apply_launch_at_login_action(
     }
 }
 
+/// Spawn the microphone-input recovery watchdog. The watchdog runs for the
+/// lifetime of the process: every [`MIC_RECOVERY_TICK_INTERVAL`] it polls the
+/// backend for a [`MicHealthAction`] and orchestrates a capture restart (or
+/// fallback to the system default device) when the stream is wedged.
+fn spawn_mic_recovery_watchdog(
+    app: AppHandle,
+    backend_state: BackendState,
+    transcription_state: AutoTranscriptionState,
+) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(MIC_RECOVERY_TICK_INTERVAL);
+            let live_running = app
+                .try_state::<LiveCaptureState>()
+                .and_then(|state| state.lock().ok().map(|live| live.is_running()))
+                .unwrap_or(false);
+            if !live_running {
+                continue;
+            }
+            let action = match backend_state.lock() {
+                Ok(mut backend) => backend.evaluate_microphone_health(),
+                Err(_) => continue,
+            };
+            let Some(action) = action else {
+                continue;
+            };
+            apply_mic_recovery_action(&app, &backend_state, &transcription_state, action);
+        }
+    });
+}
+
+fn apply_mic_recovery_action(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    transcription_state: &AutoTranscriptionState,
+    action: MicHealthAction,
+) {
+    let live_state = match app.try_state::<LiveCaptureState>() {
+        Some(state) => state,
+        None => return,
+    };
+    match action {
+        MicHealthAction::RestartCurrent { reason } => {
+            eprintln!("[mic-watchdog] restarting current device: {reason}");
+            if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
+                eprintln!("[mic-watchdog] stop before restart failed: {error}");
+            }
+            if let Err(error) = start_live_capture_runtime(
+                app,
+                backend_state,
+                live_state.inner(),
+                transcription_state.clone(),
+            ) {
+                eprintln!("[mic-watchdog] restart failed: {error}");
+            }
+        }
+        MicHealthAction::FallbackToDefault { reason } => {
+            eprintln!("[mic-watchdog] falling back to system default: {reason}");
+            if let Ok(mut backend) = backend_state.lock() {
+                backend.set_microphone_recovery_override("default");
+            }
+            if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
+                eprintln!("[mic-watchdog] stop before fallback failed: {error}");
+            }
+            if let Err(error) = start_live_capture_runtime(
+                app,
+                backend_state,
+                live_state.inner(),
+                transcription_state.clone(),
+            ) {
+                eprintln!("[mic-watchdog] fallback start failed: {error}");
+            }
+        }
+        MicHealthAction::GiveUp { reason } => {
+            eprintln!("[mic-watchdog] giving up: {reason}");
+            if let Ok(mut backend) = backend_state.lock() {
+                backend.set_microphone_warning(format!(
+                    "Microphone input lost ({reason}). Re-select your microphone or reconnect the device."
+                ));
+            }
+        }
+    }
+}
+
 fn apply_live_capture_runtime_action(
     app: &AppHandle,
     backend_state: &BackendState,
@@ -1244,6 +1339,11 @@ fn main() {
                 app.handle().clone(),
                 backend_state.clone(),
                 live_transcriber_state.clone(),
+            );
+            spawn_mic_recovery_watchdog(
+                app.handle().clone(),
+                backend_state.clone(),
+                transcription_state.clone(),
             );
             if let Err(error) = overlay::create_overlay_window(app.handle()) {
                 eprintln!("[overlay] initial hidden overlay creation failed: {error}");

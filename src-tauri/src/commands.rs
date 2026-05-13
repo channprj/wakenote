@@ -4,11 +4,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 
-use crate::audio::{InputDevice, LevelMonitor, LevelSnapshot, list_input_devices};
+use crate::audio::{
+    InputDevice, LevelMonitor, LevelSnapshot, MicHealthAction, MicHealthMonitor, MicHealthVerdict,
+    dbfs_from_samples, list_input_devices,
+};
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
@@ -252,6 +256,11 @@ pub struct AppBackend {
     pending_live_events: Vec<LiveTranscriptEvent>,
     chunk_id_history: VecDeque<(PathBuf, u64)>,
     chunk_id_index: HashMap<PathBuf, u64>,
+    mic_health: MicHealthMonitor,
+    /// One-shot device-id override used by the recovery watchdog to force a
+    /// restart onto a specific device (e.g. system default) on the next
+    /// capture start. Consumed by `take_microphone_recovery_override`.
+    mic_recovery_override: Option<String>,
 }
 
 impl std::fmt::Debug for AppBackend {
@@ -270,6 +279,8 @@ impl std::fmt::Debug for AppBackend {
             )
             .field("pending_live_events_len", &self.pending_live_events.len())
             .field("chunk_id_history_len", &self.chunk_id_history.len())
+            .field("mic_health", &self.mic_health)
+            .field("mic_recovery_override", &self.mic_recovery_override)
             .finish()
     }
 }
@@ -288,6 +299,8 @@ impl Default for AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            mic_health: MicHealthMonitor::default(),
+            mic_recovery_override: None,
         }
     }
 }
@@ -307,6 +320,8 @@ impl AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            mic_health: MicHealthMonitor::default(),
+            mic_recovery_override: None,
         })
     }
 
@@ -541,6 +556,9 @@ impl AppBackend {
         } else {
             None
         };
+        let using_default_device = device_id == "default" || used_fallback_device;
+        self.mic_health
+            .capture_started(Instant::now(), using_default_device);
         self.capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: self.save_root_path(),
             settings: self.settings.clone(),
@@ -574,12 +592,53 @@ impl AppBackend {
         self.app_status()
     }
 
+    /// Inspect microphone-input health and decide whether the watchdog should
+    /// trigger a capture recovery. Returns `None` when no action is required.
+    pub fn evaluate_microphone_health(&mut self) -> Option<MicHealthAction> {
+        if self.capture.is_none() {
+            return None;
+        }
+        if self.settings.pause_all || !self.settings.recording_enabled {
+            return None;
+        }
+        match self.mic_health.tick(Instant::now()) {
+            MicHealthVerdict::Action(action) => Some(action),
+            _ => None,
+        }
+    }
+
+    /// Pre-stage a device override for the next live-capture start. Consumed
+    /// (cleared) by `take_microphone_recovery_override` at the next start.
+    pub fn set_microphone_recovery_override(&mut self, device_id: impl Into<String>) {
+        self.mic_recovery_override = Some(device_id.into());
+    }
+
+    /// Consume any pending recovery-device override; the next live-capture
+    /// start should use the returned device id instead of `settings.selected_microphone`.
+    pub fn take_microphone_recovery_override(&mut self) -> Option<String> {
+        self.mic_recovery_override.take()
+    }
+
+    /// Surface a warning directly (used by the watchdog when recovery is
+    /// exhausted) without tearing down the active capture session.
+    pub fn set_microphone_warning(&mut self, warning: impl Into<String>) {
+        self.microphone_warning = Some(warning.into());
+    }
+
+    /// Clear any standing microphone warning (used after a successful recovery
+    /// re-establishes audio input).
+    pub fn clear_microphone_warning(&mut self) {
+        self.microphone_warning = None;
+    }
+
     pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
         let capture = self
             .capture
             .as_mut()
             .ok_or_else(|| "capture session is not running".to_string())?;
+        let dbfs = dbfs_from_samples(&frame.samples);
         self.level_monitor.observe_samples(&frame.samples);
+        self.mic_health.observe_frame(dbfs, Instant::now());
         let events = capture
             .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
@@ -883,6 +942,7 @@ impl AppBackend {
         self.capture = None;
         self.active_microphone_label = None;
         self.level_monitor = LevelMonitor::default();
+        self.mic_health.capture_stopped();
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
