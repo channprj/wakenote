@@ -18,9 +18,10 @@ function transcript(overrides: Partial<RecentTranscript>): RecentTranscript {
 }
 
 describe("TranscriptsPanel", () => {
-  it("shows one date page at a time with date pagination controls", () => {
+  it("shows today's date page by default with date pagination controls", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-14T12:00:00+09:00")}
         transcripts={[
           transcript({
             transcript_path: "/tmp/WakeNote/20260508/010203.txt",
@@ -40,25 +41,56 @@ describe("TranscriptsPanel", () => {
             recorded_at: "2026-05-10T01:02:03+09:00",
             text: "new day transcript",
           }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260514/010203.txt",
+            audio_path: "/tmp/WakeNote/20260514/010203.m4a",
+            recorded_at: "2026-05-14T01:02:03+09:00",
+            text: "today transcript",
+          }),
         ]}
       />,
     );
 
-    expect(markup).toContain("2026-05-10");
-    expect(markup).toContain("new day transcript");
+    expect(markup).toContain("2026-05-14");
+    expect(markup).toContain("today transcript");
+    expect(markup).not.toContain("new day transcript");
     expect(markup).not.toContain("middle day transcript");
     expect(markup).not.toContain("old day transcript");
-    expect(markup).toContain('aria-label="Go to 2026-05-10 transcripts"');
-    expect(markup).toContain(">2026-05-10</button>");
-    expect(markup).toContain("Previous day");
-    expect(markup).toContain("Next day");
+    expect(markup).toContain('aria-label="Go to 2026-05-14 transcripts"');
+    expect(markup).toContain('aria-label="Go to 2026-05-13 transcripts"');
+    expect(markup).toContain(">2026-05-14</button>");
+    expect(markup).toContain("Previous date");
+    expect(markup).toContain('aria-label="Previous date"');
+    expect(markup).toContain('aria-label="Next date"');
     expect(markup).toContain('aria-current="page"');
     expect(markup).not.toContain("Page 1 of 3");
+  });
+
+  it("starts on today's empty date instead of jumping to the newest saved transcript", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-14T12:00:00+09:00")}
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+            audio_path: "/tmp/WakeNote/20260510/010203.m4a",
+            recorded_at: "2026-05-10T01:02:03+09:00",
+            text: "older saved transcript",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("2026-05-14");
+    expect(markup).toContain("No transcripts for this day");
+    expect(markup).not.toContain("older saved transcript");
+    expect(markup).toContain('aria-label="Go to 2026-05-10 transcripts"');
   });
 
   it("renders transcripts in chronological order within the selected date", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
         transcripts={[
           transcript({
             transcript_path: "/tmp/WakeNote/20260510/180000.txt",
@@ -84,6 +116,7 @@ describe("TranscriptsPanel", () => {
   it("renders a right-side play button for each transcript with a recording", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
         transcripts={[
           transcript({
             text: "playable transcript",
@@ -97,9 +130,53 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain("transcript-entry__play");
   });
 
-  it("wraps the transcript timestamp in a file:// link to the .txt sidecar", () => {
+  it("renders transcript rows as a condensed list without a separate recording link", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        transcripts={[
+          transcript({
+            text: "compact transcript",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("transcript-entry-list transcript-entry-list--condensed");
+    expect(markup).toContain("transcript-entry transcript-entry--condensed");
+    expect(markup).not.toContain("Open recording file");
+    expect(markup).not.toContain("transcript-entry__recording");
+    expect(markup).not.toContain(">Recording</a>");
+    expect(markup).not.toContain("Daily transcript");
+  });
+
+  it("renders the timestamp and transcript text inline on the same row", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        transcripts={[
+          transcript({
+            text: "inline transcript",
+          }),
+        ]}
+      />,
+    );
+
+    const timestampIndex = markup.indexOf("2026-05-10 01:02:03");
+    const textIndex = markup.indexOf("inline transcript");
+    expect(timestampIndex).toBeGreaterThan(-1);
+    expect(textIndex).toBeGreaterThan(timestampIndex);
+    expect(markup).toContain("transcript-entry__timestamp");
+    expect(markup).toContain("transcript-entry__text");
+    expect(markup).not.toContain("transcript-entry__meta");
+    expect(markup).not.toContain("transcript-entry__body");
+    expect(markup).not.toContain("transcript-entry__actions");
+  });
+
+  it("wraps the transcript timestamp in an inline file:// link to the .txt sidecar", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
         transcripts={[
           transcript({
             transcript_path: "/tmp/WakeNote/20260510/010203.txt",
@@ -112,7 +189,7 @@ describe("TranscriptsPanel", () => {
     );
 
     expect(markup).toContain(
-      '<a href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>',
+      '<a class="transcript-entry__timestamp" href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>',
     );
   });
 
@@ -134,9 +211,10 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain("Now playing");
   });
 
-  it("surfaces a disabled-reason tooltip on the Previous day button when on the latest day", () => {
+  it("surfaces a disabled-reason tooltip on the Next date arrow when already on today", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
         transcripts={[
           transcript({
             transcript_path: "/tmp/WakeNote/20260509/010203.txt",
@@ -154,18 +232,17 @@ describe("TranscriptsPanel", () => {
       />,
     );
 
-    // groupTranscriptsByDay sorts newest-first, so activePage=0 shows 2026-05-10.
-    // Previous day (which would decrement activePage) is disabled and carries the latest-day tooltip;
-    // Next day is enabled and has no title attribute.
+    // The initial page is today, so the newer-date arrow is disabled and older-date navigation is enabled.
     expect(markup).toMatch(
-      /<button[^>]*aria-label="Previous day"[^>]*disabled=""[^>]*title="Already on the latest day"[^>]*>/,
+      /<button[^>]*aria-label="Next date"[^>]*disabled=""[^>]*title="Already on today"[^>]*>/,
     );
-    expect(markup).not.toMatch(/aria-label="Next day[^"]*"[^>]*title="/);
+    expect(markup).not.toMatch(/aria-label="Previous date"[^>]*\stitle="/);
   });
 
-  it("omits the disabled-reason tooltip on the enabled Next day button on the initial page", () => {
+  it("omits the disabled-reason tooltip on the enabled Previous date button on today's page", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
+        today={new Date("2026-05-10T12:00:00+09:00")}
         transcripts={[
           transcript({
             transcript_path: "/tmp/WakeNote/20260509/010203.txt",
@@ -183,10 +260,8 @@ describe("TranscriptsPanel", () => {
       />,
     );
 
-    // Initial render is activePage=0 (latest day): Next day is enabled, so no title attribute.
-    // Use a negative-leak assertion to confirm we don't leak the wrong tooltip on enabled buttons.
-    expect(markup).not.toMatch(/aria-label="Next day[^"]*"[^>]*\stitle="/);
-    expect(markup).not.toContain('title="Already on the earliest day"');
+    expect(markup).not.toMatch(/aria-label="Previous date"[^>]*\stitle="/);
+    expect(markup).not.toContain('title="Already on the earliest transcript date"');
   });
 
   it("wraps the player sheet header strong in a file:// link to the recording", () => {
@@ -211,39 +286,37 @@ describe("TranscriptsPanel", () => {
 });
 
 describe("previousDayDisabledReason", () => {
-  // Groups are sorted newest-first, so activePage===0 means the user is on the latest day
-  // and the Previous day button (which navigates to activePage-1) has nowhere to go.
-  it("returns a reason when on the latest day (activePage === 0)", () => {
-    expect(previousDayDisabledReason(0)).toBe("Already on the latest day");
+  // Date pages are sorted newest-to-oldest, so previous-date navigation moves toward older days.
+  it("returns a reason when on the earliest transcript date", () => {
+    expect(previousDayDisabledReason(2, 3)).toBe("Already on the earliest transcript date");
   });
 
-  it("returns null when there is a previous page", () => {
-    expect(previousDayDisabledReason(1)).toBeNull();
-    expect(previousDayDisabledReason(5)).toBeNull();
+  it("returns null when there is an older date page", () => {
+    expect(previousDayDisabledReason(0, 3)).toBeNull();
+    expect(previousDayDisabledReason(1, 3)).toBeNull();
   });
 
-  it("returns a reason for negative activePage as a defensive guard", () => {
-    expect(previousDayDisabledReason(-1)).toBe("Already on the latest day");
+  it("returns a reason for out-of-range activePage as a defensive guard", () => {
+    expect(previousDayDisabledReason(5, 3)).toBe("Already on the earliest transcript date");
   });
 });
 
 describe("nextDayDisabledReason", () => {
-  // Groups are sorted newest-first, so activePage===length-1 means the user is on the
-  // earliest day and the Next day button (which navigates to activePage+1) has nowhere to go.
-  it("returns a reason when on the earliest day", () => {
-    expect(nextDayDisabledReason(2, 3)).toBe("Already on the earliest day");
+  // Next-date navigation moves toward today/newer days.
+  it("returns a reason when already on today", () => {
+    expect(nextDayDisabledReason(0)).toBe("Already on today");
   });
 
-  it("returns null when there is a next page", () => {
-    expect(nextDayDisabledReason(0, 3)).toBeNull();
-    expect(nextDayDisabledReason(1, 3)).toBeNull();
+  it("returns null when there is a newer date page", () => {
+    expect(nextDayDisabledReason(1)).toBeNull();
+    expect(nextDayDisabledReason(5)).toBeNull();
   });
 
-  it("returns a reason when activePage exceeds the last index as a defensive guard", () => {
-    expect(nextDayDisabledReason(5, 3)).toBe("Already on the earliest day");
+  it("returns a reason for negative activePage as a defensive guard", () => {
+    expect(nextDayDisabledReason(-1)).toBe("Already on today");
   });
 
   it("returns a reason for a single-day list", () => {
-    expect(nextDayDisabledReason(0, 1)).toBe("Already on the earliest day");
+    expect(nextDayDisabledReason(0)).toBe("Already on today");
   });
 });

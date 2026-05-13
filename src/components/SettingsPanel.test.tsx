@@ -230,13 +230,19 @@ describe("settings panel", () => {
     expect(markup.indexOf("Peak")).toBeLessThan(markup.indexOf("Recording"));
   });
 
-  it("shows all transcripts grouped by day with recording file links", () => {
+  it("shows all transcripts grouped by day with inline transcript sidecar links", () => {
     const snapshot = mockSnapshot();
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const dashed = `${yyyy}-${mm}-${dd}`;
+    const compact = `${yyyy}${mm}${dd}`;
     snapshot.recent_transcripts = [
       {
-        transcript_path: "/tmp/WakeNote/20260510/010203.txt",
-        audio_path: "/tmp/WakeNote/20260510/010203.m4a",
-        recorded_at: "2026-05-10T01:02:03+09:00",
+        transcript_path: `/tmp/WakeNote/${compact}/010203.txt`,
+        audio_path: `/tmp/WakeNote/${compact}/010203.m4a`,
+        recorded_at: `${dashed}T01:02:03+09:00`,
         text: "daily transcript text",
       },
     ];
@@ -244,9 +250,9 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "transcripts");
 
     expect(markup).toContain("Transcripts");
-    expect(markup).toContain("2026-05-10");
+    expect(markup).toContain(dashed);
     expect(markup).toContain("daily transcript text");
-    expect(markup).toContain('href="file:///tmp/WakeNote/20260510/010203.m4a"');
+    expect(markup).toContain(`href="file:///tmp/WakeNote/${compact}/010203.txt"`);
   });
 
   it("groups history jobs by recording day", () => {
