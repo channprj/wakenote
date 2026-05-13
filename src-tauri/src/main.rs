@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{
+    AboutMetadata, CheckMenuItem, HELP_SUBMENU_ID, Menu, MenuItem, PredefinedMenuItem, Submenu,
+    WINDOW_SUBMENU_ID,
+};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::{MicHealthAction, list_input_devices};
@@ -53,6 +56,7 @@ const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "WakeNote";
+const CLOSE_SETTINGS_WINDOW_MENU_ID: &str = "close-settings-window";
 const MAIN_WINDOW_WIDTH: f64 = 1180.0;
 const MAIN_WINDOW_HEIGHT: f64 = 760.0;
 const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
@@ -1224,6 +1228,78 @@ fn settings_window_should_open_on_launch(settings: &AppSettings) -> bool {
     !settings.show_tray_icon
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMenuAction {
+    HideSettingsWindow,
+    Noop,
+}
+
+fn app_menu_action(menu_id: &str) -> AppMenuAction {
+    match menu_id {
+        CLOSE_SETTINGS_WINDOW_MENU_ID => AppMenuAction::HideSettingsWindow,
+        _ => AppMenuAction::Noop,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsWindowRequest {
+    Show { show_dock_icon: bool },
+}
+
+fn settings_window_request_for_reopen(settings: Option<&AppSettings>) -> SettingsWindowRequest {
+    SettingsWindowRequest::Show {
+        show_dock_icon: settings
+            .map(|settings| settings.show_dock_icon)
+            .unwrap_or(true),
+    }
+}
+
+fn settings_window_request_from_app(app: &AppHandle) -> SettingsWindowRequest {
+    let settings = app
+        .try_state::<BackendState>()
+        .and_then(|state| state.lock().ok().map(|backend| backend.settings()));
+    settings_window_request_for_reopen(settings.as_ref())
+}
+
+fn handle_app_menu_event(app: &AppHandle, menu_id: &str) {
+    match app_menu_action(menu_id) {
+        AppMenuAction::HideSettingsWindow => {
+            if let Err(error) = hide_settings_window(app) {
+                eprintln!("[window] failed to close settings window: {error}");
+            }
+        }
+        AppMenuAction::Noop => {}
+    }
+}
+
+fn hide_settings_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
+            window.hide()?;
+        }
+    }
+    Ok(())
+}
+
+fn schedule_settings_window_for_reopen(app: &AppHandle, reason: &'static str) {
+    let app_handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if let Err(error) = open_settings_window_for_reopen(&app_handle) {
+            eprintln!("[window] failed to open settings window on {reason}: {error}");
+        }
+    }) {
+        eprintln!("[window] failed to schedule settings window on {reason}: {error}");
+    }
+}
+
+fn open_settings_window_for_reopen(app: &AppHandle) -> tauri::Result<()> {
+    match settings_window_request_from_app(app) {
+        SettingsWindowRequest::Show { show_dock_icon } => {
+            ensure_main_window_visible(app, show_dock_icon)
+        }
+    }
+}
+
 fn apply_dock_icon_visibility(app: &AppHandle, show_dock_icon: bool) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -1293,8 +1369,111 @@ fn main_window_needs_size_restore(width: u32, height: u32) -> bool {
     width < MAIN_WINDOW_MIN_WIDTH as u32 || height < MAIN_WINDOW_MIN_HEIGHT as u32
 }
 
+fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let pkg_info = app.package_info();
+    let config = app.config();
+    let about_metadata = AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        copyright: config.bundle.copyright.clone(),
+        authors: config
+            .bundle
+            .publisher
+            .clone()
+            .map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+    let close_window = MenuItem::with_id(
+        app,
+        CLOSE_SETTINGS_WINDOW_MENU_ID,
+        "Close Window",
+        true,
+        Some("CmdOrCtrl+W"),
+    )?;
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &close_window,
+            #[cfg(not(target_os = "macos"))]
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+    let window_menu = Submenu::with_id_and_items(
+        app,
+        WINDOW_SUBMENU_ID,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+        ],
+    )?;
+    let help_menu = Submenu::with_id_and_items(
+        app,
+        HELP_SUBMENU_ID,
+        "Help",
+        true,
+        &[
+            #[cfg(not(target_os = "macos"))]
+            &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+        ],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[
+            #[cfg(target_os = "macos")]
+            &Submenu::with_items(
+                app,
+                pkg_info.name.clone(),
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?,
+            &file_menu,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            #[cfg(target_os = "macos")]
+            &Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?,
+            &window_menu,
+            &help_menu,
+        ],
+    )
+}
+
 fn main() {
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            schedule_settings_window_for_reopen(app, "single-instance launch");
+        }))
+        .plugin(tauri_plugin_dialog::init());
 
     #[cfg(target_os = "macos")]
     {
@@ -1302,6 +1481,10 @@ fn main() {
     }
 
     builder
+        .menu(build_app_menu)
+        .on_menu_event(|app, event| {
+            handle_app_menu_event(app, event.id().as_ref());
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
@@ -1455,8 +1638,17 @@ fn main() {
             start_live_capture,
             stop_live_capture
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run WakeNote");
+        .build(tauri::generate_context!())
+        .expect("failed to build WakeNote")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                schedule_settings_window_for_reopen(app, "macOS reopen");
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 fn setup_tray(
@@ -1728,6 +1920,40 @@ mod tests {
 
         settings.show_tray_icon = false;
         assert!(settings_window_should_open_on_launch(&settings));
+    }
+
+    #[test]
+    fn close_window_shortcut_hides_settings_window() {
+        assert_eq!(
+            app_menu_action(CLOSE_SETTINGS_WINDOW_MENU_ID),
+            AppMenuAction::HideSettingsWindow
+        );
+        assert_eq!(app_menu_action("open-settings"), AppMenuAction::Noop);
+    }
+
+    #[test]
+    fn reopen_request_always_shows_settings_window() {
+        let mut settings = AppSettings::default();
+        assert_eq!(
+            settings_window_request_for_reopen(Some(&settings)),
+            SettingsWindowRequest::Show {
+                show_dock_icon: true
+            }
+        );
+
+        settings.show_dock_icon = false;
+        assert_eq!(
+            settings_window_request_for_reopen(Some(&settings)),
+            SettingsWindowRequest::Show {
+                show_dock_icon: false
+            }
+        );
+        assert_eq!(
+            settings_window_request_for_reopen(None),
+            SettingsWindowRequest::Show {
+                show_dock_icon: true
+            }
+        );
     }
 
     #[test]
