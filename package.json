@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
-    "build": "tsc && vite build",
+    "build": "node scripts/build.mjs",
+    "build:debug": "pnpm build debug",
+    "build:install": "pnpm build install",
+    "build:install:open": "pnpm build install open",
+    "build:install:debug": "pnpm build debug install",
+    "build:install:debug:open": "pnpm build debug install open",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run"

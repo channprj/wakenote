@@ -101,9 +101,26 @@ pnpm tauri dev
 # 3. Run only the frontend (browser dev fallback with mock backend)
 pnpm dev
 
-# 4. Build a release bundle
-pnpm tauri build
+# 4. Build the frontend bundle (used by Tauri's beforeBuildCommand)
+pnpm build
+
+# 5. Build the macOS .app and install it to /Applications
+pnpm build install            # release build + install
+pnpm build install open       # release build + install + launch
+pnpm build debug install      # debug build + install
+pnpm build install --path ~/Applications
+
+# Convenience aliases (same as above):
+#   pnpm build:install
+#   pnpm build:install:open
+#   pnpm build:install:debug
+#   pnpm build:install:debug:open
 ```
+
+`pnpm build` with no arguments runs the frontend build (`tsc && vite build`) so
+Tauri's `beforeBuildCommand` keeps working. Adding positional arguments invokes
+`scripts/build.mjs`, which orchestrates the Tauri bundle and the macOS install.
+Override the install directory with `WAKENOTE_INSTALL_PATH=…` or `--path …`.
 
 The browser dev fallback (`pnpm dev`) renders the React UI against a mock snapshot defined in `src/lib/app-state.ts` and `src/lib/tauri-client.ts`, so the settings panel, queue, and model manager are dogfoodable without launching Tauri.
 
