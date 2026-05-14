@@ -20,6 +20,7 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onStartLiveCapture={() => {}}
       onStopLiveCapture={() => {}}
       onChooseSaveRoot={() => {}}
+      onRevealSaveFolder={() => {}}
       onChooseModelDirectory={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
@@ -53,6 +54,16 @@ function switchTag(markup: string, label: string) {
   return match?.[0] ?? "";
 }
 
+function localDateSegments(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return {
+    dashed: `${year}-${month}-${day}`,
+    compact: `${year}${month}${day}`,
+  };
+}
+
 describe("settings panel", () => {
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {
     const snapshot = mockSnapshot();
@@ -73,15 +84,16 @@ describe("settings panel", () => {
       },
     ];
 
-    const markup = renderSettingsPanel(snapshot);
+    const recordingMarkup = renderSettingsPanel(snapshot, "recording");
+    const generalMarkup = renderSettingsPanel(snapshot);
 
-    expect(isDisabled(buttonTag(markup, "Start Input"))).toBe(false);
-    expect(markup).toContain("Missing AirPods is unavailable");
-    expect(markup).toContain("Start Input will use System Default");
-    expect(markup).toMatch(
+    expect(isDisabled(buttonTag(recordingMarkup, "Start Input"))).toBe(false);
+    expect(generalMarkup).toContain("Missing AirPods is unavailable");
+    expect(generalMarkup).toContain("Start Input will use System Default");
+    expect(generalMarkup).toMatch(
       /<div class="warning-banner warning-banner--warning">\s*Missing AirPods is unavailable/,
     );
-    expect(markup).not.toMatch(/warning-banner--danger[^"]*">[\s\S]*?Missing AirPods is unavailable/);
+    expect(generalMarkup).not.toMatch(/warning-banner--danger[^"]*">[\s\S]*?Missing AirPods is unavailable/);
   });
 
   it("flags the microphone banner as danger when no fallback input is available", () => {
@@ -111,7 +123,7 @@ describe("settings panel", () => {
 
   it("disables redundant live input start and stop actions while preserving error recovery", () => {
     const stopped = mockSnapshot();
-    const stoppedMarkup = renderSettingsPanel(stopped);
+    const stoppedMarkup = renderSettingsPanel(stopped, "recording");
 
     expect(isDisabled(buttonTag(stoppedMarkup, "Start Input"))).toBe(false);
     expect(isDisabled(buttonTag(stoppedMarkup, "Stop Input"))).toBe(true);
@@ -119,7 +131,7 @@ describe("settings panel", () => {
     const active = mockSnapshot();
     active.status.live_input_active = true;
     active.status.tray_state = "listening";
-    const activeMarkup = renderSettingsPanel(active);
+    const activeMarkup = renderSettingsPanel(active, "recording");
 
     expect(isDisabled(buttonTag(activeMarkup, "Start Input"))).toBe(true);
     expect(isDisabled(buttonTag(activeMarkup, "Stop Input"))).toBe(false);
@@ -128,7 +140,7 @@ describe("settings panel", () => {
     errored.status.live_input_active = true;
     errored.status.tray_state = "error";
     errored.status.runtime_warning = "Live input stream error: default input stream disconnected";
-    const erroredMarkup = renderSettingsPanel(errored);
+    const erroredMarkup = renderSettingsPanel(errored, "recording");
 
     expect(isDisabled(buttonTag(erroredMarkup, "Start Input"))).toBe(false);
     expect(isDisabled(buttonTag(erroredMarkup, "Stop Input"))).toBe(false);
@@ -169,7 +181,7 @@ describe("settings panel", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.vad_enabled = true;
 
-    const markup = renderSettingsPanel(snapshot, "privacy");
+    const markup = renderSettingsPanel(snapshot);
     const vadSwitch = switchTag(markup, "VAD gate");
 
     expect(vadSwitch).toContain('aria-checked="false"');
@@ -178,7 +190,7 @@ describe("settings panel", () => {
 
   it("surfaces a why-disabled tooltip on the VAD gate switch", () => {
     const snapshot = mockSnapshot();
-    const markup = renderSettingsPanel(snapshot, "privacy");
+    const markup = renderSettingsPanel(snapshot);
     const vadSwitch = switchTag(markup, "VAD gate");
 
     expect(vadSwitch).toContain(`title="${vadGateDisabledReason()}"`);
@@ -186,7 +198,7 @@ describe("settings panel", () => {
 
   it("omits the why-disabled tooltip on enabled toggle rows", () => {
     const snapshot = mockSnapshot();
-    const markup = renderSettingsPanel(snapshot, "privacy");
+    const markup = renderSettingsPanel(snapshot);
     const launchSwitch = switchTag(markup, "Launch at login");
 
     expect(launchSwitch).not.toContain("title=");
@@ -219,30 +231,30 @@ describe("settings panel", () => {
     expect(markup).toContain('aria-pressed="true"');
   });
 
-  it("puts live level details above general capture controls and removes tray preview copy", () => {
+  it("omits live recording status and capture actions from general settings", () => {
     const snapshot = mockSnapshot();
     snapshot.status.tray_state = "error";
 
     const markup = renderSettingsPanel(snapshot);
 
     expect(markup).not.toContain("tray-preview");
-    expect(markup.indexOf("Current")).toBeLessThan(markup.indexOf("Recording"));
-    expect(markup.indexOf("Peak")).toBeLessThan(markup.indexOf("Recording"));
+    expect(markup).not.toContain("Current");
+    expect(markup).not.toContain("Peak");
+    expect(markup).not.toContain("Start Input");
+    expect(markup).not.toContain("Stop Input");
+    expect(markup).not.toContain("Refresh");
+    expect(markup).toContain("Launch at login");
+    expect(markup).toContain("VAD gate");
   });
 
   it("shows all transcripts grouped by day with inline transcript sidecar links", () => {
     const snapshot = mockSnapshot();
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const dashed = `${yyyy}-${mm}-${dd}`;
-    const compact = `${yyyy}${mm}${dd}`;
+    const today = localDateSegments(new Date());
     snapshot.recent_transcripts = [
       {
-        transcript_path: `/tmp/WakeNote/${compact}/010203.txt`,
-        audio_path: `/tmp/WakeNote/${compact}/010203.m4a`,
-        recorded_at: `${dashed}T01:02:03+09:00`,
+        transcript_path: `/tmp/WakeNote/${today.compact}/010203.txt`,
+        audio_path: `/tmp/WakeNote/${today.compact}/010203.m4a`,
+        recorded_at: `${today.dashed}T01:02:03+09:00`,
         text: "daily transcript text",
       },
     ];
@@ -250,9 +262,9 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "transcripts");
 
     expect(markup).toContain("Transcripts");
-    expect(markup).toContain(dashed);
+    expect(markup).toContain(today.dashed);
     expect(markup).toContain("daily transcript text");
-    expect(markup).toContain(`href="file:///tmp/WakeNote/${compact}/010203.txt"`);
+    expect(markup).toContain(`href="file:///tmp/WakeNote/${today.compact}/010203.txt"`);
   });
 
   it("groups history jobs by recording day", () => {
@@ -1877,6 +1889,20 @@ describe("settings panel", () => {
     );
   });
 
+  it("renders Open Save Folder only in the storage section", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.save_root = "/tmp/wakenote-recordings";
+
+    const generalMarkup = renderSettingsPanel(snapshot);
+    const storageMarkup = renderSettingsPanel(snapshot, "storage");
+
+    expect(generalMarkup).not.toContain("Open Save Folder");
+    expect(storageMarkup).toContain("Open Save Folder");
+    expect(buttonTag(storageMarkup, "Open Save Folder")).toContain(
+      'title="/tmp/wakenote-recordings"',
+    );
+  });
+
   it("omits the file:// link wrap when save root is blank", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.save_root = "   ";
@@ -1954,7 +1980,7 @@ describe("settings panel", () => {
 
   it("renders why-disabled tooltips on Start Input, Stop Input, and Confirm Save Root buttons", () => {
     const stopped = mockSnapshot();
-    const stoppedMarkup = renderSettingsPanel(stopped);
+    const stoppedMarkup = renderSettingsPanel(stopped, "recording");
     const stopButton = buttonTag(stoppedMarkup, "Stop Input");
     expect(stopButton).toContain('title="Input is not running"');
     // Start Input has no reason here (idle, mic available, recording on, not paused)
@@ -1962,13 +1988,13 @@ describe("settings panel", () => {
 
     const paused = mockSnapshot();
     paused.settings.pause_all = true;
-    const pausedMarkup = renderSettingsPanel(paused);
+    const pausedMarkup = renderSettingsPanel(paused, "recording");
     expect(buttonTag(pausedMarkup, "Start Input")).toContain('title="All capture is paused"');
 
     const active = mockSnapshot();
     active.status.live_input_active = true;
     active.status.tray_state = "listening";
-    const activeMarkup = renderSettingsPanel(active);
+    const activeMarkup = renderSettingsPanel(active, "recording");
     expect(buttonTag(activeMarkup, "Start Input")).toContain('title="Input is already running"');
     expect(buttonTag(activeMarkup, "Stop Input")).not.toContain("title=");
 

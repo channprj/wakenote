@@ -58,6 +58,7 @@ function renderSettingsPanelSectionBadgeClass(status: ModelStatus): string {
       onStartLiveCapture={() => {}}
       onStopLiveCapture={() => {}}
       onChooseSaveRoot={() => {}}
+      onRevealSaveFolder={() => {}}
       onChooseModelDirectory={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}

@@ -16,6 +16,18 @@ describe("App branding", () => {
     expect(markup).not.toContain("About");
   });
 
+  it("does not render the Privacy menu item", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).not.toContain("Privacy");
+  });
+
+  it("does not render Open Save Folder as a global header action", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).not.toContain("Open Save Folder");
+  });
+
   it("title-cases the status-hero tray_state Badge text", () => {
     const markup = renderToStaticMarkup(<App />);
 

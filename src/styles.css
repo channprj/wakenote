@@ -171,17 +171,8 @@ svg {
 .workspace__header {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) minmax(360px, 0.95fr);
-  grid-template-rows: auto auto;
   gap: 16px;
   margin-bottom: 14px;
-}
-
-.status-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
 }
 
 .workspace__header h1 {
@@ -443,21 +434,6 @@ svg {
 
 .section > :not(.section__header) {
   padding: 16px;
-}
-
-.general-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 14px;
-  align-items: start;
-}
-
-.general-grid .level-meter {
-  grid-column: 1 / -1;
-}
-
-.general-grid > .section {
-  grid-column: 1 / -1;
 }
 
 .two-column {
@@ -1579,7 +1555,7 @@ tr:last-child td {
 }
 
 .path-pattern,
-.privacy-note {
+.offline-note {
   display: grid;
   gap: 8px;
   border: 1px solid var(--line);
@@ -1593,7 +1569,7 @@ tr:last-child td {
 }
 
 .path-pattern span,
-.privacy-note span {
+.offline-note span {
   color: var(--muted);
   font-size: 12px;
 }
@@ -1655,7 +1631,6 @@ code {
     overflow: visible;
   }
 
-  .general-grid,
   .workspace__header,
   .two-column,
   .control-grid,

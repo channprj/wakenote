@@ -94,6 +94,7 @@ export function SettingsPanel({
   onStartLiveCapture,
   onStopLiveCapture,
   onChooseSaveRoot,
+  onRevealSaveFolder,
   onChooseModelDirectory,
   onImportAudioFiles,
   onEnqueueBacklog,
@@ -113,6 +114,7 @@ export function SettingsPanel({
   onStartLiveCapture: () => void;
   onStopLiveCapture: () => void;
   onChooseSaveRoot: () => void;
+  onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
@@ -177,7 +179,40 @@ export function SettingsPanel({
 
   if (activeSection === "recording") {
     return (
-      <Section title="Recording" eyebrow="Threshold gate">
+      <Section
+        title="Recording"
+        eyebrow="Threshold gate"
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={onStartLiveCapture}
+              disabled={liveCaptureDisabled}
+              title={startLiveCaptureReason ?? undefined}
+            >
+              <Play data-icon="inline-start" />
+              Start Input
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onStopLiveCapture}
+              disabled={!status.live_input_active}
+              title={stopLiveCaptureReason ?? undefined}
+            >
+              <Square data-icon="inline-start" />
+              Stop Input
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
+              <RefreshCw data-icon="inline-start" />
+              Refresh
+            </Button>
+          </>
+        }
+      >
         <div className="two-column">
           <LevelMeter
             settings={settings}
@@ -241,6 +276,20 @@ export function SettingsPanel({
               <FolderOpen data-icon="inline-start" />
               Choose Folder
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={settings.save_root.trim().length === 0}
+              title={
+                settings.save_root.trim().length === 0
+                  ? "Enter a save folder first"
+                  : settings.save_root
+              }
+              onClick={onRevealSaveFolder}
+            >
+              <FolderOpen data-icon="inline-start" />
+              Open Save Folder
+            </Button>
           </>
         }
       >
@@ -299,31 +348,6 @@ export function SettingsPanel({
     );
   }
 
-  if (activeSection === "privacy") {
-    return (
-      <Section title="Privacy" eyebrow="Offline defaults">
-        <div className="settings-list">
-          <ToggleRow
-            label="Launch at login"
-            checked={settings.launch_at_login}
-            onChange={(launch_at_login) => onPatch({ launch_at_login })}
-          />
-          <ToggleRow
-            label="VAD gate"
-            checked={false}
-            disabled
-            onChange={() => {}}
-            title={vadGateDisabledReason()}
-          />
-          <div className="privacy-note">
-            <Badge tone="success">Offline</Badge>
-            <span>Local models keep audio and text on device.</span>
-          </div>
-        </div>
-      </Section>
-    );
-  }
-
   if (activeSection === "advanced") {
     return (
       <Section title="Advanced" eyebrow="Runtime controls">
@@ -374,124 +398,99 @@ export function SettingsPanel({
   }
 
   return (
-    <div className="general-grid">
-      <LevelMeter
-        settings={settings}
-        status={status}
-        onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
-        onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
-      />
-      <Section
-        title="General"
-        eyebrow="Capture mode"
-        actions={
-          <>
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={onStartLiveCapture}
-              disabled={liveCaptureDisabled}
-              title={startLiveCaptureReason ?? undefined}
-            >
-              <Play data-icon="inline-start" />
-              Start Input
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={onStopLiveCapture}
-              disabled={!status.live_input_active}
-              title={stopLiveCaptureReason ?? undefined}
-            >
-              <Square data-icon="inline-start" />
-              Stop Input
-            </Button>
-            <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
-              <RefreshCw data-icon="inline-start" />
-              Refresh
-            </Button>
-          </>
-        }
-      >
-        <div className="settings-list">
-          <ToggleRow
-            label="Recording"
-            checked={settings.recording_enabled}
-            onChange={(recording_enabled) => onPatch({ recording_enabled })}
-          />
-          <ToggleRow
-            label="Transcription"
-            checked={settings.transcription_enabled}
-            onChange={(transcription_enabled) => onPatch({ transcription_enabled })}
-          />
-          <ToggleRow
-            label="Start input on launch"
-            checked={settings.start_live_input_on_launch}
-            onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
-          />
-          <ToggleRow
-            label="Hide low-confidence transcripts"
-            checked={settings.suppress_low_confidence_transcripts}
-            onChange={(suppress_low_confidence_transcripts) =>
-              onPatch({ suppress_low_confidence_transcripts })
-            }
-          />
-          <Select
-            label="Transcription Language"
-            value={settings.transcription_language}
-            onChange={(event) =>
-              onPatch({
-                transcription_language: event.currentTarget
-                  .value as AppSettings["transcription_language"],
-              })
-            }
-          >
-            {transcriptionLanguageOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-          <ToggleRow
-            label="Pause all"
-            checked={settings.pause_all}
-            onChange={(pause_all) => onPatch({ pause_all })}
-          />
-          <Select
-            label="Microphone"
-            value={settings.selected_microphone}
-            onChange={(event) => {
-              const device = microphones.find((mic) => mic.id === event.currentTarget.value);
-              onPatch({
-                selected_microphone: event.currentTarget.value,
-                selected_microphone_label: device?.label ?? event.currentTarget.value,
-              });
-            }}
-          >
-            {microphones.map((device) => (
-              <option key={device.id} value={device.id} disabled={!device.available}>
-                {device.label}
-                {device.available ? "" : " (Unavailable)"}
-              </option>
-            ))}
-          </Select>
-          {!selectedMicrophoneAvailable ? (
-            fallbackMicrophone ? (
-              <div className="warning-banner warning-banner--warning">
-                {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
-                {fallbackMicrophone.label}.
-              </div>
-            ) : (
-              <div className="warning-banner warning-banner--danger">
-                No available input device is selected.
-              </div>
-            )
-          ) : null}
+    <Section title="General" eyebrow="Application defaults">
+      <div className="settings-list">
+        <ToggleRow
+          label="Recording"
+          checked={settings.recording_enabled}
+          onChange={(recording_enabled) => onPatch({ recording_enabled })}
+        />
+        <ToggleRow
+          label="Transcription"
+          checked={settings.transcription_enabled}
+          onChange={(transcription_enabled) => onPatch({ transcription_enabled })}
+        />
+        <ToggleRow
+          label="Start input on launch"
+          checked={settings.start_live_input_on_launch}
+          onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
+        />
+        <ToggleRow
+          label="Hide low-confidence transcripts"
+          checked={settings.suppress_low_confidence_transcripts}
+          onChange={(suppress_low_confidence_transcripts) =>
+            onPatch({ suppress_low_confidence_transcripts })
+          }
+        />
+        <ToggleRow
+          label="Launch at login"
+          checked={settings.launch_at_login}
+          onChange={(launch_at_login) => onPatch({ launch_at_login })}
+        />
+        <ToggleRow
+          label="VAD gate"
+          checked={false}
+          disabled
+          onChange={() => {}}
+          title={vadGateDisabledReason()}
+        />
+        <Select
+          label="Transcription Language"
+          value={settings.transcription_language}
+          onChange={(event) =>
+            onPatch({
+              transcription_language: event.currentTarget
+                .value as AppSettings["transcription_language"],
+            })
+          }
+        >
+          {transcriptionLanguageOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+        <ToggleRow
+          label="Pause all"
+          checked={settings.pause_all}
+          onChange={(pause_all) => onPatch({ pause_all })}
+        />
+        <Select
+          label="Microphone"
+          value={settings.selected_microphone}
+          onChange={(event) => {
+            const device = microphones.find((mic) => mic.id === event.currentTarget.value);
+            onPatch({
+              selected_microphone: event.currentTarget.value,
+              selected_microphone_label: device?.label ?? event.currentTarget.value,
+            });
+          }}
+        >
+          {microphones.map((device) => (
+            <option key={device.id} value={device.id} disabled={!device.available}>
+              {device.label}
+              {device.available ? "" : " (Unavailable)"}
+            </option>
+          ))}
+        </Select>
+        {!selectedMicrophoneAvailable ? (
+          fallbackMicrophone ? (
+            <div className="warning-banner warning-banner--warning">
+              {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
+              {fallbackMicrophone.label}.
+            </div>
+          ) : (
+            <div className="warning-banner warning-banner--danger">
+              No available input device is selected.
+            </div>
+          )
+        ) : null}
+        <div className="offline-note">
+          <Badge tone="success">Offline</Badge>
+          <span>Local models keep audio and text on device.</span>
         </div>
-      </Section>
-    </div>
+      </div>
+    </Section>
   );
 }
 

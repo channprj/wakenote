@@ -4,13 +4,11 @@ import {
   Brain,
   Clock3,
   Folder,
-  FolderOpen,
   Files,
   ListTodo,
   Mic,
   RadioTower,
   Settings2,
-  Shield,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -18,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { Onboarding } from "./components/Onboarding";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptFooter } from "./components/TranscriptFooter";
-import { Badge, Button } from "./components/ui/primitives";
+import { Badge } from "./components/ui/primitives";
 import { humanizeTrayState } from "./lib/transcript-history";
 import {
   reduceTranscriptLog,
@@ -68,7 +66,6 @@ const sections = [
   { id: "recording", label: "Recording", icon: Mic },
   { id: "storage", label: "Storage", icon: Folder },
   { id: "transcripts", label: "Transcripts", icon: Files },
-  { id: "privacy", label: "Privacy", icon: Shield },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
 ];
@@ -383,19 +380,6 @@ export default function App() {
               <strong>{busy ? "Syncing snapshot" : statusPresentation.microphone}</strong>
             </div>
           </div>
-
-          <div className="status-actions">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void runAction(revealSaveFolder)}
-              title={snapshot.settings.save_root}
-            >
-              <FolderOpen data-icon="inline-start" />
-              Open Save Folder
-            </Button>
-          </div>
         </header>
 
         {error ? <div className="error-banner">{error}</div> : null}
@@ -426,6 +410,7 @@ export default function App() {
           onStartLiveCapture={() => void runAction(startLiveCapture)}
           onStopLiveCapture={() => void runAction(stopLiveCapture)}
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
+          onRevealSaveFolder={() => void runAction(revealSaveFolder)}
           onChooseModelDirectory={() => void runAction(chooseModelDirectory)}
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
