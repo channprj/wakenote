@@ -1318,7 +1318,7 @@ tr:last-child td {
 
 .transcripts-panel {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .transcript-pagination {
@@ -1338,22 +1338,22 @@ tr:last-child td {
 .transcript-pagination__pages {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
 .transcript-pagination__pages button {
   display: inline-grid;
   place-items: center;
-  height: 32px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 9px;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   white-space: nowrap;
   transition: background var(--transition), border-color var(--transition),
     color var(--transition);
@@ -1381,20 +1381,20 @@ tr:last-child td {
 
 .transcripts-empty {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface-alt);
   color: var(--muted);
-  padding: 16px;
+  padding: 12px;
   text-align: center;
 }
 
 .transcript-day {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface);
-  padding: 12px;
+  padding: 8px;
 }
 
 .transcript-day header {
@@ -1415,11 +1415,13 @@ tr:last-child td {
 .transcript-day header strong {
   display: block;
   margin-top: 2px;
+  font-size: 13px;
 }
 
 .transcript-entry-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid var(--line);
 }
 
 .transcript-entry {
