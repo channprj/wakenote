@@ -202,6 +202,9 @@ export default function App() {
           if (next) {
             dispatch(next);
           }
+          if (eventName === "live-transcript-final") {
+            void refreshTranscripts();
+          }
         });
         if (cancelled) {
           unlisten();
