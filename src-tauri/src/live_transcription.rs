@@ -17,8 +17,10 @@ const MIN_LIVE_DECODE_SAMPLES_16K: usize = 16_000;
 /// Cap each partial decode at this many seconds of audio. Long chunks would
 /// otherwise force the model to re-decode minutes of audio every interval,
 /// destroying responsiveness. The final accurate pass on the full chunk
-/// still runs in the regular queue worker after the chunk closes.
-const PARTIAL_WINDOW_SECONDS: u64 = 20;
+/// still runs in the regular queue worker after the chunk closes. 10 s gives
+/// whisper plenty of context for the trailing utterance while keeping each
+/// partial pass fast enough for sub-second perceived latency on long chunks.
+const PARTIAL_WINDOW_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone)]
 pub struct LivePartialRequest {

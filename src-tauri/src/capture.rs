@@ -9,10 +9,16 @@ use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
 use crate::settings::AppSettings;
 
 /// How often the live transcription tap fires while a chunk is recording.
-/// Smaller values = snappier preview, larger values = lighter CPU. Whisper
-/// medium-model partial decodes typically take ~1.5–3 s on Apple Silicon, so
-/// 2.5 s avoids stacking work the worker can't keep up with.
-const LIVE_PARTIAL_INTERVAL_MS: u64 = 2_500;
+/// Smaller values = snappier preview, larger values = lighter CPU. The live
+/// transcription worker is single-flight (latest pending request replaces
+/// any older one), so a faster cadence never stacks queued work — the worker
+/// just drops stale frames when it can't keep up.
+const LIVE_PARTIAL_INTERVAL_MS: u64 = 750;
+
+/// Don't emit a partial until the active buffer has this much audio. Whisper
+/// returns nothing below ~1 s, so submitting earlier wastes a decode cycle
+/// the worker could spend on the next, longer slice.
+const LIVE_PARTIAL_MIN_DURATION_MS: u64 = 1_000;
 
 #[derive(Debug, Clone)]
 pub struct CaptureProcessorConfig {
@@ -381,7 +387,7 @@ impl CaptureProcessor {
         };
         let active_duration_ms =
             active_duration_ms(self.active_samples.len(), self.config.sample_rate);
-        if active_duration_ms < LIVE_PARTIAL_INTERVAL_MS {
+        if active_duration_ms < LIVE_PARTIAL_MIN_DURATION_MS {
             return;
         }
         if active_duration_ms.saturating_sub(self.last_partial_emit_offset_ms)
