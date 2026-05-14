@@ -28,18 +28,40 @@ export function TranscriptsPanel({
     () => buildTranscriptDatePages(transcripts, todayDay),
     [transcripts, todayDay],
   );
-  const [activePage, setActivePage] = useState(0);
+  const todayIndex = Math.max(0, pages.length - 1);
+  // Track the selected day as a string rather than an index. Pages are sorted
+  // chronologically and grow when refreshTranscripts pulls a new earlier date;
+  // an index would silently slide onto a different day in that case.
+  const [activeDay, setActiveDay] = useState<string | null>(null);
   const [playingTranscriptPath, setPlayingTranscriptPath] = useState<string | null>(
     initialPlayingTranscriptPath,
   );
-  const activeGroup = pages[activePage] ?? pages[0];
+  const activePage = useMemo(() => {
+    if (activeDay !== null) {
+      const idx = pages.findIndex((page) => page.day === activeDay);
+      if (idx >= 0) {
+        return idx;
+      }
+    }
+    return todayIndex;
+  }, [pages, activeDay, todayIndex]);
+  const activeGroup = pages[activePage] ?? pages[todayIndex];
   const playingTranscript = transcripts.find(
     (entry) => entry.transcript_path === playingTranscriptPath,
   );
 
   useEffect(() => {
-    setActivePage((page) => Math.min(page, Math.max(0, pages.length - 1)));
-  }, [pages.length]);
+    if (activeDay !== null && !pages.some((page) => page.day === activeDay)) {
+      setActiveDay(null);
+    }
+  }, [pages, activeDay]);
+
+  const handlePageChange = (index: number) => {
+    const day = pages[index]?.day;
+    if (day != null) {
+      setActiveDay(day);
+    }
+  };
 
   return (
     <div className="transcripts-panel">
@@ -49,7 +71,7 @@ export function TranscriptsPanel({
             activePage={activePage}
             activeDay={activeGroup.day}
             pages={pages}
-            onPageChange={setActivePage}
+            onPageChange={handlePageChange}
           />
           <article className="transcript-day transcript-day--condensed">
             <header>
@@ -133,21 +155,21 @@ function buildTranscriptDatePages(
   const groupsByDay = new Map(
     groupTranscriptsByDay(transcripts).map((group) => [group.day, group.entries] as const),
   );
-  const datedTranscriptDays = [...groupsByDay.keys()]
-    .filter(isYearMonthDayLabel)
-    .filter((day) => day <= todayDay)
-    .sort();
-  const earliestDay = datedTranscriptDays[0] ?? todayDay;
-  const pages: TranscriptDatePage[] = [];
-
-  for (let day = todayDay; day >= earliestDay; day = previousLocalDay(day)) {
-    pages.push({ day, entries: groupsByDay.get(day) ?? [] });
-    if (day === earliestDay) {
-      break;
+  // Only surface days that actually have transcripts (past or today); skip
+  // empty intermediate calendar days so a single transcript from months ago
+  // doesn't generate hundreds of empty navigation buttons. Today is always
+  // included so live captures can land here and the user has a "current"
+  // anchor even when no recordings exist yet.
+  const days = new Set<string>([todayDay]);
+  for (const day of groupsByDay.keys()) {
+    if (isYearMonthDayLabel(day) && day <= todayDay) {
+      days.add(day);
     }
   }
 
-  return pages.length > 0 ? pages : [{ day: todayDay, entries: [] }];
+  return [...days]
+    .sort()
+    .map((day) => ({ day, entries: groupsByDay.get(day) ?? [] }));
 }
 
 function formatLocalDay(date: Date): string {
@@ -162,17 +184,6 @@ function formatLocalDay(date: Date): string {
   ].join("-");
 }
 
-function previousLocalDay(day: string): string {
-  const date = localDateFromDay(day);
-  date.setDate(date.getDate() - 1);
-  return formatLocalDay(date);
-}
-
-function localDateFromDay(day: string): Date {
-  const [year, month, date] = day.split("-").map(Number);
-  return new Date(year, month - 1, date);
-}
-
 function isYearMonthDayLabel(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -181,15 +192,15 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-export function previousDayDisabledReason(activePage: number, pagesLength: number): string | null {
-  if (activePage >= pagesLength - 1) {
+export function previousDayDisabledReason(activePage: number): string | null {
+  if (activePage <= 0) {
     return "Already on the earliest transcript date";
   }
   return null;
 }
 
-export function nextDayDisabledReason(activePage: number): string | null {
-  if (activePage <= 0) {
+export function nextDayDisabledReason(activePage: number, pagesLength: number): string | null {
+  if (activePage >= pagesLength - 1) {
     return "Already on today";
   }
   return null;
@@ -210,8 +221,8 @@ function TranscriptPagination({
     return null;
   }
 
-  const previousReason = previousDayDisabledReason(activePage, pages.length);
-  const nextReason = nextDayDisabledReason(activePage);
+  const previousReason = previousDayDisabledReason(activePage);
+  const nextReason = nextDayDisabledReason(activePage, pages.length);
 
   return (
     <nav
@@ -220,8 +231,8 @@ function TranscriptPagination({
     >
       <Button
         aria-label="Previous date"
-        disabled={activePage === pages.length - 1}
-        onClick={() => onPageChange(Math.min(pages.length - 1, activePage + 1))}
+        disabled={activePage === 0}
+        onClick={() => onPageChange(Math.max(0, activePage - 1))}
         title={previousReason ?? undefined}
         type="button"
         variant="secondary"
@@ -245,8 +256,8 @@ function TranscriptPagination({
       <span>{activeDay} / {pages.length} days</span>
       <Button
         aria-label="Next date"
-        disabled={activePage === 0}
-        onClick={() => onPageChange(Math.max(0, activePage - 1))}
+        disabled={activePage === pages.length - 1}
+        onClick={() => onPageChange(Math.min(pages.length - 1, activePage + 1))}
         title={nextReason ?? undefined}
         type="button"
         variant="secondary"

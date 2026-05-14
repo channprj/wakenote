@@ -57,13 +57,50 @@ describe("TranscriptsPanel", () => {
     expect(markup).not.toContain("middle day transcript");
     expect(markup).not.toContain("old day transcript");
     expect(markup).toContain('aria-label="Go to 2026-05-14 transcripts"');
-    expect(markup).toContain('aria-label="Go to 2026-05-13 transcripts"');
+    expect(markup).toContain('aria-label="Go to 2026-05-10 transcripts"');
+    expect(markup).toContain('aria-label="Go to 2026-05-09 transcripts"');
+    expect(markup).toContain('aria-label="Go to 2026-05-08 transcripts"');
+    // Empty intermediate dates (no transcripts) must not render as pages.
+    expect(markup).not.toContain('aria-label="Go to 2026-05-13 transcripts"');
+    expect(markup).not.toContain('aria-label="Go to 2026-05-12 transcripts"');
+    expect(markup).not.toContain('aria-label="Go to 2026-05-11 transcripts"');
     expect(markup).toContain(">2026-05-14</button>");
     expect(markup).toContain("Previous date");
     expect(markup).toContain('aria-label="Previous date"');
     expect(markup).toContain('aria-label="Next date"');
     expect(markup).toContain('aria-current="page"');
     expect(markup).not.toContain("Page 1 of 3");
+  });
+
+  it("renders date page buttons chronologically with today on the right", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-14T12:00:00+09:00")}
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260512/010203.txt",
+            audio_path: "/tmp/WakeNote/20260512/010203.m4a",
+            recorded_at: "2026-05-12T01:02:03+09:00",
+            text: "older entry",
+          }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260514/010203.txt",
+            audio_path: "/tmp/WakeNote/20260514/010203.m4a",
+            recorded_at: "2026-05-14T01:02:03+09:00",
+            text: "today entry",
+          }),
+        ]}
+      />,
+    );
+
+    // 2026-05-12 must appear before (left of) 2026-05-14 in the page strip.
+    expect(markup.indexOf(">2026-05-12</button>")).toBeLessThan(
+      markup.indexOf(">2026-05-14</button>"),
+    );
+    // Today is the active page even though it's the right-most button.
+    expect(markup).toMatch(
+      /<button[^>]*aria-current="page"[^>]*aria-label="Go to 2026-05-14 transcripts"/,
+    );
   });
 
   it("starts on today's empty date instead of jumping to the newest saved transcript", () => {
@@ -286,37 +323,38 @@ describe("TranscriptsPanel", () => {
 });
 
 describe("previousDayDisabledReason", () => {
-  // Date pages are sorted newest-to-oldest, so previous-date navigation moves toward older days.
+  // Date pages are sorted chronologically (oldest -> today), so previous-date
+  // navigation moves toward earlier days = lower activePage indices.
   it("returns a reason when on the earliest transcript date", () => {
-    expect(previousDayDisabledReason(2, 3)).toBe("Already on the earliest transcript date");
+    expect(previousDayDisabledReason(0)).toBe("Already on the earliest transcript date");
   });
 
   it("returns null when there is an older date page", () => {
-    expect(previousDayDisabledReason(0, 3)).toBeNull();
-    expect(previousDayDisabledReason(1, 3)).toBeNull();
+    expect(previousDayDisabledReason(1)).toBeNull();
+    expect(previousDayDisabledReason(5)).toBeNull();
   });
 
-  it("returns a reason for out-of-range activePage as a defensive guard", () => {
-    expect(previousDayDisabledReason(5, 3)).toBe("Already on the earliest transcript date");
+  it("returns a reason for negative activePage as a defensive guard", () => {
+    expect(previousDayDisabledReason(-1)).toBe("Already on the earliest transcript date");
   });
 });
 
 describe("nextDayDisabledReason", () => {
-  // Next-date navigation moves toward today/newer days.
+  // Next-date navigation moves toward today/newer days = higher activePage.
   it("returns a reason when already on today", () => {
-    expect(nextDayDisabledReason(0)).toBe("Already on today");
+    expect(nextDayDisabledReason(2, 3)).toBe("Already on today");
   });
 
   it("returns null when there is a newer date page", () => {
-    expect(nextDayDisabledReason(1)).toBeNull();
-    expect(nextDayDisabledReason(5)).toBeNull();
+    expect(nextDayDisabledReason(0, 3)).toBeNull();
+    expect(nextDayDisabledReason(1, 3)).toBeNull();
   });
 
-  it("returns a reason for negative activePage as a defensive guard", () => {
-    expect(nextDayDisabledReason(-1)).toBe("Already on today");
+  it("returns a reason for out-of-range activePage as a defensive guard", () => {
+    expect(nextDayDisabledReason(5, 3)).toBe("Already on today");
   });
 
   it("returns a reason for a single-day list", () => {
-    expect(nextDayDisabledReason(0)).toBe("Already on today");
+    expect(nextDayDisabledReason(0, 1)).toBe("Already on today");
   });
 });
