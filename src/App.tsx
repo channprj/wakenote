@@ -72,6 +72,11 @@ const sections = [
 
 const launchAutoStartPollWindowMs = 130_000;
 
+// Mirrors MAX_RECENT_TRANSCRIPT_LIMIT in src-tauri/src/main.rs. Used when
+// loading transcripts for the Transcripts tab so older dates remain visible
+// for users with many archived sidecars.
+const MAX_RECENT_TRANSCRIPT_LIMIT = 5_000;
+
 function preserveRecentTranscripts(current: AppSnapshot, next: AppSnapshot): AppSnapshot {
   if (next.recent_transcripts.length > 0) {
     return next;
@@ -124,7 +129,9 @@ export default function App() {
 
   async function refreshTranscripts() {
     try {
-      const recentTranscripts = await loadRecentTranscripts();
+      // Request up to the backend cap so the Transcripts tab can show every
+      // archived sidecar across older dates, not just the most recent batch.
+      const recentTranscripts = await loadRecentTranscripts(MAX_RECENT_TRANSCRIPT_LIMIT);
       setSnapshot((current) => ({
         ...current,
         recent_transcripts: recentTranscripts,

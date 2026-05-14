@@ -67,7 +67,7 @@ const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
 const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
-const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 200;
+const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 5_000;
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
