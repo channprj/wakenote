@@ -60,6 +60,8 @@ pub struct AppSettings {
     pub pause_all: bool,
     pub selected_microphone: String,
     pub selected_microphone_label: String,
+    pub system_mic_volume_enabled: bool,
+    pub system_mic_volume: u8,
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
@@ -92,6 +94,8 @@ pub struct SettingsPatch {
     pub pause_all: Option<bool>,
     pub selected_microphone: Option<String>,
     pub selected_microphone_label: Option<String>,
+    pub system_mic_volume_enabled: Option<bool>,
+    pub system_mic_volume: Option<u8>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub threshold_dbfs: Option<f32>,
@@ -223,6 +227,12 @@ impl AppSettings {
         if let Some(value) = patch.selected_microphone_label {
             self.selected_microphone_label = value;
         }
+        if let Some(value) = patch.system_mic_volume_enabled {
+            self.system_mic_volume_enabled = value;
+        }
+        if let Some(value) = patch.system_mic_volume {
+            self.system_mic_volume = value.min(100);
+        }
         if let Some(value) = patch.save_root {
             self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
@@ -297,6 +307,8 @@ impl Default for AppSettings {
             pause_all: false,
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
+            system_mic_volume_enabled: true,
+            system_mic_volume: 100,
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,

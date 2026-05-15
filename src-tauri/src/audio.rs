@@ -93,6 +93,34 @@ pub fn dbfs_from_samples(samples: &[f32]) -> f32 {
     dbfs_from_rms(rms_from_samples(samples))
 }
 
+/// Set the macOS system input (microphone) volume to the given percent (0–100).
+/// On non-macOS platforms this is a no-op that returns an error.
+#[cfg(target_os = "macos")]
+pub fn set_system_input_volume(percent: u8) -> Result<(), String> {
+    use std::process::Command;
+
+    let clamped = percent.min(100);
+    let script = format!("set volume input volume {clamped}");
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|error| format!("failed to launch osascript: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("osascript exited with status {}", output.status)
+        } else {
+            stderr
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_system_input_volume(_percent: u8) -> Result<(), String> {
+    Err("system input volume control is only supported on macOS".to_string())
+}
+
 pub fn list_input_devices() -> Vec<InputDevice> {
     use cpal::traits::{DeviceTrait, HostTrait};
 

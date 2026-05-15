@@ -51,6 +51,8 @@ export interface AppSettings {
   pause_all: boolean;
   selected_microphone: string;
   selected_microphone_label: string;
+  system_mic_volume_enabled: boolean;
+  system_mic_volume: number;
   save_root: string;
   save_root_confirmed: boolean;
   audio_format: AudioFormat;
