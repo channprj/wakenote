@@ -302,6 +302,22 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [pollingDependencyKey]);
 
+  // loadSnapshot leaves recent_transcripts empty, so the 100ms snapshot poll
+  // never refreshes the footer's archive list. While capture or queue work is
+  // running, sync recent_transcripts on a short cadence so finals appear in
+  // the footer without forcing the user to open the Transcripts panel.
+  useEffect(() => {
+    const shouldSyncFooter =
+      snapshot.status.live_input_active || snapshot.queue.running_count > 0;
+    if (!shouldSyncFooter) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void refreshTranscripts();
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [snapshot.status.live_input_active, snapshot.queue.running_count]);
+
   async function patchSettings(patch: Partial<AppSettings>) {
     setBusy(true);
     setError(null);
