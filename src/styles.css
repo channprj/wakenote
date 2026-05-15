@@ -840,9 +840,32 @@ svg {
   color: var(--primary);
 }
 
-.calibration-actions {
+.level-meter__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  row-gap: 8px;
+}
+
+.level-meter__header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.level-meter__header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.calibration-status {
   display: grid;
-  grid-template-columns: auto minmax(120px, 1fr) auto auto;
+  grid-template-columns: auto minmax(120px, 1fr);
   gap: 10px;
   align-items: center;
 }

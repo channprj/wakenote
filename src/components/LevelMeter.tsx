@@ -76,6 +76,40 @@ export function LevelMeter({
 
   return (
     <div className="level-meter">
+      <div className="level-meter__header">
+        <h3>Calibration</h3>
+        <div className="level-meter__header-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              const startedAt = Date.now();
+              setCalibrationStartMs(startedAt);
+              setNowMs(startedAt);
+              setCalibrationApplied(false);
+            }}
+            disabled={!active}
+            title={calibrateReason ?? undefined}
+          >
+            <TimerReset data-icon="inline-start" />
+            Calibrate
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setCalibrationStartMs(null);
+              setCalibrationApplied(false);
+              onResetThreshold();
+            }}
+          >
+            <RotateCcw data-icon="inline-start" />
+            Reset
+          </Button>
+        </div>
+      </div>
       <div className="level-meter__readout">
         <div>
           <span>Current</span>
@@ -114,38 +148,9 @@ export function LevelMeter({
           <strong>{settings.threshold_dbfs} dBFS</strong>
         </div>
       </div>
-      <div className="calibration-actions">
+      <div className="calibration-status">
         <Badge tone={calibrationBadge.tone}>{calibrationBadge.label}</Badge>
         <Progress value={calibrationPercent} />
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            const startedAt = Date.now();
-            setCalibrationStartMs(startedAt);
-            setNowMs(startedAt);
-            setCalibrationApplied(false);
-          }}
-          disabled={!active}
-          title={calibrateReason ?? undefined}
-        >
-          <TimerReset data-icon="inline-start" />
-          Calibrate
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            setCalibrationStartMs(null);
-            setCalibrationApplied(false);
-            onResetThreshold();
-          }}
-        >
-          <RotateCcw data-icon="inline-start" />
-          Reset
-        </Button>
       </div>
     </div>
   );
