@@ -1,10 +1,12 @@
 pub mod audio;
+pub mod audio_analysis;
 pub mod capture;
 pub mod commands;
 pub mod live_capture;
 pub mod live_transcription;
 pub mod models;
 pub mod overlay;
+pub mod permissions;
 pub mod persistence;
 pub mod queue;
 pub mod recorder;

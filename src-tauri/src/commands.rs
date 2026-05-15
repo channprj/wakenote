@@ -20,6 +20,7 @@ use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable_audio_path};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
+use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
     Transcriber, TranscriptionJobOutcome, TranscriptionWorker, TranscriptionWorkerOptions,
     WhisperTranscriber, apply_outcome,
@@ -184,6 +185,7 @@ pub fn audio_playback_content_type(path: &Path) -> Option<&'static str> {
         .as_deref()
     {
         Some("m4a") => Some("audio/mp4"),
+        Some("mp3") => Some("audio/mpeg"),
         Some("wav") => Some("audio/wav"),
         _ => None,
     }
@@ -191,7 +193,7 @@ pub fn audio_playback_content_type(path: &Path) -> Option<&'static str> {
 
 pub fn validate_audio_playback_file(path: &Path) -> Result<&'static str, String> {
     let content_type = audio_playback_content_type(path)
-        .ok_or_else(|| "only m4a and wav recordings can be played".to_string())?;
+        .ok_or_else(|| "only mp3, m4a, and wav recordings can be played".to_string())?;
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
     if !metadata.is_file() {
         return Err("recording path is not a file".to_string());
@@ -227,6 +229,13 @@ pub struct RecentTranscript {
     pub audio_path: Option<String>,
     pub recorded_at: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadedAudio {
+    pub audio_path: String,
+    pub original_filename: String,
+    pub stored_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -514,6 +523,25 @@ impl AppBackend {
 
     pub fn recent_transcripts(&self, limit: usize) -> Vec<RecentTranscript> {
         recent_transcripts_from_save_root(&self.save_root_path(), limit)
+    }
+
+    pub fn upload_audio_file(
+        &mut self,
+        source_path: impl Into<std::path::PathBuf>,
+        timestamp: DateTime<Local>,
+    ) -> Result<UploadedAudio, String> {
+        let source_path = source_path.into();
+        let target = copy_uploaded_audio_file(&self.save_root_path(), &source_path, timestamp)
+            .map_err(|error| error.to_string())?;
+        Ok(UploadedAudio {
+            audio_path: target.to_string_lossy().to_string(),
+            original_filename: source_path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            stored_at: timestamp.to_rfc3339(),
+        })
     }
 
     pub fn start_capture_session(

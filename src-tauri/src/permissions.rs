@@ -1,0 +1,173 @@
+use std::{path::PathBuf, process::Command};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGrantStatus {
+    Unknown,
+    NotDetermined,
+    Granted,
+    Denied,
+    Restricted,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PermissionState {
+    pub status: PermissionGrantStatus,
+    pub label: &'static str,
+    pub detail: &'static str,
+    pub can_request: bool,
+    pub can_open_settings: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AppPermissions {
+    pub microphone: PermissionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionSettingsRequest {
+    pub program: PathBuf,
+    pub target: String,
+}
+
+pub fn permission_snapshot() -> AppPermissions {
+    AppPermissions {
+        microphone: microphone_permission_state_for_status(microphone_permission_status()),
+    }
+}
+
+pub fn request_microphone_permission() -> AppPermissions {
+    AppPermissions {
+        microphone: microphone_permission_state_for_status(request_microphone_access_if_needed()),
+    }
+}
+
+pub fn open_microphone_permission_settings() -> Result<(), String> {
+    let request = microphone_permission_settings_request();
+    Command::new(request.program)
+        .arg(request.target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub fn microphone_permission_settings_request() -> PermissionSettingsRequest {
+    PermissionSettingsRequest {
+        program: PathBuf::from("/usr/bin/open"),
+        target: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            .to_string(),
+    }
+}
+
+pub fn microphone_permission_state_for_status(status: PermissionGrantStatus) -> PermissionState {
+    match status {
+        PermissionGrantStatus::Granted => PermissionState {
+            status,
+            label: "Allowed",
+            detail: "WakeNote can use the microphone.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::NotDetermined => PermissionState {
+            status,
+            label: "Not requested",
+            detail: "WakeNote needs microphone access before recording can start.",
+            can_request: true,
+            can_open_settings: false,
+        },
+        PermissionGrantStatus::Denied => PermissionState {
+            status,
+            label: "Denied",
+            detail: "Enable Microphone for WakeNote in System Settings.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Restricted => PermissionState {
+            status,
+            label: "Restricted",
+            detail: "Microphone access is restricted by macOS policy.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Unsupported => PermissionState {
+            status,
+            label: "Unsupported",
+            detail: "This platform does not expose microphone permission status.",
+            can_request: false,
+            can_open_settings: false,
+        },
+        PermissionGrantStatus::Unknown => PermissionState {
+            status,
+            label: "Unknown",
+            detail: "WakeNote could not determine microphone permission status.",
+            can_request: false,
+            can_open_settings: true,
+        },
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn microphone_permission_status() -> PermissionGrantStatus {
+    use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
+
+    let Some(media_type) = (unsafe { AVMediaTypeAudio }) else {
+        return PermissionGrantStatus::Unknown;
+    };
+    let status = unsafe { AVCaptureDevice::authorizationStatusForMediaType(media_type) };
+
+    if status == AVAuthorizationStatus::Authorized {
+        PermissionGrantStatus::Granted
+    } else if status == AVAuthorizationStatus::Denied {
+        PermissionGrantStatus::Denied
+    } else if status == AVAuthorizationStatus::Restricted {
+        PermissionGrantStatus::Restricted
+    } else if status == AVAuthorizationStatus::NotDetermined {
+        PermissionGrantStatus::NotDetermined
+    } else {
+        PermissionGrantStatus::Unknown
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn microphone_permission_status() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}
+
+#[cfg(target_os = "macos")]
+fn request_microphone_access_if_needed() -> PermissionGrantStatus {
+    use std::{sync::mpsc, time::Duration};
+
+    use block2::{DynBlock, RcBlock};
+    use objc2::runtime::Bool;
+    use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
+
+    if microphone_permission_status() != PermissionGrantStatus::NotDetermined {
+        return microphone_permission_status();
+    }
+
+    let Some(media_type) = (unsafe { AVMediaTypeAudio }) else {
+        return PermissionGrantStatus::Unknown;
+    };
+    let (sender, receiver) = mpsc::channel();
+    let block = RcBlock::new(move |granted: Bool| {
+        let _ = sender.send(granted.as_bool());
+    });
+    let block: &DynBlock<dyn Fn(Bool)> = &block;
+
+    unsafe {
+        AVCaptureDevice::requestAccessForMediaType_completionHandler(media_type, block);
+    }
+
+    match receiver.recv_timeout(Duration::from_secs(120)) {
+        Ok(_) => microphone_permission_status(),
+        Err(_) => PermissionGrantStatus::Unknown,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_microphone_access_if_needed() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}

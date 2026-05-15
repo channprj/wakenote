@@ -17,9 +17,10 @@ use tauri::menu::{
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::{MicHealthAction, list_input_devices};
+use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState,
+    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState, UploadedAudio,
     main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
     tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
     validate_audio_playback_file, with_live_runtime_warning,
@@ -32,6 +33,7 @@ use wakenote::live_transcription::{
 };
 use wakenote::models::{ModelDescriptor, ModelStore};
 use wakenote::overlay::{self, OverlayState};
+use wakenote::permissions::{self, AppPermissions};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
@@ -392,6 +394,23 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 }
 
 #[tauri::command]
+fn permission_snapshot() -> AppPermissions {
+    permissions::permission_snapshot()
+}
+
+#[tauri::command]
+async fn request_microphone_permission() -> Result<AppPermissions, String> {
+    tauri::async_runtime::spawn_blocking(permissions::request_microphone_permission)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_microphone_permission_settings() -> Result<(), String> {
+    permissions::open_microphone_permission_settings()
+}
+
+#[tauri::command]
 async fn recent_transcripts(
     state: State<'_, BackendState>,
     limit: Option<usize>,
@@ -416,6 +435,30 @@ fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String
     app.asset_protocol_scope()
         .allow_file(&path)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn upload_audio_file(
+    state: State<'_, BackendState>,
+    source_path: String,
+) -> Result<UploadedAudio, String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    backend.upload_audio_file(source_path, chrono::Local::now())
+}
+
+#[tauri::command]
+async fn analyze_audio_waveform(
+    audio_path: String,
+    bucket_count: Option<usize>,
+) -> Result<AudioWaveform, String> {
+    let path = PathBuf::from(audio_path);
+    validate_audio_playback_file(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::audio_analysis::analyze_audio_waveform(&path, bucket_count)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1625,8 +1668,13 @@ fn main() {
             cancel_model_download,
             delete_model,
             queue_snapshot,
+            permission_snapshot,
+            request_microphone_permission,
+            open_microphone_permission_settings,
             recent_transcripts,
             allow_audio_playback,
+            upload_audio_file,
+            analyze_audio_waveform,
             enqueue_audio_file,
             enqueue_backlog,
             retry_job,

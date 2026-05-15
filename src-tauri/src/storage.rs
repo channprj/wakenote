@@ -63,3 +63,87 @@ pub fn next_available_output(
         "no available filename after 999 collisions",
     ))
 }
+
+pub fn uploaded_audio_target(
+    save_root: &Path,
+    source_path: &Path,
+    timestamp: DateTime<Local>,
+) -> std::io::Result<PathBuf> {
+    if !is_uploadable_audio_path(source_path) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "only mp3, m4a, and wav audio files can be uploaded",
+        ));
+    }
+
+    let file_name = source_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .filter(|file_name| !file_name.trim().is_empty())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "audio filename is missing",
+            )
+        })?;
+    let directory = save_root
+        .join("uploaded")
+        .join(timestamp.format("%Y%m%d").to_string());
+    let stem = source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(file_name);
+    let extension = source_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+
+    for index in 0..1_000 {
+        let collision_suffix = if index == 0 {
+            String::new()
+        } else {
+            format!("-{index:03}")
+        };
+        let candidate = directory.join(format!("{stem}{collision_suffix}.{extension}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no available upload filename after 999 collisions",
+    ))
+}
+
+pub fn copy_uploaded_audio_file(
+    save_root: &Path,
+    source_path: &Path,
+    timestamp: DateTime<Local>,
+) -> std::io::Result<PathBuf> {
+    if !source_path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "upload source is not a file",
+        ));
+    }
+
+    let target = uploaded_audio_target(save_root, source_path, timestamp)?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source_path, &target)?;
+    Ok(target)
+}
+
+fn is_uploadable_audio_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "mp3" | "m4a" | "wav"
+            )
+        })
+        .unwrap_or(false)
+}

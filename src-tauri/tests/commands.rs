@@ -63,6 +63,10 @@ fn audio_playback_accepts_recording_formats_only() {
         Some("audio/wav")
     );
     assert_eq!(
+        audio_playback_content_type(&PathBuf::from("/tmp/recording.mp3")),
+        Some("audio/mpeg")
+    );
+    assert_eq!(
         audio_playback_content_type(&PathBuf::from("/tmp/transcript.txt")),
         None
     );
