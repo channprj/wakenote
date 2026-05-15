@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppSnapshot,
   AppStatus,
+  AppPermissions,
   LevelSnapshot,
   ModelDescriptor,
   QueueSnapshot,
@@ -264,6 +265,18 @@ export function defaultLevelSnapshot(): LevelSnapshot {
   };
 }
 
+export function defaultPermissions(): AppPermissions {
+  return {
+    microphone: {
+      status: "granted",
+      label: "Allowed",
+      detail: "WakeNote can use the microphone.",
+      can_request: false,
+      can_open_settings: true,
+    },
+  };
+}
+
 export function mockSnapshot(): AppSnapshot {
   const settings = defaultSettings();
   const queue = emptyQueue();
@@ -301,5 +314,6 @@ export function mockSnapshot(): AppSnapshot {
     models: mockModels(),
     queue,
     recent_transcripts: [],
+    permissions: defaultPermissions(),
   };
 }

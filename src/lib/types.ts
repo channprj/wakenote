@@ -122,6 +122,44 @@ export interface RecentTranscript {
   text: string;
 }
 
+export interface UploadedAudio {
+  audio_path: string;
+  original_filename: string;
+  stored_at: string;
+}
+
+export interface AudioRange {
+  start: number;
+  end: number;
+}
+
+export interface AudioWaveform {
+  duration_seconds: number;
+  sample_rate: number;
+  peaks: number[];
+  audible_ranges: AudioRange[];
+}
+
+export type PermissionGrantStatus =
+  | "unknown"
+  | "not_determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unsupported";
+
+export interface PermissionState {
+  status: PermissionGrantStatus;
+  label: string;
+  detail: string;
+  can_request: boolean;
+  can_open_settings: boolean;
+}
+
+export interface AppPermissions {
+  microphone: PermissionState;
+}
+
 export interface LevelSnapshot {
   current_dbfs: number;
   peak_dbfs: number;
@@ -149,4 +187,5 @@ export interface AppSnapshot {
   models: ModelDescriptor[];
   queue: QueueSnapshot;
   recent_transcripts: RecentTranscript[];
+  permissions: AppPermissions;
 }

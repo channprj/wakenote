@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defaultSettings, emptyQueue, mockModels } from "./app-state";
+import { defaultPermissions, defaultSettings, emptyQueue, mockModels } from "./app-state";
 import type { AppStatus, QueueSnapshot, RecentTranscript } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -46,6 +46,8 @@ function mockInvoke(command: string) {
       return Promise.resolve(mockModels());
     case "queue_snapshot":
       return Promise.resolve(queue satisfies QueueSnapshot);
+    case "permission_snapshot":
+      return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
       return Promise.resolve([
         {

@@ -3,6 +3,7 @@ import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
+import { AudioUploadPanel } from "./AudioUploadPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
@@ -96,6 +97,7 @@ export function SettingsPanel({
   onChooseSaveRoot,
   onRevealSaveFolder,
   onChooseModelDirectory,
+  onRequestMicrophonePermission,
   onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
@@ -116,6 +118,7 @@ export function SettingsPanel({
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;
+  onRequestMicrophonePermission: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
@@ -128,6 +131,7 @@ export function SettingsPanel({
   onDeleteModel: (modelId: string) => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
+  const microphonePermission = snapshot.permissions.microphone;
   const selectedMicrophone = microphones.find((mic) => mic.id === settings.selected_microphone);
   const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
   const fallbackMicrophone = microphones.find((mic) => mic.fallback && mic.available);
@@ -376,6 +380,14 @@ export function SettingsPanel({
     );
   }
 
+  if (activeSection === "audio") {
+    return (
+      <Section title="Audio" eyebrow="Uploaded files">
+        <AudioUploadPanel />
+      </Section>
+    );
+  }
+
   if (activeSection === "transcripts") {
     return (
       <Section title="Transcripts" eyebrow="Daily archive">
@@ -436,6 +448,21 @@ export function SettingsPanel({
   return (
     <Section title="General" eyebrow="Application defaults">
       <div className="settings-list">
+        <PermissionRow
+          label="Microphone Permission"
+          statusLabel={microphonePermission.label}
+          detail={microphonePermission.detail}
+          actionLabel={
+            microphonePermission.status === "granted"
+              ? null
+              : microphonePermission.can_request
+                ? "Allow Microphone"
+                : microphonePermission.can_open_settings
+                  ? "Open System Settings"
+                  : null
+          }
+          onAction={onRequestMicrophonePermission}
+        />
         <ToggleRow
           label="Recording"
           checked={settings.recording_enabled}
@@ -497,6 +524,35 @@ export function SettingsPanel({
         </div>
       </div>
     </Section>
+  );
+}
+
+function PermissionRow({
+  label,
+  statusLabel,
+  detail,
+  actionLabel,
+  onAction,
+}: {
+  label: string;
+  statusLabel: string;
+  detail: string;
+  actionLabel: string | null;
+  onAction: () => void;
+}) {
+  return (
+    <div className="permission-row">
+      <div>
+        <span>{label}</span>
+        <strong>{statusLabel}</strong>
+        <p>{detail}</p>
+      </div>
+      {actionLabel ? (
+        <Button type="button" variant="secondary" size="sm" onClick={onAction}>
+          {actionLabel}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

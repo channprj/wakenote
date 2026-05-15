@@ -5,6 +5,7 @@ import {
   Clock3,
   Folder,
   Files,
+  FileAudio,
   ListTodo,
   Mic,
   RadioTower,
@@ -35,6 +36,8 @@ import {
   enqueueBacklog,
   loadRecentTranscripts,
   loadSnapshot,
+  requestMicrophonePermission,
+  openMicrophonePermissionSettings,
   processNextTranscription,
   retryJob,
   saveSettingsPatch,
@@ -65,6 +68,7 @@ const sections = [
   { id: "models", label: "Models", icon: Brain },
   { id: "recording", label: "Recording", icon: Mic },
   { id: "storage", label: "Storage", icon: Folder },
+  { id: "audio", label: "Audio", icon: FileAudio },
   { id: "transcripts", label: "Transcripts", icon: Files },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
@@ -462,6 +466,13 @@ export default function App() {
           onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
           onRevealSaveFolder={() => void runAction(revealSaveFolder)}
           onChooseModelDirectory={() => void runAction(chooseModelDirectory)}
+          onRequestMicrophonePermission={() =>
+            void runAction(
+              snapshot.permissions.microphone.can_request
+                ? requestMicrophonePermission
+                : openMicrophonePermissionSettings,
+            )
+          }
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}

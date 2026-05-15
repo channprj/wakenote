@@ -8,6 +8,7 @@ import {
   emptyQueue,
   mockModels,
   mockSnapshot,
+  defaultPermissions,
 } from "./app-state";
 import type {
   AppSettings,
@@ -19,6 +20,9 @@ import type {
   QueueSnapshot,
   RecentTranscript,
   SettingsPatch,
+  UploadedAudio,
+  AudioWaveform,
+  AppPermissions,
 } from "./types";
 
 declare global {
@@ -33,6 +37,10 @@ let browserQueuedCaptureSessionId: number | null = null;
 let browserCaptureSessionTranscriptionRequested = false;
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 const defaultRecentTranscriptLimit = 50;
+
+function permissionSnapshotFromBrowser(): AppPermissions {
+  return browserSnapshot.permissions ?? defaultPermissions();
+}
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
@@ -49,6 +57,10 @@ function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
 
 function isBrowserImportableAudioPath(audioPath: string) {
   return /\.(m4a|wav)$/i.test(audioPath);
+}
+
+function isBrowserUploadableAudioPath(audioPath: string) {
+  return /\.(mp3|m4a|wav)$/i.test(audioPath);
 }
 
 function isUsableBrowserModel(modelId: string, models: ModelDescriptor[]) {
@@ -191,15 +203,24 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     return browserSnapshot;
   }
 
-  const [settings, status, microphones, models, queue] = await Promise.all([
+  const [settings, status, microphones, models, queue, permissions] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
+    invoke<AppPermissions>("permission_snapshot"),
   ]);
 
-  return { settings, status, microphones, models, queue, recent_transcripts: [] };
+  return { settings, status, microphones, models, queue, permissions, recent_transcripts: [] };
+}
+
+export async function loadPermissions(): Promise<AppPermissions> {
+  if (!isTauriRuntime()) {
+    return permissionSnapshotFromBrowser();
+  }
+
+  return invoke<AppPermissions>("permission_snapshot");
 }
 
 export async function loadRecentTranscripts(
@@ -360,6 +381,112 @@ export async function chooseAudioFiles(): Promise<AppSnapshot> {
   }
 
   return enqueueAudioFiles(selected);
+}
+
+export async function requestMicrophonePermission(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      permissions: {
+        microphone: {
+          status: "granted",
+          label: "Allowed",
+          detail: "WakeNote can use the microphone.",
+          can_request: false,
+          can_open_settings: true,
+        },
+      },
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<AppPermissions>("request_microphone_permission");
+  return loadSnapshot();
+}
+
+export async function openMicrophonePermissionSettings(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+
+  await invoke("open_microphone_permission_settings");
+  return loadSnapshot();
+}
+
+export function browserUploadedPathFromSource(
+  sourcePath: string,
+  saveRoot: string,
+  today = new Date(),
+): string {
+  const fileName = sourcePath.split("/").filter(Boolean).pop() ?? "audio.mp3";
+  const day = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("");
+  return `${saveRoot}/uploaded/${day}/${fileName}`;
+}
+
+export async function uploadAudioFile(sourcePath: string): Promise<UploadedAudio> {
+  if (!isTauriRuntime()) {
+    if (!isBrowserUploadableAudioPath(sourcePath)) {
+      throw new Error("only mp3, m4a, and wav audio files can be uploaded");
+    }
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    return {
+      audio_path: browserUploadedPathFromSource(sourcePath, settings.save_root),
+      original_filename: sourcePath.split("/").filter(Boolean).pop() ?? "audio.mp3",
+      stored_at: new Date().toISOString(),
+    };
+  }
+
+  return invoke<UploadedAudio>("upload_audio_file", { sourcePath });
+}
+
+export async function chooseUploadedAudioFile(): Promise<UploadedAudio | null> {
+  if (!isTauriRuntime()) {
+    return uploadAudioFile("/tmp/browser-upload/meeting.mp3");
+  }
+
+  const selected = await open({
+    multiple: false,
+    title: "Upload Audio",
+    filters: [
+      {
+        name: "Audio",
+        extensions: ["mp3", "m4a", "wav"],
+      },
+    ],
+  });
+  if (typeof selected !== "string") {
+    return null;
+  }
+
+  return uploadAudioFile(selected);
+}
+
+export async function loadAudioWaveform(
+  audioPath: string,
+  bucketCount = 4096,
+): Promise<AudioWaveform> {
+  if (!isTauriRuntime()) {
+    const peaks = Array.from({ length: Math.min(bucketCount, 512) }, (_, index) => {
+      const wave = Math.abs(Math.sin(index / 7) * Math.cos(index / 19));
+      return Number((0.08 + wave * 0.86).toFixed(3));
+    });
+    return {
+      duration_seconds: 30 * 60,
+      sample_rate: 8000,
+      peaks,
+      audible_ranges: [
+        { start: 2, end: 320 },
+        { start: 370, end: 880 },
+        { start: 930, end: 1780 },
+      ],
+    };
+  }
+
+  return invoke<AudioWaveform>("analyze_audio_waveform", { audioPath, bucketCount });
 }
 
 export async function cancelCurrentTranscription(): Promise<AppSnapshot> {

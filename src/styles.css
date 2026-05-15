@@ -491,6 +491,43 @@ svg {
   padding: 8px 12px;
 }
 
+.permission-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 10px 12px;
+}
+
+.permission-row > div {
+  min-width: 0;
+}
+
+.permission-row span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.permission-row strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.permission-row p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .toggle-row > span {
   flex: 1;
   min-width: 0;
@@ -1252,6 +1289,189 @@ svg {
   gap: 12px;
 }
 
+.audio-upload-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.audio-upload-panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.audio-workbench__title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.audio-upload-empty,
+.audio-waveform-loading {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 180px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: #fbfdff;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.audio-upload-empty svg,
+.audio-waveform-loading svg {
+  color: var(--primary);
+  font-size: 24px;
+}
+
+.audio-waveform-loading svg {
+  animation: transcript-footer-spin 1.2s linear infinite;
+}
+
+.audio-workbench {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.audio-workbench__header,
+.audio-workbench__title,
+.audio-player-row,
+.audio-player-row a,
+.audio-workbench__switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-workbench__header {
+  justify-content: space-between;
+}
+
+.audio-workbench__title {
+  min-width: 0;
+}
+
+.audio-workbench__title > svg {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: var(--primary);
+  padding: 8px;
+}
+
+.audio-workbench__title div {
+  min-width: 0;
+}
+
+.audio-workbench__title a {
+  display: block;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.audio-workbench__title a:hover,
+.audio-player-row a:hover {
+  text-decoration: underline;
+}
+
+.audio-workbench__title strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-waveform-overview,
+.audio-waveform-detail {
+  display: grid;
+  align-items: end;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+  padding: 8px;
+}
+
+.audio-waveform-overview {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(1px, 1fr);
+  height: 88px;
+}
+
+.audio-waveform-detail {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(2px, 1fr);
+  height: 190px;
+  background: #f8fbff;
+}
+
+.audio-waveform-overview span,
+.audio-waveform-detail span {
+  align-self: center;
+  min-height: 4px;
+  border-radius: 999px;
+  background: #0f172a;
+  opacity: 0.74;
+}
+
+.audio-waveform-detail span {
+  background: var(--primary);
+  opacity: 0.88;
+}
+
+.audio-workbench__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.audio-workbench__switch {
+  justify-content: space-between;
+  min-height: 60px;
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 10px 12px;
+}
+
+.audio-workbench__switch > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.audio-player-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.audio-player-row audio {
+  width: 100%;
+}
+
+.audio-player-row a {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .queue-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1702,8 +1922,15 @@ code {
   .onboarding-strip,
   .status-cards,
   .queue-stats,
+  .audio-workbench__controls,
+  .audio-player-row,
   .recording-split {
     grid-template-columns: 1fr;
+  }
+
+  .permission-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .floating-overlay {

@@ -22,6 +22,7 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onChooseSaveRoot={() => {}}
       onRevealSaveFolder={() => {}}
       onChooseModelDirectory={() => {}}
+      onRequestMicrophonePermission={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
       onCancelCurrent={() => {}}
@@ -158,6 +159,57 @@ describe("settings panel", () => {
     expect(markup).toContain("Transcription Language");
     expect(markup).toContain('<option value="auto">Auto-detect</option>');
     expect(markup).toContain('<option value="ko" selected="">Korean</option>');
+  });
+
+  it("shows microphone permission status in general controls", () => {
+    const snapshot = mockSnapshot();
+    snapshot.permissions.microphone = {
+      status: "granted",
+      label: "Allowed",
+      detail: "WakeNote can use the microphone.",
+      can_request: false,
+      can_open_settings: true,
+    };
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Microphone Permission");
+    expect(markup).toContain("Allowed");
+    expect(markup).toContain("WakeNote can use the microphone.");
+  });
+
+  it("renders an allow microphone action when permission has not been requested", () => {
+    const snapshot = mockSnapshot();
+    snapshot.permissions.microphone = {
+      status: "not_determined",
+      label: "Not requested",
+      detail: "WakeNote needs microphone access before recording can start.",
+      can_request: true,
+      can_open_settings: false,
+    };
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Microphone Permission");
+    expect(isDisabled(buttonTag(markup, "Allow Microphone"))).toBe(false);
+    expect(markup).not.toContain("Open System Settings");
+  });
+
+  it("renders a system settings action when microphone permission is denied", () => {
+    const snapshot = mockSnapshot();
+    snapshot.permissions.microphone = {
+      status: "denied",
+      label: "Denied",
+      detail: "Enable Microphone for WakeNote in System Settings.",
+      can_request: false,
+      can_open_settings: true,
+    };
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Denied");
+    expect(isDisabled(buttonTag(markup, "Open System Settings"))).toBe(false);
+    expect(markup).not.toContain(">Allow Microphone<");
   });
 
   it("shows an auto-start live input toggle in general controls", () => {
