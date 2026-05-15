@@ -213,11 +213,45 @@ export function SettingsPanel({
           </>
         }
       >
-        <div className="two-column">
+        <div className="recording-stack">
+          <div className="settings-list">
+            <Select
+              label="Microphone"
+              value={settings.selected_microphone}
+              onChange={(event) => {
+                const device = microphones.find((mic) => mic.id === event.currentTarget.value);
+                onPatch({
+                  selected_microphone: event.currentTarget.value,
+                  selected_microphone_label: device?.label ?? event.currentTarget.value,
+                });
+              }}
+            >
+              {microphones.map((device) => (
+                <option key={device.id} value={device.id} disabled={!device.available}>
+                  {device.label}
+                  {device.available ? "" : " (Unavailable)"}
+                </option>
+              ))}
+            </Select>
+            {!selectedMicrophoneAvailable ? (
+              fallbackMicrophone ? (
+                <div className="warning-banner warning-banner--warning">
+                  {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
+                  {fallbackMicrophone.label}.
+                </div>
+              ) : (
+                <div className="warning-banner warning-banner--danger">
+                  No available input device is selected.
+                </div>
+              )
+            ) : null}
+          </div>
           <LevelMeter
             settings={settings}
             status={status}
-            onApplyThreshold={(threshold_dbfs) => onPatch(calibrationSettingsPatch(threshold_dbfs))}
+            onApplyThreshold={(threshold_dbfs) =>
+              onPatch(calibrationSettingsPatch(threshold_dbfs))
+            }
             onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
           />
           <div className="control-grid">
@@ -455,36 +489,6 @@ export function SettingsPanel({
           checked={settings.pause_all}
           onChange={(pause_all) => onPatch({ pause_all })}
         />
-        <Select
-          label="Microphone"
-          value={settings.selected_microphone}
-          onChange={(event) => {
-            const device = microphones.find((mic) => mic.id === event.currentTarget.value);
-            onPatch({
-              selected_microphone: event.currentTarget.value,
-              selected_microphone_label: device?.label ?? event.currentTarget.value,
-            });
-          }}
-        >
-          {microphones.map((device) => (
-            <option key={device.id} value={device.id} disabled={!device.available}>
-              {device.label}
-              {device.available ? "" : " (Unavailable)"}
-            </option>
-          ))}
-        </Select>
-        {!selectedMicrophoneAvailable ? (
-          fallbackMicrophone ? (
-            <div className="warning-banner warning-banner--warning">
-              {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
-              {fallbackMicrophone.label}.
-            </div>
-          ) : (
-            <div className="warning-banner warning-banner--danger">
-              No available input device is selected.
-            </div>
-          )
-        ) : null}
         <div className="offline-note">
           <Badge tone="success">Offline</Badge>
           <span>Local models keep audio and text on device.</span>

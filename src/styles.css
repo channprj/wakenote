@@ -436,9 +436,8 @@ svg {
   padding: 16px;
 }
 
-.two-column {
+.recording-stack {
   display: grid;
-  grid-template-columns: minmax(280px, 0.85fr) minmax(320px, 1.15fr);
   gap: 16px;
 }
 
@@ -1634,7 +1633,6 @@ code {
   }
 
   .workspace__header,
-  .two-column,
   .control-grid,
   .onboarding-strip,
   .status-cards,

@@ -88,12 +88,15 @@ describe("settings panel", () => {
     const generalMarkup = renderSettingsPanel(snapshot);
 
     expect(isDisabled(buttonTag(recordingMarkup, "Start Input"))).toBe(false);
-    expect(generalMarkup).toContain("Missing AirPods is unavailable");
-    expect(generalMarkup).toContain("Start Input will use System Default");
-    expect(generalMarkup).toMatch(
+    expect(recordingMarkup).toContain("Missing AirPods is unavailable");
+    expect(recordingMarkup).toContain("Start Input will use System Default");
+    expect(recordingMarkup).toMatch(
       /<div class="warning-banner warning-banner--warning">\s*Missing AirPods is unavailable/,
     );
-    expect(generalMarkup).not.toMatch(/warning-banner--danger[^"]*">[\s\S]*?Missing AirPods is unavailable/);
+    expect(recordingMarkup).not.toMatch(
+      /warning-banner--danger[^"]*">[\s\S]*?Missing AirPods is unavailable/,
+    );
+    expect(generalMarkup).not.toContain("Missing AirPods is unavailable");
   });
 
   it("flags the microphone banner as danger when no fallback input is available", () => {
@@ -102,7 +105,7 @@ describe("settings panel", () => {
     snapshot.settings.selected_microphone_label = "Missing AirPods";
     snapshot.microphones = [];
 
-    const markup = renderSettingsPanel(snapshot);
+    const markup = renderSettingsPanel(snapshot, "recording");
 
     expect(markup).toMatch(
       /<div class="warning-banner warning-banner--danger">\s*No available input device is selected\.\s*<\/div>/,
@@ -114,7 +117,7 @@ describe("settings panel", () => {
 
   it("omits the microphone warning banner entirely when the selected mic is available", () => {
     const snapshot = mockSnapshot();
-    const markup = renderSettingsPanel(snapshot);
+    const markup = renderSettingsPanel(snapshot, "recording");
 
     expect(markup).not.toContain("is unavailable");
     expect(markup).not.toContain("No available input device is selected");
