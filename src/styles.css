@@ -441,6 +441,13 @@ svg {
   gap: 16px;
 }
 
+.recording-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
 .settings-list,
 .control-grid {
   display: grid;
@@ -449,6 +456,10 @@ svg {
 
 .control-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.control-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .max-chunk-control {
@@ -1659,7 +1670,8 @@ code {
   .control-grid,
   .onboarding-strip,
   .status-cards,
-  .queue-stats {
+  .queue-stats,
+  .recording-split {
     grid-template-columns: 1fr;
   }
 

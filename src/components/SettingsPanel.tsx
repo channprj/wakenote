@@ -246,39 +246,41 @@ export function SettingsPanel({
               )
             ) : null}
           </div>
-          <LevelMeter
-            settings={settings}
-            status={status}
-            onApplyThreshold={(threshold_dbfs) =>
-              onPatch(calibrationSettingsPatch(threshold_dbfs))
-            }
-            onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
-          />
-          <div className="control-grid">
-            <Slider
-              label="Threshold"
-              value={settings.threshold_dbfs}
-              min={-90}
-              max={-10}
-              suffix=" dBFS"
-              onValueChange={(threshold_dbfs) => onPatch({ threshold_dbfs })}
+          <div className="recording-split">
+            <LevelMeter
+              settings={settings}
+              status={status}
+              onApplyThreshold={(threshold_dbfs) =>
+                onPatch(calibrationSettingsPatch(threshold_dbfs))
+              }
+              onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
             />
-            {durationFields.map(([key, label, min, max]) => (
+            <div className="control-grid control-grid--stacked">
               <Slider
-                key={key}
-                label={label}
-                value={settings[key]}
-                min={min}
-                max={max}
-                step={50}
-                suffix=" ms"
-                onValueChange={(value) => onPatch({ [key]: value })}
+                label="Threshold"
+                value={settings.threshold_dbfs}
+                min={-90}
+                max={-10}
+                suffix=" dBFS"
+                onValueChange={(threshold_dbfs) => onPatch({ threshold_dbfs })}
               />
-            ))}
-            <MaxChunkControl
-              value={settings.max_chunk_ms}
-              onChange={(max_chunk_ms) => onPatch({ max_chunk_ms })}
-            />
+              {durationFields.map(([key, label, min, max]) => (
+                <Slider
+                  key={key}
+                  label={label}
+                  value={settings[key]}
+                  min={min}
+                  max={max}
+                  step={50}
+                  suffix=" ms"
+                  onValueChange={(value) => onPatch({ [key]: value })}
+                />
+              ))}
+              <MaxChunkControl
+                value={settings.max_chunk_ms}
+                onChange={(max_chunk_ms) => onPatch({ max_chunk_ms })}
+              />
+            </div>
           </div>
         </div>
       </Section>
