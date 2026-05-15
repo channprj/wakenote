@@ -150,6 +150,30 @@ export default function App() {
     if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
       return;
     }
+    const handleHideShortcut = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key !== "h" || event.shiftKey || event.altKey) {
+        return;
+      }
+      const isMac = navigator.platform.toLowerCase().includes("mac");
+      const modifier = isMac ? event.metaKey : event.ctrlKey;
+      if (!modifier) {
+        return;
+      }
+      event.preventDefault();
+      void (async () => {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().hide();
+      })();
+    };
+    window.addEventListener("keydown", handleHideShortcut);
+    return () => window.removeEventListener("keydown", handleHideShortcut);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+      return;
+    }
     let cancelled = false;
     const unlisteners: Array<() => void> = [];
 
