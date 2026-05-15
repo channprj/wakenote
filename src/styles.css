@@ -1368,18 +1368,20 @@ tr:last-child td {
   font-weight: 700;
 }
 
-.transcript-pagination__pages {
-  display: flex;
-  flex-wrap: wrap;
+.transcript-pagination__week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  flex: 1 1 auto;
   gap: 4px;
   min-width: 0;
 }
 
-.transcript-pagination__pages button {
-  display: inline-grid;
-  place-items: center;
-  height: 28px;
-  padding: 0 9px;
+.transcript-pagination__day {
+  display: grid;
+  grid-template-rows: auto auto;
+  justify-items: center;
+  gap: 2px;
+  padding: 6px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
@@ -1392,23 +1394,54 @@ tr:last-child td {
     color var(--transition);
 }
 
-.transcript-pagination__pages button:hover {
+.transcript-pagination__day-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.transcript-pagination__day-number {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcript-pagination__day[data-day-of-week="0"] .transcript-pagination__day-label,
+.transcript-pagination__day[data-day-of-week="0"] .transcript-pagination__day-number {
+  color: #dc2626;
+}
+
+.transcript-pagination__day[data-day-of-week="6"] .transcript-pagination__day-label,
+.transcript-pagination__day[data-day-of-week="6"] .transcript-pagination__day-number {
+  color: #2563eb;
+}
+
+.transcript-pagination__day:hover:not(:disabled) {
   border-color: #94a3b8;
   background: var(--surface-alt);
 }
 
-.transcript-pagination__pages button:focus-visible {
+.transcript-pagination__day:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-.transcript-pagination__pages button[aria-current="page"] {
+.transcript-pagination__day:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.transcript-pagination__day[aria-current="page"] {
   border-color: var(--primary);
   background: var(--primary);
   color: white;
 }
 
-.transcript-pagination__pages button[aria-current="page"]:hover {
+.transcript-pagination__day[aria-current="page"] .transcript-pagination__day-label,
+.transcript-pagination__day[aria-current="page"] .transcript-pagination__day-number {
+  color: white;
+}
+
+.transcript-pagination__day[aria-current="page"]:hover {
   background: var(--primary-hover);
 }
 
@@ -1454,15 +1487,13 @@ tr:last-child td {
 .transcript-entry-list {
   display: grid;
   gap: 0;
-  border-top: 1px solid var(--line);
 }
 
 .transcript-entry {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   padding: 4px 6px;
 }
@@ -1491,9 +1522,9 @@ tr:last-child td {
   color: var(--text);
   font-size: 12px;
   line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
 .transcript-entry__play {

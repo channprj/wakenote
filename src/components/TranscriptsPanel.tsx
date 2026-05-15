@@ -14,6 +14,8 @@ interface TranscriptDatePage {
   entries: RecentTranscript[];
 }
 
+const KOREAN_DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
 export function TranscriptsPanel({
   transcripts,
   initialPlayingTranscriptPath = null,
@@ -28,78 +30,80 @@ export function TranscriptsPanel({
     () => buildTranscriptDatePages(transcripts, todayDay),
     [transcripts, todayDay],
   );
-  const todayIndex = Math.max(0, pages.length - 1);
-  // Track the selected day as a string rather than an index. Pages are sorted
-  // chronologically and grow when refreshTranscripts pulls a new earlier date;
-  // an index would silently slide onto a different day in that case.
   const [activeDay, setActiveDay] = useState<string | null>(null);
+  const [viewWeekStart, setViewWeekStart] = useState<string | null>(null);
   const [playingTranscriptPath, setPlayingTranscriptPath] = useState<string | null>(
     initialPlayingTranscriptPath,
   );
-  const activePage = useMemo(() => {
-    if (activeDay !== null) {
-      const idx = pages.findIndex((page) => page.day === activeDay);
-      if (idx >= 0) {
-        return idx;
-      }
-    }
-    return todayIndex;
-  }, [pages, activeDay, todayIndex]);
-  const activeGroup = pages[activePage] ?? pages[todayIndex];
+
+  const effectiveActiveDay = activeDay ?? todayDay;
+  const pageByDay = useMemo(
+    () => new Map(pages.map((page) => [page.day, page] as const)),
+    [pages],
+  );
+  const activeGroup: TranscriptDatePage =
+    pageByDay.get(effectiveActiveDay) ?? { day: effectiveActiveDay, entries: [] };
   const playingTranscript = transcripts.find(
     (entry) => entry.transcript_path === playingTranscriptPath,
   );
 
   useEffect(() => {
-    if (activeDay !== null && !pages.some((page) => page.day === activeDay)) {
+    if (activeDay !== null && !pageByDay.has(activeDay) && activeDay !== todayDay) {
       setActiveDay(null);
     }
-  }, [pages, activeDay]);
+  }, [pageByDay, activeDay, todayDay]);
 
-  const handlePageChange = (index: number) => {
-    const day = pages[index]?.day;
-    if (day != null) {
-      setActiveDay(day);
-    }
+  const handleSelectDay = (day: string) => {
+    setActiveDay(day);
+    setViewWeekStart(null);
+  };
+
+  const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
+
+  const handlePrevWeek = () => {
+    setViewWeekStart(addDays(effectiveWeekStart, -7));
+  };
+  const handleNextWeek = () => {
+    setViewWeekStart(addDays(effectiveWeekStart, 7));
   };
 
   return (
     <div className="transcripts-panel">
-      {activeGroup ? (
-        <>
-          <TranscriptPagination
-            activePage={activePage}
-            activeDay={activeGroup.day}
-            pages={pages}
-            onPageChange={handlePageChange}
-          />
-          <article className="transcript-day transcript-day--condensed">
-            <header>
-              <div>
-                <span>{activeGroup.day}</span>
-                <strong>
-                  {activeGroup.entries.length} transcript
-                  {activeGroup.entries.length === 1 ? "" : "s"}
-                </strong>
-              </div>
-            </header>
-            {activeGroup.entries.length > 0 ? (
-              <div className="transcript-entry-list transcript-entry-list--condensed">
-                {activeGroup.entries.map((entry) => (
-                  <TranscriptEntryRow
-                    entry={entry}
-                    isPlaying={entry.transcript_path === playingTranscriptPath}
-                    key={entry.transcript_path}
-                    onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="transcripts-empty">No transcripts for this day</div>
-            )}
-          </article>
-        </>
-      ) : null}
+      <TranscriptPagination
+        activeDay={effectiveActiveDay}
+        pageByDay={pageByDay}
+        todayDay={todayDay}
+        weekStart={effectiveWeekStart}
+        earliestDay={pages[0]?.day ?? todayDay}
+        onSelectDay={handleSelectDay}
+        onPrevWeek={handlePrevWeek}
+        onNextWeek={handleNextWeek}
+      />
+      <article className="transcript-day transcript-day--condensed">
+        <header>
+          <div>
+            <span>{activeGroup.day}</span>
+            <strong>
+              {activeGroup.entries.length} transcript
+              {activeGroup.entries.length === 1 ? "" : "s"}
+            </strong>
+          </div>
+        </header>
+        {activeGroup.entries.length > 0 ? (
+          <div className="transcript-entry-list transcript-entry-list--condensed">
+            {activeGroup.entries.map((entry) => (
+              <TranscriptEntryRow
+                entry={entry}
+                isPlaying={entry.transcript_path === playingTranscriptPath}
+                key={entry.transcript_path}
+                onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="transcripts-empty">No transcripts for this day</div>
+        )}
+      </article>
       {playingTranscript?.audio_path ? (
         <TranscriptPlayerSheet
           entry={playingTranscript}
@@ -155,11 +159,6 @@ function buildTranscriptDatePages(
   const groupsByDay = new Map(
     groupTranscriptsByDay(transcripts).map((group) => [group.day, group.entries] as const),
   );
-  // Only surface days that actually have transcripts (past or today); skip
-  // empty intermediate calendar days so a single transcript from months ago
-  // doesn't generate hundreds of empty navigation buttons. Today is always
-  // included so live captures can land here and the user has a "current"
-  // anchor even when no recordings exist yet.
   const days = new Set<string>([todayDay]);
   for (const day of groupsByDay.keys()) {
     if (isYearMonthDayLabel(day) && day <= todayDay) {
@@ -192,37 +191,62 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-export function previousDayDisabledReason(activePage: number): string | null {
-  if (activePage <= 0) {
-    return "Already on the earliest transcript date";
+function parseDay(day: string): Date {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(year, month - 1, date);
+}
+
+export function addDays(day: string, count: number): string {
+  const date = parseDay(day);
+  date.setDate(date.getDate() + count);
+  return formatLocalDay(date);
+}
+
+export function weekStartFor(day: string): string {
+  const date = parseDay(day);
+  date.setDate(date.getDate() - date.getDay());
+  return formatLocalDay(date);
+}
+
+export function previousWeekDisabledReason(
+  weekStart: string,
+  earliestDay: string,
+): string | null {
+  if (weekStart <= weekStartFor(earliestDay)) {
+    return "Already on the earliest week";
   }
   return null;
 }
 
-export function nextDayDisabledReason(activePage: number, pagesLength: number): string | null {
-  if (activePage >= pagesLength - 1) {
-    return "Already on today";
+export function nextWeekDisabledReason(weekStart: string, todayDay: string): string | null {
+  if (weekStart >= weekStartFor(todayDay)) {
+    return "Already on this week";
   }
   return null;
 }
 
 function TranscriptPagination({
-  activePage,
   activeDay,
-  pages,
-  onPageChange,
+  pageByDay,
+  todayDay,
+  weekStart,
+  earliestDay,
+  onSelectDay,
+  onPrevWeek,
+  onNextWeek,
 }: {
-  activePage: number;
   activeDay: string;
-  pages: TranscriptDatePage[];
-  onPageChange: (page: number) => void;
+  pageByDay: Map<string, TranscriptDatePage>;
+  todayDay: string;
+  weekStart: string;
+  earliestDay: string;
+  onSelectDay: (day: string) => void;
+  onPrevWeek: () => void;
+  onNextWeek: () => void;
 }) {
-  if (pages.length <= 1) {
-    return null;
-  }
-
-  const previousReason = previousDayDisabledReason(activePage);
-  const nextReason = nextDayDisabledReason(activePage, pages.length);
+  const previousReason = previousWeekDisabledReason(weekStart, earliestDay);
+  const nextReason = nextWeekDisabledReason(weekStart, todayDay);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   return (
     <nav
@@ -230,40 +254,59 @@ function TranscriptPagination({
       aria-label="Transcript date pages"
     >
       <Button
-        aria-label="Previous date"
-        disabled={activePage === 0}
-        onClick={() => onPageChange(Math.max(0, activePage - 1))}
+        aria-label="Previous week"
+        disabled={previousReason !== null}
+        onClick={onPrevWeek}
+        size="icon"
         title={previousReason ?? undefined}
         type="button"
         variant="secondary"
       >
-        <ChevronLeft data-icon="inline-start" />
-        Previous date
+        <ChevronLeft />
       </Button>
-      <div className="transcript-pagination__pages">
-        {pages.map((group, index) => (
-          <button
-            aria-current={activePage === index ? "page" : undefined}
-            aria-label={`Go to ${group.day} transcripts`}
-            key={group.day}
-            onClick={() => onPageChange(index)}
-            type="button"
-          >
-            {group.day}
-          </button>
-        ))}
+      <div className="transcript-pagination__week">
+        {weekDays.map((day, dayOfWeek) => {
+          const hasEntries = pageByDay.has(day);
+          const isFuture = day > todayDay;
+          const isToday = day === todayDay;
+          const selectable = !isFuture && (hasEntries || isToday);
+          const isActive = activeDay === day;
+          const dayNumber = day.split("-")[2];
+          const monthNumber = day.split("-")[1];
+
+          return (
+            <button
+              key={day}
+              aria-current={isActive ? "page" : undefined}
+              aria-label={`Go to ${day} transcripts`}
+              className="transcript-pagination__day"
+              data-day-of-week={dayOfWeek}
+              data-has-entries={hasEntries ? "true" : undefined}
+              data-today={isToday ? "true" : undefined}
+              disabled={!selectable}
+              onClick={() => onSelectDay(day)}
+              type="button"
+            >
+              <span className="transcript-pagination__day-label">
+                {KOREAN_DAY_LABELS[dayOfWeek]}
+              </span>
+              <span className="transcript-pagination__day-number">
+                {monthNumber}/{dayNumber}
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <span>{activeDay} / {pages.length} days</span>
       <Button
-        aria-label="Next date"
-        disabled={activePage === pages.length - 1}
-        onClick={() => onPageChange(Math.min(pages.length - 1, activePage + 1))}
+        aria-label="Next week"
+        disabled={nextReason !== null}
+        onClick={onNextWeek}
+        size="icon"
         title={nextReason ?? undefined}
         type="button"
         variant="secondary"
       >
-        Next date
-        <ChevronRight data-icon="inline-end" />
+        <ChevronRight />
       </Button>
     </nav>
   );
