@@ -524,13 +524,6 @@ export async function stopLiveCapture(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
-export async function setSystemMicrophoneVolume(percent: number): Promise<void> {
-  if (!isTauriRuntime()) {
-    return;
-  }
-  await invoke("set_system_microphone_volume", { percent });
-}
-
 export async function chooseSaveRoot(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     return browserSnapshot;

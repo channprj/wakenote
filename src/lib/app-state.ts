@@ -129,8 +129,6 @@ export function defaultSettings(): AppSettings {
     pause_all: false,
     selected_microphone: "default",
     selected_microphone_label: "System Default",
-    system_mic_volume_enabled: true,
-    system_mic_volume: 100,
     save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     audio_format: "m4a",

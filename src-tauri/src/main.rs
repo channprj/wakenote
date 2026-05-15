@@ -16,7 +16,7 @@ use tauri::menu::{
 };
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
-use wakenote::audio::{MicHealthAction, list_input_devices, set_system_input_volume};
+use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
     MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState,
@@ -118,20 +118,6 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-fn set_system_microphone_volume(percent: u8) -> Result<(), String> {
-    set_system_input_volume(percent)
-}
-
-fn apply_system_mic_volume_if_enabled(settings: &AppSettings) {
-    if !settings.system_mic_volume_enabled {
-        return;
-    }
-    if let Err(error) = set_system_input_volume(settings.system_mic_volume) {
-        eprintln!("[system-volume] failed to apply input volume: {error}");
-    }
-}
-
-#[tauri::command]
 fn update_settings(
     app: AppHandle,
     state: State<'_, BackendState>,
@@ -159,17 +145,12 @@ fn update_settings(
     };
     apply_launch_at_login_action(&app, launch_at_login_action)?;
 
-    let mic_volume_patch_touched =
-        patch.system_mic_volume_enabled.is_some() || patch.system_mic_volume.is_some();
     let (settings, live_event_handler, live_events) = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.update_settings(patch);
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (settings, handler, events)
     };
-    if mic_volume_patch_touched {
-        apply_system_mic_volume_if_enabled(&settings);
-    }
     if settings.model_directory != previous_model_directory {
         if let Ok(slot) = live_transcriber_state.lock() {
             if let Some(service) = slot.as_ref() {
@@ -1526,7 +1507,6 @@ fn main() {
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
             let initial_settings_for_runtime = backend.settings();
-            apply_system_mic_volume_if_enabled(&initial_settings_for_runtime);
             let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
             let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
             ensure_main_window_visible(app.handle(), show_dock_icon)?;
@@ -1637,7 +1617,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
-            set_system_microphone_volume,
             app_status,
             list_microphones,
             list_models,

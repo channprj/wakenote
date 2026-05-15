@@ -233,26 +233,6 @@ export function SettingsPanel({
                 </option>
               ))}
             </Select>
-            <div className="toggle-row">
-              <span>System mic volume</span>
-              <Switch
-                label="System mic volume"
-                checked={settings.system_mic_volume_enabled}
-                onCheckedChange={(system_mic_volume_enabled) =>
-                  onPatch({ system_mic_volume_enabled })
-                }
-              />
-            </div>
-            {settings.system_mic_volume_enabled ? (
-              <Slider
-                label="System mic volume"
-                value={settings.system_mic_volume}
-                min={0}
-                max={100}
-                suffix="%"
-                onValueChange={(system_mic_volume) => onPatch({ system_mic_volume })}
-              />
-            ) : null}
             {!selectedMicrophoneAvailable ? (
               fallbackMicrophone ? (
                 <div className="warning-banner warning-banner--warning">
