@@ -20,8 +20,9 @@ import {
 } from "react";
 import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
 import {
+  amplitudeToDisplay,
   audibleRangesFromPeaks,
-  dbfsToAmplitude,
+  dbfsToDisplay,
   nextAudibleTime,
 } from "../lib/audio-player";
 import {
@@ -30,15 +31,19 @@ import {
 } from "../lib/tauri-client";
 import { fileUrlFromPath } from "../lib/transcript-history";
 import type { AudioWaveform, UploadedAudio } from "../lib/types";
-import { displayWaveformPeaks } from "../lib/waveform";
+import {
+  type SignedWaveformView,
+  displaySignedWaveformPeaks,
+} from "../lib/waveform";
 import { Badge, Button, Slider, Switch } from "./ui/primitives";
 
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 12;
 const PIXELS_PER_SECOND_AT_ZOOM_1 = 60;
 const SKIP_OFFSETS_SECONDS = [-10, -5, 5, 10] as const;
-const OVERVIEW_BAR_COUNT = 260;
-const WAVEFORM_HEIGHT = 210;
+const OVERVIEW_BAR_COUNT = 320;
+const WAVEFORM_HEIGHT = 224;
+const WAVEFORM_RULER_HEIGHT = 22;
 const WAVEFORM_BAR_FILL_RATIO = 0.92;
 const WAVEFORM_BUCKET_COUNT = 16384;
 const THRESHOLD_DBFS_DEFAULT = -45;
@@ -46,6 +51,22 @@ const THRESHOLD_DBFS_MIN = -80;
 const THRESHOLD_DBFS_MAX = 0;
 const THRESHOLD_DBFS_STEP = 0.5;
 const THRESHOLD_COLOR = "#f97316"; // orange-500 — the "기준선"
+const PLAYED_COLOR = "#1e3a8a";
+const UNPLAYED_COLOR = "#94a3b8";
+const PLAYHEAD_COLOR = "#dc2626";
+const RULER_TICK_MAJOR = "rgba(15, 23, 42, 0.38)";
+const RULER_TICK_MINOR = "rgba(15, 23, 42, 0.14)";
+const RULER_LABEL_COLOR = "rgba(15, 23, 42, 0.62)";
+const CENTER_AXIS_COLOR = "rgba(15, 23, 42, 0.07)";
+const RULER_LABEL_FONT =
+  '10px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif';
+// Time-ruler intervals (seconds) ordered shortest → longest. We pick the
+// smallest entry whose pixel width is at least RULER_MIN_LABEL_PX so labels
+// never overlap regardless of zoom.
+const RULER_INTERVAL_CHOICES = [
+  0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600,
+] as const;
+const RULER_MIN_LABEL_PX = 88;
 
 // Audio enhancement defaults
 const GAIN_MIN = 0;
@@ -107,9 +128,39 @@ export function AudioUploadPanel({
   const initialAudioPath = initialAudio?.audio_path ?? null;
 
   const pixelsPerSecond = zoom * PIXELS_PER_SECOND_AT_ZOOM_1;
-  const overviewPeaks = useMemo(
-    () => displayWaveformPeaks(waveform?.peaks ?? [], OVERVIEW_BAR_COUNT),
-    [waveform?.peaks],
+
+  // Memoize the signed peak arrays once so every render path (detail canvas,
+  // overview, skip-silence) reads from a stable view. Falls back to mirroring
+  // the absolute peaks symmetrically when the backend payload lacks signed
+  // data (older builds, unit-test fixtures).
+  const detailPeaks = useMemo(() => {
+    if (!waveform) {
+      return { positive: [] as number[], negative: [] as number[] };
+    }
+    const length = waveform.peaks.length;
+    const hasSigned =
+      waveform.peaks_max?.length === length &&
+      waveform.peaks_min?.length === length;
+    if (hasSigned) {
+      return {
+        positive: waveform.peaks_max as number[],
+        negative: waveform.peaks_min as number[],
+      };
+    }
+    return {
+      positive: waveform.peaks,
+      negative: waveform.peaks.map((value) => -value),
+    };
+  }, [waveform?.peaks, waveform?.peaks_max, waveform?.peaks_min]);
+
+  const overviewPeaks: SignedWaveformView = useMemo(
+    () =>
+      displaySignedWaveformPeaks(
+        detailPeaks.positive,
+        detailPeaks.negative,
+        OVERVIEW_BAR_COUNT,
+      ),
+    [detailPeaks.positive, detailPeaks.negative],
   );
 
   const liveAudibleRanges = useMemo(() => {
@@ -463,14 +514,16 @@ export function AudioUploadPanel({
                   </span>
                 </div>
                 <WaveformOverview
-                  peaks={overviewPeaks}
+                  positivePeaks={overviewPeaks.positive}
+                  negativePeaks={overviewPeaks.negative}
                   duration={duration}
                   currentTime={currentTime}
                   audibleRanges={skipSilence ? liveAudibleRanges : []}
                   onSeek={seek}
                 />
                 <WaveformDetail
-                  peaks={waveform.peaks}
+                  positivePeaks={detailPeaks.positive}
+                  negativePeaks={detailPeaks.negative}
                   duration={duration}
                   currentTime={currentTime}
                   pixelsPerSecond={pixelsPerSecond}
@@ -590,21 +643,80 @@ export function AudioUploadPanel({
   );
 }
 
+const OVERVIEW_HEIGHT = 48;
+
 function WaveformOverview({
-  peaks,
+  positivePeaks,
+  negativePeaks,
   duration,
   currentTime,
   audibleRanges,
   onSeek,
 }: {
-  peaks: number[];
+  positivePeaks: number[];
+  negativePeaks: number[];
   duration: number;
   currentTime: number;
   audibleRanges: { start: number; end: number }[];
   onSeek: (time: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [width, setWidth] = useState(0);
   const progressRatio = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const update = () => {
+      setWidth(Math.round(element.getBoundingClientRect().width));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || width <= 0) {
+      return;
+    }
+    const dpr =
+      typeof window !== "undefined" ? Math.max(1, window.devicePixelRatio || 1) : 1;
+    canvas.width = Math.max(1, Math.round(width * dpr));
+    canvas.height = Math.max(1, Math.round(OVERVIEW_HEIGHT * dpr));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, OVERVIEW_HEIGHT);
+    const centerY = OVERVIEW_HEIGHT / 2;
+    const halfHeight = (OVERVIEW_HEIGHT * 0.92) / 2;
+    const count = Math.min(positivePeaks.length, negativePeaks.length);
+    if (count === 0) {
+      return;
+    }
+    const bucketWidth = width / count;
+    const barWidth = Math.max(1, bucketWidth - 0.6);
+    for (let index = 0; index < count; index += 1) {
+      const positive = positivePeaks[index] ?? 0;
+      const negative = negativePeaks[index] ?? 0;
+      const upHeight = amplitudeToDisplay(positive) * halfHeight;
+      const downHeight = amplitudeToDisplay(negative) * halfHeight;
+      const x = Math.round(index * bucketWidth);
+      const topY = Math.round(centerY - upHeight);
+      const totalHeight = Math.max(1, Math.round(upHeight + downHeight));
+      const playedBy = (index + 0.5) / count;
+      ctx.fillStyle = playedBy <= progressRatio ? PLAYED_COLOR : UNPLAYED_COLOR;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(x, topY, Math.max(1, Math.round(barWidth)), totalHeight);
+    }
+    ctx.globalAlpha = 1;
+  }, [width, positivePeaks, negativePeaks, progressRatio]);
 
   const seekFromPointer = useCallback(
     (clientX: number) => {
@@ -643,14 +755,10 @@ function WaveformOverview({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
     >
-      <div className="audio-waveform-overview__bars">
-        {peaks.map((peak, index) => (
-          <span
-            key={`${index}-${peak}`}
-            style={{ height: `${Math.max(4, Math.round(Math.min(1, peak) * 100))}%` }}
-          />
-        ))}
-      </div>
+      <canvas
+        ref={canvasRef}
+        style={{ width: "100%", height: OVERVIEW_HEIGHT, display: "block" }}
+      />
       {duration > 0
         ? audibleRanges.map((range) => (
             <span
@@ -676,7 +784,8 @@ function WaveformOverview({
 }
 
 function WaveformDetail({
-  peaks,
+  positivePeaks,
+  negativePeaks,
   duration,
   currentTime,
   pixelsPerSecond,
@@ -685,7 +794,8 @@ function WaveformDetail({
   audibleRanges,
   onSeek,
 }: {
-  peaks: number[];
+  positivePeaks: number[];
+  negativePeaks: number[];
   duration: number;
   currentTime: number;
   pixelsPerSecond: number;
@@ -717,11 +827,18 @@ function WaveformDetail({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || width <= 0 || peaks.length === 0 || duration <= 0) {
+    if (
+      !canvas ||
+      width <= 0 ||
+      positivePeaks.length === 0 ||
+      negativePeaks.length === 0 ||
+      duration <= 0
+    ) {
       return;
     }
 
-    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const dpr =
+      typeof window !== "undefined" ? Math.max(1, window.devicePixelRatio || 1) : 1;
     const cssHeight = WAVEFORM_HEIGHT;
     canvas.width = Math.max(1, Math.round(width * dpr));
     canvas.height = Math.max(1, Math.round(cssHeight * dpr));
@@ -732,81 +849,130 @@ function WaveformDetail({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, cssHeight);
 
-    const centerX = width / 2;
-    const centerY = cssHeight / 2;
-    // Thinner bars (1px wide, 1px gap) double the visible density compared to
-    // the previous 2+1 layout — needed for the higher-bucket waveform.
+    const rulerHeight = WAVEFORM_RULER_HEIGHT;
+    const waveTop = rulerHeight;
+    const waveBottom = cssHeight;
+    const waveHeight = waveBottom - waveTop;
+    const centerY = waveTop + waveHeight / 2;
+    const halfHeight = (waveHeight * WAVEFORM_BAR_FILL_RATIO) / 2;
+    const centerXf = width / 2;
+    const centerX = Math.round(centerXf);
+
+    // Bar geometry. 1px-wide bars with 1px gap (stride 2) keeps the canvas
+    // pixel-aligned without resorting to subpixel blurring.
     const barWidth = 1;
     const barGap = 1;
     const barStride = barWidth + barGap;
-    const secondsPerPeak = duration / peaks.length;
+    const peakLength = Math.min(positivePeaks.length, negativePeaks.length);
+    const secondsPerPeak = duration / peakLength;
     const peaksPerBar = Math.max(
       1,
       Math.round(barStride / pixelsPerSecond / secondsPerPeak),
     );
 
+    // 1. Silence shading (under the bars so it doesn't overpower them).
     if (skipSilenceActive && audibleRanges.length > 0) {
-      ctx.fillStyle = "rgba(249, 115, 22, 0.07)";
+      ctx.fillStyle = "rgba(249, 115, 22, 0.08)";
       let cursor = 0;
       for (const range of audibleRanges) {
         if (range.start > cursor) {
-          const x0 = centerX + (cursor - currentTime) * pixelsPerSecond;
-          const x1 = centerX + (range.start - currentTime) * pixelsPerSecond;
-          ctx.fillRect(x0, 0, Math.max(0, x1 - x0), cssHeight);
+          const x0 = Math.round(centerXf + (cursor - currentTime) * pixelsPerSecond);
+          const x1 = Math.round(centerXf + (range.start - currentTime) * pixelsPerSecond);
+          if (x1 > x0) {
+            ctx.fillRect(x0, waveTop, x1 - x0, waveHeight);
+          }
         }
         cursor = Math.max(cursor, range.end);
       }
       if (cursor < duration) {
-        const x0 = centerX + (cursor - currentTime) * pixelsPerSecond;
-        const x1 = centerX + (duration - currentTime) * pixelsPerSecond;
-        ctx.fillRect(x0, 0, Math.max(0, x1 - x0), cssHeight);
+        const x0 = Math.round(centerXf + (cursor - currentTime) * pixelsPerSecond);
+        const x1 = Math.round(centerXf + (duration - currentTime) * pixelsPerSecond);
+        if (x1 > x0) {
+          ctx.fillRect(x0, waveTop, x1 - x0, waveHeight);
+        }
       }
     }
 
-    const startX = Math.round(centerX) % barStride;
-    for (let x = startX; x < width; x += barStride) {
-      const t = currentTime + (x - centerX) / pixelsPerSecond;
+    // 2. Subtle center axis line — anchors the eye, prevents tall asymmetric
+    //    peaks from looking unbalanced.
+    ctx.fillStyle = CENTER_AXIS_COLOR;
+    ctx.fillRect(0, Math.round(centerY), width, 1);
+
+    // 3. Time ruler ticks and labels.
+    drawTimeRuler(ctx, {
+      width,
+      pixelsPerSecond,
+      currentTime,
+      duration,
+      centerXf,
+      rulerHeight,
+    });
+
+    // 4. The waveform itself. Bars step in barStride increments and align to
+    //    integer pixel boundaries so they stay crisp at every zoom level.
+    const startOffset = ((centerX % barStride) + barStride) % barStride;
+    for (let x = startOffset; x < width; x += barStride) {
+      const t = currentTime + (x - centerXf) / pixelsPerSecond;
       if (t < 0 || t > duration) {
         continue;
       }
-      const startIndex = Math.floor(t / secondsPerPeak);
-      const endIndex = Math.min(peaks.length, startIndex + peaksPerBar);
-      let amp = 0;
+      const startIndex = Math.min(peakLength - 1, Math.floor(t / secondsPerPeak));
+      const endIndex = Math.min(peakLength, startIndex + peaksPerBar);
+      let posMax = 0;
+      let negMin = 0;
       for (let i = startIndex; i < endIndex; i += 1) {
-        if (peaks[i] > amp) {
-          amp = peaks[i];
+        const positive = positivePeaks[i];
+        const negative = negativePeaks[i];
+        if (positive > posMax) {
+          posMax = positive;
+        }
+        if (negative < negMin) {
+          negMin = negative;
         }
       }
-      const barHeight = Math.max(1, amp * cssHeight * WAVEFORM_BAR_FILL_RATIO);
-      const y = (cssHeight - barHeight) / 2;
-      ctx.fillStyle = t <= currentTime ? "#0f172a" : "#94a3b8";
-      ctx.fillRect(x, y, barWidth, barHeight);
+      // Apply perceptual dB scaling so quiet content remains visible.
+      const upDisplay = amplitudeToDisplay(posMax);
+      const downDisplay = amplitudeToDisplay(negMin);
+      const upHeight = upDisplay * halfHeight;
+      const downHeight = downDisplay * halfHeight;
+      const totalHeight = Math.max(1, Math.round(upHeight + downHeight));
+      const topY = Math.round(centerY - upHeight);
+      ctx.fillStyle = t <= currentTime ? PLAYED_COLOR : UNPLAYED_COLOR;
+      ctx.fillRect(x, topY, barWidth, totalHeight);
     }
 
-    const thresholdAmplitude = Math.min(1, dbfsToAmplitude(thresholdDbfs));
-    const thresholdHalfHeight =
-      (thresholdAmplitude * cssHeight * WAVEFORM_BAR_FILL_RATIO) / 2;
-    const upperY = centerY - thresholdHalfHeight;
-    const lowerY = centerY + thresholdHalfHeight;
-    ctx.save();
-    ctx.strokeStyle = THRESHOLD_COLOR;
-    ctx.lineWidth = 1.25;
-    ctx.setLineDash([5, 3]);
-    ctx.shadowColor = "rgba(249, 115, 22, 0.4)";
-    ctx.shadowBlur = 3;
-    ctx.beginPath();
-    ctx.moveTo(0, upperY);
-    ctx.lineTo(width, upperY);
-    ctx.moveTo(0, lowerY);
-    ctx.lineTo(width, lowerY);
-    ctx.stroke();
-    ctx.restore();
+    // 5. Skip-silence threshold reference line. Drawn on top of the bars,
+    //    pixel-aligned to avoid the blurry shadow look from the previous
+    //    implementation.
+    const thresholdDisplay = dbfsToDisplay(thresholdDbfs);
+    if (thresholdDisplay > 0) {
+      const offset = thresholdDisplay * halfHeight;
+      const upperY = Math.round(centerY - offset) + 0.5;
+      const lowerY = Math.round(centerY + offset) + 0.5;
+      ctx.save();
+      ctx.strokeStyle = THRESHOLD_COLOR;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, upperY);
+      ctx.lineTo(width, upperY);
+      ctx.moveTo(0, lowerY);
+      ctx.lineTo(width, lowerY);
+      ctx.stroke();
+      ctx.restore();
+    }
 
-    ctx.fillStyle = "#dc2626";
-    ctx.fillRect(Math.round(centerX) - 1, 0, 2, cssHeight);
+    // 6. Playhead — Voice Memos style: thin vertical accent line with a
+    //    rounded disc at the top edge of the wave area.
+    ctx.fillStyle = PLAYHEAD_COLOR;
+    ctx.fillRect(centerX - 1, waveTop, 2, waveHeight);
+    ctx.beginPath();
+    ctx.arc(centerX, waveTop, 4.5, 0, Math.PI * 2);
+    ctx.fill();
   }, [
     width,
-    peaks,
+    positivePeaks,
+    negativePeaks,
     duration,
     currentTime,
     pixelsPerSecond,
@@ -1052,6 +1218,96 @@ function AudioEnhancePanel({
       ) : null}
     </section>
   );
+}
+
+function pickRulerInterval(pixelsPerSecond: number): number {
+  for (const candidate of RULER_INTERVAL_CHOICES) {
+    if (candidate * pixelsPerSecond >= RULER_MIN_LABEL_PX) {
+      return candidate;
+    }
+  }
+  return RULER_INTERVAL_CHOICES[RULER_INTERVAL_CHOICES.length - 1];
+}
+
+function drawTimeRuler(
+  ctx: CanvasRenderingContext2D,
+  options: {
+    width: number;
+    pixelsPerSecond: number;
+    currentTime: number;
+    duration: number;
+    centerXf: number;
+    rulerHeight: number;
+  },
+) {
+  const { width, pixelsPerSecond, currentTime, duration, centerXf, rulerHeight } =
+    options;
+  if (pixelsPerSecond <= 0 || rulerHeight <= 0 || duration <= 0) {
+    return;
+  }
+
+  const major = pickRulerInterval(pixelsPerSecond);
+  // Sub-tick every 1/5th of the major interval (or 1/4 when 1/5 would be
+  // sub-second on the long-form choices) — keeps the rhythm readable.
+  const minor = major >= 60 ? major / 4 : major / 5;
+
+  const visibleSecondsHalf = width / pixelsPerSecond / 2;
+  const start = Math.max(0, currentTime - visibleSecondsHalf - minor);
+  const end = Math.min(duration, currentTime + visibleSecondsHalf + minor);
+  const firstMinorIndex = Math.ceil(start / minor);
+  const lastMinorIndex = Math.floor(end / minor);
+
+  ctx.save();
+  ctx.font = RULER_LABEL_FONT;
+  ctx.textBaseline = "alphabetic";
+
+  for (let index = firstMinorIndex; index <= lastMinorIndex; index += 1) {
+    const time = index * minor;
+    if (time < 0 || time > duration) {
+      continue;
+    }
+    const x = Math.round(centerXf + (time - currentTime) * pixelsPerSecond);
+    if (x < -2 || x > width + 2) {
+      continue;
+    }
+    const isMajor =
+      Math.abs(time / major - Math.round(time / major)) < 0.001;
+    if (isMajor) {
+      ctx.fillStyle = RULER_TICK_MAJOR;
+      ctx.fillRect(x, 0, 1, Math.round(rulerHeight * 0.55));
+      ctx.fillStyle = RULER_LABEL_COLOR;
+      const label = formatRulerTime(time, major);
+      const metrics = ctx.measureText(label);
+      const labelX = Math.min(
+        width - metrics.width - 2,
+        Math.max(2, x + 4),
+      );
+      ctx.fillText(label, labelX, rulerHeight - 5);
+    } else {
+      ctx.fillStyle = RULER_TICK_MINOR;
+      ctx.fillRect(x, 0, 1, Math.round(rulerHeight * 0.32));
+    }
+  }
+  ctx.restore();
+}
+
+function formatRulerTime(seconds: number, interval: number): string {
+  const safe = Math.max(0, seconds);
+  const showFractional = interval < 1;
+  if (showFractional) {
+    const minutes = Math.floor(safe / 60);
+    const remainder = safe - minutes * 60;
+    const formatted = remainder.toFixed(1);
+    return `${minutes}:${remainder < 10 ? "0" : ""}${formatted}`;
+  }
+  const totalSeconds = Math.round(safe);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
 }
 
 function gainToDb(value: number): string {
