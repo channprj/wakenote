@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextAudibleTime } from "./audio-player";
+import { audibleRangeAt, nextAudibleTime } from "./audio-player";
 import type { AudioRange } from "./types";
 
 const ranges: AudioRange[] = [
@@ -22,5 +22,27 @@ describe("skip-silence playback helpers", () => {
 
   it("does not jump after the final audible range", () => {
     expect(nextAudibleTime(24, ranges)).toBeNull();
+  });
+
+  it("jumps from the moment playback leaves a range", () => {
+    expect(nextAudibleTime(8.05, ranges)).toBe(15);
+  });
+
+  it("never jumps backwards even if an earlier range is the closest match", () => {
+    expect(nextAudibleTime(16, ranges)).toBeNull();
+  });
+
+  it("suppresses tiny jumps that fall under the minimum threshold", () => {
+    expect(nextAudibleTime(2.95, ranges)).toBeNull();
+  });
+});
+
+describe("audibleRangeAt", () => {
+  it("returns the active range when inside one", () => {
+    expect(audibleRangeAt(5, ranges)).toEqual({ start: 3, end: 8 });
+  });
+
+  it("returns null when in silence", () => {
+    expect(audibleRangeAt(10, ranges)).toBeNull();
   });
 });

@@ -1391,49 +1391,191 @@ svg {
   white-space: nowrap;
 }
 
-.audio-waveform-overview,
-.audio-waveform-detail {
-  display: grid;
-  align-items: end;
-  gap: 2px;
+.audio-waveform-overview {
+  position: relative;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
   padding: 8px;
+  height: 72px;
+  cursor: pointer;
+  user-select: none;
 }
 
-.audio-waveform-overview {
+.audio-waveform-overview__bars {
+  display: grid;
+  align-items: center;
+  gap: 2px;
   grid-auto-flow: column;
   grid-auto-columns: minmax(1px, 1fr);
-  height: 88px;
+  height: 100%;
+  pointer-events: none;
 }
 
-.audio-waveform-detail {
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(2px, 1fr);
-  height: 190px;
-  background: #f8fbff;
-}
-
-.audio-waveform-overview span,
-.audio-waveform-detail span {
+.audio-waveform-overview__bars span {
   align-self: center;
   min-height: 4px;
   border-radius: 999px;
   background: #0f172a;
-  opacity: 0.74;
+  opacity: 0.42;
 }
 
-.audio-waveform-detail span {
+.audio-waveform-overview__progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: rgba(220, 38, 38, 0.1);
+  border-right: 1px solid rgba(220, 38, 38, 0.45);
+  pointer-events: none;
+}
+
+.audio-waveform-overview__cursor {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: #dc2626;
+  border-radius: 2px;
+  transform: translateX(-1px);
+  pointer-events: none;
+  box-shadow: 0 0 6px rgba(220, 38, 38, 0.5);
+}
+
+.audio-waveform-detail {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+  height: 190px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.audio-waveform-detail:active {
+  cursor: grabbing;
+}
+
+.audio-waveform-detail canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.audio-transport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.audio-transport__buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-transport__skip,
+.audio-transport__play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+}
+
+.audio-transport__skip {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+  gap: 0;
+  padding: 0;
+}
+
+.audio-transport__skip-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.audio-transport__skip-amount {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.audio-transport__skip:hover,
+.audio-transport__play:hover {
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+.audio-transport__skip:active,
+.audio-transport__play:active {
+  transform: scale(0.96);
+}
+
+.audio-transport__play {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
   background: var(--primary);
-  opacity: 0.88;
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.audio-transport__play:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.audio-transport__play svg {
+  width: 22px;
+  height: 22px;
+}
+
+.audio-transport__time {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.audio-transport__time-current {
+  font-size: 18px;
+  color: var(--text);
+}
+
+.audio-transport__time-separator,
+.audio-transport__time-total {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .audio-workbench__controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
 }
@@ -1456,12 +1598,13 @@ svg {
 }
 
 .audio-player-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .audio-player-row audio {
-  width: 100%;
+  display: none;
 }
 
 .audio-player-row a {
