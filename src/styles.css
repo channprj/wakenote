@@ -1532,9 +1532,8 @@ svg {
 
 .audio-transport__skip,
 .audio-transport__play {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -1544,32 +1543,32 @@ svg {
 
 .audio-transport__skip {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: 999px;
-  font-weight: 700;
-  font-size: 12px;
-  gap: 0;
   padding: 0;
   color: var(--muted);
 }
 
-.audio-transport__skip-glyph {
+.audio-transport__skip-icon {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 30px;
-  line-height: 1;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  stroke-width: 1.6;
+  pointer-events: none;
   color: inherit;
 }
 
 .audio-transport__skip-amount {
   position: relative;
   z-index: 1;
-  margin-top: 4px;
   font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .audio-transport__skip:hover {
@@ -1602,9 +1601,159 @@ svg {
 
 .audio-workbench__controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto;
   gap: 12px;
   align-items: end;
+}
+
+.audio-threshold {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  min-height: 60px;
+}
+
+.audio-threshold__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.audio-threshold__header > span:first-child {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-threshold__input {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.audio-threshold__input::-webkit-outer-spin-button,
+.audio-threshold__input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.audio-threshold__input:focus-visible {
+  outline: 2px solid rgba(249, 115, 22, 0.45);
+  outline-offset: 1px;
+}
+
+.audio-threshold__unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.audio-threshold__slider {
+  width: 100%;
+  accent-color: #f97316;
+}
+
+.audio-enhance {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.audio-enhance--open {
+  background: var(--surface-alt);
+}
+
+.audio-enhance__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+
+.audio-enhance__header:hover {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.audio-enhance__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.audio-enhance__title svg {
+  width: 16px;
+  height: 16px;
+  color: var(--primary);
+}
+
+.audio-enhance__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(30, 58, 138, 0.12);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.audio-enhance__chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transition: transform var(--transition);
+}
+
+.audio-enhance__chevron[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.audio-enhance__body {
+  display: grid;
+  gap: 12px;
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.audio-enhance__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.audio-enhance__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .audio-workbench__switch {

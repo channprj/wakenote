@@ -1,10 +1,14 @@
 import {
+  ChevronDown,
   FileAudio,
   FolderOpen,
   Loader2,
   Pause,
   Play,
+  RotateCcw,
+  RotateCw,
   Upload,
+  Wand2,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -33,13 +37,41 @@ const ZOOM_MIN = 1;
 const ZOOM_MAX = 12;
 const PIXELS_PER_SECOND_AT_ZOOM_1 = 60;
 const SKIP_OFFSETS_SECONDS = [-10, -5, 5, 10] as const;
-const OVERVIEW_BAR_COUNT = 220;
-const WAVEFORM_HEIGHT = 200;
-const WAVEFORM_BAR_FILL_RATIO = 0.88;
+const OVERVIEW_BAR_COUNT = 260;
+const WAVEFORM_HEIGHT = 210;
+const WAVEFORM_BAR_FILL_RATIO = 0.92;
+const WAVEFORM_BUCKET_COUNT = 16384;
 const THRESHOLD_DBFS_DEFAULT = -45;
-const THRESHOLD_DBFS_MIN = -60;
-const THRESHOLD_DBFS_MAX = -20;
+const THRESHOLD_DBFS_MIN = -80;
+const THRESHOLD_DBFS_MAX = 0;
+const THRESHOLD_DBFS_STEP = 0.5;
 const THRESHOLD_COLOR = "#f97316"; // orange-500 — the "기준선"
+
+// Audio enhancement defaults
+const GAIN_MIN = 0;
+const GAIN_MAX = 3;
+const GAIN_STEP = 0.05;
+const GAIN_DEFAULT = 1;
+const RATE_MIN = 0.5;
+const RATE_MAX = 2.5;
+const RATE_STEP = 0.05;
+const RATE_DEFAULT = 1;
+const HPF_OFF = 0;
+const LPF_OFF = 20000;
+const HPF_OPTIONS = [
+  { value: HPF_OFF, label: "Off" },
+  { value: 60, label: "60 Hz" },
+  { value: 100, label: "100 Hz" },
+  { value: 150, label: "150 Hz" },
+  { value: 220, label: "220 Hz" },
+] as const;
+const LPF_OPTIONS = [
+  { value: LPF_OFF, label: "Off" },
+  { value: 12000, label: "12 kHz" },
+  { value: 8000, label: "8 kHz" },
+  { value: 5000, label: "5 kHz" },
+  { value: 3500, label: "3.5 kHz" },
+] as const;
 
 export function AudioUploadPanel({
   initialAudio = null,
@@ -61,7 +93,17 @@ export function AudioUploadPanel({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(initialWaveform?.duration_seconds ?? 0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [enhanceOpen, setEnhanceOpen] = useState(false);
+  const [gain, setGain] = useState(GAIN_DEFAULT);
+  const [rate, setRate] = useState(RATE_DEFAULT);
+  const [hpfHz, setHpfHz] = useState<number>(HPF_OFF);
+  const [lpfHz, setLpfHz] = useState<number>(LPF_OFF);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const hpfNodeRef = useRef<BiquadFilterNode | null>(null);
+  const lpfNodeRef = useRef<BiquadFilterNode | null>(null);
   const initialAudioPath = initialAudio?.audio_path ?? null;
 
   const pixelsPerSecond = zoom * PIXELS_PER_SECOND_AT_ZOOM_1;
@@ -70,8 +112,6 @@ export function AudioUploadPanel({
     [waveform?.peaks],
   );
 
-  // Recompute audible ranges live from the user-controlled threshold so the
-  // skip-silence playhead and the on-canvas reference line stay in sync.
   const liveAudibleRanges = useMemo(() => {
     if (!waveform) {
       return [];
@@ -121,7 +161,7 @@ export function AudioUploadPanel({
     let cancelled = false;
     setWaveform(null);
     setError(null);
-    void loadAudioWaveform(audio.audio_path)
+    void loadAudioWaveform(audio.audio_path, WAVEFORM_BUCKET_COUNT)
       .then((nextWaveform) => {
         if (!cancelled) {
           setWaveform(nextWaveform);
@@ -148,13 +188,11 @@ export function AudioUploadPanel({
     }
   }, [waveform?.duration_seconds]);
 
-  // Reset playback when audio source changes.
   useEffect(() => {
     setCurrentTime(0);
     setIsPlaying(false);
   }, [audioSource]);
 
-  // Bind audio element listeners for playback metadata.
   useEffect(() => {
     const element = audioRef.current;
     if (!element) {
@@ -189,9 +227,98 @@ export function AudioUploadPanel({
     };
   }, [audioSource]);
 
-  // High-frequency playhead + skip-silence loop while playing. Drives the
-  // scrolling waveform animation and forwards the playhead past silence the
-  // moment it enters a gap, instead of waiting on `timeupdate` (~4 Hz).
+  // Build Web Audio chain: source → HPF → LPF → Gain → destination.
+  // The graph is rebuilt whenever the audio element is recreated (new source).
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof AudioContext === "undefined") {
+      return;
+    }
+    const element = audioRef.current;
+    if (!element || !audioSource) {
+      return;
+    }
+
+    let ctx = audioCtxRef.current;
+    if (!ctx) {
+      try {
+        ctx = new AudioContext();
+        audioCtxRef.current = ctx;
+      } catch {
+        return;
+      }
+    }
+
+    let source: MediaElementAudioSourceNode;
+    try {
+      source = ctx.createMediaElementSource(element);
+    } catch {
+      // Re-creating the source for the same element throws; ignore.
+      return;
+    }
+    const hpf = ctx.createBiquadFilter();
+    hpf.type = "highpass";
+    hpf.frequency.value = hpfHz <= HPF_OFF ? 1 : hpfHz;
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = "lowpass";
+    lpf.frequency.value = lpfHz >= LPF_OFF ? LPF_OFF : lpfHz;
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = gain;
+
+    source.connect(hpf);
+    hpf.connect(lpf);
+    lpf.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    sourceNodeRef.current = source;
+    hpfNodeRef.current = hpf;
+    lpfNodeRef.current = lpf;
+    gainNodeRef.current = gainNode;
+
+    return () => {
+      try {
+        source.disconnect();
+        hpf.disconnect();
+        lpf.disconnect();
+        gainNode.disconnect();
+      } catch {
+        // ignore
+      }
+      sourceNodeRef.current = null;
+      hpfNodeRef.current = null;
+      lpfNodeRef.current = null;
+      gainNodeRef.current = null;
+    };
+  }, [audioSource]);
+
+  useEffect(() => {
+    const node = gainNodeRef.current;
+    if (node) {
+      node.gain.value = gain;
+    }
+  }, [gain]);
+
+  useEffect(() => {
+    const node = hpfNodeRef.current;
+    if (node) {
+      node.frequency.value = hpfHz <= HPF_OFF ? 1 : hpfHz;
+    }
+  }, [hpfHz]);
+
+  useEffect(() => {
+    const node = lpfNodeRef.current;
+    if (node) {
+      node.frequency.value = lpfHz >= LPF_OFF ? LPF_OFF : lpfHz;
+    }
+  }, [lpfHz]);
+
+  useEffect(() => {
+    const element = audioRef.current;
+    if (element) {
+      element.playbackRate = rate;
+    }
+  }, [rate, audioSource]);
+
+  // High-frequency playhead + skip-silence loop while playing.
   useEffect(() => {
     if (!isPlaying) {
       return;
@@ -233,6 +360,10 @@ export function AudioUploadPanel({
     if (!element) {
       return;
     }
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      void ctx.resume().catch(() => undefined);
+    }
     if (element.paused) {
       void element.play().catch(() => undefined);
     } else {
@@ -265,6 +396,30 @@ export function AudioUploadPanel({
       setBusy(false);
     }
   };
+
+  const handleNormalize = useCallback(() => {
+    if (!waveform || waveform.peaks.length === 0) {
+      return;
+    }
+    let maxPeak = 0;
+    for (const peak of waveform.peaks) {
+      if (Number.isFinite(peak) && peak > maxPeak) {
+        maxPeak = peak;
+      }
+    }
+    if (maxPeak <= 0.001) {
+      return;
+    }
+    const normalized = Math.min(GAIN_MAX, 0.97 / maxPeak);
+    setGain(Number(normalized.toFixed(2)));
+  }, [waveform]);
+
+  const handleResetEnhance = useCallback(() => {
+    setGain(GAIN_DEFAULT);
+    setRate(RATE_DEFAULT);
+    setHpfHz(HPF_OFF);
+    setLpfHz(LPF_OFF);
+  }, []);
 
   const remainingTime = Math.max(0, duration - currentTime);
 
@@ -341,15 +496,45 @@ export function AudioUploadPanel({
                   suffix="x"
                   onValueChange={setZoom}
                 />
-                <Slider
-                  label="Skip Silence Threshold"
-                  min={THRESHOLD_DBFS_MIN}
-                  max={THRESHOLD_DBFS_MAX}
-                  step={1}
-                  value={thresholdDbfs}
-                  suffix=" dBFS"
-                  onValueChange={setThresholdDbfs}
-                />
+                <div className="audio-threshold">
+                  <div className="audio-threshold__header">
+                    <span>Skip Silence Threshold</span>
+                    <input
+                      type="number"
+                      className="audio-threshold__input"
+                      value={thresholdDbfs}
+                      min={THRESHOLD_DBFS_MIN}
+                      max={THRESHOLD_DBFS_MAX}
+                      step={THRESHOLD_DBFS_STEP}
+                      aria-label="Skip silence threshold in dBFS"
+                      onChange={(event) => {
+                        const next = Number(event.currentTarget.value);
+                        if (!Number.isFinite(next)) {
+                          return;
+                        }
+                        setThresholdDbfs(
+                          Math.max(
+                            THRESHOLD_DBFS_MIN,
+                            Math.min(THRESHOLD_DBFS_MAX, next),
+                          ),
+                        );
+                      }}
+                    />
+                    <span className="audio-threshold__unit">dBFS</span>
+                  </div>
+                  <input
+                    className="ui-slider audio-threshold__slider"
+                    type="range"
+                    value={thresholdDbfs}
+                    min={THRESHOLD_DBFS_MIN}
+                    max={THRESHOLD_DBFS_MAX}
+                    step={THRESHOLD_DBFS_STEP}
+                    aria-label="Skip silence threshold slider"
+                    onChange={(event) =>
+                      setThresholdDbfs(Number(event.currentTarget.value))
+                    }
+                  />
+                </div>
                 <div className="audio-workbench__switch">
                   <span>Skip Silence</span>
                   <Switch
@@ -359,6 +544,21 @@ export function AudioUploadPanel({
                   />
                 </div>
               </div>
+
+              <AudioEnhancePanel
+                open={enhanceOpen}
+                onToggle={() => setEnhanceOpen((prev) => !prev)}
+                gain={gain}
+                onGainChange={setGain}
+                rate={rate}
+                onRateChange={setRate}
+                hpfHz={hpfHz}
+                onHpfChange={setHpfHz}
+                lpfHz={lpfHz}
+                onLpfChange={setLpfHz}
+                onNormalize={handleNormalize}
+                onReset={handleResetEnhance}
+              />
             </>
           ) : (
             <div className="audio-waveform-loading">
@@ -534,17 +734,17 @@ function WaveformDetail({
 
     const centerX = width / 2;
     const centerY = cssHeight / 2;
-    const barWidth = 2;
+    // Thinner bars (1px wide, 1px gap) double the visible density compared to
+    // the previous 2+1 layout — needed for the higher-bucket waveform.
+    const barWidth = 1;
     const barGap = 1;
     const barStride = barWidth + barGap;
     const secondsPerPeak = duration / peaks.length;
     const peaksPerBar = Math.max(
       1,
-      Math.ceil(barStride / pixelsPerSecond / secondsPerPeak),
+      Math.round(barStride / pixelsPerSecond / secondsPerPeak),
     );
 
-    // Shade the silence gaps with a soft tint when skip silence is active so
-    // the user can read at a glance which sections will be skipped over.
     if (skipSilenceActive && audibleRanges.length > 0) {
       ctx.fillStyle = "rgba(249, 115, 22, 0.07)";
       let cursor = 0;
@@ -577,15 +777,12 @@ function WaveformDetail({
           amp = peaks[i];
         }
       }
-      const barHeight = Math.max(2, amp * cssHeight * WAVEFORM_BAR_FILL_RATIO);
+      const barHeight = Math.max(1, amp * cssHeight * WAVEFORM_BAR_FILL_RATIO);
       const y = (cssHeight - barHeight) / 2;
       ctx.fillStyle = t <= currentTime ? "#0f172a" : "#94a3b8";
       ctx.fillRect(x, y, barWidth, barHeight);
     }
 
-    // Orange threshold line — the skip-silence reference. Drawn after the bars
-    // so it stays legible against the waveform, with a glow underneath for
-    // readability against tall peaks.
     const thresholdAmplitude = Math.min(1, dbfsToAmplitude(thresholdDbfs));
     const thresholdHalfHeight =
       (thresholdAmplitude * cssHeight * WAVEFORM_BAR_FILL_RATIO) / 2;
@@ -605,7 +802,6 @@ function WaveformDetail({
     ctx.stroke();
     ctx.restore();
 
-    // Fixed center playhead — Voice Memos uses a thin accent line.
     ctx.fillStyle = "#dc2626";
     ctx.fillRect(Math.round(centerX) - 1, 0, 2, cssHeight);
   }, [
@@ -661,7 +857,7 @@ function WaveformDetail({
         title={`Silence threshold: ${thresholdDbfs} dBFS`}
         aria-hidden
       >
-        {thresholdDbfs} dBFS
+        {formatThresholdLabel(thresholdDbfs)} dBFS
       </span>
     </div>
   );
@@ -704,23 +900,177 @@ function SkipButton({
   onSkip: (offset: number) => void;
 }) {
   const absSeconds = Math.abs(offset);
-  const label =
-    offset < 0
-      ? `Skip back ${absSeconds} seconds`
-      : `Skip forward ${absSeconds} seconds`;
+  const isBack = offset < 0;
+  const label = isBack
+    ? `Skip back ${absSeconds} seconds`
+    : `Skip forward ${absSeconds} seconds`;
+  const Icon = isBack ? RotateCcw : RotateCw;
   return (
     <button
       type="button"
-      className={`audio-transport__skip audio-transport__skip--${offset < 0 ? "back" : "fwd"}`}
+      className={`audio-transport__skip audio-transport__skip--${isBack ? "back" : "fwd"}`}
       onClick={() => onSkip(offset)}
       aria-label={label}
     >
-      <span className="audio-transport__skip-glyph" aria-hidden>
-        {offset < 0 ? "⟲" : "⟳"}
-      </span>
+      <Icon className="audio-transport__skip-icon" aria-hidden />
       <span className="audio-transport__skip-amount">{absSeconds}</span>
     </button>
   );
+}
+
+function AudioEnhancePanel({
+  open,
+  onToggle,
+  gain,
+  onGainChange,
+  rate,
+  onRateChange,
+  hpfHz,
+  onHpfChange,
+  lpfHz,
+  onLpfChange,
+  onNormalize,
+  onReset,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  gain: number;
+  onGainChange: (value: number) => void;
+  rate: number;
+  onRateChange: (value: number) => void;
+  hpfHz: number;
+  onHpfChange: (value: number) => void;
+  lpfHz: number;
+  onLpfChange: (value: number) => void;
+  onNormalize: () => void;
+  onReset: () => void;
+}) {
+  const enhancementsActive =
+    gain !== GAIN_DEFAULT ||
+    rate !== RATE_DEFAULT ||
+    hpfHz !== HPF_OFF ||
+    lpfHz !== LPF_OFF;
+
+  return (
+    <section className={`audio-enhance${open ? " audio-enhance--open" : ""}`}>
+      <button
+        type="button"
+        className="audio-enhance__header"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="audio-enhance__title">
+          <Wand2 aria-hidden />
+          Audio Enhance
+          {enhancementsActive ? (
+            <span className="audio-enhance__badge">on</span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className="audio-enhance__chevron"
+          aria-hidden
+          data-open={open ? "true" : "false"}
+        />
+      </button>
+      {open ? (
+        <div className="audio-enhance__body">
+          <div className="audio-enhance__grid">
+            <Slider
+              label="Volume Boost"
+              min={GAIN_MIN}
+              max={GAIN_MAX}
+              step={GAIN_STEP}
+              value={Number(gain.toFixed(2))}
+              suffix={`x (${gainToDb(gain)} dB)`}
+              onValueChange={onGainChange}
+            />
+            <Slider
+              label="Playback Rate"
+              min={RATE_MIN}
+              max={RATE_MAX}
+              step={RATE_STEP}
+              value={Number(rate.toFixed(2))}
+              suffix="x"
+              onValueChange={onRateChange}
+            />
+            <label className="ui-field">
+              <span className="ui-field__label">
+                High-pass (remove rumble)
+                <strong>
+                  {HPF_OPTIONS.find((option) => option.value === hpfHz)?.label ??
+                    `${hpfHz} Hz`}
+                </strong>
+              </span>
+              <select
+                className="ui-select"
+                value={hpfHz}
+                onChange={(event) => onHpfChange(Number(event.currentTarget.value))}
+              >
+                {HPF_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="ui-field">
+              <span className="ui-field__label">
+                Low-pass (remove hiss)
+                <strong>
+                  {LPF_OPTIONS.find((option) => option.value === lpfHz)?.label ??
+                    `${lpfHz} Hz`}
+                </strong>
+              </span>
+              <select
+                className="ui-select"
+                value={lpfHz}
+                onChange={(event) => onLpfChange(Number(event.currentTarget.value))}
+              >
+                {LPF_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="audio-enhance__actions">
+            <Button type="button" variant="secondary" size="sm" onClick={onNormalize}>
+              Normalize
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onReset}
+              disabled={!enhancementsActive}
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function gainToDb(value: number): string {
+  if (value <= 0) {
+    return "-∞";
+  }
+  const db = 20 * Math.log10(value);
+  if (!Number.isFinite(db)) {
+    return "-∞";
+  }
+  const rounded = Math.round(db * 10) / 10;
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function formatThresholdLabel(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return value.toFixed(1);
 }
 
 function formatDuration(seconds: number) {
