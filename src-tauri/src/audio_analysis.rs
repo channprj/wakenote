@@ -17,7 +17,17 @@ pub struct AudioRange {
 pub struct AudioWaveform {
     pub duration_seconds: f64,
     pub sample_rate: u32,
+    /// Absolute amplitude (0..1) per bucket. Used for skip-silence detection
+    /// and as a fallback for rendering when signed peaks are unavailable.
     pub peaks: Vec<f32>,
+    /// Signed positive peak per bucket (0..1). Renderers draw bars upward
+    /// from the centerline using this value.
+    #[serde(default)]
+    pub peaks_max: Vec<f32>,
+    /// Signed negative peak per bucket (-1..0). Renderers draw bars downward
+    /// from the centerline using this value.
+    #[serde(default)]
+    pub peaks_min: Vec<f32>,
     pub audible_ranges: Vec<AudioRange>,
 }
 
@@ -63,7 +73,12 @@ pub fn audio_waveform_from_samples(
 ) -> AudioWaveform {
     let sample_rate = sample_rate.max(1);
     let duration_seconds = samples.len() as f64 / f64::from(sample_rate);
-    let peaks = waveform_peaks_from_samples(samples, bucket_count.max(1));
+    let (peaks_max, peaks_min) = signed_peaks_from_samples(samples, bucket_count.max(1));
+    let peaks: Vec<f32> = peaks_max
+        .iter()
+        .zip(peaks_min.iter())
+        .map(|(positive, negative)| positive.max(negative.abs()).min(1.0))
+        .collect();
     let audible_ranges =
         next_audible_ranges_from_peaks(&peaks, duration_seconds, silence_threshold_dbfs);
 
@@ -71,6 +86,8 @@ pub fn audio_waveform_from_samples(
         duration_seconds,
         sample_rate,
         peaks,
+        peaks_max,
+        peaks_min,
         audible_ranges,
     }
 }
@@ -111,25 +128,34 @@ pub fn next_audible_ranges_from_peaks(
     ranges
 }
 
-fn waveform_peaks_from_samples(samples: &[f32], bucket_count: usize) -> Vec<f32> {
+fn signed_peaks_from_samples(samples: &[f32], bucket_count: usize) -> (Vec<f32>, Vec<f32>) {
     if samples.is_empty() {
-        return vec![0.0; bucket_count];
+        return (vec![0.0; bucket_count], vec![0.0; bucket_count]);
     }
 
-    let mut peaks = Vec::with_capacity(bucket_count);
+    let mut peaks_max = Vec::with_capacity(bucket_count);
+    let mut peaks_min = Vec::with_capacity(bucket_count);
     for bucket in 0..bucket_count {
         let start = bucket * samples.len() / bucket_count;
         let end = ((bucket + 1) * samples.len() / bucket_count).max(start + 1);
-        let peak = samples[start..end.min(samples.len())]
-            .iter()
-            .copied()
-            .filter(|sample| sample.is_finite())
-            .map(f32::abs)
-            .fold(0.0, f32::max)
-            .min(1.0);
-        peaks.push(peak);
+        let slice = &samples[start..end.min(samples.len())];
+        let mut bucket_max = 0.0_f32;
+        let mut bucket_min = 0.0_f32;
+        for sample in slice.iter().copied() {
+            if !sample.is_finite() {
+                continue;
+            }
+            if sample > bucket_max {
+                bucket_max = sample;
+            }
+            if sample < bucket_min {
+                bucket_min = sample;
+            }
+        }
+        peaks_max.push(bucket_max.min(1.0));
+        peaks_min.push(bucket_min.max(-1.0));
     }
-    peaks
+    (peaks_max, peaks_min)
 }
 
 fn push_audible_range(ranges: &mut Vec<AudioRange>, start: f64, end: f64, duration_seconds: f64) {
