@@ -470,14 +470,25 @@ export async function loadAudioWaveform(
   bucketCount = 4096,
 ): Promise<AudioWaveform> {
   if (!isTauriRuntime()) {
-    const peaks = Array.from({ length: Math.min(bucketCount, 512) }, (_, index) => {
-      const wave = Math.abs(Math.sin(index / 7) * Math.cos(index / 19));
-      return Number((0.08 + wave * 0.86).toFixed(3));
-    });
+    const count = Math.min(bucketCount, 512);
+    const peaks: number[] = [];
+    const peaksMax: number[] = [];
+    const peaksMin: number[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const envelope = Math.abs(Math.sin(index / 7) * Math.cos(index / 19));
+      const wobble = Math.sin(index / 3.1) * 0.18;
+      const positive = Number((0.06 + envelope * 0.78 + Math.max(0, wobble)).toFixed(3));
+      const negative = Number((-0.05 - envelope * 0.66 + Math.min(0, wobble)).toFixed(3));
+      peaks.push(Math.min(1, Math.max(positive, Math.abs(negative))));
+      peaksMax.push(Math.min(1, positive));
+      peaksMin.push(Math.max(-1, negative));
+    }
     return {
       duration_seconds: 30 * 60,
       sample_rate: 8000,
       peaks,
+      peaks_max: peaksMax,
+      peaks_min: peaksMin,
       audible_ranges: [
         { start: 2, end: 320 },
         { start: 370, end: 880 },

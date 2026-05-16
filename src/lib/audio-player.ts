@@ -70,6 +70,51 @@ export function dbfsToAmplitude(dbfs: number): number {
   return 10 ** (dbfs / 20);
 }
 
+/** Default visual noise floor for waveform rendering, in dBFS. */
+export const WAVEFORM_DISPLAY_FLOOR_DBFS = -60;
+
+/**
+ * Maps a dBFS value to a 0..1 display ratio using a linear-in-dB scale.
+ * Anything at or below `floorDbfs` collapses to 0; 0 dBFS maps to 1. This is
+ * how Voice Memos and most DAW meters keep quiet content readable instead of
+ * disappearing under linear scaling.
+ */
+export function dbfsToDisplay(
+  dbfs: number,
+  floorDbfs = WAVEFORM_DISPLAY_FLOOR_DBFS,
+): number {
+  if (!Number.isFinite(dbfs) || floorDbfs >= 0) {
+    return 0;
+  }
+  if (dbfs <= floorDbfs) {
+    return 0;
+  }
+  if (dbfs >= 0) {
+    return 1;
+  }
+  return (dbfs - floorDbfs) / -floorDbfs;
+}
+
+/**
+ * Maps a linear amplitude in [-1, 1] to a display ratio in [0, 1] via the
+ * perceptual dBFS curve. Negative inputs are folded through abs(); the
+ * direction is expected to be applied by the renderer.
+ */
+export function amplitudeToDisplay(
+  amplitude: number,
+  floorDbfs = WAVEFORM_DISPLAY_FLOOR_DBFS,
+): number {
+  if (!Number.isFinite(amplitude) || amplitude === 0) {
+    return 0;
+  }
+  const magnitude = Math.min(1, Math.abs(amplitude));
+  if (magnitude <= 0) {
+    return 0;
+  }
+  const dbfs = 20 * Math.log10(magnitude);
+  return dbfsToDisplay(dbfs, floorDbfs);
+}
+
 /**
  * Recomputes audible ranges from the normalized peak amplitudes using a custom
  * threshold. Mirrors `next_audible_ranges_from_peaks` in the Rust backend so

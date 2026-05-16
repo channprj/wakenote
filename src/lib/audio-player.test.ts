@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  WAVEFORM_DISPLAY_FLOOR_DBFS,
+  amplitudeToDisplay,
   audibleRangeAt,
   audibleRangesFromPeaks,
   dbfsToAmplitude,
+  dbfsToDisplay,
   nextAudibleTime,
 } from "./audio-player";
 import type { AudioRange } from "./types";
@@ -63,6 +66,62 @@ describe("dbfsToAmplitude", () => {
 
   it("converts -60 dBFS to 0.001 amplitude", () => {
     expect(dbfsToAmplitude(-60)).toBeCloseTo(0.001, 5);
+  });
+});
+
+describe("dbfsToDisplay", () => {
+  it("maps full-scale to 1", () => {
+    expect(dbfsToDisplay(0)).toBe(1);
+  });
+
+  it("collapses anything at or below the floor to 0", () => {
+    expect(dbfsToDisplay(-60)).toBe(0);
+    expect(dbfsToDisplay(-80)).toBe(0);
+  });
+
+  it("scales linearly between the floor and 0 dBFS", () => {
+    expect(dbfsToDisplay(-30)).toBeCloseTo(0.5, 5);
+    expect(dbfsToDisplay(-15)).toBeCloseTo(0.75, 5);
+  });
+
+  it("respects a custom floor", () => {
+    expect(dbfsToDisplay(-40, -80)).toBeCloseTo(0.5, 5);
+  });
+
+  it("treats non-finite or non-negative floors as collapsing to 0", () => {
+    expect(dbfsToDisplay(Number.NaN)).toBe(0);
+    expect(dbfsToDisplay(-20, 0)).toBe(0);
+  });
+
+  it("clamps values above 0 dBFS to 1", () => {
+    expect(dbfsToDisplay(3)).toBe(1);
+  });
+
+  it("exposes the default floor constant", () => {
+    expect(WAVEFORM_DISPLAY_FLOOR_DBFS).toBe(-60);
+  });
+});
+
+describe("amplitudeToDisplay", () => {
+  it("returns 0 for silence", () => {
+    expect(amplitudeToDisplay(0)).toBe(0);
+  });
+
+  it("returns 1 for full-scale", () => {
+    expect(amplitudeToDisplay(1)).toBe(1);
+  });
+
+  it("folds negative amplitude through abs()", () => {
+    expect(amplitudeToDisplay(-0.5)).toBeCloseTo(amplitudeToDisplay(0.5), 6);
+  });
+
+  it("keeps quiet signals readable via the dB scale", () => {
+    expect(amplitudeToDisplay(0.1)).toBeCloseTo((20 * Math.log10(0.1) + 60) / 60, 4);
+    expect(amplitudeToDisplay(0.1)).toBeGreaterThan(0.6);
+  });
+
+  it("returns 0 for non-finite input", () => {
+    expect(amplitudeToDisplay(Number.NaN)).toBe(0);
   });
 });
 

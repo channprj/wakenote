@@ -136,7 +136,13 @@ export interface AudioRange {
 export interface AudioWaveform {
   duration_seconds: number;
   sample_rate: number;
+  /** Absolute (positive) per-bucket peaks 0..1, used for skip-silence and
+   * fallback rendering when signed peaks are unavailable. */
   peaks: number[];
+  /** Positive per-bucket peak 0..1. Drawn upward from the centerline. */
+  peaks_max?: number[];
+  /** Negative per-bucket peak -1..0. Drawn downward from the centerline. */
+  peaks_min?: number[];
   audible_ranges: AudioRange[];
 }
 
