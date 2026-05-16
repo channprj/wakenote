@@ -15,7 +15,11 @@ import {
   useState,
 } from "react";
 import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
-import { nextAudibleTime } from "../lib/audio-player";
+import {
+  audibleRangesFromPeaks,
+  dbfsToAmplitude,
+  nextAudibleTime,
+} from "../lib/audio-player";
 import {
   chooseUploadedAudioFile,
   loadAudioWaveform,
@@ -30,7 +34,12 @@ const ZOOM_MAX = 12;
 const PIXELS_PER_SECOND_AT_ZOOM_1 = 60;
 const SKIP_OFFSETS_SECONDS = [-10, -5, 5, 10] as const;
 const OVERVIEW_BAR_COUNT = 220;
-const WAVEFORM_HEIGHT = 180;
+const WAVEFORM_HEIGHT = 200;
+const WAVEFORM_BAR_FILL_RATIO = 0.88;
+const THRESHOLD_DBFS_DEFAULT = -45;
+const THRESHOLD_DBFS_MIN = -60;
+const THRESHOLD_DBFS_MAX = -20;
+const THRESHOLD_COLOR = "#f97316"; // orange-500 — the "기준선"
 
 export function AudioUploadPanel({
   initialAudio = null,
@@ -46,6 +55,7 @@ export function AudioUploadPanel({
   );
   const [zoom, setZoom] = useState(3);
   const [skipSilence, setSkipSilence] = useState(false);
+  const [thresholdDbfs, setThresholdDbfs] = useState(THRESHOLD_DBFS_DEFAULT);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -59,6 +69,19 @@ export function AudioUploadPanel({
     () => displayWaveformPeaks(waveform?.peaks ?? [], OVERVIEW_BAR_COUNT),
     [waveform?.peaks],
   );
+
+  // Recompute audible ranges live from the user-controlled threshold so the
+  // skip-silence playhead and the on-canvas reference line stay in sync.
+  const liveAudibleRanges = useMemo(() => {
+    if (!waveform) {
+      return [];
+    }
+    return audibleRangesFromPeaks(
+      waveform.peaks,
+      waveform.duration_seconds,
+      thresholdDbfs,
+    );
+  }, [waveform?.peaks, waveform?.duration_seconds, thresholdDbfs]);
 
   useEffect(() => {
     if (!audio) {
@@ -180,8 +203,8 @@ export function AudioUploadPanel({
 
     let raf = 0;
     const tick = () => {
-      if (skipSilence && waveform) {
-        const next = nextAudibleTime(element.currentTime, waveform.audible_ranges);
+      if (skipSilence && liveAudibleRanges.length > 0) {
+        const next = nextAudibleTime(element.currentTime, liveAudibleRanges);
         if (next !== null && next > element.currentTime) {
           element.currentTime = next;
         }
@@ -191,7 +214,7 @@ export function AudioUploadPanel({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, skipSilence, waveform]);
+  }, [isPlaying, skipSilence, liveAudibleRanges]);
 
   const seek = useCallback(
     (time: number) => {
@@ -243,6 +266,8 @@ export function AudioUploadPanel({
     }
   };
 
+  const remainingTime = Math.max(0, duration - currentTime);
+
   return (
     <div className="audio-upload-panel">
       <div className="audio-upload-panel__toolbar">
@@ -273,26 +298,39 @@ export function AudioUploadPanel({
 
           {waveform ? (
             <>
-              <WaveformOverview
-                peaks={overviewPeaks}
-                duration={duration}
-                currentTime={currentTime}
-                onSeek={seek}
-              />
-              <WaveformDetail
-                peaks={waveform.peaks}
-                duration={duration}
-                currentTime={currentTime}
-                pixelsPerSecond={pixelsPerSecond}
-                onSeek={seek}
-              />
-              <TransportControls
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                onTogglePlay={togglePlay}
-                onSkip={skipBy}
-              />
+              <div className="audio-player">
+                <div className="audio-player__timecode" aria-live="polite">
+                  <span className="audio-player__time-current">
+                    {formatTime(currentTime)}
+                  </span>
+                  <span className="audio-player__time-remaining">
+                    -{formatTime(remainingTime)}
+                  </span>
+                </div>
+                <WaveformOverview
+                  peaks={overviewPeaks}
+                  duration={duration}
+                  currentTime={currentTime}
+                  audibleRanges={skipSilence ? liveAudibleRanges : []}
+                  onSeek={seek}
+                />
+                <WaveformDetail
+                  peaks={waveform.peaks}
+                  duration={duration}
+                  currentTime={currentTime}
+                  pixelsPerSecond={pixelsPerSecond}
+                  thresholdDbfs={thresholdDbfs}
+                  skipSilenceActive={skipSilence}
+                  audibleRanges={liveAudibleRanges}
+                  onSeek={seek}
+                />
+                <TransportControls
+                  isPlaying={isPlaying}
+                  onTogglePlay={togglePlay}
+                  onSkip={skipBy}
+                />
+              </div>
+
               <div className="audio-workbench__controls">
                 <Slider
                   label="Zoom"
@@ -302,6 +340,15 @@ export function AudioUploadPanel({
                   value={zoom}
                   suffix="x"
                   onValueChange={setZoom}
+                />
+                <Slider
+                  label="Skip Silence Threshold"
+                  min={THRESHOLD_DBFS_MIN}
+                  max={THRESHOLD_DBFS_MAX}
+                  step={1}
+                  value={thresholdDbfs}
+                  suffix=" dBFS"
+                  onValueChange={setThresholdDbfs}
                 />
                 <div className="audio-workbench__switch">
                   <span>Skip Silence</span>
@@ -347,11 +394,13 @@ function WaveformOverview({
   peaks,
   duration,
   currentTime,
+  audibleRanges,
   onSeek,
 }: {
   peaks: number[];
   duration: number;
   currentTime: number;
+  audibleRanges: { start: number; end: number }[];
   onSeek: (time: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -402,6 +451,18 @@ function WaveformOverview({
           />
         ))}
       </div>
+      {duration > 0
+        ? audibleRanges.map((range) => (
+            <span
+              key={`audible-${range.start}-${range.end}`}
+              className="audio-waveform-overview__range"
+              style={{
+                left: `${(range.start / duration) * 100}%`,
+                width: `${Math.max(0.5, ((range.end - range.start) / duration) * 100)}%`,
+              }}
+            />
+          ))
+        : null}
       <span
         className="audio-waveform-overview__progress"
         style={{ width: `${progressRatio * 100}%` }}
@@ -419,12 +480,18 @@ function WaveformDetail({
   duration,
   currentTime,
   pixelsPerSecond,
+  thresholdDbfs,
+  skipSilenceActive,
+  audibleRanges,
   onSeek,
 }: {
   peaks: number[];
   duration: number;
   currentTime: number;
   pixelsPerSecond: number;
+  thresholdDbfs: number;
+  skipSilenceActive: boolean;
+  audibleRanges: { start: number; end: number }[];
   onSeek: (time: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -466,13 +533,37 @@ function WaveformDetail({
     ctx.clearRect(0, 0, width, cssHeight);
 
     const centerX = width / 2;
+    const centerY = cssHeight / 2;
     const barWidth = 2;
     const barGap = 1;
     const barStride = barWidth + barGap;
     const secondsPerPeak = duration / peaks.length;
-    const peaksPerBar = Math.max(1, Math.ceil(barStride / pixelsPerSecond / secondsPerPeak));
+    const peaksPerBar = Math.max(
+      1,
+      Math.ceil(barStride / pixelsPerSecond / secondsPerPeak),
+    );
 
-    const startX = (Math.round(centerX) % barStride);
+    // Shade the silence gaps with a soft tint when skip silence is active so
+    // the user can read at a glance which sections will be skipped over.
+    if (skipSilenceActive && audibleRanges.length > 0) {
+      ctx.fillStyle = "rgba(249, 115, 22, 0.07)";
+      let cursor = 0;
+      for (const range of audibleRanges) {
+        if (range.start > cursor) {
+          const x0 = centerX + (cursor - currentTime) * pixelsPerSecond;
+          const x1 = centerX + (range.start - currentTime) * pixelsPerSecond;
+          ctx.fillRect(x0, 0, Math.max(0, x1 - x0), cssHeight);
+        }
+        cursor = Math.max(cursor, range.end);
+      }
+      if (cursor < duration) {
+        const x0 = centerX + (cursor - currentTime) * pixelsPerSecond;
+        const x1 = centerX + (duration - currentTime) * pixelsPerSecond;
+        ctx.fillRect(x0, 0, Math.max(0, x1 - x0), cssHeight);
+      }
+    }
+
+    const startX = Math.round(centerX) % barStride;
     for (let x = startX; x < width; x += barStride) {
       const t = currentTime + (x - centerX) / pixelsPerSecond;
       if (t < 0 || t > duration) {
@@ -486,16 +577,47 @@ function WaveformDetail({
           amp = peaks[i];
         }
       }
-      const barHeight = Math.max(2, amp * cssHeight * 0.85);
+      const barHeight = Math.max(2, amp * cssHeight * WAVEFORM_BAR_FILL_RATIO);
       const y = (cssHeight - barHeight) / 2;
-      ctx.fillStyle = t <= currentTime ? "#1e3a8a" : "#94a3b8";
+      ctx.fillStyle = t <= currentTime ? "#0f172a" : "#94a3b8";
       ctx.fillRect(x, y, barWidth, barHeight);
     }
 
-    // Fixed red center cursor.
+    // Orange threshold line — the skip-silence reference. Drawn after the bars
+    // so it stays legible against the waveform, with a glow underneath for
+    // readability against tall peaks.
+    const thresholdAmplitude = Math.min(1, dbfsToAmplitude(thresholdDbfs));
+    const thresholdHalfHeight =
+      (thresholdAmplitude * cssHeight * WAVEFORM_BAR_FILL_RATIO) / 2;
+    const upperY = centerY - thresholdHalfHeight;
+    const lowerY = centerY + thresholdHalfHeight;
+    ctx.save();
+    ctx.strokeStyle = THRESHOLD_COLOR;
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([5, 3]);
+    ctx.shadowColor = "rgba(249, 115, 22, 0.4)";
+    ctx.shadowBlur = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, upperY);
+    ctx.lineTo(width, upperY);
+    ctx.moveTo(0, lowerY);
+    ctx.lineTo(width, lowerY);
+    ctx.stroke();
+    ctx.restore();
+
+    // Fixed center playhead — Voice Memos uses a thin accent line.
     ctx.fillStyle = "#dc2626";
     ctx.fillRect(Math.round(centerX) - 1, 0, 2, cssHeight);
-  }, [width, peaks, duration, currentTime, pixelsPerSecond]);
+  }, [
+    width,
+    peaks,
+    duration,
+    currentTime,
+    pixelsPerSecond,
+    thresholdDbfs,
+    skipSilenceActive,
+    audibleRanges,
+  ]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || duration <= 0) {
@@ -534,48 +656,42 @@ function WaveformDetail({
       onPointerCancel={handlePointerUp}
     >
       <canvas ref={canvasRef} style={{ width: "100%", height: WAVEFORM_HEIGHT }} />
+      <span
+        className="audio-waveform-detail__threshold-label"
+        title={`Silence threshold: ${thresholdDbfs} dBFS`}
+        aria-hidden
+      >
+        {thresholdDbfs} dBFS
+      </span>
     </div>
   );
 }
 
 function TransportControls({
   isPlaying,
-  currentTime,
-  duration,
   onTogglePlay,
   onSkip,
 }: {
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   onTogglePlay: () => void;
   onSkip: (offsetSeconds: number) => void;
 }) {
   return (
     <div className="audio-transport">
-      <div className="audio-transport__buttons">
-        {SKIP_OFFSETS_SECONDS.filter((offset) => offset < 0).map((offset) => (
-          <SkipButton key={offset} offset={offset} onSkip={onSkip} />
-        ))}
-        <button
-          type="button"
-          className="audio-transport__play"
-          onClick={onTogglePlay}
-          aria-label={isPlaying ? "Pause" : "Play"}
-        >
-          {isPlaying ? <Pause /> : <Play />}
-        </button>
-        {SKIP_OFFSETS_SECONDS.filter((offset) => offset > 0).map((offset) => (
-          <SkipButton key={offset} offset={offset} onSkip={onSkip} />
-        ))}
-      </div>
-      <div className="audio-transport__time" aria-live="polite">
-        <span className="audio-transport__time-current">
-          {formatTime(currentTime)}
-        </span>
-        <span className="audio-transport__time-separator">/</span>
-        <span className="audio-transport__time-total">{formatTime(duration)}</span>
-      </div>
+      {SKIP_OFFSETS_SECONDS.filter((offset) => offset < 0).map((offset) => (
+        <SkipButton key={offset} offset={offset} onSkip={onSkip} />
+      ))}
+      <button
+        type="button"
+        className="audio-transport__play"
+        onClick={onTogglePlay}
+        aria-label={isPlaying ? "Pause" : "Play"}
+      >
+        {isPlaying ? <Pause /> : <Play />}
+      </button>
+      {SKIP_OFFSETS_SECONDS.filter((offset) => offset > 0).map((offset) => (
+        <SkipButton key={offset} offset={offset} onSkip={onSkip} />
+      ))}
     </div>
   );
 }
@@ -588,7 +704,10 @@ function SkipButton({
   onSkip: (offset: number) => void;
 }) {
   const absSeconds = Math.abs(offset);
-  const label = offset < 0 ? `Skip back ${absSeconds} seconds` : `Skip forward ${absSeconds} seconds`;
+  const label =
+    offset < 0
+      ? `Skip back ${absSeconds} seconds`
+      : `Skip forward ${absSeconds} seconds`;
   return (
     <button
       type="button"

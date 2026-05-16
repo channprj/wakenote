@@ -1391,15 +1391,45 @@ svg {
   white-space: nowrap;
 }
 
+.audio-player {
+  display: grid;
+  gap: 14px;
+  padding: 18px 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f6fa 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.audio-player__timecode {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.audio-player__time-current {
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.audio-player__time-remaining {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .audio-waveform-overview {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
-  padding: 8px;
-  height: 72px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.04);
+  padding: 6px 4px;
+  height: 44px;
   cursor: pointer;
   user-select: none;
 }
@@ -1407,7 +1437,7 @@ svg {
 .audio-waveform-overview__bars {
   display: grid;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   grid-auto-flow: column;
   grid-auto-columns: minmax(1px, 1fr);
   height: 100%;
@@ -1416,10 +1446,19 @@ svg {
 
 .audio-waveform-overview__bars span {
   align-self: center;
-  min-height: 4px;
-  border-radius: 999px;
-  background: #0f172a;
-  opacity: 0.42;
+  min-height: 3px;
+  border-radius: 1px;
+  background: #475569;
+  opacity: 0.55;
+}
+
+.audio-waveform-overview__range {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: rgba(249, 115, 22, 0.18);
+  border-radius: 3px;
+  pointer-events: none;
 }
 
 .audio-waveform-overview__progress {
@@ -1427,31 +1466,31 @@ svg {
   top: 0;
   left: 0;
   bottom: 0;
-  background: rgba(220, 38, 38, 0.1);
-  border-right: 1px solid rgba(220, 38, 38, 0.45);
+  background: rgba(220, 38, 38, 0.08);
+  border-right: 1px solid rgba(220, 38, 38, 0.4);
   pointer-events: none;
 }
 
 .audio-waveform-overview__cursor {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 2px;
+  bottom: 2px;
   width: 2px;
   background: #dc2626;
   border-radius: 2px;
   transform: translateX(-1px);
   pointer-events: none;
-  box-shadow: 0 0 6px rgba(220, 38, 38, 0.5);
+  box-shadow: 0 0 6px rgba(220, 38, 38, 0.45);
 }
 
 .audio-waveform-detail {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f8fbff;
-  height: 190px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #f1f5fa 100%);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+  height: 210px;
   cursor: grab;
   user-select: none;
   touch-action: none;
@@ -1467,21 +1506,28 @@ svg {
   height: 100%;
 }
 
+.audio-waveform-detail__threshold-label {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(249, 115, 22, 0.45);
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
 .audio-transport {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.audio-transport__buttons {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 18px;
+  padding: 4px 0 0;
 }
 
 .audio-transport__skip,
@@ -1489,22 +1535,23 @@ svg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
-  background: var(--surface-alt);
+  border: 0;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+  transition: background var(--transition), color var(--transition), transform var(--transition);
 }
 
 .audio-transport__skip {
   position: relative;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   font-weight: 700;
   font-size: 12px;
   gap: 0;
   padding: 0;
+  color: var(--muted);
 }
 
 .audio-transport__skip-glyph {
@@ -1512,70 +1559,50 @@ svg {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 26px;
+  font-size: 30px;
   line-height: 1;
-  color: var(--muted);
+  color: inherit;
 }
 
 .audio-transport__skip-amount {
   position: relative;
   z-index: 1;
+  margin-top: 4px;
   font-size: 11px;
   color: var(--text);
 }
 
-.audio-transport__skip:hover,
-.audio-transport__play:hover {
-  background: var(--surface);
-  border-color: var(--line-strong);
+.audio-transport__skip:hover {
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--text);
 }
 
 .audio-transport__skip:active,
 .audio-transport__play:active {
-  transform: scale(0.96);
+  transform: scale(0.94);
 }
 
 .audio-transport__play {
-  width: 54px;
-  height: 54px;
+  width: 64px;
+  height: 64px;
   border-radius: 999px;
   background: var(--primary);
   color: #fff;
-  border-color: var(--primary);
+  box-shadow: 0 6px 16px rgba(30, 58, 138, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .audio-transport__play:hover {
   background: var(--primary-hover);
-  border-color: var(--primary-hover);
 }
 
 .audio-transport__play svg {
-  width: 22px;
-  height: 22px;
-}
-
-.audio-transport__time {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
-.audio-transport__time-current {
-  font-size: 18px;
-  color: var(--text);
-}
-
-.audio-transport__time-separator,
-.audio-transport__time-total {
-  color: var(--muted);
-  font-size: 14px;
+  width: 26px;
+  height: 26px;
 }
 
 .audio-workbench__controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
 }

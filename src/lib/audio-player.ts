@@ -1,6 +1,8 @@
 import type { AudioRange } from "./types";
 
 const DEFAULT_MIN_JUMP_SECONDS = 0.2;
+const MIN_AUDIBLE_RANGE_SECONDS = 0.12;
+const MERGE_SILENCE_GAP_SECONDS = 1.0;
 
 /**
  * Finds the next audible time the playhead should advance to.
@@ -58,4 +60,73 @@ export function audibleRangeAt(
     }
   }
   return null;
+}
+
+/**
+ * Converts a dBFS value to a 0..1 amplitude. Used to translate the user-facing
+ * silence threshold into a peak comparison that mirrors the Rust backend.
+ */
+export function dbfsToAmplitude(dbfs: number): number {
+  return 10 ** (dbfs / 20);
+}
+
+/**
+ * Recomputes audible ranges from the normalized peak amplitudes using a custom
+ * threshold. Mirrors `next_audible_ranges_from_peaks` in the Rust backend so
+ * the UI can react to threshold changes without a round trip.
+ */
+export function audibleRangesFromPeaks(
+  peaks: number[],
+  durationSeconds: number,
+  thresholdDbfs: number,
+): AudioRange[] {
+  if (peaks.length === 0 || durationSeconds <= 0) {
+    return [];
+  }
+
+  const threshold = dbfsToAmplitude(thresholdDbfs);
+  const secondsPerBucket = durationSeconds / peaks.length;
+  const ranges: AudioRange[] = [];
+  let currentStart: number | null = null;
+
+  for (let index = 0; index < peaks.length; index += 1) {
+    const peak = peaks[index];
+    const audible = Number.isFinite(peak) && peak >= threshold;
+    if (audible) {
+      if (currentStart === null) {
+        currentStart = index * secondsPerBucket;
+      }
+      continue;
+    }
+
+    if (currentStart !== null) {
+      pushAudibleRange(ranges, currentStart, index * secondsPerBucket, durationSeconds);
+      currentStart = null;
+    }
+  }
+
+  if (currentStart !== null) {
+    pushAudibleRange(ranges, currentStart, durationSeconds, durationSeconds);
+  }
+
+  return ranges;
+}
+
+function pushAudibleRange(
+  ranges: AudioRange[],
+  rawStart: number,
+  rawEnd: number,
+  duration: number,
+) {
+  if (rawEnd - rawStart < MIN_AUDIBLE_RANGE_SECONDS) {
+    return;
+  }
+  const start = Math.min(Math.max(0, rawStart), duration);
+  const end = Math.min(Math.max(start, rawEnd), duration);
+  const previous = ranges[ranges.length - 1];
+  if (previous && start - previous.end <= MERGE_SILENCE_GAP_SECONDS) {
+    previous.end = end;
+    return;
+  }
+  ranges.push({ start, end });
 }
