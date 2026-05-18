@@ -28,7 +28,7 @@ fn copy_uploaded_audio_file_preserves_source_and_avoids_name_collisions() {
         copy_uploaded_audio_file(tmp.path(), &source_path, timestamp).expect("second copy");
 
     assert!(first.ends_with("uploaded/20260516/meeting.mp3"));
-    assert!(second.ends_with("uploaded/20260516/meeting-001.mp3"));
+    assert!(second.ends_with("uploaded/20260516/meeting-2.mp3"));
     assert_eq!(
         std::fs::read(&source_path).expect("source remains"),
         b"mp3 bytes"

@@ -95,9 +95,6 @@ impl Recorder {
             request.started_at,
             request.settings.audio_format,
         )?;
-        if let Some(parent) = target.audio_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
 
         match request.settings.audio_format {
             AudioFormat::Wav => {

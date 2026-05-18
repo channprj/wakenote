@@ -259,7 +259,7 @@ export function formatAudioPathLabel(audioPath: string): string {
 }
 
 export function humanizeBasenameTime(basename: string): string {
-  // 010203.m4a → 01:02:03.m4a; 010203-001.wav → 01:02:03-001.wav
+  // 010203.m4a → 01:02:03.m4a; 010203-2.wav → 01:02:03-2.wav
   return basename.replace(/^(\d{2})(\d{2})(\d{2})(?=[.\-])/, "$1:$2:$3");
 }
 

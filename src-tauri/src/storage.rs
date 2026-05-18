@@ -36,25 +36,29 @@ pub fn next_available_output(
         AudioFormat::Wav => "wav",
     };
     let directory = save_root.join(date_dir);
+    std::fs::create_dir_all(&directory)?;
 
     for index in 0..1_000 {
-        let basename = if index == 0 {
-            stem.clone()
-        } else {
-            format!("{stem}-{index:03}")
-        };
+        let basename = collision_basename(&stem, index);
         let audio_path = directory.join(format!("{basename}.{extension}"));
+        let metadata_path = directory.join(format!("{basename}.json"));
+        let transcript_path = directory.join(format!("{basename}.txt"));
+        let error_path = directory.join(format!("{basename}.error.txt"));
 
-        if audio_path.exists() {
+        if audio_path.exists()
+            || metadata_path.exists()
+            || transcript_path.exists()
+            || error_path.exists()
+        {
             continue;
         }
 
         return Ok(OutputTarget {
-            basename: OutputBasename::new(basename.clone()),
+            basename: OutputBasename::new(basename),
             audio_path,
-            metadata_path: directory.join(format!("{basename}.json")),
-            transcript_path: directory.join(format!("{basename}.txt")),
-            error_path: directory.join(format!("{basename}.error.txt")),
+            metadata_path,
+            transcript_path,
+            error_path,
         });
     }
 
@@ -62,6 +66,15 @@ pub fn next_available_output(
         std::io::ErrorKind::AlreadyExists,
         "no available filename after 999 collisions",
     ))
+}
+
+fn collision_basename(stem: &str, index: usize) -> String {
+    if index == 0 {
+        stem.to_string()
+    } else {
+        // index 1 → "-2", index 2 → "-3" … keep names short and human-friendly.
+        format!("{stem}-{}", index + 1)
+    }
 }
 
 pub fn uploaded_audio_target(
@@ -89,6 +102,7 @@ pub fn uploaded_audio_target(
     let directory = save_root
         .join("uploaded")
         .join(timestamp.format("%Y%m%d").to_string());
+    std::fs::create_dir_all(&directory)?;
     let stem = source_path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -99,12 +113,8 @@ pub fn uploaded_audio_target(
         .unwrap_or_default();
 
     for index in 0..1_000 {
-        let collision_suffix = if index == 0 {
-            String::new()
-        } else {
-            format!("-{index:03}")
-        };
-        let candidate = directory.join(format!("{stem}{collision_suffix}.{extension}"));
+        let basename = collision_basename(stem, index);
+        let candidate = directory.join(format!("{basename}.{extension}"));
         if !candidate.exists() {
             return Ok(candidate);
         }
@@ -129,9 +139,6 @@ pub fn copy_uploaded_audio_file(
     }
 
     let target = uploaded_audio_target(save_root, source_path, timestamp)?;
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     std::fs::copy(source_path, &target)?;
     Ok(target)
 }

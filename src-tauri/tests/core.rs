@@ -127,8 +127,18 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
 
     let second =
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("second path");
-    assert_eq!(second.basename, OutputBasename::new(format!("{stem}-001")));
-    assert!(second.audio_path.ends_with(format!("{dir}/{stem}-001.m4a")));
+    assert_eq!(second.basename, OutputBasename::new(format!("{stem}-2")));
+    assert!(second.audio_path.ends_with(format!("{dir}/{stem}-2.m4a")));
+
+    // A pre-existing sidecar (e.g. transcript or error file) alone should also
+    // force a new basename so we never silently clobber a partial chunk.
+    std::fs::write(&second.audio_path, b"second existing").expect("collision file");
+    std::fs::write(&second.transcript_path, b"transcript").expect("collision sidecar");
+
+    let third =
+        next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("third path");
+    assert_eq!(third.basename, OutputBasename::new(format!("{stem}-3")));
+    assert!(third.audio_path.ends_with(format!("{dir}/{stem}-3.m4a")));
 }
 
 #[test]
