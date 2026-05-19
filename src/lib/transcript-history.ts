@@ -29,6 +29,15 @@ export function formatLocalTimestamp(value: string | Date): string {
   ].join("-") + ` ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
 
+export function formatTranscriptForCopy(entry: RecentTranscript): string {
+  const timestamp = formatLocalTimestamp(entry.recorded_at) || entry.recorded_at;
+  return `${timestamp} - ${entry.text}`;
+}
+
+export function formatTranscriptsForCopy(entries: RecentTranscript[]): string {
+  return entries.map(formatTranscriptForCopy).join("\n");
+}
+
 export function appendRecentAge(
   text: string,
   recordedAt: string,

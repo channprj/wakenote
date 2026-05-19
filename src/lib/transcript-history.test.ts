@@ -11,6 +11,8 @@ import {
   fileUrlFromPath,
   formatAudioPathLabel,
   formatLocalTimestamp,
+  formatTranscriptForCopy,
+  formatTranscriptsForCopy,
   groupQueueJobsByDay,
   groupTranscriptsByDay,
   humanizeBasenameTime,
@@ -672,5 +674,45 @@ describe("transcript history helpers", () => {
       "cancelled",
       "skipped",
     ]);
+  });
+});
+
+describe("formatTranscriptForCopy", () => {
+  it("formats a single entry as `YYYY-MM-DD HH:mm:SS - text`", () => {
+    const entry: RecentTranscript = {
+      transcript_path: "/tmp/WakeNote/20260519/155323.txt",
+      audio_path: "/tmp/WakeNote/20260519/155323.m4a",
+      recorded_at: "2026-05-19T15:53:23+09:00",
+      text: "슬립~",
+    };
+
+    expect(formatTranscriptForCopy(entry)).toBe("2026-05-19 15:53:23 - 슬립~");
+  });
+});
+
+describe("formatTranscriptsForCopy", () => {
+  it("joins entries with newlines in the requested format", () => {
+    const entries: RecentTranscript[] = [
+      {
+        transcript_path: "/tmp/WakeNote/20260519/155323.txt",
+        audio_path: "/tmp/WakeNote/20260519/155323.m4a",
+        recorded_at: "2026-05-19T15:53:23+09:00",
+        text: "슬립~",
+      },
+      {
+        transcript_path: "/tmp/WakeNote/20260519/155330.txt",
+        audio_path: "/tmp/WakeNote/20260519/155330.m4a",
+        recorded_at: "2026-05-19T15:53:30+09:00",
+        text: "여보세요?",
+      },
+    ];
+
+    expect(formatTranscriptsForCopy(entries)).toBe(
+      "2026-05-19 15:53:23 - 슬립~\n2026-05-19 15:53:30 - 여보세요?",
+    );
+  });
+
+  it("returns an empty string for an empty list", () => {
+    expect(formatTranscriptsForCopy([])).toBe("");
   });
 });

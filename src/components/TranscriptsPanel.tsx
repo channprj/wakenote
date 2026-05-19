@@ -1,13 +1,23 @@
-import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Copy, Play, X } from "lucide-react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
 import {
   fileUrlFromPath,
   formatLocalTimestamp,
+  formatTranscriptsForCopy,
   groupTranscriptsByDay,
 } from "../lib/transcript-history";
 import type { RecentTranscript } from "../lib/types";
 import { Button } from "./ui/primitives";
+
+type CopyToastKind = "all" | "selected";
+type DragMode = "select" | "deselect";
+
+interface DragState {
+  mode: DragMode;
+  visited: Set<string>;
+}
 
 interface TranscriptDatePage {
   day: string;
@@ -35,6 +45,9 @@ export function TranscriptsPanel({
   const [playingTranscriptPath, setPlayingTranscriptPath] = useState<string | null>(
     initialPlayingTranscriptPath,
   );
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [copyToast, setCopyToast] = useState<CopyToastKind | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
 
   const effectiveActiveDay = activeDay ?? todayDay;
   const pageByDay = useMemo(
@@ -53,10 +66,86 @@ export function TranscriptsPanel({
     }
   }, [pageByDay, activeDay, todayDay]);
 
+  useEffect(() => {
+    setSelectedPaths(new Set());
+    setCopyToast(null);
+  }, [effectiveActiveDay]);
+
+  useEffect(() => {
+    const endDrag = () => {
+      dragStateRef.current = null;
+    };
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    return () => {
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+    };
+  }, []);
+
+  const beginDragSelection = useCallback((path: string) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      const mode: DragMode = prev.has(path) ? "deselect" : "select";
+      if (mode === "select") {
+        next.add(path);
+      } else {
+        next.delete(path);
+      }
+      dragStateRef.current = { mode, visited: new Set([path]) };
+      return next;
+    });
+  }, []);
+
+  const continueDragSelection = useCallback((path: string) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    if (drag.visited.has(path)) return;
+    drag.visited.add(path);
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (drag.mode === "select") {
+        next.add(path);
+      } else {
+        next.delete(path);
+      }
+      return next;
+    });
+  }, []);
+
   const handleSelectDay = (day: string) => {
     setActiveDay(day);
     setViewWeekStart(null);
   };
+
+  const writeToClipboard = useCallback(async (text: string, kind: CopyToastKind) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyToast(kind);
+      window.setTimeout(() => setCopyToast(null), 1500);
+    } catch {
+      // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
+    }
+  }, []);
+
+  const handleCopyAll = useCallback(() => {
+    void writeToClipboard(formatTranscriptsForCopy(activeGroup.entries), "all");
+  }, [writeToClipboard, activeGroup.entries]);
+
+  const handleCopySelected = useCallback(() => {
+    const selected = activeGroup.entries.filter((entry) =>
+      selectedPaths.has(entry.transcript_path),
+    );
+    void writeToClipboard(formatTranscriptsForCopy(selected), "selected");
+  }, [writeToClipboard, activeGroup.entries, selectedPaths]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedPaths(new Set());
+  }, []);
+
+  const selectionCount = selectedPaths.size;
+  const hasEntries = activeGroup.entries.length > 0;
 
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
 
@@ -88,15 +177,74 @@ export function TranscriptsPanel({
               {activeGroup.entries.length === 1 ? "" : "s"}
             </strong>
           </div>
+          {hasEntries ? (
+            <div className="transcript-day__actions">
+              {selectionCount > 0 ? (
+                <>
+                  <span
+                    aria-live="polite"
+                    className="transcript-day__selection-count"
+                  >
+                    {selectionCount} 선택됨
+                  </span>
+                  <Button
+                    onClick={handleClearSelection}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    선택 해제
+                  </Button>
+                  <Button
+                    aria-label="선택한 트랜스크립트 복사"
+                    onClick={handleCopySelected}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    {copyToast === "selected" ? (
+                      <>
+                        <Check /> 복사됨
+                      </>
+                    ) : (
+                      <>
+                        <Copy /> 선택 복사
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : null}
+              <Button
+                aria-label="해당 일자의 모든 트랜스크립트 복사"
+                onClick={handleCopyAll}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {copyToast === "all" ? (
+                  <>
+                    <Check /> 복사됨
+                  </>
+                ) : (
+                  <>
+                    <Copy /> 전체 복사
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : null}
         </header>
-        {activeGroup.entries.length > 0 ? (
+        {hasEntries ? (
           <div className="transcript-entry-list transcript-entry-list--condensed">
             {activeGroup.entries.map((entry) => (
               <TranscriptEntryRow
                 entry={entry}
                 isPlaying={entry.transcript_path === playingTranscriptPath}
+                isSelected={selectedPaths.has(entry.transcript_path)}
                 key={entry.transcript_path}
                 onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
+                onPointerDownSelect={beginDragSelection}
+                onPointerEnterSelect={continueDragSelection}
               />
             ))}
           </div>
@@ -117,16 +265,40 @@ export function TranscriptsPanel({
 function TranscriptEntryRow({
   entry,
   isPlaying,
+  isSelected,
   onPlay,
+  onPointerDownSelect,
+  onPointerEnterSelect,
 }: {
   entry: RecentTranscript;
   isPlaying: boolean;
+  isSelected: boolean;
   onPlay: () => void;
+  onPointerDownSelect: (path: string) => void;
+  onPointerEnterSelect: (path: string) => void;
 }) {
   const timestamp = formatLocalTimestamp(entry.recorded_at);
 
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("a, button")) return;
+    event.preventDefault();
+    onPointerDownSelect(entry.transcript_path);
+  };
+
+  const handlePointerEnter = () => {
+    onPointerEnterSelect(entry.transcript_path);
+  };
+
   return (
-    <div className="transcript-entry transcript-entry--condensed">
+    <div
+      aria-selected={isSelected}
+      className="transcript-entry transcript-entry--condensed"
+      data-selected={isSelected ? "true" : undefined}
+      onPointerDown={handlePointerDown}
+      onPointerEnter={handlePointerEnter}
+    >
       <a
         className="transcript-entry__timestamp"
         href={fileUrlFromPath(entry.transcript_path)}

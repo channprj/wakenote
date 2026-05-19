@@ -2016,10 +2016,42 @@ tr:last-child td {
   min-width: 0;
   background: transparent;
   padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .transcript-entry:hover {
   background: var(--surface-alt);
+}
+
+.transcript-entry[data-selected="true"] {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.transcript-entry[data-selected="true"]:hover {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+.transcript-day__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.transcript-day__actions .ui-button svg {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+}
+
+.transcript-day__selection-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .transcript-entry__timestamp {

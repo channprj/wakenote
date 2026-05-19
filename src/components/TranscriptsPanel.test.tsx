@@ -264,6 +264,39 @@ describe("TranscriptsPanel", () => {
     expect(markup).toContain("Now playing");
   });
 
+  it("renders a 전체 복사 button when the active day has transcripts", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-19T18:00:00+09:00")}
+        transcripts={[
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260519/155323.txt",
+            audio_path: "/tmp/WakeNote/20260519/155323.m4a",
+            recorded_at: "2026-05-19T15:53:23+09:00",
+            text: "슬립~",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("transcript-day__actions");
+    expect(markup).toContain('aria-label="해당 일자의 모든 트랜스크립트 복사"');
+    expect(markup).toContain("전체 복사");
+    expect(markup).not.toContain("선택 복사");
+  });
+
+  it("hides the copy action when the active day has no transcripts", () => {
+    const markup = renderToStaticMarkup(
+      <TranscriptsPanel
+        today={new Date("2026-05-19T18:00:00+09:00")}
+        transcripts={[]}
+      />,
+    );
+
+    expect(markup).not.toContain("transcript-day__actions");
+    expect(markup).not.toContain("전체 복사");
+  });
+
   it("wraps the player sheet header strong in a file:// link to the recording", () => {
     const markup = renderToStaticMarkup(
       <TranscriptsPanel
