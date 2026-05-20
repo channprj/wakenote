@@ -290,7 +290,14 @@ pub struct MicHealthConfig {
     /// Grace period after capture start during which no recovery action fires.
     pub startup_grace: Duration,
     /// How long the stream must stay digitally silent before a recovery action.
+    /// Secondary guard for streams that keep delivering callbacks but only
+    /// zero-valued samples.
     pub stall_threshold: Duration,
+    /// How long the cpal data callback can be silent (no frames at all) before
+    /// the stream is declared wedged. Primary stall signal — catches the common
+    /// failure mode where the audio thread stops firing but `is_running()`
+    /// still reports true (the visible symptom: waveform freezes).
+    pub heartbeat_threshold: Duration,
     /// Settle window after a recovery action before re-evaluating.
     pub recovery_cooldown: Duration,
     /// Total recovery attempts allowed before giving up.
@@ -302,6 +309,7 @@ impl Default for MicHealthConfig {
         Self {
             startup_grace: Duration::from_millis(1_500),
             stall_threshold: Duration::from_millis(3_000),
+            heartbeat_threshold: Duration::from_millis(1_000),
             recovery_cooldown: Duration::from_millis(3_500),
             max_attempts: 2,
         }
@@ -339,15 +347,28 @@ enum MicHealthState {
     Exhausted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StallKind {
+    /// No data callback at all for `heartbeat_threshold`.
+    Heartbeat,
+    /// Callbacks arrive but every frame is digital silence for `stall_threshold`.
+    Silence,
+}
+
 #[derive(Debug, Clone)]
 pub struct MicHealthMonitor {
     config: MicHealthConfig,
     state: MicHealthState,
     capture_started_at: Option<Instant>,
+    last_frame_at: Option<Instant>,
     last_nonzero_at: Option<Instant>,
     cooldown_until: Option<Instant>,
     attempts: u32,
     currently_default_device: bool,
+    /// Reason latched by an out-of-band stall signal (cpal `StreamError`, OS
+    /// device-change, sleep/wake). Consumed by the next non-cooldown `tick`,
+    /// short-circuiting heartbeat/silence checks for immediate recovery.
+    pending_recovery_reason: Option<String>,
 }
 
 impl Default for MicHealthMonitor {
@@ -362,10 +383,12 @@ impl MicHealthMonitor {
             config,
             state: MicHealthState::Idle,
             capture_started_at: None,
+            last_frame_at: None,
             last_nonzero_at: None,
             cooldown_until: None,
             attempts: 0,
             currently_default_device: true,
+            pending_recovery_reason: None,
         }
     }
 
@@ -377,18 +400,33 @@ impl MicHealthMonitor {
     pub fn capture_started(&mut self, now: Instant, using_default_device: bool) {
         self.state = MicHealthState::Watching;
         self.capture_started_at = Some(now);
+        self.last_frame_at = None;
         self.last_nonzero_at = None;
         self.cooldown_until = None;
         self.attempts = 0;
         self.currently_default_device = using_default_device;
+        self.pending_recovery_reason = None;
     }
 
     /// Mark the session as stopped; subsequent ticks return [`MicHealthVerdict::Healthy`].
     pub fn capture_stopped(&mut self) {
         self.state = MicHealthState::Idle;
         self.capture_started_at = None;
+        self.last_frame_at = None;
         self.last_nonzero_at = None;
         self.cooldown_until = None;
+        self.pending_recovery_reason = None;
+    }
+
+    /// Latch an out-of-band stall signal (e.g. a cpal `StreamError`). The next
+    /// non-cooldown `tick` will produce a recovery action regardless of how
+    /// long heartbeat/silence have been quiet, since the source already knows
+    /// the stream is broken.
+    pub fn request_recovery(&mut self, reason: impl Into<String>) {
+        if matches!(self.state, MicHealthState::Idle) {
+            return;
+        }
+        self.pending_recovery_reason = Some(reason.into());
     }
 
     /// Record a single observed frame.
@@ -396,6 +434,9 @@ impl MicHealthMonitor {
         if matches!(self.state, MicHealthState::Idle) {
             return;
         }
+        // Frame arrival alone is the primary heartbeat — even an all-zero
+        // buffer means the audio thread is still firing.
+        self.last_frame_at = Some(now);
         if dbfs > MIC_NONZERO_DBFS {
             self.last_nonzero_at = Some(now);
             // Healthy frames imply the stream is alive; clear cooldown so the
@@ -434,6 +475,13 @@ impl MicHealthMonitor {
     }
 
     fn evaluate(&mut self, now: Instant) -> MicHealthVerdict {
+        // External signals (cpal StreamError, OS device-change) are definitive
+        // and bypass the startup-grace window: the source has already told us
+        // the stream is dead.
+        if let Some(reason) = self.pending_recovery_reason.take() {
+            return self.escalate(now, reason);
+        }
+
         let Some(started_at) = self.capture_started_at else {
             return MicHealthVerdict::Healthy;
         };
@@ -443,24 +491,35 @@ impl MicHealthMonitor {
             return MicHealthVerdict::AwaitingFirstFrame;
         }
 
+        // Heartbeat is the primary stall signal: if cpal stops firing the data
+        // callback (e.g. CoreAudio wedge, device hot-swap, sleep/wake) the
+        // frontend waveform freezes long before silence-based detection trips.
+        let heartbeat_anchor = self.last_frame_at.unwrap_or(started_at);
+        let heartbeat_age = now.saturating_duration_since(heartbeat_anchor);
         let silence_anchor = self.last_nonzero_at.unwrap_or(started_at);
         let silence_age = now.saturating_duration_since(silence_anchor);
-        if silence_age < self.config.stall_threshold {
-            return MicHealthVerdict::Healthy;
-        }
 
+        let reason = if heartbeat_age >= self.config.heartbeat_threshold {
+            stall_reason(StallKind::Heartbeat, heartbeat_age)
+        } else if silence_age >= self.config.stall_threshold {
+            stall_reason(StallKind::Silence, silence_age)
+        } else {
+            return MicHealthVerdict::Healthy;
+        };
+
+        self.escalate(now, reason)
+    }
+
+    fn escalate(&mut self, now: Instant, reason: String) -> MicHealthVerdict {
         if self.attempts >= self.config.max_attempts {
             self.state = MicHealthState::Exhausted;
-            return MicHealthVerdict::Action(MicHealthAction::GiveUp {
-                reason: stall_reason(silence_age),
-            });
+            return MicHealthVerdict::Action(MicHealthAction::GiveUp { reason });
         }
 
         self.attempts = self.attempts.saturating_add(1);
         self.cooldown_until = Some(now + self.config.recovery_cooldown);
         self.state = MicHealthState::Cooldown;
 
-        let reason = stall_reason(silence_age);
         if !self.currently_default_device && self.attempts >= 2 {
             MicHealthVerdict::Action(MicHealthAction::FallbackToDefault { reason })
         } else if self.currently_default_device && self.attempts >= self.config.max_attempts {
@@ -473,9 +532,12 @@ impl MicHealthMonitor {
     }
 }
 
-fn stall_reason(silence_age: Duration) -> String {
-    let secs = silence_age.as_secs_f32();
-    format!("no audio input detected for {secs:.1}s")
+fn stall_reason(kind: StallKind, age: Duration) -> String {
+    let secs = age.as_secs_f32();
+    match kind {
+        StallKind::Heartbeat => format!("no audio frames received for {secs:.1}s"),
+        StallKind::Silence => format!("audio input stuck at digital silence for {secs:.1}s"),
+    }
 }
 
 fn percentile(samples: &VecDeque<f32>, percentile: f32) -> Option<f32> {
@@ -498,6 +560,7 @@ mod mic_health_tests {
         MicHealthConfig {
             startup_grace: Duration::from_millis(100),
             stall_threshold: Duration::from_millis(300),
+            heartbeat_threshold: Duration::from_millis(200),
             recovery_cooldown: Duration::from_millis(200),
             max_attempts: 2,
         }
@@ -624,6 +687,141 @@ mod mic_health_tests {
         assert_eq!(
             monitor.tick(started + Duration::from_millis(500)),
             MicHealthVerdict::Healthy
+        );
+    }
+
+    #[test]
+    fn heartbeat_triggers_when_data_callback_stops_firing() {
+        // Simulates the CoreAudio wedge: frames arrive normally, then the
+        // cpal data callback stops entirely (no further `observe_frame` calls)
+        // even though the higher-level capture state still thinks it's running.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        // Healthy frames flow for a while.
+        for offset_ms in (0..=400).step_by(50) {
+            monitor.observe_frame(-50.0, started + Duration::from_millis(offset_ms));
+        }
+        assert_eq!(
+            monitor.tick(started + Duration::from_millis(400)),
+            MicHealthVerdict::Healthy
+        );
+
+        // Now the callback dies. heartbeat_threshold = 200ms in fast_config,
+        // so by 650ms we are 250ms past the last frame and stall fires —
+        // well before the silence path (stall_threshold = 300ms anchored
+        // at the last nonzero frame would only fire at 700ms+).
+        let verdict = monitor.tick(started + Duration::from_millis(650));
+        let MicHealthVerdict::Action(MicHealthAction::RestartCurrent { reason }) = verdict else {
+            panic!("expected RestartCurrent from heartbeat stall, got {verdict:?}");
+        };
+        assert!(
+            reason.contains("no audio frames received"),
+            "expected heartbeat reason, got {reason}"
+        );
+    }
+
+    #[test]
+    fn heartbeat_fires_before_silence_when_both_could_apply() {
+        // If frames stop arriving entirely, heartbeat (200ms) should win over
+        // silence detection (300ms) because the heartbeat threshold is shorter.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        // Single healthy frame after the grace period so silence anchor and
+        // heartbeat anchor both sit at t=120ms.
+        monitor.observe_frame(-50.0, started + Duration::from_millis(120));
+
+        // 120 + 250 = 370ms: heartbeat_age = 250ms (>= 200ms threshold),
+        // silence_age = 250ms (< 300ms threshold) → heartbeat wins.
+        let verdict = monitor.tick(started + Duration::from_millis(370));
+        let MicHealthVerdict::Action(MicHealthAction::RestartCurrent { reason }) = verdict else {
+            panic!("expected heartbeat-driven RestartCurrent, got {verdict:?}");
+        };
+        assert!(reason.contains("no audio frames received"));
+    }
+
+    #[test]
+    fn request_recovery_during_grace_period_fires_immediately() {
+        // cpal can fire a StreamError during the startup grace window
+        // (e.g. unsupported sample-format negotiation). The external signal
+        // must override the grace gate.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        monitor.request_recovery("cpal init failed");
+        let verdict = monitor.tick(started + Duration::from_millis(10));
+        let MicHealthVerdict::Action(MicHealthAction::RestartCurrent { reason }) = verdict else {
+            panic!("expected RestartCurrent during grace, got {verdict:?}");
+        };
+        assert_eq!(reason, "cpal init failed");
+    }
+
+    #[test]
+    fn request_recovery_when_idle_is_a_no_op() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        monitor.request_recovery("ignored");
+        assert_eq!(monitor.tick(Instant::now()), MicHealthVerdict::Healthy);
+    }
+
+    #[test]
+    fn request_recovery_during_cooldown_is_consumed_when_cooldown_elapses() {
+        // First wedge triggers a recovery → cooldown. cpal then reports an
+        // error mid-cooldown. The latched reason must be picked up at the
+        // first post-cooldown tick.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        // Drive a heartbeat stall: one frame at t=120ms, then nothing.
+        monitor.observe_frame(-50.0, started + Duration::from_millis(120));
+        let first = monitor.tick(started + Duration::from_millis(370));
+        assert!(matches!(
+            first,
+            MicHealthVerdict::Action(MicHealthAction::RestartCurrent { .. })
+        ));
+        // Now in cooldown until ~570ms.
+        assert_eq!(
+            monitor.tick(started + Duration::from_millis(450)),
+            MicHealthVerdict::InCooldown
+        );
+
+        // cpal fires StreamError during cooldown.
+        monitor.request_recovery("device disconnected");
+
+        // After cooldown elapses, the latched reason wins over silence/heartbeat.
+        let second = monitor.tick(started + Duration::from_millis(700));
+        let MicHealthVerdict::Action(MicHealthAction::FallbackToDefault { reason }) = second
+        else {
+            panic!("expected FallbackToDefault using latched reason, got {second:?}");
+        };
+        assert_eq!(reason, "device disconnected");
+    }
+
+    #[test]
+    fn silence_path_still_fires_when_callbacks_keep_arriving_but_are_all_zero() {
+        // Defence in depth: rare wedge mode where cpal keeps calling the data
+        // callback but every buffer is digital silence. Heartbeat sees healthy
+        // arrival, so the silence threshold must still catch this.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, false);
+
+        // Frames keep arriving every 50ms but every sample is -120 dBFS.
+        for offset_ms in (0..=500).step_by(50) {
+            monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
+        }
+
+        let verdict = monitor.tick(started + Duration::from_millis(500));
+        let MicHealthVerdict::Action(MicHealthAction::RestartCurrent { reason }) = verdict else {
+            panic!("expected silence-driven RestartCurrent, got {verdict:?}");
+        };
+        assert!(
+            reason.contains("digital silence"),
+            "expected silence reason, got {reason}"
         );
     }
 }

@@ -1124,12 +1124,23 @@ fn spawn_mic_recovery_watchdog(
     thread::spawn(move || {
         loop {
             thread::sleep(MIC_RECOVERY_TICK_INTERVAL);
-            let live_running = app
-                .try_state::<LiveCaptureState>()
-                .and_then(|state| state.lock().ok().map(|live| live.is_running()))
-                .unwrap_or(false);
+            let (live_running, runtime_error) = match app.try_state::<LiveCaptureState>() {
+                Some(state) => match state.lock() {
+                    Ok(live) => (live.is_running(), live.runtime_error()),
+                    Err(_) => continue,
+                },
+                None => continue,
+            };
             if !live_running {
                 continue;
+            }
+            // If cpal explicitly told us the stream broke, latch that as a
+            // pending recovery so the same tick fires an action immediately —
+            // no need to wait for heartbeat/silence thresholds.
+            if let Some(error) = runtime_error {
+                if let Ok(mut backend) = backend_state.lock() {
+                    backend.notify_stream_error(format!("audio stream error: {error}"));
+                }
             }
             let action = match backend_state.lock() {
                 Ok(mut backend) => backend.evaluate_microphone_health(),

@@ -635,6 +635,16 @@ impl AppBackend {
         }
     }
 
+    /// Forward an out-of-band stall signal (cpal `StreamError`, OS device-change)
+    /// to the health monitor so the next watchdog tick triggers a recovery
+    /// action immediately instead of waiting for heartbeat/silence thresholds.
+    pub fn notify_stream_error(&mut self, reason: impl Into<String>) {
+        if self.capture.is_none() {
+            return;
+        }
+        self.mic_health.request_recovery(reason);
+    }
+
     /// Pre-stage a device override for the next live-capture start. Consumed
     /// (cleared) by `take_microphone_recovery_override` at the next start.
     pub fn set_microphone_recovery_override(&mut self, device_id: impl Into<String>) {
