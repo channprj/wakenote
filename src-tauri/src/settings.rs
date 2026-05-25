@@ -51,6 +51,15 @@ impl Default for TranscriptionLanguage {
     }
 }
 
+/// One entry in the microphone priority list. Persisted alongside the legacy
+/// `selected_microphone[_label]` fields so the UI can render an unplugged
+/// device's name even when it isn't currently enumerable from cpal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MicrophonePriorityEntry {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
@@ -60,6 +69,12 @@ pub struct AppSettings {
     pub pause_all: bool,
     pub selected_microphone: String,
     pub selected_microphone_label: String,
+    /// Ordered list of preferred microphones. Position 0 is the top-priority
+    /// device that capture tries first and that the watchdog re-attempts
+    /// every [`TOP_PRIORITY_RECHECK`](crate::audio::TOP_PRIORITY_RECHECK)
+    /// when the active device is somewhere further down the list.
+    #[serde(default)]
+    pub microphone_priority: Vec<MicrophonePriorityEntry>,
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
@@ -92,6 +107,7 @@ pub struct SettingsPatch {
     pub pause_all: Option<bool>,
     pub selected_microphone: Option<String>,
     pub selected_microphone_label: Option<String>,
+    pub microphone_priority: Option<Vec<MicrophonePriorityEntry>>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub threshold_dbfs: Option<f32>,
@@ -129,6 +145,13 @@ pub enum LiveCaptureRuntimeAction {
     Unchanged,
 }
 
+pub fn default_microphone_priority() -> Vec<MicrophonePriorityEntry> {
+    vec![MicrophonePriorityEntry {
+        id: "default".to_string(),
+        label: "System Default".to_string(),
+    }]
+}
+
 pub fn launch_at_login_action_for_patch(
     settings: &AppSettings,
     patch: &SettingsPatch,
@@ -153,7 +176,11 @@ pub fn live_capture_runtime_action_for_patch(
     let microphone_changed = patch
         .selected_microphone
         .as_ref()
-        .is_some_and(|value| value != &settings.selected_microphone);
+        .is_some_and(|value| value != &settings.selected_microphone)
+        || patch
+            .microphone_priority
+            .as_ref()
+            .is_some_and(|list| top_priority_id(list) != settings.selected_microphone);
 
     match (currently_running, should_run, microphone_changed) {
         (false, true, _) => LiveCaptureRuntimeAction::Start,
@@ -161,6 +188,20 @@ pub fn live_capture_runtime_action_for_patch(
         (true, true, true) => LiveCaptureRuntimeAction::Restart,
         _ => LiveCaptureRuntimeAction::Unchanged,
     }
+}
+
+/// Top-of-list device id for a priority list, or "default" when the list is
+/// empty (which only happens transiently during user edits / migration).
+pub fn top_priority_id(list: &[MicrophonePriorityEntry]) -> String {
+    list.first()
+        .map(|entry| entry.id.clone())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+pub fn top_priority_label(list: &[MicrophonePriorityEntry]) -> String {
+    list.first()
+        .map(|entry| entry.label.clone())
+        .unwrap_or_else(|| "System Default".to_string())
 }
 
 pub fn live_capture_should_run(settings: &AppSettings) -> bool {
@@ -201,6 +242,48 @@ fn clamp_ms(value: u64, min: u64, max: u64) -> u64 {
 }
 
 impl AppSettings {
+    /// Reconcile [`Self::microphone_priority`] with the legacy
+    /// `selected_microphone[_label]` fields. The priority list is the source of
+    /// truth: after this call, `priority[0]` and the legacy single-mic fields
+    /// always match. Older persisted settings without a priority list (or with
+    /// a list that no longer matches the legacy fields, e.g. after a migration
+    /// from a release that only wrote the single field) get repaired here.
+    pub fn normalize_microphone_priority(&mut self) {
+        // Drop any empty / duplicate entries from the priority list first.
+        let mut seen = std::collections::HashSet::new();
+        self.microphone_priority
+            .retain(|entry| !entry.id.is_empty() && seen.insert(entry.id.clone()));
+
+        if self.microphone_priority.is_empty() {
+            // Legacy / fresh install: build a single-entry list from the
+            // selected-microphone fields.
+            let id = if self.selected_microphone.is_empty() {
+                "default".to_string()
+            } else {
+                self.selected_microphone.clone()
+            };
+            let label = if self.selected_microphone_label.is_empty() {
+                if id == "default" {
+                    "System Default".to_string()
+                } else {
+                    id.clone()
+                }
+            } else {
+                self.selected_microphone_label.clone()
+            };
+            self.microphone_priority
+                .push(MicrophonePriorityEntry { id, label });
+        }
+
+        let top = self
+            .microphone_priority
+            .first()
+            .cloned()
+            .expect("priority list is non-empty after repair");
+        self.selected_microphone = top.id;
+        self.selected_microphone_label = top.label;
+    }
+
     pub fn apply_patch(&mut self, patch: SettingsPatch) {
         if let Some(value) = patch.recording_enabled {
             self.recording_enabled = value;
@@ -217,12 +300,31 @@ impl AppSettings {
         if let Some(value) = patch.pause_all {
             self.pause_all = value;
         }
+        // Legacy single-mic fields. If the patch carries only these (no
+        // explicit microphone_priority), splice the new value into position 0
+        // of the priority list so the priority stays in sync.
+        let legacy_mic_changed =
+            patch.selected_microphone.is_some() || patch.selected_microphone_label.is_some();
         if let Some(value) = patch.selected_microphone {
             self.selected_microphone = value;
         }
         if let Some(value) = patch.selected_microphone_label {
             self.selected_microphone_label = value;
         }
+        if legacy_mic_changed && patch.microphone_priority.is_none() {
+            // Move/insert the legacy selection to the top of the priority list.
+            let new_top = MicrophonePriorityEntry {
+                id: self.selected_microphone.clone(),
+                label: self.selected_microphone_label.clone(),
+            };
+            self.microphone_priority
+                .retain(|entry| entry.id != new_top.id);
+            self.microphone_priority.insert(0, new_top);
+        }
+        if let Some(list) = patch.microphone_priority {
+            self.microphone_priority = list;
+        }
+        self.normalize_microphone_priority();
         if let Some(value) = patch.save_root {
             self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
@@ -297,6 +399,7 @@ impl Default for AppSettings {
             pause_all: false,
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
+            microphone_priority: default_microphone_priority(),
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,

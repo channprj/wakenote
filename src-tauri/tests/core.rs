@@ -4,10 +4,10 @@ use wakenote::audio::{
 };
 use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
-    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction, SettingsPatch,
-    TranscriptionLanguage, expand_user_path, launch_at_login_action_for_patch,
-    live_capture_runtime_action_for_patch, live_capture_should_run,
-    live_capture_should_start_on_launch,
+    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
+    MicrophonePriorityEntry, SettingsPatch, TranscriptionLanguage, expand_user_path,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run, live_capture_should_start_on_launch,
 };
 use wakenote::storage::{OutputBasename, next_available_output};
 
@@ -299,6 +299,180 @@ fn settings_patch_keeps_max_chunk_at_least_min_chunk() {
 
     assert_eq!(settings.min_chunk_ms, 5_000);
     assert_eq!(settings.max_chunk_ms, 10_000);
+}
+
+#[test]
+fn default_settings_seed_microphone_priority_with_system_default() {
+    let settings = AppSettings::default();
+    assert_eq!(
+        settings.microphone_priority,
+        vec![MicrophonePriorityEntry {
+            id: "default".to_string(),
+            label: "System Default".to_string(),
+        }],
+    );
+    // Legacy mirrors stay consistent with priority[0].
+    assert_eq!(settings.selected_microphone, "default");
+    assert_eq!(settings.selected_microphone_label, "System Default");
+}
+
+#[test]
+fn legacy_only_settings_migrate_into_priority_list() {
+    // Simulates loading a settings.json saved by an older release that only
+    // wrote `selected_microphone[_label]` and has no `microphone_priority`.
+    let mut settings = AppSettings::default();
+    settings.apply_patch(SettingsPatch {
+        selected_microphone: Some("input-3-usb-mic".to_string()),
+        selected_microphone_label: Some("USB Mic".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(
+        settings.microphone_priority.first(),
+        Some(&MicrophonePriorityEntry {
+            id: "input-3-usb-mic".to_string(),
+            label: "USB Mic".to_string(),
+        }),
+    );
+    // Legacy fields stay in sync with priority[0].
+    assert_eq!(settings.selected_microphone, "input-3-usb-mic");
+    assert_eq!(settings.selected_microphone_label, "USB Mic");
+}
+
+#[test]
+fn microphone_priority_patch_drives_legacy_selected_microphone() {
+    // The new UI sends `microphone_priority`. The backend must mirror its
+    // first entry into the legacy single-mic fields so every consumer that
+    // still reads them stays consistent.
+    let mut settings = AppSettings::default();
+    settings.apply_patch(SettingsPatch {
+        microphone_priority: Some(vec![
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+        ]),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.microphone_priority.len(), 2);
+    assert_eq!(settings.selected_microphone, "input-3-usb-mic");
+    assert_eq!(settings.selected_microphone_label, "USB Mic");
+}
+
+#[test]
+fn microphone_priority_normalize_drops_duplicates_and_empty_ids() {
+    let mut settings = AppSettings::default();
+    settings.apply_patch(SettingsPatch {
+        microphone_priority: Some(vec![
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic (duplicate)".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: String::new(),
+                label: "Bogus".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+        ]),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(
+        settings.microphone_priority,
+        vec![
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+        ],
+    );
+}
+
+#[test]
+fn legacy_selected_microphone_patch_moves_to_top_of_existing_priority() {
+    // Users on the new UI may also occasionally trigger code paths that send
+    // only the legacy single field (tray menu shortcuts etc.). When that
+    // happens we promote the named device to position 0 of the existing
+    // priority list rather than throwing the priority away.
+    let mut settings = AppSettings::default();
+    settings.apply_patch(SettingsPatch {
+        microphone_priority: Some(vec![
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+            },
+        ]),
+        ..SettingsPatch::default()
+    });
+    settings.apply_patch(SettingsPatch {
+        selected_microphone: Some("input-3-usb-mic".to_string()),
+        selected_microphone_label: Some("USB Mic".to_string()),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(
+        settings.microphone_priority,
+        vec![
+            MicrophonePriorityEntry {
+                id: "input-3-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+        ],
+    );
+    assert_eq!(settings.selected_microphone, "input-3-usb-mic");
+}
+
+#[test]
+fn microphone_priority_reorder_triggers_live_capture_restart() {
+    // Changing priority[0] is functionally a microphone change — the live
+    // capture must restart so the new top device gets opened.
+    let active = AppSettings::default();
+
+    let new_priority = vec![
+        MicrophonePriorityEntry {
+            id: "input-3-usb-mic".to_string(),
+            label: "USB Mic".to_string(),
+        },
+        MicrophonePriorityEntry {
+            id: "default".to_string(),
+            label: "System Default".to_string(),
+        },
+    ];
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &active,
+            &SettingsPatch {
+                microphone_priority: Some(new_priority),
+                ..SettingsPatch::default()
+            },
+        ),
+        LiveCaptureRuntimeAction::Restart,
+    );
 }
 
 #[test]

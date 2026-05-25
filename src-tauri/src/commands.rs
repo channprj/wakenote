@@ -584,9 +584,18 @@ impl AppBackend {
         } else {
             None
         };
-        let using_default_device = device_id == "default" || used_fallback_device;
+        let priority_ids: Vec<String> = self
+            .settings
+            .microphone_priority
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+        let active_index = priority_ids
+            .iter()
+            .position(|id| id == &device_id)
+            .unwrap_or(priority_ids.len());
         self.mic_health
-            .capture_started(Instant::now(), using_default_device);
+            .capture_started(Instant::now(), priority_ids, active_index);
         self.capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: self.save_root_path(),
             settings: self.settings.clone(),

@@ -1165,10 +1165,13 @@ fn apply_mic_recovery_action(
         None => return,
     };
     match action {
-        MicHealthAction::RestartCurrent { reason } => {
-            eprintln!("[mic-watchdog] restarting current device: {reason}");
+        MicHealthAction::SwitchTo { device_id, reason } => {
+            eprintln!("[mic-watchdog] switching to {device_id}: {reason}");
+            if let Ok(mut backend) = backend_state.lock() {
+                backend.set_microphone_recovery_override(&device_id);
+            }
             if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
-                eprintln!("[mic-watchdog] stop before restart failed: {error}");
+                eprintln!("[mic-watchdog] stop before switch failed: {error}");
             }
             if let Err(error) = start_live_capture_runtime(
                 app,
@@ -1176,32 +1179,7 @@ fn apply_mic_recovery_action(
                 live_state.inner(),
                 transcription_state.clone(),
             ) {
-                eprintln!("[mic-watchdog] restart failed: {error}");
-            }
-        }
-        MicHealthAction::FallbackToDefault { reason } => {
-            eprintln!("[mic-watchdog] falling back to system default: {reason}");
-            if let Ok(mut backend) = backend_state.lock() {
-                backend.set_microphone_recovery_override("default");
-            }
-            if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
-                eprintln!("[mic-watchdog] stop before fallback failed: {error}");
-            }
-            if let Err(error) = start_live_capture_runtime(
-                app,
-                backend_state,
-                live_state.inner(),
-                transcription_state.clone(),
-            ) {
-                eprintln!("[mic-watchdog] fallback start failed: {error}");
-            }
-        }
-        MicHealthAction::GiveUp { reason } => {
-            eprintln!("[mic-watchdog] giving up: {reason}");
-            if let Ok(mut backend) = backend_state.lock() {
-                backend.set_microphone_warning(format!(
-                    "Microphone input lost ({reason}). Re-select your microphone or reconnect the device."
-                ));
+                eprintln!("[mic-watchdog] switch start failed: {error}");
             }
         }
     }
