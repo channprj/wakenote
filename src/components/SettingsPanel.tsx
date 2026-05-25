@@ -730,7 +730,7 @@ function MicrophonePriorityList({
               <span className="mic-priority__pos">{index + 1}.</span>
               <span className="mic-priority__label" title={entry.id}>
                 <span className="mic-priority__name">{entry.label}</span>
-                {isTop ? <Badge tone="info">Primary</Badge> : null}
+                {isTop ? <Badge tone="primary">Primary</Badge> : null}
                 {unknown ? (
                   <Badge tone="warning">Not connected</Badge>
                 ) : available ? null : (
