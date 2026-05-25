@@ -454,6 +454,66 @@ svg {
   gap: 12px;
 }
 
+.mic-priority {
+  display: grid;
+  gap: 10px;
+}
+
+.mic-priority__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mic-priority__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.mic-priority__pos {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 1.5em;
+  text-align: right;
+}
+
+.mic-priority__label {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mic-priority__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mic-priority__controls {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.mic-priority__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .control-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

@@ -43,6 +43,11 @@ export type QueueJobStatus =
   | "cancelled"
   | "skipped";
 
+export interface MicrophonePriorityEntry {
+  id: string;
+  label: string;
+}
+
 export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
@@ -51,6 +56,7 @@ export interface AppSettings {
   pause_all: boolean;
   selected_microphone: string;
   selected_microphone_label: string;
+  microphone_priority: MicrophonePriorityEntry[];
   save_root: string;
   save_root_confirmed: boolean;
   audio_format: AudioFormat;

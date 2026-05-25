@@ -130,6 +130,7 @@ export function defaultSettings(): AppSettings {
     pause_all: false,
     selected_microphone: "default",
     selected_microphone_label: "System Default",
+    microphone_priority: [{ id: "default", label: "System Default" }],
     save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     audio_format: "m4a",

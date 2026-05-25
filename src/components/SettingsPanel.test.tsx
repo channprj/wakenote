@@ -3,12 +3,22 @@ import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
 import {
   SettingsPanel,
+  addMicrophonePriority,
   confirmSaveRootDisabledReason,
+  derivePriorityList,
+  removeMicrophonePriority,
+  reorderMicrophonePriority,
   startLiveCaptureDisabledReason,
   stopLiveCaptureDisabledReason,
   vadGateDisabledReason,
 } from "./SettingsPanel";
-import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
+import type {
+  AppSnapshot,
+  AppSettings,
+  AppStatus,
+  MicrophoneDevice,
+  MicrophonePriorityEntry,
+} from "../lib/types";
 
 function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
   return renderToStaticMarkup(
@@ -2098,5 +2108,157 @@ describe("settings panel", () => {
     expect(markup).toMatch(
       /<span class="ui-badge ui-badge--neutral">whisper-removed-from-registry<\/span>/,
     );
+  });
+});
+
+describe("microphone priority list", () => {
+  const samplePriority: MicrophonePriorityEntry[] = [
+    { id: "input-3-usb-mic", label: "USB Mic" },
+    { id: "input-1-built-in", label: "Built-in" },
+    { id: "default", label: "System Default" },
+  ];
+
+  it("renders the priority list with the top entry tagged Primary and a hint about the 10-minute retry", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.microphone_priority = samplePriority;
+    snapshot.settings.selected_microphone = "input-3-usb-mic";
+    snapshot.settings.selected_microphone_label = "USB Mic";
+    snapshot.microphones = [
+      { id: "default", label: "System Default", available: true, fallback: false },
+      { id: "input-3-usb-mic", label: "USB Mic", available: true, fallback: false },
+      { id: "input-1-built-in", label: "Built-in", available: true, fallback: false },
+    ];
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup).toContain('aria-label="Microphone priority order"');
+    expect(markup).toContain('<span class="ui-badge ui-badge--info">Primary</span>');
+    expect(markup).toContain("retries position 1 every 10 minutes");
+    // The list renders the three entries in priority order.
+    expect(markup.indexOf("USB Mic")).toBeLessThan(markup.indexOf("Built-in"));
+    expect(markup.indexOf("Built-in")).toBeLessThan(markup.indexOf("System Default"));
+  });
+
+  it("disables the up arrow on the top entry and the down arrow on the bottom entry", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.microphone_priority = samplePriority;
+    snapshot.settings.selected_microphone = "input-3-usb-mic";
+    snapshot.settings.selected_microphone_label = "USB Mic";
+    snapshot.microphones = [
+      { id: "default", label: "System Default", available: true, fallback: false },
+      { id: "input-3-usb-mic", label: "USB Mic", available: true, fallback: false },
+      { id: "input-1-built-in", label: "Built-in", available: true, fallback: false },
+    ];
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+    const moveUsbUp = markup.match(
+      /<button[^>]*aria-label="Move USB Mic up"[^>]*>/,
+    )?.[0] ?? "";
+    const moveDefaultDown = markup.match(
+      /<button[^>]*aria-label="Move System Default down"[^>]*>/,
+    )?.[0] ?? "";
+
+    expect(isDisabled(moveUsbUp)).toBe(true);
+    expect(isDisabled(moveDefaultDown)).toBe(true);
+  });
+
+  it("flags entries no longer in the connected device list as Not connected", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.microphone_priority = [
+      { id: "input-9-ghost", label: "Ghost AirPods" },
+      { id: "default", label: "System Default" },
+    ];
+    snapshot.settings.selected_microphone = "input-9-ghost";
+    snapshot.settings.selected_microphone_label = "Ghost AirPods";
+    snapshot.microphones = [
+      { id: "default", label: "System Default", available: true, fallback: true },
+    ];
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup).toContain('<span class="ui-badge ui-badge--warning">Not connected</span>');
+  });
+});
+
+describe("microphone priority list helpers", () => {
+  const list: MicrophonePriorityEntry[] = [
+    { id: "a", label: "Alpha" },
+    { id: "b", label: "Bravo" },
+    { id: "c", label: "Charlie" },
+  ];
+
+  it("reorders an entry up by swapping it with its predecessor", () => {
+    expect(reorderMicrophonePriority(list, 1, 0)).toEqual([
+      { id: "b", label: "Bravo" },
+      { id: "a", label: "Alpha" },
+      { id: "c", label: "Charlie" },
+    ]);
+  });
+
+  it("reorders an entry down by swapping it with its successor", () => {
+    expect(reorderMicrophonePriority(list, 0, 1)).toEqual([
+      { id: "b", label: "Bravo" },
+      { id: "a", label: "Alpha" },
+      { id: "c", label: "Charlie" },
+    ]);
+  });
+
+  it("returns the original list when the reorder is a no-op or out of bounds", () => {
+    expect(reorderMicrophonePriority(list, 0, 0)).toBe(list);
+    expect(reorderMicrophonePriority(list, 0, -1)).toBe(list);
+    expect(reorderMicrophonePriority(list, 0, list.length)).toBe(list);
+  });
+
+  it("appends a new device that is not already in the list", () => {
+    const device: Pick<MicrophoneDevice, "id" | "label"> = { id: "d", label: "Delta" };
+    expect(addMicrophonePriority(list, device)).toEqual([
+      ...list,
+      { id: "d", label: "Delta" },
+    ]);
+  });
+
+  it("ignores adding a device that is already in the list", () => {
+    expect(addMicrophonePriority(list, { id: "b", label: "Bravo" })).toBe(list);
+  });
+
+  it("removes a non-last entry by index", () => {
+    expect(removeMicrophonePriority(list, 1)).toEqual([
+      { id: "a", label: "Alpha" },
+      { id: "c", label: "Charlie" },
+    ]);
+  });
+
+  it("refuses to remove the last remaining entry", () => {
+    const single: MicrophonePriorityEntry[] = [{ id: "a", label: "Alpha" }];
+    expect(removeMicrophonePriority(single, 0)).toBe(single);
+  });
+
+  it("derivePriorityList resyncs the priority list when the legacy mirror points elsewhere", () => {
+    const settings: Pick<
+      AppSettings,
+      "microphone_priority" | "selected_microphone" | "selected_microphone_label"
+    > = {
+      microphone_priority: [
+        { id: "default", label: "System Default" },
+        { id: "input-3-usb-mic", label: "USB Mic" },
+      ],
+      selected_microphone: "input-3-usb-mic",
+      selected_microphone_label: "USB Mic",
+    };
+
+    expect(derivePriorityList(settings)).toEqual([
+      { id: "input-3-usb-mic", label: "USB Mic" },
+      { id: "default", label: "System Default" },
+    ]);
+  });
+
+  it("derivePriorityList synthesises a single-entry list when the priority field is empty", () => {
+    expect(
+      derivePriorityList({
+        microphone_priority: [],
+        selected_microphone: "default",
+        selected_microphone_label: "System Default",
+      }),
+    ).toEqual([{ id: "default", label: "System Default" }]);
   });
 });

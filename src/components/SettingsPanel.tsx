@@ -1,4 +1,4 @@
-import { CheckCircle2, FolderOpen, Play, RefreshCw, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, FolderOpen, Play, RefreshCw, Square, X } from "lucide-react";
 import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
@@ -9,7 +9,13 @@ import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/
 import { formatModelLabel } from "../lib/models";
 import { modelStatusBadgeTone } from "../lib/status-summary";
 import { fileUrlFromPath } from "../lib/transcript-history";
-import type { AppSnapshot, AppSettings, AppStatus } from "../lib/types";
+import type {
+  AppSnapshot,
+  AppSettings,
+  AppStatus,
+  MicrophoneDevice,
+  MicrophonePriorityEntry,
+} from "../lib/types";
 
 const durationFields = [
   ["attack_ms", "Attack", 50, 2000],
@@ -132,10 +138,28 @@ export function SettingsPanel({
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
   const microphonePermission = snapshot.permissions.microphone;
-  const selectedMicrophone = microphones.find((mic) => mic.id === settings.selected_microphone);
-  const selectedMicrophoneAvailable = selectedMicrophone?.available ?? false;
+  // The backend's invariant is priority[0].id === selected_microphone. When a
+  // snapshot is constructed in tests or transient UI state, the two can drift;
+  // we resync here so the UI always treats `selected_microphone` as position 0
+  // and never crashes on missing fields.
+  const priorityList = derivePriorityList(settings);
+  const topPriorityEntry = priorityList[0];
+  const topPriorityAvailable = microphones.some(
+    (mic) => mic.id === topPriorityEntry.id && mic.available,
+  );
+  // Any entry below position 0 (or the system fallback) that the runtime can
+  // actually open. As long as something usable is in the list, Start Input is
+  // allowed — the watchdog handles the actual cycle.
+  // The first available entry that sits below position 0 in priority — what
+  // Start Input falls through to if the top mic is unreachable.
+  const nextAvailablePriorityEntry = priorityList
+    .slice(1)
+    .find((entry) => microphones.some((mic) => mic.id === entry.id && mic.available));
   const fallbackMicrophone = microphones.find((mic) => mic.fallback && mic.available);
-  const canStartWithMicrophone = selectedMicrophoneAvailable || Boolean(fallbackMicrophone);
+  const canStartWithMicrophone =
+    topPriorityAvailable
+    || Boolean(nextAvailablePriorityEntry)
+    || Boolean(fallbackMicrophone);
   const usableModelIds = new Set(
     models
       .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
@@ -219,28 +243,20 @@ export function SettingsPanel({
       >
         <div className="recording-stack">
           <div className="settings-list">
-            <Select
-              label="Microphone"
-              value={settings.selected_microphone}
-              onChange={(event) => {
-                const device = microphones.find((mic) => mic.id === event.currentTarget.value);
-                onPatch({
-                  selected_microphone: event.currentTarget.value,
-                  selected_microphone_label: device?.label ?? event.currentTarget.value,
-                });
-              }}
-            >
-              {microphones.map((device) => (
-                <option key={device.id} value={device.id} disabled={!device.available}>
-                  {device.label}
-                  {device.available ? "" : " (Unavailable)"}
-                </option>
-              ))}
-            </Select>
-            {!selectedMicrophoneAvailable ? (
-              fallbackMicrophone ? (
+            <MicrophonePriorityList
+              value={priorityList}
+              microphones={microphones}
+              onChange={(microphone_priority) => onPatch({ microphone_priority })}
+            />
+            {!topPriorityAvailable ? (
+              nextAvailablePriorityEntry ? (
                 <div className="warning-banner warning-banner--warning">
-                  {settings.selected_microphone_label} is unavailable. Start Input will use{" "}
+                  {topPriorityEntry.label} is unavailable. Start Input will use{" "}
+                  {nextAvailablePriorityEntry.label}.
+                </div>
+              ) : fallbackMicrophone ? (
+                <div className="warning-banner warning-banner--warning">
+                  {topPriorityEntry.label} is unavailable. Start Input will use{" "}
                   {fallbackMicrophone.label}.
                 </div>
               ) : (
@@ -625,4 +641,165 @@ function formatChunkDuration(value: number) {
   }
 
   return `${Math.round(value / 1_000)} sec`;
+}
+
+export function derivePriorityList(
+  settings: Pick<
+    AppSettings,
+    "microphone_priority" | "selected_microphone" | "selected_microphone_label"
+  >,
+): MicrophonePriorityEntry[] {
+  const fromBackend = settings.microphone_priority ?? [];
+  const legacyTop: MicrophonePriorityEntry = {
+    id: settings.selected_microphone,
+    label: settings.selected_microphone_label,
+  };
+  if (fromBackend.length === 0) {
+    return [legacyTop];
+  }
+  if (fromBackend[0]?.id === legacyTop.id) {
+    return fromBackend;
+  }
+  return [
+    legacyTop,
+    ...fromBackend.filter((entry) => entry.id !== legacyTop.id),
+  ];
+}
+
+export function reorderMicrophonePriority(
+  list: MicrophonePriorityEntry[],
+  from: number,
+  to: number,
+): MicrophonePriorityEntry[] {
+  if (from === to || from < 0 || from >= list.length || to < 0 || to >= list.length) {
+    return list;
+  }
+  const next = list.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+export function addMicrophonePriority(
+  list: MicrophonePriorityEntry[],
+  device: Pick<MicrophoneDevice, "id" | "label">,
+): MicrophonePriorityEntry[] {
+  if (list.some((entry) => entry.id === device.id)) {
+    return list;
+  }
+  return [...list, { id: device.id, label: device.label }];
+}
+
+export function removeMicrophonePriority(
+  list: MicrophonePriorityEntry[],
+  index: number,
+): MicrophonePriorityEntry[] {
+  if (list.length <= 1 || index < 0 || index >= list.length) {
+    return list;
+  }
+  return list.filter((_, i) => i !== index);
+}
+
+function MicrophonePriorityList({
+  value,
+  microphones,
+  onChange,
+}: {
+  value: MicrophonePriorityEntry[];
+  microphones: MicrophoneDevice[];
+  onChange: (next: MicrophonePriorityEntry[]) => void;
+}) {
+  const availableToAdd = microphones.filter(
+    (device) => !value.some((entry) => entry.id === device.id),
+  );
+  const availabilityFor = (id: string): boolean | undefined => {
+    const match = microphones.find((mic) => mic.id === id);
+    return match ? match.available : undefined;
+  };
+
+  return (
+    <div className="mic-priority">
+      <span className="ui-field__label">Microphone priority</span>
+      <ol className="mic-priority__list" aria-label="Microphone priority order">
+        {value.map((entry, index) => {
+          const available = availabilityFor(entry.id);
+          const unknown = available === undefined;
+          const isTop = index === 0;
+          return (
+            <li className="mic-priority__item" key={entry.id}>
+              <span className="mic-priority__pos">{index + 1}.</span>
+              <span className="mic-priority__label" title={entry.id}>
+                <span className="mic-priority__name">{entry.label}</span>
+                {isTop ? <Badge tone="info">Primary</Badge> : null}
+                {unknown ? (
+                  <Badge tone="warning">Not connected</Badge>
+                ) : available ? null : (
+                  <Badge tone="warning">Unavailable</Badge>
+                )}
+              </span>
+              <div className="mic-priority__controls">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Move ${entry.label} up`}
+                  disabled={index === 0}
+                  onClick={() => onChange(reorderMicrophonePriority(value, index, index - 1))}
+                >
+                  <ArrowUp data-icon="solo" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Move ${entry.label} down`}
+                  disabled={index === value.length - 1}
+                  onClick={() => onChange(reorderMicrophonePriority(value, index, index + 1))}
+                >
+                  <ArrowDown data-icon="solo" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove ${entry.label}`}
+                  disabled={value.length <= 1}
+                  onClick={() => onChange(removeMicrophonePriority(value, index))}
+                >
+                  <X data-icon="solo" />
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {availableToAdd.length > 0 ? (
+        <Select
+          label="Add microphone"
+          value=""
+          onChange={(event) => {
+            const id = event.currentTarget.value;
+            if (!id) return;
+            const device = microphones.find((mic) => mic.id === id);
+            if (device) {
+              onChange(addMicrophonePriority(value, device));
+            }
+            event.currentTarget.value = "";
+          }}
+        >
+          <option value="">Add a microphone…</option>
+          {availableToAdd.map((device) => (
+            <option key={device.id} value={device.id}>
+              {device.label}
+              {device.available ? "" : " (Unavailable)"}
+            </option>
+          ))}
+        </Select>
+      ) : null}
+      <p className="mic-priority__hint">
+        Capture opens position 1 first. If it stalls, the watchdog cycles through the list in
+        order and retries position 1 every 10 minutes.
+      </p>
+    </div>
+  );
 }
