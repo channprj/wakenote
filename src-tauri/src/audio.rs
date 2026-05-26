@@ -317,8 +317,6 @@ impl Default for MicHealthConfig {
     fn default() -> Self {
         Self {
             startup_grace: Duration::from_millis(1_500),
-            // Threshold for the UI warning only. Digital silence used to trigger
-            // device cycling; now it just notifies the user so they can decide.
             stall_threshold: Duration::from_secs(12),
             heartbeat_threshold: Duration::from_millis(1_000),
             recovery_cooldown: Duration::from_millis(3_500),
@@ -797,7 +795,9 @@ mod mic_health_tests {
     fn digital_silence_alone_does_not_switch_devices() {
         // Regression guard for the 2026-05-26 silence-as-warning change: even when
         // the stream sits at digital silence forever, the watchdog must not emit
-        // a SwitchTo action. Only heartbeat loss / StreamError do that now.
+        // a SwitchTo action. Once silence has accumulated past stall_threshold we
+        // also positively assert that SilenceWarning fires — otherwise a bug that
+        // silently turns the silence path into Healthy would pass this guard.
         let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
             startup_grace: Duration::from_millis(100),
             stall_threshold: Duration::from_millis(300),
@@ -807,9 +807,11 @@ mod mic_health_tests {
             top_priority_recheck: Duration::from_secs(300),
         });
         let prio = vec!["mic-a".to_string(), "mic-b".to_string()];
-        let mut now = Instant::now();
+        let start = Instant::now();
+        let mut now = start;
         monitor.capture_started(now, prio, 0);
 
+        let mut warning_seen_after_threshold = false;
         for _ in 0..40 {
             now += Duration::from_millis(120);
             monitor.observe_frame(-120.0, now);
@@ -818,7 +820,23 @@ mod mic_health_tests {
                 !matches!(verdict, MicHealthVerdict::Action(_)),
                 "silence must not produce an action; got {verdict:?}"
             );
+            if now.saturating_duration_since(start) >= Duration::from_millis(500) {
+                // 100ms grace + 300ms stall_threshold = 400ms; give one tick of
+                // slack and require SilenceWarning beyond that point.
+                if matches!(verdict, MicHealthVerdict::SilenceWarning { .. }) {
+                    warning_seen_after_threshold = true;
+                } else {
+                    assert!(
+                        matches!(verdict, MicHealthVerdict::SilenceWarning { .. }),
+                        "expected SilenceWarning after threshold, got {verdict:?}"
+                    );
+                }
+            }
         }
+        assert!(
+            warning_seen_after_threshold,
+            "test never observed a SilenceWarning verdict — regression"
+        );
     }
 
     #[test]
