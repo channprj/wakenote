@@ -287,7 +287,7 @@ pub const MIC_NONZERO_DBFS: f32 = -119.0;
 /// How long we run on a non-top-priority microphone before voluntarily
 /// re-attempting the top-priority device. Used as the default for
 /// [`MicHealthConfig::top_priority_recheck`].
-pub const TOP_PRIORITY_RECHECK: Duration = Duration::from_secs(600);
+pub const TOP_PRIORITY_RECHECK: Duration = Duration::from_secs(300);
 
 /// Tunables for [`MicHealthMonitor`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -447,7 +447,7 @@ impl MicHealthMonitor {
             active_index.min(self.priority.len())
         };
         // Anchor the top-priority retry timer whenever we (re)open priority[0]
-        // so the 10-minute upgrade clock starts fresh.
+        // so the 5-minute upgrade clock starts fresh.
         if self.active_index == 0 {
             self.last_top_priority_attempt_at = Some(now);
         }
@@ -1288,6 +1288,15 @@ mod mic_health_tests {
         assert!(
             matches!(verdict, MicHealthVerdict::Healthy),
             "expected Healthy after non-silent frame, got {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn top_priority_recheck_default_is_five_minutes() {
+        assert_eq!(TOP_PRIORITY_RECHECK, Duration::from_secs(300));
+        assert_eq!(
+            MicHealthConfig::default().top_priority_recheck,
+            Duration::from_secs(300)
         );
     }
 }
