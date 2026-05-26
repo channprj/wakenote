@@ -2132,7 +2132,7 @@ describe("microphone priority list", () => {
     const markup = renderSettingsPanel(snapshot, "recording");
 
     expect(markup).toContain('aria-label="Microphone priority order"');
-    expect(markup).toContain('<span class="ui-badge ui-badge--info">Primary</span>');
+    expect(markup).toContain('<span class="ui-badge ui-badge--primary">Primary</span>');
     expect(markup).toContain("retries position 1 every 10 minutes");
     // The list renders the three entries in priority order.
     expect(markup.indexOf("USB Mic")).toBeLessThan(markup.indexOf("Built-in"));
