@@ -662,6 +662,14 @@ impl AppBackend {
         } else {
             None
         };
+        // Runtime diagnostic: every capture start logs the resolved device id,
+        // its label, and whether a fallback warning is being surfaced. Lets
+        // a `log show --predicate 'process == "wakenote"'` reader confirm
+        // the false-positive 'Pinned X unavailable; using X' bug stays dead.
+        eprintln!(
+            "[mic-start] device_id={device_id} label={device_name} fallback={used_fallback_device} warning={:?}",
+            self.microphone_warning
+        );
         let priority_ids: Vec<String> = self
             .settings
             .microphone_priority
