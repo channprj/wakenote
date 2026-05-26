@@ -3,7 +3,7 @@ use wakenote::audio::{
     GateConfig, GateDecision, MicHealthConfig, SpeechGate, TOP_PRIORITY_RECHECK, dbfs_from_rms,
     input_devices_from_labels,
 };
-use wakenote::commands::AppBackend;
+use wakenote::commands::{AppBackend, pinned_device_mismatch};
 use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
@@ -800,4 +800,139 @@ fn silence_warning_verdict_populates_app_status() {
         backend.app_status().silence_warning.is_none(),
         "silence_warning should be None after healthy audio"
     );
+}
+
+#[test]
+fn stale_stable_id_with_matching_label_does_not_set_fallback_warning() {
+    // End-to-end guard for the 'Pinned BY-V is unavailable; using BY-V' bug.
+    // Reproduces the in-the-wild flow:
+    //   1. Settings persist an old stable id (cpal enumerated BY-V at index 3 once).
+    //   2. After a USB blip / sleep cycle, cpal now enumerates BY-V at index 5.
+    //   3. The resolver matches the same physical mic via label-hint, returning
+    //      the new stable id with `used_fallback_device = false`.
+    //   4. main.rs computes `used_fallback_device` via `pinned_device_mismatch`
+    //      and starts the capture session.
+    // The fix: label match counts as 'we are on the pinned device', so no
+    // warning fires; and `reconcile_resolved_device_id` rewrites settings
+    // to the new id so the next start matches by id without needing the
+    // label-hint fallback.
+    let mut backend = AppBackend::default();
+    backend.apply_settings_patch_for_test(SettingsPatch {
+        recording_enabled: Some(true),
+        selected_microphone: Some("input-3-by-v".to_string()),
+        selected_microphone_label: Some("BY-V".to_string()),
+        microphone_priority: Some(vec![
+            MicrophonePriorityEntry {
+                id: "input-3-by-v".to_string(),
+                label: "BY-V".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+            },
+        ]),
+        ..SettingsPatch::default()
+    });
+
+    // Simulate the resolver's output after label-hint matching: same physical
+    // device, new stable id, NOT a true fallback.
+    let resolved_id = "input-5-by-v";
+    let resolved_label = "BY-V";
+    let resolver_fell_back = false;
+
+    let settings = backend.settings();
+    let used_fallback_device = pinned_device_mismatch(
+        &settings.selected_microphone,
+        &settings.selected_microphone_label,
+        resolved_id,
+        resolved_label,
+        resolver_fell_back,
+    );
+
+    assert!(
+        !used_fallback_device,
+        "id drift with matching label must NOT be flagged as a fallback"
+    );
+
+    backend.reconcile_resolved_device_id(
+        &settings.selected_microphone,
+        resolved_id,
+        resolved_label,
+    );
+    backend
+        .start_capture_session_with_device(
+            48_000,
+            Utc.with_ymd_and_hms(2026, 5, 27, 0, 0, 0).unwrap(),
+            resolved_id.to_string(),
+            resolved_label.to_string(),
+            used_fallback_device,
+        )
+        .expect("start should succeed");
+
+    assert!(
+        backend.app_status().microphone_warning.is_none(),
+        "microphone_warning must be None after stale-id drift with matching label, got {:?}",
+        backend.app_status().microphone_warning
+    );
+
+    // Settings have been reconciled to the new stable id — next start will
+    // hit the exact-id match path, no more label-hint round-trip.
+    let after = backend.settings();
+    assert_eq!(after.selected_microphone, resolved_id);
+    assert_eq!(after.selected_microphone_label, resolved_label);
+    assert_eq!(after.microphone_priority[0].id, resolved_id);
+    assert_eq!(after.microphone_priority[0].label, resolved_label);
+    // The second priority entry (System Default) must be untouched.
+    assert_eq!(after.microphone_priority[1].id, "default");
+}
+
+#[test]
+fn true_device_fallback_still_produces_warning() {
+    // Negative guard: when the resolver fell back to a genuinely different
+    // device (label differs), the warning must still fire so the user
+    // knows their pinned mic is unavailable.
+    let mut backend = AppBackend::default();
+    backend.apply_settings_patch_for_test(SettingsPatch {
+        recording_enabled: Some(true),
+        selected_microphone: Some("input-3-by-v".to_string()),
+        selected_microphone_label: Some("BY-V".to_string()),
+        microphone_priority: Some(vec![MicrophonePriorityEntry {
+            id: "input-3-by-v".to_string(),
+            label: "BY-V".to_string(),
+        }]),
+        ..SettingsPatch::default()
+    });
+
+    // Resolver fell back to System Default because BY-V was disconnected.
+    let resolved_id = "default";
+    let resolved_label = "System Default";
+    let resolver_fell_back = true;
+
+    let settings = backend.settings();
+    let used_fallback_device = pinned_device_mismatch(
+        &settings.selected_microphone,
+        &settings.selected_microphone_label,
+        resolved_id,
+        resolved_label,
+        resolver_fell_back,
+    );
+
+    assert!(used_fallback_device, "real fallback must be flagged");
+
+    backend
+        .start_capture_session_with_device(
+            48_000,
+            Utc.with_ymd_and_hms(2026, 5, 27, 0, 0, 0).unwrap(),
+            resolved_id.to_string(),
+            resolved_label.to_string(),
+            used_fallback_device,
+        )
+        .expect("start should succeed");
+
+    let warning = backend
+        .app_status()
+        .microphone_warning
+        .expect("warning should be set for genuine device fallback");
+    assert!(warning.contains("Pinned microphone BY-V"));
+    assert!(warning.contains("System Default"));
 }
