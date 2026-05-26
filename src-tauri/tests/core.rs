@@ -755,7 +755,16 @@ fn silence_warning_verdict_populates_app_status() {
     use std::time::{Duration, Instant};
 
     let mut backend = AppBackend::default();
-    backend.update_settings_for_test_silence_warning();
+    backend.apply_settings_patch_for_test(SettingsPatch {
+        recording_enabled: Some(true),
+        selected_microphone: Some("mic-a".to_string()),
+        selected_microphone_label: Some("Mic A".to_string()),
+        microphone_priority: Some(vec![MicrophonePriorityEntry {
+            id: "mic-a".to_string(),
+            label: "Mic A".to_string(),
+        }]),
+        ..SettingsPatch::default()
+    });
     backend.override_mic_health_config_for_test(MicHealthConfig {
         startup_grace: Duration::from_millis(10),
         stall_threshold: Duration::from_millis(100),
@@ -773,7 +782,7 @@ fn silence_warning_verdict_populates_app_status() {
         backend.observe_audio_for_test(-120.0, clock);
         clock += Duration::from_millis(100);
     }
-    backend.tick_microphone_health_at(clock);
+    let _ = backend.evaluate_microphone_health_at(clock);
 
     let warning = backend
         .app_status()
@@ -785,7 +794,7 @@ fn silence_warning_verdict_populates_app_status() {
     // A non-silent frame followed by another tick should clear the warning.
     clock += Duration::from_millis(30);
     backend.observe_audio_for_test(-30.0, clock);
-    backend.tick_microphone_health_at(clock);
+    let _ = backend.evaluate_microphone_health_at(clock);
     assert!(
         backend.app_status().silence_warning.is_none(),
         "silence_warning should be None after healthy audio"

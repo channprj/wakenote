@@ -648,23 +648,11 @@ impl AppBackend {
         self.mic_health.observe_frame(dbfs, at);
     }
 
-    /// Tick the health monitor with a caller-supplied `now`, updating
-    /// `self.silence_warning` exactly as the production path does.
-    pub fn tick_microphone_health_at(&mut self, now: Instant) {
-        self.evaluate_microphone_health_at(now);
-    }
-
-    /// Seed the settings with a named microphone so the silence warning
-    /// carries a non-empty `device_label`.
-    pub fn update_settings_for_test_silence_warning(&mut self) {
-        use crate::settings::MicrophonePriorityEntry;
-        self.settings.apply_patch(crate::settings::SettingsPatch {
-            microphone_priority: Some(vec![MicrophonePriorityEntry {
-                id: "test-mic".to_string(),
-                label: "Test Microphone".to_string(),
-            }]),
-            ..crate::settings::SettingsPatch::default()
-        });
+    /// Test-only: apply a `SettingsPatch` without going through the Tauri
+    /// command boundary. Mirrors `update_settings` but lets integration tests
+    /// drive backend state without a Tauri runtime.
+    pub fn apply_settings_patch_for_test(&mut self, patch: crate::settings::SettingsPatch) {
+        self.update_settings(patch);
     }
 
     pub fn stop_capture_session(&mut self) -> Result<AppStatus, String> {
@@ -708,7 +696,7 @@ impl AppBackend {
         self.evaluate_microphone_health_at(Instant::now())
     }
 
-    fn evaluate_microphone_health_at(&mut self, now: Instant) -> Option<MicHealthAction> {
+    pub fn evaluate_microphone_health_at(&mut self, now: Instant) -> Option<MicHealthAction> {
         if self.settings.pause_all || !self.settings.recording_enabled {
             self.silence_warning = None;
             return None;
@@ -1126,6 +1114,7 @@ impl AppBackend {
         self.active_microphone_label = None;
         self.level_monitor = LevelMonitor::default();
         self.mic_health.capture_stopped();
+        self.silence_warning = None;
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
