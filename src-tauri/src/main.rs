@@ -63,7 +63,13 @@ const MAIN_WINDOW_WIDTH: f64 = 1180.0;
 const MAIN_WINDOW_HEIGHT: f64 = 760.0;
 const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
 const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
-const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long we wait for cpal's `host.input_devices()` enumeration to
+/// finish before giving up with "audio device lookup did not finish
+/// within N seconds". cpal blocks on CoreAudio on macOS, which can
+/// take several seconds the first time after a sleep/wake cycle or
+/// when many Bluetooth devices are advertising. 2s was too aggressive
+/// — bumped to 5s.
+const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;

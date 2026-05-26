@@ -271,6 +271,16 @@ function installBundle(options) {
     stdio: 'ignore',
   });
 
+  // Tauri 2 + recent rustc emit a Mach-O with `linker-signed` adhoc
+  // signature but skip sealing the bundle resources. macOS taskgated
+  // sees the binary claiming `--deep` signing semantics while the
+  // bundle has no `_CodeSignature/CodeResources` manifest, treats that
+  // as a tampered bundle, and SIGKILLs the process with
+  // `Taskgated Invalid Signature`. Force a fresh adhoc bundle signature
+  // here so `Sealed Resources` is populated and verification passes.
+  console.log(`==> Re-signing bundle (adhoc, seals resources)`);
+  runMaybeSudo(useSudo, 'codesign', ['--force', '--deep', '--sign', '-', dest]);
+
   console.log(`==> Done. Installed: ${dest}`);
 
   if (options.open) {
