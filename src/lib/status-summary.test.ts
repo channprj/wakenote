@@ -508,3 +508,43 @@ describe("queueStatsCellTone", () => {
     expect(queueJobStatusBadgeTone("pending")).toBe("neutral");
   });
 });
+
+describe("activeWarning with silence_warning", () => {
+  it("emits a warning banner when silence_warning is present", () => {
+    const snapshot = mockSnapshot();
+    const presentation = captureStatusPresentation({
+      ...snapshot,
+      status: {
+        ...snapshot.status,
+        silence_warning: { device_label: "Mic A", seconds: 14 },
+      },
+    });
+    expect(presentation.warning).toEqual({
+      key: "silence:Mic A:14",
+      message: "마이크 'Mic A'에서 14초간 입력이 감지되지 않습니다. 마이크 설정을 확인하세요.",
+      tone: "warning",
+    });
+  });
+
+  it("prefers microphone_warning over silence_warning when both are set", () => {
+    const snapshot = mockSnapshot();
+    const presentation = captureStatusPresentation({
+      ...snapshot,
+      status: {
+        ...snapshot.status,
+        microphone_warning: "Mic fallback in use",
+        silence_warning: { device_label: "Mic A", seconds: 14 },
+      },
+    });
+    expect(presentation.warning?.key).toMatch(/^microphone:/);
+  });
+
+  it("clears the silence warning when silence_warning is null", () => {
+    const snapshot = mockSnapshot();
+    const presentation = captureStatusPresentation({
+      ...snapshot,
+      status: { ...snapshot.status, silence_warning: null },
+    });
+    expect(presentation.warning).toBeNull();
+  });
+});

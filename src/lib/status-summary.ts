@@ -225,6 +225,15 @@ function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
     };
   }
 
+  const silenceWarning = snapshot.status.silence_warning;
+  if (silenceWarning) {
+    return {
+      key: `silence:${silenceWarning.device_label}:${silenceWarning.seconds}`,
+      message: `마이크 '${silenceWarning.device_label}'에서 ${silenceWarning.seconds}초간 입력이 감지되지 않습니다. 마이크 설정을 확인하세요.`,
+      tone: "warning",
+    };
+  }
+
   const runtimeWarning = snapshot.status.runtime_warning;
   if (runtimeWarning) {
     return {
