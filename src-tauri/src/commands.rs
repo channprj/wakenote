@@ -672,6 +672,7 @@ impl AppBackend {
         self.capture = None;
         self.active_microphone_label = None;
         self.level_monitor = LevelMonitor::default();
+        self.silence_warning = None;
 
         let warning = warning.into();
         let priority_ids: Vec<String> = self
