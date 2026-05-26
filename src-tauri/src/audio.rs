@@ -476,13 +476,14 @@ impl MicHealthMonitor {
         self.last_frame_at = None;
         self.last_nonzero_at = None;
 
-        // Advance to the next priority entry so the next emitted action
-        // targets a different device — this keeps a wedged device from being
-        // re-tried at full rate.
-        let next_index = self.next_priority_index();
-        self.active_index = next_index;
-        if next_index == 0 {
-            self.last_top_priority_attempt_at = Some(now);
+        // Advance to the next entry in the priority list. The device we just
+        // failed to open is unavailable right now; walk forward (wrapping
+        // mod len) until something opens successfully or every entry fails.
+        if !self.priority.is_empty() {
+            self.active_index = (self.active_index + 1) % self.priority.len();
+            if self.active_index == 0 {
+                self.last_top_priority_attempt_at = Some(now);
+            }
         }
     }
 
@@ -667,37 +668,22 @@ impl MicHealthMonitor {
         scaled.min(self.config.max_recovery_cooldown)
     }
 
-    fn next_priority_index(&self) -> usize {
-        if self.priority.is_empty() {
-            return 0;
-        }
-        // If active_index is out of range — running on a device not in the
-        // priority list (e.g. a recovery override that resolved to an
-        // off-list device) — the next switch returns to the top of the list.
-        if self.active_index >= self.priority.len() {
-            return 0;
-        }
-        (self.active_index + 1) % self.priority.len()
-    }
-
     fn escalate(&mut self, now: Instant, reason: String) -> MicHealthVerdict {
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
         self.cooldown_until = Some(now + self.current_cooldown());
         self.state = MicHealthState::Cooldown;
 
-        // Advance to the next entry in the priority cycle. Recovery is
-        // infinite: even on a single-device list this just re-opens the same
-        // device, separated by the growing cooldown so we don't hammer cpal.
-        let next_index = self.next_priority_index();
+        // A stall on the running stream — most failures are transient
+        // (sleep/wake, USB blip). Always retry priority[0] first; only if
+        // that start itself fails (mark_start_failed) do we walk down the
+        // priority list.
+        self.active_index = 0;
         let device_id = self
             .priority
-            .get(next_index)
+            .first()
             .cloned()
             .unwrap_or_else(|| "default".to_string());
-
-        if next_index == 0 {
-            self.last_top_priority_attempt_at = Some(now);
-        }
+        self.last_top_priority_attempt_at = Some(now);
 
         MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, reason })
     }
@@ -841,22 +827,23 @@ mod mic_health_tests {
 
     #[test]
     fn cycle_wraps_around_priority_list_indefinitely() {
-        // Priority [A, B, C]. Each device wedges in turn. The cycle goes
-        // A → B → C → A → B ... and never reaches an exhausted state.
+        // Priority [A, B, C]. A running stream stalls (heartbeat lost).
+        // escalate() always targets priority[0] = mic-A regardless of which
+        // device was active. The watchdog retries the top-priority mic first;
+        // only start failures walk down the list.
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let mut now = Instant::now();
         let prio = priority(&["mic-A", "mic-B", "mic-C"]);
 
-        let mut expected_targets = ["mic-B", "mic-C", "mic-A", "mic-B"].into_iter();
-        let mut active_index = 0usize;
-        for _ in 0..4 {
+        // Start each iteration on a different active device and confirm every
+        // escalation returns mic-A (priority[0]).
+        for active_index in [0usize, 1, 2, 0] {
             monitor.capture_started(now, prio.clone(), active_index);
             // Push past the grace window without ever delivering a frame so
             // the heartbeat path fires.
             now += Duration::from_millis(400);
             let (device_id, _) = expect_switch_to(monitor.tick(now));
-            assert_eq!(device_id, expected_targets.next().unwrap());
-            active_index = prio.iter().position(|id| id == &device_id).unwrap();
+            assert_eq!(device_id, "mic-A");
             // Let the cooldown elapse before the next capture_started.
             now += Duration::from_millis(900);
         }
@@ -1021,7 +1008,7 @@ mod mic_health_tests {
     fn heartbeat_triggers_when_data_callback_stops_firing() {
         // CoreAudio wedge: frames arrive normally, then the cpal data callback
         // stops entirely even though the higher-level capture state still
-        // thinks it's running.
+        // thinks it's running. escalate() always targets priority[0] = mic-A.
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let started = Instant::now();
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
@@ -1036,7 +1023,7 @@ mod mic_health_tests {
 
         let (device_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(650)));
-        assert_eq!(device_id, "default");
+        assert_eq!(device_id, "mic-A");
         assert!(
             reason.contains("no audio frames received"),
             "expected heartbeat reason, got {reason}"
@@ -1084,7 +1071,7 @@ mod mic_health_tests {
     fn request_recovery_during_grace_period_fires_immediately() {
         // cpal can fire a StreamError during the startup grace window
         // (e.g. unsupported sample-format negotiation). The external signal
-        // must override the grace gate.
+        // must override the grace gate. escalate() resets to priority[0] = mic-A.
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let started = Instant::now();
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
@@ -1092,7 +1079,7 @@ mod mic_health_tests {
         monitor.request_recovery("cpal init failed");
         let (device_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(10)));
-        assert_eq!(device_id, "default");
+        assert_eq!(device_id, "mic-A");
         assert_eq!(reason, "cpal init failed");
     }
 
@@ -1110,8 +1097,9 @@ mod mic_health_tests {
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
 
         monitor.observe_frame(-50.0, started + Duration::from_millis(120));
+        // Heartbeat stall: escalate() resets active_index to 0 and targets mic-A.
         let (first_id, _) = expect_switch_to(monitor.tick(started + Duration::from_millis(370)));
-        assert_eq!(first_id, "default");
+        assert_eq!(first_id, "mic-A");
 
         // Cooldown of 200ms, so we sit in InCooldown at 450ms.
         assert_eq!(
@@ -1121,12 +1109,11 @@ mod mic_health_tests {
 
         monitor.request_recovery("device disconnected");
 
-        // After cooldown elapses, the latched reason wins. We have not
-        // started a new capture session, so active_index is still 0 and the
-        // next cycle target is "default" again.
+        // After cooldown elapses, the latched reason wins. escalate() again
+        // resets to priority[0] = mic-A.
         let (second_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(700)));
-        assert_eq!(second_id, "default");
+        assert_eq!(second_id, "mic-A");
         assert_eq!(reason, "device disconnected");
     }
 
@@ -1298,5 +1285,109 @@ mod mic_health_tests {
             MicHealthConfig::default().top_priority_recheck,
             Duration::from_secs(300)
         );
+    }
+
+    #[test]
+    fn heartbeat_loss_restarts_on_priority_zero_first() {
+        // Stream is running on priority[1] (fallback). Heartbeat dies.
+        // Action must target priority[0], not priority[2].
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(50),
+            max_recovery_cooldown: Duration::from_secs(1),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec![
+            "mic-top".to_string(),
+            "mic-fallback".to_string(),
+            "mic-third".to_string(),
+        ];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio, 1);
+        // Past startup grace.
+        now += Duration::from_millis(60);
+        // First frame to anchor heartbeat.
+        monitor.observe_frame(-30.0, now);
+        // Heartbeat lapses.
+        now += Duration::from_millis(300);
+        match monitor.tick(now) {
+            MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
+                assert_eq!(device_id, "mic-top");
+            }
+            other => panic!("expected SwitchTo(mic-top), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_failure_on_priority_zero_advances_to_priority_one() {
+        // After capture_started succeeded on priority[0] and a non-silent frame
+        // arrived, simulating a fresh cycle. Then the next start attempt fails:
+        // mark_start_failed must advance active_index to 1, so the next emitted
+        // action targets priority[1].
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(10),
+            max_recovery_cooldown: Duration::from_millis(50),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec![
+            "mic-top".to_string(),
+            "mic-fallback".to_string(),
+            "mic-third".to_string(),
+        ];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio.clone(), 0);
+        now += Duration::from_millis(60);
+        monitor.observe_frame(-30.0, now);
+
+        // Simulate watchdog deciding to switch and the start failing.
+        monitor.refresh_priority(prio);
+        monitor.mark_start_failed(now, "start failed");
+        // Walk past the cooldown.
+        now += Duration::from_millis(20);
+        match monitor.tick(now) {
+            MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
+                assert_eq!(device_id, "mic-fallback");
+            }
+            other => panic!("expected SwitchTo(mic-fallback), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consecutive_start_failures_wrap_through_priority_list() {
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(10),
+            max_recovery_cooldown: Duration::from_millis(50),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio.clone(), 0);
+        now += Duration::from_millis(60);
+        monitor.observe_frame(-30.0, now);
+
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            monitor.refresh_priority(prio.clone());
+            monitor.mark_start_failed(now, "fail");
+            now += Duration::from_millis(60);
+            match monitor.tick(now) {
+                MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
+                    seen.push(device_id);
+                }
+                other => panic!("expected SwitchTo, got {other:?}"),
+            }
+            now += Duration::from_millis(60);
+        }
+        // mark_start_failed advances by 1 each time, starting from active_index 0.
+        // Sequence of resulting active_index: 1 → 2 → 0 → 1 → 2 → 0.
+        assert_eq!(seen, vec!["b", "c", "a", "b", "c", "a"]);
     }
 }
