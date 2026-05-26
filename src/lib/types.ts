@@ -179,6 +179,11 @@ export interface LevelSnapshot {
   suggested_threshold_dbfs: number;
 }
 
+export interface SilenceWarning {
+  device_label: string;
+  seconds: number;
+}
+
 export interface AppStatus {
   mode: AppMode;
   tray_state: TrayState;
@@ -186,6 +191,7 @@ export interface AppStatus {
   active_model: string;
   active_microphone: string;
   microphone_warning?: string | null;
+  silence_warning?: SilenceWarning | null;
   runtime_warning?: string | null;
   threshold_dbfs: number;
   level: LevelSnapshot;
