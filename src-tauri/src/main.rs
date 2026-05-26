@@ -21,9 +21,9 @@ use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
     MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState, UploadedAudio,
-    main_window_close_action, microphone_devices_from_input_devices, reveal_save_folder_request,
-    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    validate_audio_playback_file, with_live_runtime_warning,
+    main_window_close_action, microphone_devices_from_input_devices, pinned_device_mismatch,
+    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::live_capture::{
     AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -650,19 +650,35 @@ fn start_live_capture_runtime(
         }
     };
     // True if the device we actually opened diverges from the user's pinned
-    // selection — either because the watchdog overrode it or because cpal had
-    // to fall back when the pinned device was unavailable.
-    let used_fallback_device =
-        recovery_override_active || settings.selected_microphone != resolved.device_id;
+    // selection — either because the watchdog overrode it or because cpal
+    // genuinely could not match (label differs). A stable-id drift with the
+    // same label is NOT a divergence; the resolver found the same physical
+    // device after cpal re-enumeration.
+    let used_fallback_device = recovery_override_active
+        || pinned_device_mismatch(
+            &settings.selected_microphone,
+            &settings.selected_microphone_label,
+            &resolved.device_id,
+            &resolved.device_name,
+            resolved.used_fallback_device,
+        );
 
     let (device_id, sample_rate, handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        // Persist the resolved stable id back into settings when we matched
+        // a pinned device by label — keeps the priority list and pinned id
+        // pointing at the current cpal index instead of drifting forever.
+        backend.reconcile_resolved_device_id(
+            &requested_device_id,
+            &resolved.device_id,
+            &resolved.device_name,
+        );
         backend.start_capture_session_with_device(
             resolved.sample_rate,
             chrono::Utc::now(),
             resolved.device_id.clone(),
             resolved.device_name,
-            used_fallback_device || resolved.used_fallback_device,
+            used_fallback_device,
         )?;
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (resolved.device_id, resolved.sample_rate, handler, events)

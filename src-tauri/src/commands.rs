@@ -170,6 +170,62 @@ pub fn main_window_close_action(window_label: &str) -> MainWindowCloseAction {
     }
 }
 
+/// Decide whether the device we actually opened diverges from the user's
+/// pinned selection enough to warrant a "fallback in use" warning. The
+/// `cpal` stable id embeds the host enumeration index, which is NOT stable
+/// across sleep/wake or USB re-enumeration on macOS — the same physical mic
+/// can end up with a different id while keeping its label. The label is the
+/// durable identity, so a label match is enough evidence that we are on
+/// the user's intended device and no warning should fire.
+pub fn pinned_device_mismatch(
+    pinned_id: &str,
+    pinned_label: &str,
+    resolved_id: &str,
+    resolved_label: &str,
+    resolver_fell_back: bool,
+) -> bool {
+    if resolver_fell_back {
+        return true;
+    }
+    if pinned_id == resolved_id {
+        return false;
+    }
+    if !pinned_label.is_empty() && pinned_label == resolved_label {
+        return false;
+    }
+    true
+}
+
+/// Rewrite any settings entry whose `id == requested_id` to point at
+/// `resolved_id` when the label still matches. Closes the drift where
+/// `cpal` re-enumeration assigns the same physical mic a different stable
+/// id, leaving stale ids in `selected_microphone` and the priority list.
+/// Pure — does not persist; the caller is responsible for `persist_settings`.
+pub fn reconcile_device_id_in_settings(
+    settings: &mut AppSettings,
+    requested_id: &str,
+    resolved_id: &str,
+    resolved_label: &str,
+) -> bool {
+    if requested_id == resolved_id || resolved_label.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    if settings.selected_microphone == requested_id
+        && settings.selected_microphone_label == resolved_label
+    {
+        settings.selected_microphone = resolved_id.to_string();
+        changed = true;
+    }
+    for entry in settings.microphone_priority.iter_mut() {
+        if entry.id == requested_id && entry.label == resolved_label {
+            entry.id = resolved_id.to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderRequest {
     RevealSaveFolderRequest {
         program: PathBuf::from("/usr/bin/open"),
@@ -788,6 +844,26 @@ impl AppBackend {
     /// start should use the returned device id instead of `settings.selected_microphone`.
     pub fn take_microphone_recovery_override(&mut self) -> Option<MicRecoveryOverride> {
         self.mic_recovery_override.take()
+    }
+
+    /// Update settings to point at the actual stable id we just resolved to,
+    /// when the label proves we're on the same physical device the user
+    /// pinned. Silently reconciles drift after cpal re-enumeration so the
+    /// next start has the correct id from the get-go.
+    pub fn reconcile_resolved_device_id(
+        &mut self,
+        requested_id: &str,
+        resolved_id: &str,
+        resolved_label: &str,
+    ) {
+        if reconcile_device_id_in_settings(
+            &mut self.settings,
+            requested_id,
+            resolved_id,
+            resolved_label,
+        ) {
+            self.persist_settings();
+        }
     }
 
     /// Surface a warning directly (used by the watchdog when recovery is
@@ -1551,5 +1627,166 @@ mod tests {
             derive_tray_state(AppMode::RecordingAndTranscription, true, true, true, false),
             TrayState::Recording
         );
+    }
+
+    #[test]
+    fn pinned_device_mismatch_returns_false_when_label_matches_after_id_drift() {
+        // Stable ids embed the cpal enumeration index. After USB re-enumeration
+        // the same physical mic has a new stable id but the label is unchanged.
+        // Label match alone is enough to say we're on the pinned device.
+        assert!(!pinned_device_mismatch(
+            "input-3-by-v",
+            "BY-V",
+            "input-5-by-v",
+            "BY-V",
+            false,
+        ));
+    }
+
+    #[test]
+    fn pinned_device_mismatch_returns_true_when_label_differs() {
+        assert!(pinned_device_mismatch(
+            "input-3-by-v",
+            "BY-V",
+            "default",
+            "System Default",
+            true,
+        ));
+    }
+
+    #[test]
+    fn pinned_device_mismatch_returns_true_when_resolver_explicitly_fell_back() {
+        // Even with matching labels, trust the resolver's explicit fallback signal.
+        assert!(pinned_device_mismatch(
+            "input-3-by-v",
+            "BY-V",
+            "input-3-by-v",
+            "BY-V",
+            true,
+        ));
+    }
+
+    #[test]
+    fn pinned_device_mismatch_returns_false_when_ids_match() {
+        assert!(!pinned_device_mismatch(
+            "input-3-by-v",
+            "BY-V",
+            "input-3-by-v",
+            "BY-V",
+            false,
+        ));
+    }
+
+    #[test]
+    fn pinned_device_mismatch_returns_true_when_pinned_label_empty_and_ids_differ() {
+        // Legacy settings might not have a label. Without a label, fall back
+        // to id equality only.
+        assert!(pinned_device_mismatch(
+            "input-3",
+            "",
+            "input-5",
+            "Some Mic",
+            false,
+        ));
+    }
+
+    fn settings_with_priority(
+        selected_id: &str,
+        selected_label: &str,
+        priority: Vec<(&str, &str)>,
+    ) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.selected_microphone = selected_id.to_string();
+        settings.selected_microphone_label = selected_label.to_string();
+        settings.microphone_priority = priority
+            .into_iter()
+            .map(|(id, label)| crate::settings::MicrophonePriorityEntry {
+                id: id.to_string(),
+                label: label.to_string(),
+            })
+            .collect();
+        settings
+    }
+
+    #[test]
+    fn reconcile_device_id_in_settings_rewrites_selected_and_priority_entries() {
+        let mut settings = settings_with_priority(
+            "input-3-by-v",
+            "BY-V",
+            vec![("input-3-by-v", "BY-V"), ("input-7-airpods", "AirPods")],
+        );
+
+        let changed = reconcile_device_id_in_settings(
+            &mut settings,
+            "input-3-by-v",
+            "input-5-by-v",
+            "BY-V",
+        );
+
+        assert!(changed);
+        assert_eq!(settings.selected_microphone, "input-5-by-v");
+        assert_eq!(settings.selected_microphone_label, "BY-V");
+        assert_eq!(settings.microphone_priority[0].id, "input-5-by-v");
+        assert_eq!(settings.microphone_priority[1].id, "input-7-airpods");
+    }
+
+    #[test]
+    fn reconcile_device_id_in_settings_skips_when_label_does_not_match() {
+        // If the resolver returned a different label for the same id, we
+        // can't be sure it's the same physical device — leave settings alone.
+        let mut settings = settings_with_priority(
+            "input-3-by-v",
+            "BY-V",
+            vec![("input-3-by-v", "BY-V")],
+        );
+
+        let changed = reconcile_device_id_in_settings(
+            &mut settings,
+            "input-3-by-v",
+            "input-5-other",
+            "Some Other Mic",
+        );
+
+        assert!(!changed);
+        assert_eq!(settings.selected_microphone, "input-3-by-v");
+        assert_eq!(settings.microphone_priority[0].id, "input-3-by-v");
+    }
+
+    #[test]
+    fn reconcile_device_id_in_settings_noop_when_ids_equal() {
+        let mut settings = settings_with_priority(
+            "input-3-by-v",
+            "BY-V",
+            vec![("input-3-by-v", "BY-V")],
+        );
+
+        let changed = reconcile_device_id_in_settings(
+            &mut settings,
+            "input-3-by-v",
+            "input-3-by-v",
+            "BY-V",
+        );
+
+        assert!(!changed);
+    }
+
+    #[test]
+    fn reconcile_device_id_in_settings_noop_when_resolved_label_empty() {
+        // No label means we can't safely identify the device; skip.
+        let mut settings = settings_with_priority(
+            "input-3-by-v",
+            "BY-V",
+            vec![("input-3-by-v", "BY-V")],
+        );
+
+        let changed = reconcile_device_id_in_settings(
+            &mut settings,
+            "input-3-by-v",
+            "input-5-by-v",
+            "",
+        );
+
+        assert!(!changed);
+        assert_eq!(settings.selected_microphone, "input-3-by-v");
     }
 }
