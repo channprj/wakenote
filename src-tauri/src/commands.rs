@@ -253,6 +253,15 @@ pub struct PreparedModelDownload {
     pub registry: Vec<ModelDescriptor>,
 }
 
+/// One-shot device override staged by the recovery watchdog. Carries the
+/// stable device id plus the persisted label, so the resolver can still
+/// reattach to the same physical mic when its enumeration index has moved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicRecoveryOverride {
+    pub device_id: String,
+    pub label_hint: Option<String>,
+}
+
 pub struct AppBackend {
     settings: AppSettings,
     queue: TranscriptionQueue,
@@ -266,10 +275,10 @@ pub struct AppBackend {
     chunk_id_history: VecDeque<(PathBuf, u64)>,
     chunk_id_index: HashMap<PathBuf, u64>,
     mic_health: MicHealthMonitor,
-    /// One-shot device-id override used by the recovery watchdog to force a
+    /// One-shot device override used by the recovery watchdog to force a
     /// restart onto a specific device (e.g. system default) on the next
     /// capture start. Consumed by `take_microphone_recovery_override`.
-    mic_recovery_override: Option<String>,
+    mic_recovery_override: Option<MicRecoveryOverride>,
 }
 
 impl std::fmt::Debug for AppBackend {
@@ -623,25 +632,60 @@ impl AppBackend {
         Ok(self.app_status())
     }
 
+    /// Mark the most recent live-capture start as failed. The capture
+    /// controller is torn down, but mic_health stays alive in
+    /// `AwaitingRestart` so the watchdog keeps cycling through the priority
+    /// list with backoff until a start succeeds.
     pub fn capture_start_failed(&mut self, warning: impl Into<String>) -> AppStatus {
-        self.clear_capture_session_state();
-        self.microphone_warning = Some(warning.into());
+        self.capture = None;
+        self.active_microphone_label = None;
+        self.level_monitor = LevelMonitor::default();
+
+        let warning = warning.into();
+        let priority_ids: Vec<String> = self
+            .settings
+            .microphone_priority
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+        self.mic_health.refresh_priority(priority_ids);
+        self.mic_health
+            .mark_start_failed(Instant::now(), warning.clone());
+
+        self.microphone_warning = Some(warning);
         self.app_status()
     }
 
     /// Inspect microphone-input health and decide whether the watchdog should
     /// trigger a capture recovery. Returns `None` when no action is required.
     pub fn evaluate_microphone_health(&mut self) -> Option<MicHealthAction> {
-        if self.capture.is_none() {
+        if self.settings.pause_all || !self.settings.recording_enabled {
             return None;
         }
-        if self.settings.pause_all || !self.settings.recording_enabled {
+        // Allow ticking when no capture is running so the watchdog can keep
+        // re-attempting starts after a failure (`AwaitingRestart`). When
+        // capture is fully stopped (`Idle`) mic_health returns Healthy and
+        // we exit cleanly.
+        if self.capture.is_none() && !self.mic_health.is_awaiting_restart() {
             return None;
         }
         match self.mic_health.tick(Instant::now()) {
             MicHealthVerdict::Action(action) => Some(action),
             _ => None,
         }
+    }
+
+    /// True iff recording is desired (recording_enabled && !pause_all). The
+    /// watchdog uses this to decide whether to drive an idle-but-pending
+    /// recovery loop forward, even when no live stream is currently running.
+    pub fn live_capture_should_run(&self) -> bool {
+        self.settings.recording_enabled && !self.settings.pause_all
+    }
+
+    /// True iff the watchdog is in the middle of recovering from a failed
+    /// start (no live capture, but periodic retries pending).
+    pub fn mic_recovery_pending(&self) -> bool {
+        self.capture.is_none() && self.mic_health.is_awaiting_restart()
     }
 
     /// Forward an out-of-band stall signal (cpal `StreamError`, OS device-change)
@@ -656,13 +700,32 @@ impl AppBackend {
 
     /// Pre-stage a device override for the next live-capture start. Consumed
     /// (cleared) by `take_microphone_recovery_override` at the next start.
+    /// The label is looked up from the user's priority list so the resolver
+    /// can fall back to label-matching when the cpal index has moved.
     pub fn set_microphone_recovery_override(&mut self, device_id: impl Into<String>) {
-        self.mic_recovery_override = Some(device_id.into());
+        let device_id = device_id.into();
+        let label_hint = self
+            .settings
+            .microphone_priority
+            .iter()
+            .find(|entry| entry.id == device_id)
+            .map(|entry| entry.label.clone())
+            .or_else(|| {
+                if self.settings.selected_microphone == device_id {
+                    Some(self.settings.selected_microphone_label.clone())
+                } else {
+                    None
+                }
+            });
+        self.mic_recovery_override = Some(MicRecoveryOverride {
+            device_id,
+            label_hint,
+        });
     }
 
     /// Consume any pending recovery-device override; the next live-capture
     /// start should use the returned device id instead of `settings.selected_microphone`.
-    pub fn take_microphone_recovery_override(&mut self) -> Option<String> {
+    pub fn take_microphone_recovery_override(&mut self) -> Option<MicRecoveryOverride> {
         self.mic_recovery_override.take()
     }
 

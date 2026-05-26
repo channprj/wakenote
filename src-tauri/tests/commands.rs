@@ -459,6 +459,31 @@ fn backend_surfaces_capture_start_failure_as_microphone_warning() {
             .expect_err("capture should be stopped"),
         "capture session is not running"
     );
+    // The failure transitions the watchdog into a pending-recovery state so
+    // it keeps re-attempting starts instead of going idle.
+    assert!(
+        backend.mic_recovery_pending(),
+        "capture_start_failed should leave recovery pending"
+    );
+}
+
+#[test]
+fn backend_clears_mic_recovery_pending_after_successful_start() {
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    let _ = backend.capture_start_failed("Microphone unavailable: device gone");
+    assert!(backend.mic_recovery_pending());
+
+    backend
+        .start_capture_session_for_test(10)
+        .expect("recovery start succeeds");
+
+    assert!(
+        !backend.mic_recovery_pending(),
+        "successful start should clear recovery pending",
+    );
 }
 
 #[test]

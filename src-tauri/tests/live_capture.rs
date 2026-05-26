@@ -227,6 +227,7 @@ fn live_capture_runtime_restarts_after_stream_runtime_error() {
 fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
     let resolved = resolve_input_device_from_candidates(
         "input-9-missing-airpods",
+        None,
         &[
             CandidateInputDevice {
                 id: "input-0-built-in".to_string(),
@@ -251,6 +252,7 @@ fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
 fn input_device_resolution_rejects_missing_system_default() {
     let resolved = resolve_input_device_from_candidates(
         "default",
+        None,
         &[CandidateInputDevice {
             id: "input-0-usb".to_string(),
             label: "USB Mic".to_string(),
@@ -265,6 +267,7 @@ fn input_device_resolution_rejects_missing_system_default() {
 fn input_device_resolution_uses_pinned_device_without_system_default() {
     let resolved = resolve_input_device_from_candidates(
         "input-0-usb",
+        None,
         &[CandidateInputDevice {
             id: "input-0-usb".to_string(),
             label: "USB Mic".to_string(),
@@ -276,4 +279,79 @@ fn input_device_resolution_uses_pinned_device_without_system_default() {
     assert_eq!(resolved.device_id, "input-0-usb");
     assert_eq!(resolved.device_name, "USB Mic");
     assert!(!resolved.used_fallback_device);
+}
+
+#[test]
+fn input_device_resolution_falls_back_to_label_when_index_changed() {
+    // The user pinned the USB mic when it was at index 3. After a reboot it
+    // enumerates at index 1, so its stable id is different — but the label is
+    // unchanged. The resolver should re-attach to the same physical mic via
+    // the label hint instead of silently falling back to System Default.
+    let resolved = resolve_input_device_from_candidates(
+        "input-3-usb-mic",
+        Some("USB Mic"),
+        &[
+            CandidateInputDevice {
+                id: "input-0-built-in".to_string(),
+                label: "Built-in Microphone".to_string(),
+                is_default: true,
+            },
+            CandidateInputDevice {
+                id: "input-1-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: false,
+            },
+        ],
+    )
+    .expect("label-matched device");
+
+    assert_eq!(resolved.device_id, "input-1-usb-mic");
+    assert_eq!(resolved.device_name, "USB Mic");
+    assert!(!resolved.used_fallback_device);
+}
+
+#[test]
+fn input_device_resolution_prefers_exact_id_over_label_hint() {
+    // If a candidate's id matches the request exactly, we use it even if
+    // another candidate shares the label — the id is the precise pin.
+    let resolved = resolve_input_device_from_candidates(
+        "input-1-usb-mic",
+        Some("USB Mic"),
+        &[
+            CandidateInputDevice {
+                id: "input-0-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: false,
+            },
+            CandidateInputDevice {
+                id: "input-1-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: true,
+            },
+        ],
+    )
+    .expect("id-matched device");
+
+    assert_eq!(resolved.device_id, "input-1-usb-mic");
+}
+
+#[test]
+fn input_device_resolution_ignores_empty_label_hint() {
+    // An empty label hint must never accidentally match a device whose name
+    // is also empty (some virtual devices report a blank name on macOS).
+    let resolved = resolve_input_device_from_candidates(
+        "input-9-missing",
+        Some(""),
+        &[
+            CandidateInputDevice {
+                id: "input-0-blank".to_string(),
+                label: String::new(),
+                is_default: true,
+            },
+        ],
+    )
+    .expect("fallback to default");
+
+    assert_eq!(resolved.device_id, "default");
+    assert!(resolved.used_fallback_device);
 }

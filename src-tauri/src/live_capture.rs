@@ -23,6 +23,9 @@ pub struct AudioFrame {
 pub struct AudioInputConfig {
     pub device_id: String,
     pub sample_rate: Option<u32>,
+    /// Persisted label for the requested device, used as a fallback when the
+    /// cpal enumeration index has changed and `device_id` no longer matches.
+    pub label_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +47,7 @@ impl Default for AudioInputConfig {
         Self {
             device_id: "default".to_string(),
             sample_rate: None,
+            label_hint: None,
         }
     }
 }
@@ -333,13 +337,16 @@ impl AudioInputBackend for CpalAudioInput {
 
 impl CpalAudioInput {
     pub fn default_sample_rate(device_id: &str) -> Result<u32, LiveCaptureError> {
-        let resolved = Self::resolve_device(device_id)?;
+        let resolved = Self::resolve_device(device_id, None)?;
         Ok(resolved.sample_rate)
     }
 
-    pub fn resolve_device(device_id: &str) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
+    pub fn resolve_device(
+        device_id: &str,
+        label_hint: Option<&str>,
+    ) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
         let host = cpal::default_host();
-        let (device, resolved) = select_device_with_resolution(&host, device_id)?;
+        let (device, resolved) = select_device_with_resolution(&host, device_id, label_hint)?;
         let config = device
             .default_input_config()
             .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
@@ -366,7 +373,11 @@ fn build_cpal_stream(
     runtime_error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, LiveCaptureError> {
     let host = cpal::default_host();
-    let (device, _) = select_device_with_resolution(&host, &config.device_id)?;
+    let (device, _) = select_device_with_resolution(
+        &host,
+        &config.device_id,
+        config.label_hint.as_deref(),
+    )?;
     let supported_config = device
         .default_input_config()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
@@ -436,6 +447,7 @@ fn build_cpal_stream(
 fn select_device_with_resolution(
     host: &cpal::Host,
     device_id: &str,
+    label_hint: Option<&str>,
 ) -> Result<(cpal::Device, ResolvedInputDevice), LiveCaptureError> {
     let default_device = host.default_input_device();
     if device_id == "default" {
@@ -448,10 +460,14 @@ fn select_device_with_resolution(
     let devices = host
         .input_devices()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
+    // First pass: exact id match.
+    let mut label_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
+    let mut legacy_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
+    let label_hint = label_hint.filter(|label| !label.is_empty());
     for (index, device) in devices.enumerate() {
         let label = device.name().unwrap_or_default();
         let stable_id = stable_input_device_id(index, &label);
-        if stable_id == device_id || label == device_id {
+        if stable_id == device_id {
             return Ok((
                 device,
                 ResolvedInputDevice {
@@ -461,6 +477,35 @@ fn select_device_with_resolution(
                 },
             ));
         }
+        if label_match.is_none() {
+            if let Some(hint) = label_hint {
+                if label == hint {
+                    label_match = Some((
+                        device,
+                        ResolvedInputDevice {
+                            device_id: stable_id.clone(),
+                            device_name: label.clone(),
+                            used_fallback_device: false,
+                        },
+                    ));
+                    continue;
+                }
+            }
+        }
+        if legacy_match.is_none() && label == device_id {
+            legacy_match = Some((
+                device,
+                ResolvedInputDevice {
+                    device_id: stable_id,
+                    device_name: label,
+                    used_fallback_device: false,
+                },
+            ));
+        }
+    }
+
+    if let Some(matched) = label_match.or(legacy_match) {
+        return Ok(matched);
     }
 
     let Some(default_device) = default_device else {
@@ -479,6 +524,7 @@ fn default_input_resolution(used_fallback_device: bool) -> ResolvedInputDevice {
 
 pub fn resolve_input_device_from_candidates(
     requested_device_id: &str,
+    label_hint: Option<&str>,
     candidates: &[CandidateInputDevice],
 ) -> Option<ResolvedInputDevice> {
     if requested_device_id == "default" {
@@ -488,9 +534,33 @@ pub fn resolve_input_device_from_candidates(
             .then(|| default_input_resolution(false));
     }
 
-    if let Some(candidate) = candidates.iter().find(|candidate| {
-        candidate.id == requested_device_id || candidate.label == requested_device_id
-    }) {
+    // Exact id match wins: the stable id is the precise pin and a different
+    // device that happens to share a label must not be selected.
+    if let Some(candidate) = candidates.iter().find(|c| c.id == requested_device_id) {
+        return Some(ResolvedInputDevice {
+            device_id: candidate.id.clone(),
+            device_name: candidate.label.clone(),
+            used_fallback_device: false,
+        });
+    }
+
+    // Label-based fallback. The stable id embeds the cpal enumeration index,
+    // which is not actually stable across reboots / hot-swaps on macOS — but
+    // the device label usually is. Match by the persisted label so the same
+    // physical mic is re-acquired after its index moves.
+    let label_hint = label_hint.filter(|label| !label.is_empty());
+    if let Some(label) = label_hint {
+        if let Some(candidate) = candidates.iter().find(|c| c.label == label) {
+            return Some(ResolvedInputDevice {
+                device_id: candidate.id.clone(),
+                device_name: candidate.label.clone(),
+                used_fallback_device: false,
+            });
+        }
+    }
+
+    // Legacy: callers used to pass a label string as `requested_device_id`.
+    if let Some(candidate) = candidates.iter().find(|c| c.label == requested_device_id) {
         return Some(ResolvedInputDevice {
             device_id: candidate.id.clone(),
             device_name: candidate.label.clone(),

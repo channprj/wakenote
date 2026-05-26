@@ -283,10 +283,14 @@ fn fallback_microphones(selected_microphone: &str) -> Vec<MicrophoneDevice> {
 
 fn resolve_capture_device_with_timeout(
     device_id: String,
+    label_hint: Option<String>,
 ) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let _ = sender.send(CpalAudioInput::resolve_device(&device_id));
+        let _ = sender.send(CpalAudioInput::resolve_device(
+            &device_id,
+            label_hint.as_deref(),
+        ));
     });
 
     match receiver.recv_timeout(AUDIO_DEVICE_RESOLVE_TIMEOUT) {
@@ -628,9 +632,17 @@ fn start_live_capture_runtime(
         backend.take_microphone_recovery_override()
     };
     let recovery_override_active = recovery_override.is_some();
-    let requested_device_id =
-        recovery_override.unwrap_or_else(|| settings.selected_microphone.clone());
-    let resolved = match resolve_capture_device_with_timeout(requested_device_id.clone()) {
+    let (requested_device_id, requested_label_hint) = match recovery_override {
+        Some(override_data) => (override_data.device_id, override_data.label_hint),
+        None => (
+            settings.selected_microphone.clone(),
+            Some(settings.selected_microphone_label.clone()).filter(|label| !label.is_empty()),
+        ),
+    };
+    let resolved = match resolve_capture_device_with_timeout(
+        requested_device_id.clone(),
+        requested_label_hint.clone(),
+    ) {
         Ok(resolved) => resolved,
         Err(error) => {
             let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
@@ -670,6 +682,7 @@ fn start_live_capture_runtime(
         AudioInputConfig {
             device_id,
             sample_rate: Some(sample_rate),
+            label_hint: requested_label_hint,
         },
         move |frame| {
             let waveform_levels = overlay::waveform_levels_from_samples(
@@ -1131,7 +1144,21 @@ fn spawn_mic_recovery_watchdog(
                 },
                 None => continue,
             };
-            if !live_running {
+            // Decide whether this tick should do anything at all. We act when
+            // the stream is running (normal heartbeat/silence watching) OR
+            // when no stream is running but the user still wants recording
+            // AND the backend is mid-recovery from a previous start failure.
+            let (should_evaluate, recovery_pending) = match backend_state.lock() {
+                Ok(backend) => (
+                    backend.live_capture_should_run() || live_running,
+                    backend.mic_recovery_pending(),
+                ),
+                Err(_) => continue,
+            };
+            if !live_running && !recovery_pending {
+                continue;
+            }
+            if !should_evaluate {
                 continue;
             }
             // If cpal explicitly told us the stream broke, latch that as a

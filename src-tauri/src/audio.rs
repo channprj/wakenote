@@ -353,6 +353,10 @@ enum MicHealthState {
     Idle,
     Watching,
     Cooldown,
+    /// Live capture is not running but the user still wants recording on, so
+    /// the watchdog must keep re-attempting starts. Set by `mark_start_failed`
+    /// and cleared on the next successful `capture_started`.
+    AwaitingRestart,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,6 +460,50 @@ impl MicHealthMonitor {
         self.last_nonzero_at = None;
         self.cooldown_until = None;
         self.pending_recovery_reason = None;
+        self.consecutive_failures = 0;
+    }
+
+    /// Record that the most recent live-capture start attempt failed before
+    /// the data callback ever fired. Transitions the monitor into
+    /// `AwaitingRestart` so the watchdog keeps cycling through the priority
+    /// list with a growing cooldown, rather than going idle.
+    pub fn mark_start_failed(&mut self, now: Instant, reason: impl Into<String>) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.cooldown_until = Some(now + self.current_cooldown());
+        self.state = MicHealthState::AwaitingRestart;
+        self.pending_recovery_reason = Some(reason.into());
+        self.last_frame_at = None;
+        self.last_nonzero_at = None;
+
+        // Advance to the next priority entry so the next emitted action
+        // targets a different device — this keeps a wedged device from being
+        // re-tried at full rate.
+        let next_index = self.next_priority_index();
+        self.active_index = next_index;
+        if next_index == 0 {
+            self.last_top_priority_attempt_at = Some(now);
+        }
+    }
+
+    /// True iff the monitor is waiting to re-attempt a capture start (i.e.
+    /// the previous start failed and no live session is running). Used by the
+    /// watchdog to decide whether to keep ticking when capture is `None`.
+    pub fn is_awaiting_restart(&self) -> bool {
+        matches!(self.state, MicHealthState::AwaitingRestart)
+    }
+
+    /// Resync the priority list without touching health state. Used right
+    /// before [`Self::mark_start_failed`] to make sure the monitor cycles
+    /// over the user's current selection, including the case where the
+    /// start failure happened before [`Self::capture_started`] could prime
+    /// the list.
+    pub fn refresh_priority(&mut self, priority: Vec<String>) {
+        self.priority = priority;
+        // If active_index is now out of range, saturate at the end so the
+        // next cycle wraps back to position 0.
+        if !self.priority.is_empty() && self.active_index > self.priority.len() {
+            self.active_index = self.priority.len();
+        }
     }
 
     /// Latch an out-of-band stall signal (e.g. a cpal `StreamError`). The next
@@ -513,7 +561,33 @@ impl MicHealthMonitor {
                 self.evaluate(now)
             }
             MicHealthState::Watching => self.evaluate(now),
+            MicHealthState::AwaitingRestart => {
+                if let Some(cooldown_until) = self.cooldown_until {
+                    if now < cooldown_until {
+                        return MicHealthVerdict::InCooldown;
+                    }
+                }
+                self.emit_restart_action(now)
+            }
         }
+    }
+
+    fn emit_restart_action(&mut self, now: Instant) -> MicHealthVerdict {
+        let device_id = self
+            .priority
+            .get(self.active_index)
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+        let reason = self
+            .pending_recovery_reason
+            .take()
+            .unwrap_or_else(|| "retrying microphone capture after start failure".to_string());
+        // Re-arm the cooldown so a slow watchdog (or a test that keeps ticking
+        // without acting) does not emit at full rate. The cooldown grows with
+        // `consecutive_failures`; it is reset only on a successful
+        // `capture_started` followed by a non-silent frame.
+        self.cooldown_until = Some(now + self.current_cooldown());
+        MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, reason })
     }
 
     fn evaluate(&mut self, now: Instant) -> MicHealthVerdict {
@@ -1041,5 +1115,88 @@ mod mic_health_tests {
 
         let (device_id, _) = expect_switch_to(monitor.tick(started + Duration::from_millis(400)));
         assert_eq!(device_id, "mic-A");
+    }
+
+    #[test]
+    fn mark_start_failed_keeps_watchdog_in_retry_mode_after_cooldown() {
+        // The live capture start itself failed (e.g. cpal returned an error),
+        // so the backend has no active session — but we still want recording
+        // and the watchdog must keep trying instead of going Idle.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        let prio = priority(&["mic-A", "default"]);
+        monitor.capture_started(started, prio.clone(), 0);
+        monitor.mark_start_failed(started, "cpal failed to open mic-A");
+
+        assert!(monitor.is_awaiting_restart());
+        // One ms before the base cooldown expires we are still gated.
+        assert_eq!(
+            monitor.tick(started + Duration::from_millis(199)),
+            MicHealthVerdict::InCooldown
+        );
+        // One ms after, the watchdog volunteers the next priority entry.
+        let (device_id, reason) =
+            expect_switch_to(monitor.tick(started + Duration::from_millis(201)));
+        assert_eq!(device_id, "default");
+        assert_eq!(reason, "cpal failed to open mic-A");
+    }
+
+    #[test]
+    fn consecutive_start_failures_cycle_through_priority_with_growing_cooldown() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let mut now = Instant::now();
+        let prio = priority(&["mic-A", "mic-B", "mic-C"]);
+        monitor.capture_started(now, prio.clone(), 0);
+
+        // Each failure advances the cycle by one entry and applies the next
+        // cooldown step (200 → 400 → 800ms in the fast config).
+        let expected = [("mic-B", 200u64), ("mic-C", 400), ("mic-A", 800)];
+        for (target, cooldown_ms) in expected {
+            monitor.mark_start_failed(now, format!("failed to open {target}"));
+            assert_eq!(
+                monitor.tick(now + Duration::from_millis(cooldown_ms - 1)),
+                MicHealthVerdict::InCooldown,
+                "expected cooldown gate at {cooldown_ms}ms for {target}",
+            );
+            let (device_id, _) =
+                expect_switch_to(monitor.tick(now + Duration::from_millis(cooldown_ms + 1)));
+            assert_eq!(device_id, target);
+            now += Duration::from_millis(cooldown_ms + 5);
+        }
+    }
+
+    #[test]
+    fn successful_capture_started_clears_awaiting_restart() {
+        // After a start failure the monitor is in AwaitingRestart. When the
+        // next start succeeds, capture_started must reset the state so we go
+        // back to normal heartbeat watching.
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        let prio = priority(&["mic-A", "default"]);
+        monitor.capture_started(started, prio.clone(), 0);
+        monitor.mark_start_failed(started, "failure");
+        assert!(monitor.is_awaiting_restart());
+
+        // The watchdog called start_live_capture_runtime and it succeeded.
+        let resumed = started + Duration::from_millis(500);
+        monitor.capture_started(resumed, prio.clone(), 1);
+        assert!(!monitor.is_awaiting_restart());
+        // No frames yet — but we are inside the grace window.
+        assert_eq!(
+            monitor.tick(resumed + Duration::from_millis(10)),
+            MicHealthVerdict::AwaitingFirstFrame
+        );
+    }
+
+    #[test]
+    fn mark_start_failed_without_priority_falls_back_to_default() {
+        let mut monitor = MicHealthMonitor::with_config(fast_config());
+        let started = Instant::now();
+        monitor.capture_started(started, Vec::new(), 0);
+        monitor.mark_start_failed(started, "no priority configured");
+
+        let (device_id, _) =
+            expect_switch_to(monitor.tick(started + Duration::from_millis(300)));
+        assert_eq!(device_id, "default");
     }
 }
