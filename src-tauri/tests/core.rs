@@ -1,7 +1,9 @@
 use chrono::{TimeZone, Utc};
 use wakenote::audio::{
-    GateConfig, GateDecision, SpeechGate, dbfs_from_rms, input_devices_from_labels,
+    GateConfig, GateDecision, MicHealthConfig, SpeechGate, TOP_PRIORITY_RECHECK, dbfs_from_rms,
+    input_devices_from_labels,
 };
+use wakenote::commands::AppBackend;
 use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
@@ -746,4 +748,46 @@ fn default_registry_uses_pinned_remote_sha256() {
             "{model_id} checksum must be lowercase hex"
         );
     }
+}
+
+#[test]
+fn silence_warning_verdict_populates_app_status() {
+    use std::time::{Duration, Instant};
+
+    let mut backend = AppBackend::default();
+    backend.update_settings_for_test_silence_warning();
+    backend.override_mic_health_config_for_test(MicHealthConfig {
+        startup_grace: Duration::from_millis(10),
+        stall_threshold: Duration::from_millis(100),
+        heartbeat_threshold: Duration::from_secs(30),
+        recovery_cooldown: Duration::from_millis(50),
+        max_recovery_cooldown: Duration::from_millis(200),
+        top_priority_recheck: TOP_PRIORITY_RECHECK,
+    });
+    backend.start_capture_session_for_test(48_000).unwrap();
+
+    // Feed silent frames over >1 s so that the silence_age reported in
+    // `since` converts to at least 1 whole second.
+    let mut clock = Instant::now() + Duration::from_millis(20);
+    for _ in 0..12 {
+        backend.observe_audio_for_test(-120.0, clock);
+        clock += Duration::from_millis(100);
+    }
+    backend.tick_microphone_health_at(clock);
+
+    let warning = backend
+        .app_status()
+        .silence_warning
+        .expect("silence_warning should be Some after silence exceeds stall_threshold");
+    assert!(!warning.device_label.is_empty());
+    assert!(warning.seconds >= 1, "seconds should be at least 1, got {}", warning.seconds);
+
+    // A non-silent frame followed by another tick should clear the warning.
+    clock += Duration::from_millis(30);
+    backend.observe_audio_for_test(-30.0, clock);
+    backend.tick_microphone_health_at(clock);
+    assert!(
+        backend.app_status().silence_warning.is_none(),
+        "silence_warning should be None after healthy audio"
+    );
 }

@@ -209,6 +209,14 @@ pub struct MicrophoneDevice {
     pub fallback: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SilenceWarning {
+    /// User-visible label of the device that has been silent.
+    pub device_label: String,
+    /// How long the input has been digitally silent, in whole seconds.
+    pub seconds: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppStatus {
     pub mode: AppMode,
@@ -217,6 +225,7 @@ pub struct AppStatus {
     pub active_model: String,
     pub active_microphone: String,
     pub microphone_warning: Option<String>,
+    pub silence_warning: Option<SilenceWarning>,
     pub runtime_warning: Option<String>,
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
@@ -269,6 +278,7 @@ pub struct AppBackend {
     level_monitor: LevelMonitor,
     active_microphone_label: Option<String>,
     microphone_warning: Option<String>,
+    silence_warning: Option<SilenceWarning>,
     persistence: Option<AppPersistence>,
     live_event_handler: Option<LiveEventHandler>,
     pending_live_events: Vec<LiveTranscriptEvent>,
@@ -290,6 +300,7 @@ impl std::fmt::Debug for AppBackend {
             .field("level_monitor", &self.level_monitor)
             .field("active_microphone_label", &self.active_microphone_label)
             .field("microphone_warning", &self.microphone_warning)
+            .field("silence_warning", &self.silence_warning)
             .field("persistence", &self.persistence)
             .field(
                 "live_event_handler",
@@ -312,6 +323,7 @@ impl Default for AppBackend {
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
+            silence_warning: None,
             persistence: None,
             live_event_handler: None,
             pending_live_events: Vec::new(),
@@ -333,6 +345,7 @@ impl AppBackend {
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
+            silence_warning: None,
             persistence: Some(persistence),
             live_event_handler: None,
             pending_live_events: Vec::new(),
@@ -623,6 +636,37 @@ impl AppBackend {
         Ok(())
     }
 
+    /// Replace the mic-health monitor with one using a custom config.
+    /// Call this before `start_capture_session_for_test` so that
+    /// `capture_started` is invoked on the new monitor.
+    pub fn override_mic_health_config_for_test(&mut self, config: crate::audio::MicHealthConfig) {
+        self.mic_health = MicHealthMonitor::with_config(config);
+    }
+
+    /// Inject a single audio frame directly into the health monitor.
+    pub fn observe_audio_for_test(&mut self, dbfs: f32, at: Instant) {
+        self.mic_health.observe_frame(dbfs, at);
+    }
+
+    /// Tick the health monitor with a caller-supplied `now`, updating
+    /// `self.silence_warning` exactly as the production path does.
+    pub fn tick_microphone_health_at(&mut self, now: Instant) {
+        self.evaluate_microphone_health_at(now);
+    }
+
+    /// Seed the settings with a named microphone so the silence warning
+    /// carries a non-empty `device_label`.
+    pub fn update_settings_for_test_silence_warning(&mut self) {
+        use crate::settings::MicrophonePriorityEntry;
+        self.settings.apply_patch(crate::settings::SettingsPatch {
+            microphone_priority: Some(vec![MicrophonePriorityEntry {
+                id: "test-mic".to_string(),
+                label: "Test Microphone".to_string(),
+            }]),
+            ..crate::settings::SettingsPatch::default()
+        });
+    }
+
     pub fn stop_capture_session(&mut self) -> Result<AppStatus, String> {
         if let Some(capture) = self.capture.as_mut() {
             let events = capture.flush().map_err(|error| error.to_string())?;
@@ -658,8 +702,15 @@ impl AppBackend {
 
     /// Inspect microphone-input health and decide whether the watchdog should
     /// trigger a capture recovery. Returns `None` when no action is required.
+    /// Side effect: updates `self.silence_warning` based on the verdict so
+    /// `app_status()` exposes the warning to the frontend.
     pub fn evaluate_microphone_health(&mut self) -> Option<MicHealthAction> {
+        self.evaluate_microphone_health_at(Instant::now())
+    }
+
+    fn evaluate_microphone_health_at(&mut self, now: Instant) -> Option<MicHealthAction> {
         if self.settings.pause_all || !self.settings.recording_enabled {
+            self.silence_warning = None;
             return None;
         }
         // Allow ticking when no capture is running so the watchdog can keep
@@ -667,11 +718,32 @@ impl AppBackend {
         // capture is fully stopped (`Idle`) mic_health returns Healthy and
         // we exit cleanly.
         if self.capture.is_none() && !self.mic_health.is_awaiting_restart() {
+            self.silence_warning = None;
             return None;
         }
-        match self.mic_health.tick(Instant::now()) {
-            MicHealthVerdict::Action(action) => Some(action),
-            _ => None,
+        let verdict = self.mic_health.tick(now);
+        match verdict {
+            MicHealthVerdict::Action(action) => {
+                self.silence_warning = None;
+                Some(action)
+            }
+            MicHealthVerdict::SilenceWarning { since } => {
+                let device_label = self
+                    .active_microphone_label
+                    .clone()
+                    .unwrap_or_else(|| self.settings.selected_microphone_label.clone());
+                self.silence_warning = Some(SilenceWarning {
+                    device_label,
+                    seconds: since.as_secs() as u32,
+                });
+                None
+            }
+            MicHealthVerdict::Healthy
+            | MicHealthVerdict::AwaitingFirstFrame
+            | MicHealthVerdict::InCooldown => {
+                self.silence_warning = None;
+                None
+            }
         }
     }
 
@@ -986,6 +1058,7 @@ impl AppBackend {
                 .clone()
                 .unwrap_or_else(|| self.settings.selected_microphone_label.clone()),
             microphone_warning: self.microphone_warning.clone(),
+            silence_warning: self.silence_warning.clone(),
             runtime_warning,
             threshold_dbfs: self.settings.threshold_dbfs,
             level: self.level_monitor.snapshot(),
