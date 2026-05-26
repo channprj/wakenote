@@ -425,8 +425,9 @@ impl MicHealthMonitor {
     /// non-empty in practice — the watchdog seeds at least one entry).
     /// `active_index` is the position in that list of the device the live
     /// capture actually opened. Devices that fail to be located in the
-    /// priority list saturate at `priority.len()` so the next stall still
-    /// advances back into the list (mod len).
+    /// priority list saturate at `priority.len()`. Both `escalate()` (real
+    /// stall) and `mark_start_failed()` (start attempt failed) treat the
+    /// saturated state as "start from `priority[0]`".
     pub fn capture_started(
         &mut self,
         now: Instant,
@@ -479,8 +480,15 @@ impl MicHealthMonitor {
         // Advance to the next entry in the priority list. The device we just
         // failed to open is unavailable right now; walk forward (wrapping
         // mod len) until something opens successfully or every entry fails.
+        // When `active_index` is saturated (the active device isn't in the
+        // priority list — see `capture_started`'s clamp), start from
+        // `priority[0]` rather than skipping it.
         if !self.priority.is_empty() {
-            self.active_index = (self.active_index + 1) % self.priority.len();
+            self.active_index = if self.active_index >= self.priority.len() {
+                0
+            } else {
+                (self.active_index + 1) % self.priority.len()
+            };
             if self.active_index == 0 {
                 self.last_top_priority_attempt_at = Some(now);
             }
@@ -1345,7 +1353,6 @@ mod mic_health_tests {
         monitor.observe_frame(-30.0, now);
 
         // Simulate watchdog deciding to switch and the start failing.
-        monitor.refresh_priority(prio);
         monitor.mark_start_failed(now, "start failed");
         // Walk past the cooldown.
         now += Duration::from_millis(20);
@@ -1389,5 +1396,33 @@ mod mic_health_tests {
         // mark_start_failed advances by 1 each time, starting from active_index 0.
         // Sequence of resulting active_index: 1 → 2 → 0 → 1 → 2 → 0.
         assert_eq!(seen, vec!["b", "c", "a", "b", "c", "a"]);
+    }
+
+    #[test]
+    fn mark_start_failed_from_saturated_active_index_resets_to_priority_zero() {
+        // capture_started clamps active_index to priority.len() when the active
+        // device isn't in the priority list (e.g. a one-shot override). A
+        // subsequent start failure must walk back to priority[0], not skip it.
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(10),
+            max_recovery_cooldown: Duration::from_millis(50),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec!["mic-a".to_string(), "mic-b".to_string(), "mic-c".to_string()];
+        let now = Instant::now();
+        // Saturated: active_index = priority.len() (off-list device).
+        monitor.capture_started(now, prio.clone(), prio.len());
+
+        monitor.mark_start_failed(now, "off-list device start failed");
+        let after = now + Duration::from_millis(20);
+        match monitor.tick(after) {
+            MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
+                assert_eq!(device_id, "mic-a");
+            }
+            other => panic!("expected SwitchTo(mic-a), got {other:?}"),
+        }
     }
 }
