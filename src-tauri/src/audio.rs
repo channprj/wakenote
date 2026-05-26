@@ -294,9 +294,8 @@ pub const TOP_PRIORITY_RECHECK: Duration = Duration::from_secs(600);
 pub struct MicHealthConfig {
     /// Grace period after capture start during which no recovery action fires.
     pub startup_grace: Duration,
-    /// How long the stream must stay digitally silent before a recovery action.
-    /// Secondary guard for streams that keep delivering callbacks but only
-    /// zero-valued samples.
+    /// How long the stream must stay digitally silent before the watchdog
+    /// surfaces a UI warning. Does NOT trigger any device switch.
     pub stall_threshold: Duration,
     /// How long the cpal data callback can be silent (no frames at all) before
     /// the stream is declared wedged. Primary stall signal — catches the common
@@ -318,7 +317,9 @@ impl Default for MicHealthConfig {
     fn default() -> Self {
         Self {
             startup_grace: Duration::from_millis(1_500),
-            stall_threshold: Duration::from_millis(3_000),
+            // Threshold for the UI warning only. Digital silence used to trigger
+            // device cycling; now it just notifies the user so they can decide.
+            stall_threshold: Duration::from_secs(12),
             heartbeat_threshold: Duration::from_millis(1_000),
             recovery_cooldown: Duration::from_millis(3_500),
             max_recovery_cooldown: Duration::from_secs(30),
@@ -346,6 +347,10 @@ pub enum MicHealthVerdict {
     AwaitingFirstFrame,
     InCooldown,
     Action(MicHealthAction),
+    /// Stream is alive (callbacks firing) but every frame has been digital
+    /// silence for `since`. The watchdog does NOT switch devices — surfaced
+    /// to the UI for the user to investigate manually.
+    SilenceWarning { since: Duration },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,8 +368,6 @@ enum MicHealthState {
 enum StallKind {
     /// No data callback at all for `heartbeat_threshold`.
     Heartbeat,
-    /// Callbacks arrive but every frame is digital silence for `stall_threshold`.
-    Silence,
 }
 
 #[derive(Debug, Clone)]
@@ -607,31 +610,29 @@ impl MicHealthMonitor {
             return MicHealthVerdict::AwaitingFirstFrame;
         }
 
-        // Heartbeat is the primary stall signal: if cpal stops firing the data
-        // callback (e.g. CoreAudio wedge, device hot-swap, sleep/wake) the
-        // frontend waveform freezes long before silence-based detection trips.
+        // Heartbeat is the only signal that triggers an automatic restart —
+        // it means cpal stopped firing the data callback (CoreAudio wedge,
+        // device hot-swap, sleep/wake).
         let heartbeat_anchor = self.last_frame_at.unwrap_or(started_at);
         let heartbeat_age = now.saturating_duration_since(heartbeat_anchor);
-        let silence_anchor = self.last_nonzero_at.unwrap_or(started_at);
-        let silence_age = now.saturating_duration_since(silence_anchor);
-
         if heartbeat_age >= self.config.heartbeat_threshold {
             return self.escalate(now, stall_reason(StallKind::Heartbeat, heartbeat_age));
         }
+
+        // Digital silence is NOT a failure: it could be a quiet user, hardware
+        // mute, OS noise gate. Report it as a warning so the UI can prompt the
+        // user, but don't switch devices.
+        let silence_anchor = self.last_nonzero_at.unwrap_or(started_at);
+        let silence_age = now.saturating_duration_since(silence_anchor);
         if silence_age >= self.config.stall_threshold {
-            return self.escalate(now, stall_reason(StallKind::Silence, silence_age));
+            return MicHealthVerdict::SilenceWarning { since: silence_age };
         }
 
         // Audio is flowing — but if we are running on a non-top-priority
-        // device, periodically attempt to re-acquire the top device. The
-        // user's pinned mic may have come back online (USB reconnect, app
-        // released hold, etc.) and they explicitly want to favour it.
+        // device, periodically attempt to re-acquire the top device.
         if self.should_attempt_top_priority_upgrade(now) {
             let device_id = self.priority[0].clone();
             self.last_top_priority_attempt_at = Some(now);
-            // No cooldown for an upgrade attempt: we are currently healthy.
-            // If the upgrade fails, the next stall will go through escalate
-            // and pick up a cooldown there.
             return MicHealthVerdict::Action(MicHealthAction::SwitchTo {
                 device_id,
                 reason: format!(
@@ -708,7 +709,6 @@ fn stall_reason(kind: StallKind, age: Duration) -> String {
     let secs = age.as_secs_f32();
     match kind {
         StallKind::Heartbeat => format!("no audio frames received for {secs:.1}s"),
-        StallKind::Silence => format!("audio input stuck at digital silence for {secs:.1}s"),
     }
 }
 
@@ -794,20 +794,31 @@ mod mic_health_tests {
     }
 
     #[test]
-    fn stall_on_pinned_device_switches_to_next_in_priority() {
-        // Priority: [usb-mic, default]. We open usb-mic (index 0) but every
-        // frame is digital silence. The watchdog must switch to the next
-        // entry — "default" — instead of giving up.
-        let mut monitor = MicHealthMonitor::with_config(fast_config());
-        let started = Instant::now();
-        monitor.capture_started(started, priority(&["usb-mic", "default"]), 0);
+    fn digital_silence_alone_does_not_switch_devices() {
+        // Regression guard for the 2026-05-26 silence-as-warning change: even when
+        // the stream sits at digital silence forever, the watchdog must not emit
+        // a SwitchTo action. Only heartbeat loss / StreamError do that now.
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(100),
+            stall_threshold: Duration::from_millis(300),
+            heartbeat_threshold: Duration::from_secs(60),
+            recovery_cooldown: Duration::from_millis(100),
+            max_recovery_cooldown: Duration::from_secs(1),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec!["mic-a".to_string(), "mic-b".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio, 0);
 
-        for offset_ms in (0..=500).step_by(50) {
-            monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
+        for _ in 0..40 {
+            now += Duration::from_millis(120);
+            monitor.observe_frame(-120.0, now);
+            let verdict = monitor.tick(now);
+            assert!(
+                !matches!(verdict, MicHealthVerdict::Action(_)),
+                "silence must not produce an action; got {verdict:?}"
+            );
         }
-
-        let (device_id, _) = expect_switch_to(monitor.tick(started + Duration::from_millis(500)));
-        assert_eq!(device_id, "default");
     }
 
     #[test]
@@ -1032,9 +1043,9 @@ mod mic_health_tests {
     }
 
     #[test]
-    fn silence_path_still_fires_when_callbacks_keep_arriving_but_are_all_zero() {
-        // Defence in depth: every buffer is digital silence even though the
-        // heartbeat is healthy. The silence path must still recover.
+    fn silence_path_emits_warning_when_callbacks_keep_arriving_but_are_all_zero() {
+        // Callbacks arrive (heartbeat healthy) but every frame is digital silence.
+        // The watchdog must emit SilenceWarning, not a SwitchTo action.
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let started = Instant::now();
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
@@ -1044,12 +1055,10 @@ mod mic_health_tests {
             monitor.observe_frame(-120.0, started + Duration::from_millis(offset_ms));
         }
 
-        let (device_id, reason) =
-            expect_switch_to(monitor.tick(started + Duration::from_millis(500)));
-        assert_eq!(device_id, "default");
+        let verdict = monitor.tick(started + Duration::from_millis(500));
         assert!(
-            reason.contains("digital silence"),
-            "expected silence reason, got {reason}"
+            matches!(verdict, MicHealthVerdict::SilenceWarning { .. }),
+            "expected SilenceWarning, got {verdict:?}"
         );
     }
 
@@ -1198,5 +1207,69 @@ mod mic_health_tests {
         let (device_id, _) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(300)));
         assert_eq!(device_id, "default");
+    }
+
+    #[test]
+    fn silence_emits_warning_without_switching() {
+        // Stream is running on priority[0], frames keep arriving but every sample
+        // is digital silence. Watchdog must emit SilenceWarning, NOT a SwitchTo.
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(100),
+            stall_threshold: Duration::from_millis(500),
+            heartbeat_threshold: Duration::from_millis(5_000),
+            recovery_cooldown: Duration::from_millis(100),
+            max_recovery_cooldown: Duration::from_secs(1),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec!["mic-a".to_string(), "mic-b".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio.clone(), 0);
+
+        // Past startup grace, deliver frames that are all digital silence.
+        for _ in 0..6 {
+            now += Duration::from_millis(150);
+            monitor.observe_frame(-120.0, now);
+        }
+
+        let verdict = monitor.tick(now);
+        match verdict {
+            MicHealthVerdict::SilenceWarning { since } => {
+                assert!(since >= Duration::from_millis(500), "since={since:?}");
+            }
+            other => panic!("expected SilenceWarning, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn silence_warning_clears_when_nonzero_frame_arrives() {
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(100),
+            stall_threshold: Duration::from_millis(500),
+            heartbeat_threshold: Duration::from_millis(5_000),
+            recovery_cooldown: Duration::from_millis(100),
+            max_recovery_cooldown: Duration::from_secs(1),
+            top_priority_recheck: Duration::from_secs(300),
+        });
+        let prio = vec!["mic-a".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio, 0);
+
+        for _ in 0..6 {
+            now += Duration::from_millis(150);
+            monitor.observe_frame(-120.0, now);
+        }
+        assert!(matches!(
+            monitor.tick(now),
+            MicHealthVerdict::SilenceWarning { .. }
+        ));
+
+        // A real audio frame arrives — next tick should be Healthy.
+        now += Duration::from_millis(150);
+        monitor.observe_frame(-40.0, now);
+        let verdict = monitor.tick(now);
+        assert!(
+            matches!(verdict, MicHealthVerdict::Healthy),
+            "expected Healthy after non-silent frame, got {verdict:?}"
+        );
     }
 }
