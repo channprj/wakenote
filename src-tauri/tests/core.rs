@@ -772,6 +772,7 @@ fn silence_warning_verdict_populates_app_status() {
         recovery_cooldown: Duration::from_millis(50),
         max_recovery_cooldown: Duration::from_millis(200),
         top_priority_recheck: TOP_PRIORITY_RECHECK,
+        force_default_after_escalations: u32::MAX,
     });
     backend.start_capture_session_for_test(48_000).unwrap();
 

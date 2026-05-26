@@ -68,6 +68,16 @@ const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
 const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
+/// Sleep inserted between a watchdog-driven `stop` and the immediately
+/// following `start`. macOS CoreAudio occasionally retains wedged state
+/// when a device is reopened the instant after it's released; a brief
+/// pause lets the driver drop its handles and avoids re-opening into the
+/// same wedged stream.
+const MIC_RECOVERY_SETTLING_DELAY: Duration = Duration::from_millis(200);
+/// After this many consecutive watchdog escalations without a single
+/// non-silent frame, surface a UI warning so the user knows the watchdog
+/// is fighting (and that pressing Refresh or changing priority may help).
+const MIC_WEDGE_WARNING_THRESHOLD: u32 = 4;
 const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
 const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 5_000;
 
@@ -1189,6 +1199,21 @@ fn spawn_mic_recovery_watchdog(
                 Ok(mut backend) => backend.evaluate_microphone_health(),
                 Err(_) => continue,
             };
+            // Surface a UI warning once the watchdog has been escalating
+            // without recovery long enough that the user is likely to
+            // benefit from intervention (Refresh / change priority).
+            // Static text — the warning key on the frontend hashes the
+            // content, and we want it stable across ticks so a dismiss
+            // sticks until conditions change.
+            if let Ok(mut backend) = backend_state.lock() {
+                let escalations = backend.mic_escalations_since_first_frame();
+                if escalations >= MIC_WEDGE_WARNING_THRESHOLD {
+                    backend.set_microphone_warning(
+                        "Microphone has not produced audio after several recovery attempts. \
+                         Try Refresh or change the microphone priority.",
+                    );
+                }
+            }
             let Some(action) = action else {
                 continue;
             };
@@ -1216,6 +1241,10 @@ fn apply_mic_recovery_action(
             if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
                 eprintln!("[mic-watchdog] stop before switch failed: {error}");
             }
+            // CoreAudio frequently retains wedged state for ~tens of ms
+            // after a device is released. A brief settling delay before
+            // reopening avoids handing us back the same wedged stream.
+            thread::sleep(MIC_RECOVERY_SETTLING_DELAY);
             if let Err(error) = start_live_capture_runtime(
                 app,
                 backend_state,
@@ -1223,6 +1252,11 @@ fn apply_mic_recovery_action(
                 transcription_state.clone(),
             ) {
                 eprintln!("[mic-watchdog] switch start failed: {error}");
+                if let Ok(mut backend) = backend_state.lock() {
+                    backend.set_microphone_warning(format!(
+                        "Microphone recovery failed: {error}. Try Refresh or change priority."
+                    ));
+                }
             }
         }
     }

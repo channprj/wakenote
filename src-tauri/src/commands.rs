@@ -805,6 +805,13 @@ impl AppBackend {
         self.capture.is_none() && self.mic_health.is_awaiting_restart()
     }
 
+    /// Number of consecutive watchdog escalations since the last non-silent
+    /// frame. Used by the runtime watchdog to surface a UI warning when
+    /// recovery is fighting (and likely losing).
+    pub fn mic_escalations_since_first_frame(&self) -> u32 {
+        self.mic_health.escalations_since_first_frame()
+    }
+
     /// Forward an out-of-band stall signal (cpal `StreamError`, OS device-change)
     /// to the health monitor so the next watchdog tick triggers a recovery
     /// action immediately instead of waiting for heartbeat/silence thresholds.

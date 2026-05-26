@@ -311,6 +311,12 @@ pub struct MicHealthConfig {
     /// While running on a non-top-priority device, how long the watchdog waits
     /// before voluntarily re-attempting the top-priority device.
     pub top_priority_recheck: Duration,
+    /// After this many consecutive escalations without a single non-silent
+    /// frame, the watchdog forces a fallback to the system "default" device
+    /// once. Targets the common CoreAudio purgatory case where reopening
+    /// the same stable id returns another wedged stream — asking for the
+    /// "default" id triggers a fresh OS query and tends to break the loop.
+    pub force_default_after_escalations: u32,
 }
 
 impl Default for MicHealthConfig {
@@ -320,8 +326,13 @@ impl Default for MicHealthConfig {
             stall_threshold: Duration::from_secs(12),
             heartbeat_threshold: Duration::from_millis(1_000),
             recovery_cooldown: Duration::from_millis(3_500),
-            max_recovery_cooldown: Duration::from_secs(30),
+            // Lowered from 30s to 8s: with the previous ceiling, a streak of
+            // wedged starts pushed the retry interval past 30s, which felt
+            // like the watchdog had given up. 8s keeps the user's wait
+            // bounded while still avoiding a hot reopen-loop.
+            max_recovery_cooldown: Duration::from_secs(8),
             top_priority_recheck: TOP_PRIORITY_RECHECK,
+            force_default_after_escalations: 3,
         }
     }
 }
@@ -387,6 +398,11 @@ pub struct MicHealthMonitor {
     /// growing cooldown between switch attempts — a wedged-everywhere system
     /// must not retry at full rate forever.
     consecutive_failures: u32,
+    /// Escalations triggered since the last non-silent frame. Counts every
+    /// stall-detected restart cycle (regardless of which device was targeted)
+    /// so the watchdog can break out of CoreAudio purgatory by forcing a
+    /// "default" device target after [`MicHealthConfig::force_default_after_escalations`].
+    escalations_since_first_frame: u32,
     /// Wall-clock anchor for the periodic "try the top-priority device"
     /// upgrade attempt. Updated whenever we open or re-attempt `priority[0]`.
     last_top_priority_attempt_at: Option<Instant>,
@@ -414,9 +430,18 @@ impl MicHealthMonitor {
             priority: Vec::new(),
             active_index: 0,
             consecutive_failures: 0,
+            escalations_since_first_frame: 0,
             last_top_priority_attempt_at: None,
             pending_recovery_reason: None,
         }
+    }
+
+    /// Snapshot of how many consecutive escalations have happened without a
+    /// non-silent frame ever arriving. The watchdog driver uses this to
+    /// surface a UI warning when the count grows large (recovery is fighting
+    /// but losing) so the user knows manual intervention may help.
+    pub fn escalations_since_first_frame(&self) -> u32 {
+        self.escalations_since_first_frame
     }
 
     /// Reset and start watching a new capture session.
@@ -463,6 +488,7 @@ impl MicHealthMonitor {
         self.cooldown_until = None;
         self.pending_recovery_reason = None;
         self.consecutive_failures = 0;
+        self.escalations_since_first_frame = 0;
     }
 
     /// Record that the most recent live-capture start attempt failed before
@@ -541,6 +567,7 @@ impl MicHealthMonitor {
             // failure starts at base cooldown, not the accumulated penalty
             // from earlier dead-device cycles.
             self.consecutive_failures = 0;
+            self.escalations_since_first_frame = 0;
             // Healthy frames imply the stream is alive; clear cooldown so the
             // next stall can be acted on immediately.
             if matches!(self.state, MicHealthState::Cooldown) {
@@ -682,16 +709,50 @@ impl MicHealthMonitor {
         self.state = MicHealthState::Cooldown;
 
         // A stall on the running stream — most failures are transient
-        // (sleep/wake, USB blip). Always retry priority[0] first; only if
-        // that start itself fails (mark_start_failed) do we walk down the
-        // priority list.
-        self.active_index = 0;
-        let device_id = self
-            .priority
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
-        self.last_top_priority_attempt_at = Some(now);
+        // (sleep/wake, USB blip). Default behaviour is to retry priority[0]
+        // first; only if that start itself fails (mark_start_failed) do we
+        // walk down the priority list.
+        //
+        // Escape hatch for CoreAudio purgatory: after `force_default_after_escalations`
+        // prior escalations have failed to produce a non-silent frame, the
+        // same stable id is probably wedged at the OS layer. Force this
+        // attempt onto the system "default" device — cpal queries the
+        // default fresh each time, which tends to kick CoreAudio out of
+        // the stuck state.
+        let prior_escalations = self.escalations_since_first_frame;
+        self.escalations_since_first_frame =
+            self.escalations_since_first_frame.saturating_add(1);
+        let force_default = prior_escalations >= self.config.force_default_after_escalations
+            && self
+                .priority
+                .first()
+                .map(|id| id != "default")
+                .unwrap_or(false);
+
+        let (device_id, active_index, reason) = if force_default {
+            (
+                "default".to_string(),
+                self.priority.len(),
+                format!(
+                    "{reason}; forcing default device after {} consecutive stalled restarts",
+                    self.escalations_since_first_frame
+                ),
+            )
+        } else {
+            (
+                self.priority
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string()),
+                0,
+                reason,
+            )
+        };
+
+        self.active_index = active_index;
+        if self.active_index == 0 {
+            self.last_top_priority_attempt_at = Some(now);
+        }
 
         MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, reason })
     }
@@ -728,6 +789,11 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(200),
             max_recovery_cooldown: Duration::from_millis(800),
             top_priority_recheck: Duration::from_millis(500),
+            // Disable the default-rescue path for tests that aren't
+            // explicitly exercising it — the watchdog's priority-cycle
+            // tests assert exact device sequences that would otherwise
+            // be perturbed by the rescue kicking in mid-test.
+            force_default_after_escalations: u32::MAX,
         }
     }
 
@@ -799,6 +865,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(100),
             max_recovery_cooldown: Duration::from_secs(1),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec!["mic-a".to_string(), "mic-b".to_string()];
         let start = Instant::now();
@@ -1233,6 +1300,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(100),
             max_recovery_cooldown: Duration::from_secs(1),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec!["mic-a".to_string(), "mic-b".to_string()];
         let mut now = Instant::now();
@@ -1262,6 +1330,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(100),
             max_recovery_cooldown: Duration::from_secs(1),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec!["mic-a".to_string()];
         let mut now = Instant::now();
@@ -1306,6 +1375,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(50),
             max_recovery_cooldown: Duration::from_secs(1),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec![
             "mic-top".to_string(),
@@ -1341,6 +1411,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(10),
             max_recovery_cooldown: Duration::from_millis(50),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec![
             "mic-top".to_string(),
@@ -1373,6 +1444,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(10),
             max_recovery_cooldown: Duration::from_millis(50),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let mut now = Instant::now();
@@ -1410,6 +1482,7 @@ mod mic_health_tests {
             recovery_cooldown: Duration::from_millis(10),
             max_recovery_cooldown: Duration::from_millis(50),
             top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: u32::MAX,
         });
         let prio = vec!["mic-a".to_string(), "mic-b".to_string(), "mic-c".to_string()];
         let now = Instant::now();
@@ -1424,5 +1497,113 @@ mod mic_health_tests {
             }
             other => panic!("expected SwitchTo(mic-a), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn escalate_forces_default_after_threshold_consecutive_stalls_without_frame() {
+        // CoreAudio purgatory: reopening the same wedged stable id keeps
+        // producing wedged streams. After `force_default_after_escalations`
+        // consecutive escalations without a single non-silent frame, the
+        // watchdog must break the loop by targeting the system default.
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(10),
+            max_recovery_cooldown: Duration::from_millis(50),
+            top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: 3,
+        });
+        let prio = vec!["mic-pinned".to_string(), "mic-fallback".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio, 0);
+
+        // Loop: heartbeat-loss triggers escalate each time. Three escalations
+        // hit priority[0]; the fourth must force default.
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            // Past startup grace.
+            now += Duration::from_millis(60);
+            // Single frame to anchor heartbeat, then let it lapse.
+            monitor.observe_frame(-120.0, now); // digital silence, NOT a non-silent frame
+            now += Duration::from_millis(300);
+            match monitor.tick(now) {
+                MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
+                    seen.push(device_id);
+                }
+                other => panic!("expected SwitchTo, got {other:?}"),
+            }
+            // Walk past cooldown so the next tick can fire.
+            now += Duration::from_millis(60);
+            // Watchdog driver would call capture_started for the new device;
+            // simulate by replaying with active_index from priority list.
+            let next_index = if seen.last().map(|s| s.as_str()) == Some("default") {
+                prio_len_for_test(&monitor)
+            } else {
+                0
+            };
+            monitor.capture_started(now, monitor.priority.clone(), next_index);
+        }
+
+        assert_eq!(
+            seen,
+            vec![
+                "mic-pinned".to_string(),
+                "mic-pinned".to_string(),
+                "mic-pinned".to_string(),
+                "default".to_string(),
+            ],
+            "fourth escalation must force the default device"
+        );
+    }
+
+    fn prio_len_for_test(monitor: &MicHealthMonitor) -> usize {
+        monitor.priority.len()
+    }
+
+    #[test]
+    fn escalations_counter_resets_on_non_silent_frame() {
+        let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
+            startup_grace: Duration::from_millis(50),
+            stall_threshold: Duration::from_secs(60),
+            heartbeat_threshold: Duration::from_millis(200),
+            recovery_cooldown: Duration::from_millis(10),
+            max_recovery_cooldown: Duration::from_millis(50),
+            top_priority_recheck: Duration::from_secs(300),
+            force_default_after_escalations: 2,
+        });
+        let prio = vec!["mic-pinned".to_string()];
+        let mut now = Instant::now();
+        monitor.capture_started(now, prio.clone(), 0);
+
+        // Two escalations push counter to 2.
+        now += Duration::from_millis(60);
+        monitor.observe_frame(-120.0, now);
+        now += Duration::from_millis(300);
+        let _ = monitor.tick(now);
+        now += Duration::from_millis(60);
+        monitor.capture_started(now, prio.clone(), 0);
+        now += Duration::from_millis(60);
+        monitor.observe_frame(-120.0, now);
+        now += Duration::from_millis(300);
+        let _ = monitor.tick(now);
+        assert_eq!(monitor.escalations_since_first_frame(), 2);
+
+        // A real audio frame arrives — counter must reset.
+        now += Duration::from_millis(60);
+        monitor.observe_frame(-30.0, now);
+        assert_eq!(monitor.escalations_since_first_frame(), 0);
+    }
+
+    #[test]
+    fn max_recovery_cooldown_default_capped_at_eight_seconds() {
+        // Sanity check: default ceiling was lowered from 30s to 8s so a
+        // wedged-everywhere system retries on a bounded interval. Regression
+        // guard against accidentally raising the ceiling back.
+        assert!(
+            MicHealthConfig::default().max_recovery_cooldown <= Duration::from_secs(8),
+            "max_recovery_cooldown should stay <= 8s; got {:?}",
+            MicHealthConfig::default().max_recovery_cooldown
+        );
     }
 }
