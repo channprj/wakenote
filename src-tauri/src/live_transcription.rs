@@ -63,6 +63,19 @@ struct LiveTranscriptionState {
     closed: bool,
     model_directory: PathBuf,
     loaded_model: Option<LoadedModel>,
+    /// Model id the worker should warm up when otherwise idle. Set by
+    /// [`LiveTranscriptionService::preload`] so the (5-15 s) whisper load
+    /// happens at capture start instead of on the first utterance — without
+    /// it, the first several seconds of speech produce no live captions
+    /// because the decode can't begin until the model finishes loading.
+    preload_model_id: Option<String>,
+}
+
+/// One unit of work for the worker thread: either decode a partial, or warm
+/// up a model so the first real decode is instant.
+enum WorkItem {
+    Partial(LivePartialRequest),
+    Preload(String),
 }
 
 struct LoadedModel {
@@ -80,6 +93,7 @@ impl LiveTranscriptionService {
                 closed: false,
                 model_directory,
                 loaded_model: None,
+                preload_model_id: None,
             }),
             cond: Condvar::new(),
         });
@@ -89,6 +103,29 @@ impl LiveTranscriptionService {
             inner,
             join: Some(join),
         }
+    }
+
+    /// Ask the worker to load `model_id` now, before any audio arrives, so
+    /// the first utterance decodes immediately instead of waiting out the
+    /// 5-15 s model load. No-op if that model is already loaded or a decode
+    /// is already pending (the real request will load it anyway).
+    pub fn preload(&self, model_id: impl Into<String>) {
+        let Ok(mut state) = self.inner.state.lock() else {
+            return;
+        };
+        if state.closed {
+            return;
+        }
+        let model_id = model_id.into();
+        let already_loaded = state
+            .loaded_model
+            .as_ref()
+            .is_some_and(|loaded| loaded.model_id == model_id);
+        if already_loaded || state.pending.is_some() {
+            return;
+        }
+        state.preload_model_id = Some(model_id);
+        self.inner.cond.notify_one();
     }
 
     /// Submit the latest partial request for the active chunk. Replaces any
@@ -138,7 +175,15 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
     let mut last_missing: Option<(u64, String)> = None;
     loop {
         let request = match wait_for_request(&inner) {
-            Some(request) => request,
+            Some(WorkItem::Partial(request)) => request,
+            Some(WorkItem::Preload(model_id)) => {
+                eprintln!("[wakenote] live_transcription: preloading model {model_id}");
+                // Warm the model so the first real decode is instant. Ignore
+                // the result — a real request (or ModelMissing handling) will
+                // surface any load failure to the UI.
+                let _ = ensure_context(&inner, &model_id);
+                continue;
+            }
             None => {
                 eprintln!("[wakenote] live_transcription worker exiting (closed)");
                 return;
@@ -206,15 +251,20 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
     }
 }
 
-fn wait_for_request(inner: &Arc<LiveTranscriptionInner>) -> Option<LivePartialRequest> {
+fn wait_for_request(inner: &Arc<LiveTranscriptionInner>) -> Option<WorkItem> {
     let mut state = inner.state.lock().ok()?;
     loop {
         if state.closed {
             return None;
         }
+        // A real decode always wins over a preload — if audio is already
+        // waiting, loading the model for it covers the warm-up anyway.
         if let Some(request) = state.pending.take() {
             state.in_flight_chunk_id = Some(request.chunk_id);
-            return Some(request);
+            return Some(WorkItem::Partial(request));
+        }
+        if let Some(model_id) = state.preload_model_id.take() {
+            return Some(WorkItem::Preload(model_id));
         }
         state = inner.cond.wait(state).ok()?;
     }

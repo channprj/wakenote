@@ -755,6 +755,25 @@ fn start_live_capture_runtime(
         return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
     }
 
+    // Warm the live-transcription model now that capture is live. whisper
+    // (esp. medium, 1.5 GB) takes 5-15 s to load; preloading here means the
+    // first utterance produces captions immediately instead of being dropped
+    // while the model loads. Best-effort — a failure just falls back to the
+    // original lazy load on the first partial request.
+    if let (Some(transcriber_state), Some(model_id)) = (
+        app.try_state::<LiveTranscriberState>(),
+        backend_state
+            .lock()
+            .ok()
+            .map(|backend| backend.settings().selected_model),
+    ) {
+        if let Ok(slot) = transcriber_state.lock() {
+            if let Some(service) = slot.as_ref() {
+                service.preload(model_id);
+            }
+        }
+    }
+
     let (dropped_frames, runtime_error) = live_state
         .lock()
         .map(|live_capture| {
