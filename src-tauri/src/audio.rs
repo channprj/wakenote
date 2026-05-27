@@ -506,18 +506,29 @@ impl MicHealthMonitor {
         // Advance to the next entry in the priority list. The device we just
         // failed to open is unavailable right now; walk forward (wrapping
         // mod len) until something opens successfully or every entry fails.
-        // When `active_index` is saturated (the active device isn't in the
-        // priority list — see `capture_started`'s clamp), start from
-        // `priority[0]` rather than skipping it.
         if !self.priority.is_empty() {
-            self.active_index = if self.active_index >= self.priority.len() {
-                0
-            } else {
-                (self.active_index + 1) % self.priority.len()
-            };
+            self.active_index = self.next_priority_index();
             if self.active_index == 0 {
                 self.last_top_priority_attempt_at = Some(now);
             }
+        }
+    }
+
+    /// The next device index to try, cycling forward through the priority
+    /// list. A saturated `active_index` (the active device isn't in the list
+    /// — see `capture_started`'s clamp) wraps back to `priority[0]` rather
+    /// than skipping it. Shared by `escalate` (stall on a running stream) and
+    /// `mark_start_failed` (a start attempt that never produced a frame) so
+    /// recovery walks the list in the user's ranked order instead of always
+    /// snapping back to the top.
+    fn next_priority_index(&self) -> usize {
+        if self.priority.is_empty() {
+            return 0;
+        }
+        if self.active_index >= self.priority.len() {
+            0
+        } else {
+            (self.active_index + 1) % self.priority.len()
         }
     }
 
@@ -708,17 +719,17 @@ impl MicHealthMonitor {
         self.cooldown_until = Some(now + self.current_cooldown());
         self.state = MicHealthState::Cooldown;
 
-        // A stall on the running stream — most failures are transient
-        // (sleep/wake, USB blip). Default behaviour is to retry priority[0]
-        // first; only if that start itself fails (mark_start_failed) do we
-        // walk down the priority list.
+        // A stall on the running stream hands off to the NEXT device in the
+        // user's priority ranking (cycling, wrapping at the end) — not always
+        // back to priority[0]. Climbing back to the preferred mic is the job
+        // of the periodic top-priority recheck (every `top_priority_recheck`),
+        // so a flaky priority[0] doesn't trap recovery in a tight reopen loop.
         //
         // Escape hatch for CoreAudio purgatory: after `force_default_after_escalations`
-        // prior escalations have failed to produce a non-silent frame, the
-        // same stable id is probably wedged at the OS layer. Force this
-        // attempt onto the system "default" device — cpal queries the
-        // default fresh each time, which tends to kick CoreAudio out of
-        // the stuck state.
+        // prior escalations have failed to produce a non-silent frame, every
+        // listed device is likely wedged at the OS layer. Force the system
+        // "default" device once — cpal queries the default fresh each time,
+        // which tends to kick CoreAudio out of the stuck state.
         let prior_escalations = self.escalations_since_first_frame;
         self.escalations_since_first_frame =
             self.escalations_since_first_frame.saturating_add(1);
@@ -739,12 +750,13 @@ impl MicHealthMonitor {
                 ),
             )
         } else {
+            let next_index = self.next_priority_index();
             (
                 self.priority
-                    .first()
+                    .get(next_index)
                     .cloned()
                     .unwrap_or_else(|| "default".to_string()),
-                0,
+                next_index,
                 reason,
             )
         };
@@ -903,22 +915,19 @@ mod mic_health_tests {
     #[test]
     fn cycle_wraps_around_priority_list_indefinitely() {
         // Priority [A, B, C]. A running stream stalls (heartbeat lost).
-        // escalate() always targets priority[0] = mic-A regardless of which
-        // device was active. The watchdog retries the top-priority mic first;
-        // only start failures walk down the list.
+        // escalate() hands off to the NEXT device in ranked order, wrapping
+        // at the end: active 0 -> B, active 1 -> C, active 2 -> A.
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let mut now = Instant::now();
         let prio = priority(&["mic-A", "mic-B", "mic-C"]);
 
-        // Start each iteration on a different active device and confirm every
-        // escalation returns mic-A (priority[0]).
-        for active_index in [0usize, 1, 2, 0] {
+        for (active_index, expected) in [(0usize, "mic-B"), (1, "mic-C"), (2, "mic-A")] {
             monitor.capture_started(now, prio.clone(), active_index);
             // Push past the grace window without ever delivering a frame so
             // the heartbeat path fires.
             now += Duration::from_millis(400);
             let (device_id, _) = expect_switch_to(monitor.tick(now));
-            assert_eq!(device_id, "mic-A");
+            assert_eq!(device_id, expected);
             // Let the cooldown elapse before the next capture_started.
             now += Duration::from_millis(900);
         }
@@ -1083,7 +1092,8 @@ mod mic_health_tests {
     fn heartbeat_triggers_when_data_callback_stops_firing() {
         // CoreAudio wedge: frames arrive normally, then the cpal data callback
         // stops entirely even though the higher-level capture state still
-        // thinks it's running. escalate() always targets priority[0] = mic-A.
+        // thinks it's running. Running on priority[0] = mic-A, escalate() hands
+        // off to the next ranked device = "default".
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let started = Instant::now();
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
@@ -1098,7 +1108,7 @@ mod mic_health_tests {
 
         let (device_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(650)));
-        assert_eq!(device_id, "mic-A");
+        assert_eq!(device_id, "default");
         assert!(
             reason.contains("no audio frames received"),
             "expected heartbeat reason, got {reason}"
@@ -1146,7 +1156,8 @@ mod mic_health_tests {
     fn request_recovery_during_grace_period_fires_immediately() {
         // cpal can fire a StreamError during the startup grace window
         // (e.g. unsupported sample-format negotiation). The external signal
-        // must override the grace gate. escalate() resets to priority[0] = mic-A.
+        // must override the grace gate. Running on priority[0] = mic-A,
+        // escalate() hands off to the next ranked device = "default".
         let mut monitor = MicHealthMonitor::with_config(fast_config());
         let started = Instant::now();
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
@@ -1154,7 +1165,7 @@ mod mic_health_tests {
         monitor.request_recovery("cpal init failed");
         let (device_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(10)));
-        assert_eq!(device_id, "mic-A");
+        assert_eq!(device_id, "default");
         assert_eq!(reason, "cpal init failed");
     }
 
@@ -1172,9 +1183,10 @@ mod mic_health_tests {
         monitor.capture_started(started, priority(&["mic-A", "default"]), 0);
 
         monitor.observe_frame(-50.0, started + Duration::from_millis(120));
-        // Heartbeat stall: escalate() resets active_index to 0 and targets mic-A.
+        // Heartbeat stall on priority[0]=mic-A: escalate() cycles to the next
+        // ranked device = "default".
         let (first_id, _) = expect_switch_to(monitor.tick(started + Duration::from_millis(370)));
-        assert_eq!(first_id, "mic-A");
+        assert_eq!(first_id, "default");
 
         // Cooldown of 200ms, so we sit in InCooldown at 450ms.
         assert_eq!(
@@ -1184,8 +1196,9 @@ mod mic_health_tests {
 
         monitor.request_recovery("device disconnected");
 
-        // After cooldown elapses, the latched reason wins. escalate() again
-        // resets to priority[0] = mic-A.
+        // After cooldown elapses, the latched reason wins. We're now on
+        // index 1 (default), so escalate() cycles forward and wraps to
+        // priority[0] = mic-A.
         let (second_id, reason) =
             expect_switch_to(monitor.tick(started + Duration::from_millis(700)));
         assert_eq!(second_id, "mic-A");
@@ -1365,9 +1378,10 @@ mod mic_health_tests {
     }
 
     #[test]
-    fn heartbeat_loss_restarts_on_priority_zero_first() {
+    fn heartbeat_loss_advances_to_next_priority_in_order() {
         // Stream is running on priority[1] (fallback). Heartbeat dies.
-        // Action must target priority[0], not priority[2].
+        // escalate() cycles forward in ranked order, so the next device is
+        // priority[2] = mic-third — NOT a reset back to priority[0].
         let mut monitor = MicHealthMonitor::with_config(MicHealthConfig {
             startup_grace: Duration::from_millis(50),
             stall_threshold: Duration::from_secs(60),
@@ -1392,9 +1406,9 @@ mod mic_health_tests {
         now += Duration::from_millis(300);
         match monitor.tick(now) {
             MicHealthVerdict::Action(MicHealthAction::SwitchTo { device_id, .. }) => {
-                assert_eq!(device_id, "mic-top");
+                assert_eq!(device_id, "mic-third");
             }
-            other => panic!("expected SwitchTo(mic-top), got {other:?}"),
+            other => panic!("expected SwitchTo(mic-third), got {other:?}"),
         }
     }
 
@@ -1518,8 +1532,10 @@ mod mic_health_tests {
         let mut now = Instant::now();
         monitor.capture_started(now, prio, 0);
 
-        // Loop: heartbeat-loss triggers escalate each time. Three escalations
-        // hit priority[0]; the fourth must force default.
+        // Loop: heartbeat-loss triggers escalate each time. Each iteration is
+        // re-seeded on priority[0], so the in-order cycle hands off to
+        // priority[1] = mic-fallback for the first three escalations; the
+        // fourth (prior_escalations == 3) must force "default".
         let mut seen = Vec::new();
         for _ in 0..4 {
             // Past startup grace.
@@ -1536,7 +1552,7 @@ mod mic_health_tests {
             // Walk past cooldown so the next tick can fire.
             now += Duration::from_millis(60);
             // Watchdog driver would call capture_started for the new device;
-            // simulate by replaying with active_index from priority list.
+            // simulate by replaying on priority[0] each non-default round.
             let next_index = if seen.last().map(|s| s.as_str()) == Some("default") {
                 prio_len_for_test(&monitor)
             } else {
@@ -1548,9 +1564,9 @@ mod mic_health_tests {
         assert_eq!(
             seen,
             vec![
-                "mic-pinned".to_string(),
-                "mic-pinned".to_string(),
-                "mic-pinned".to_string(),
+                "mic-fallback".to_string(),
+                "mic-fallback".to_string(),
+                "mic-fallback".to_string(),
                 "default".to_string(),
             ],
             "fourth escalation must force the default device"
