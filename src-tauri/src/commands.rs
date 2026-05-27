@@ -1309,12 +1309,94 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
     paths.sort_by(|left, right| {
         transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
     });
-    paths.truncate(limit);
 
-    paths
-        .into_iter()
-        .filter_map(|path| recent_transcript_from_sidecar(&path))
-        .collect()
+    let _dataless_guard = DatalessMaterializationGuard::disabled();
+    let mut transcripts = Vec::with_capacity(limit.min(paths.len()));
+    for path in paths {
+        if transcripts.len() >= limit {
+            break;
+        }
+        if let Some(transcript) = recent_transcript_from_sidecar(&path) {
+            transcripts.push(transcript);
+        }
+    }
+    transcripts
+}
+
+#[cfg(target_os = "macos")]
+struct DatalessMaterializationGuard {
+    previous_policy: Option<std::ffi::c_int>,
+}
+
+#[cfg(target_os = "macos")]
+impl DatalessMaterializationGuard {
+    fn disabled() -> Self {
+        const IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES: std::ffi::c_int = 3;
+        const IOPOL_SCOPE_THREAD: std::ffi::c_int = 1;
+        const IOPOL_MATERIALIZE_DATALESS_FILES_OFF: std::ffi::c_int = 1;
+
+        let previous_policy = unsafe {
+            getiopolicy_np(
+                IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES,
+                IOPOL_SCOPE_THREAD,
+            )
+        };
+        if previous_policy < 0 {
+            return Self {
+                previous_policy: None,
+            };
+        }
+
+        let changed = unsafe {
+            setiopolicy_np(
+                IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES,
+                IOPOL_SCOPE_THREAD,
+                IOPOL_MATERIALIZE_DATALESS_FILES_OFF,
+            )
+        } == 0;
+
+        Self {
+            previous_policy: changed.then_some(previous_policy),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for DatalessMaterializationGuard {
+    fn drop(&mut self) {
+        const IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES: std::ffi::c_int = 3;
+        const IOPOL_SCOPE_THREAD: std::ffi::c_int = 1;
+
+        if let Some(previous_policy) = self.previous_policy {
+            let _ = unsafe {
+                setiopolicy_np(
+                    IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES,
+                    IOPOL_SCOPE_THREAD,
+                    previous_policy,
+                )
+            };
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn getiopolicy_np(iotype: std::ffi::c_int, scope: std::ffi::c_int) -> std::ffi::c_int;
+    fn setiopolicy_np(
+        iotype: std::ffi::c_int,
+        scope: std::ffi::c_int,
+        policy: std::ffi::c_int,
+    ) -> std::ffi::c_int;
+}
+
+#[cfg(not(target_os = "macos"))]
+struct DatalessMaterializationGuard;
+
+#[cfg(not(target_os = "macos"))]
+impl DatalessMaterializationGuard {
+    fn disabled() -> Self {
+        Self
+    }
 }
 
 fn collect_transcript_sidecar_paths(root: &Path, paths: &mut Vec<PathBuf>) {
@@ -1803,5 +1885,21 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(settings.selected_microphone, "input-3-by-v");
+    }
+
+    #[test]
+    fn recent_transcripts_fills_limit_after_skipping_empty_sidecars() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260528");
+        std::fs::create_dir_all(&day).expect("day dir");
+        std::fs::write(day.join("000003.txt"), "   \n").expect("empty transcript");
+        std::fs::write(day.join("000002.txt"), "second newest").expect("second transcript");
+        std::fs::write(day.join("000001.txt"), "oldest").expect("oldest transcript");
+
+        let transcripts = recent_transcripts_from_save_root(tmp.path(), 2);
+
+        assert_eq!(transcripts.len(), 2);
+        assert_eq!(transcripts[0].text, "second newest");
+        assert_eq!(transcripts[1].text, "oldest");
     }
 }
