@@ -4522,6 +4522,7 @@ dependencies = [
  "chrono",
  "cpal",
  "hound",
+ "libc",
  "objc2",
  "objc2-av-foundation",
  "serde",

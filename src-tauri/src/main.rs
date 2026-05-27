@@ -1762,8 +1762,23 @@ fn main() {
         .expect("failed to build WakeNote")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                schedule_settings_window_for_reopen(app, "macOS reopen");
+            match event {
+                tauri::RunEvent::Reopen { .. } => {
+                    schedule_settings_window_for_reopen(app, "macOS reopen");
+                }
+                // whisper.cpp's GGML Metal backend aborts inside its
+                // static destructor (`ggml_metal_rsets_free` -> `ggml_abort`)
+                // when the process tears down via libc `exit()` ->
+                // `__cxa_finalize`. The Metal device is already gone by then,
+                // so the cleanup trips an internal assertion and SIGABRTs on
+                // every quit that ran a transcription. Bypass the C++ static
+                // destructors entirely with `_exit`: the kernel reclaims the
+                // GPU resources anyway, and all durable state (settings,
+                // transcription queue) is already persisted on write.
+                tauri::RunEvent::Exit => {
+                    unsafe { libc::_exit(0) };
+                }
+                _ => {}
             }
 
             #[cfg(not(target_os = "macos"))]

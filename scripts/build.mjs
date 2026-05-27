@@ -147,6 +147,35 @@ function buildTauri(mode, env = process.env) {
     console.log('==> Building Tauri app (release)');
     run('pnpm', ['tauri', 'build'], { env });
   }
+
+  // Seal the freshly built bundle. See `sealBundleSignature` for why this
+  // is necessary; doing it here means `pnpm build` alone (no install) also
+  // yields a launchable bundle, and `ditto` later preserves the signature.
+  const appBundle = path.join(
+    tauriDir,
+    'target',
+    bundleDirForMode(mode),
+    'bundle',
+    'macos',
+    APP_BUNDLE_NAME,
+  );
+  if (fs.existsSync(appBundle)) {
+    sealBundleSignature(appBundle, false);
+  }
+}
+
+// Re-sign a macOS .app bundle with an adhoc signature that seals the bundle
+// resources. Tauri 2 + recent rustc emit a Mach-O carrying a `linker-signed`
+// adhoc signature but never run `codesign` on the assembled bundle, so the
+// binary advertises deep-signing semantics while the bundle has no
+// `_CodeSignature/CodeResources` manifest. macOS taskgated treats that
+// mismatch as a tampered bundle and SIGKILLs the process at exec with
+// `CODESIGNING / Taskgated Invalid Signature`. Forcing a fresh adhoc bundle
+// signature populates `Sealed Resources` and makes verification pass.
+// Adhoc (`--sign -`) keeps this dependency-free — no developer identity.
+function sealBundleSignature(appBundle, useSudo) {
+  console.log('==> Sealing bundle signature (adhoc)');
+  runMaybeSudo(useSudo, 'codesign', ['--force', '--deep', '--sign', '-', appBundle]);
 }
 
 function ensureMacOsInstallTarget() {
@@ -271,15 +300,11 @@ function installBundle(options) {
     stdio: 'ignore',
   });
 
-  // Tauri 2 + recent rustc emit a Mach-O with `linker-signed` adhoc
-  // signature but skip sealing the bundle resources. macOS taskgated
-  // sees the binary claiming `--deep` signing semantics while the
-  // bundle has no `_CodeSignature/CodeResources` manifest, treats that
-  // as a tampered bundle, and SIGKILLs the process with
-  // `Taskgated Invalid Signature`. Force a fresh adhoc bundle signature
-  // here so `Sealed Resources` is populated and verification passes.
-  console.log(`==> Re-signing bundle (adhoc, seals resources)`);
-  runMaybeSudo(useSudo, 'codesign', ['--force', '--deep', '--sign', '-', dest]);
+  // `ditto` preserves the source signature, but re-seal at the install
+  // destination too: this covers `--no-build` (installing a pre-built or
+  // externally-produced bundle that may be unsigned) and guards against any
+  // attribute drift introduced by the copy + quarantine strip above.
+  sealBundleSignature(dest, useSudo);
 
   console.log(`==> Done. Installed: ${dest}`);
 
