@@ -36,9 +36,9 @@ describe("calibration helpers", () => {
   });
 
   it("resets threshold calibration to the default value", () => {
-    expect(DEFAULT_THRESHOLD_DBFS).toBe(-60);
+    expect(DEFAULT_THRESHOLD_DBFS).toBe(-42);
     expect(resetCalibrationSettingsPatch()).toEqual({
-      threshold_dbfs: -60,
+      threshold_dbfs: -42,
       calibration_completed: false,
     });
   });

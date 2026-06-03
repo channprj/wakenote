@@ -1,7 +1,7 @@
 import type { StatusTone } from "./status-summary";
 import type { SettingsPatch } from "./types";
 
-export const DEFAULT_THRESHOLD_DBFS = -60;
+export const DEFAULT_THRESHOLD_DBFS = -42;
 
 export interface CalibrationBadgePresentation {
   tone: StatusTone;

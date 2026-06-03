@@ -176,14 +176,15 @@ fn default_settings_match_prd_mvp_defaults() {
     assert!(!settings.calibration_completed);
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
-    assert_eq!(settings.threshold_dbfs, -60.0);
+    assert_eq!(settings.threshold_dbfs, -42.0);
     assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
     assert!(settings.suppress_low_confidence_transcripts);
-    assert_eq!(settings.attack_ms, 200);
-    assert_eq!(settings.release_ms, 1_500);
-    assert_eq!(settings.pre_roll_ms, 400);
-    assert_eq!(settings.post_roll_ms, 400);
-    assert_eq!(settings.max_chunk_ms, 120_000);
+    assert_eq!(settings.attack_ms, 300);
+    assert_eq!(settings.release_ms, 600);
+    assert_eq!(settings.pre_roll_ms, 600);
+    assert_eq!(settings.post_roll_ms, 300);
+    assert_eq!(settings.min_chunk_ms, 600);
+    assert_eq!(settings.max_chunk_ms, 60_000);
     assert_eq!(settings.selected_model, "whisper-medium");
     assert_eq!(settings.save_root, "~/Documents/WakeNote");
     assert_eq!(

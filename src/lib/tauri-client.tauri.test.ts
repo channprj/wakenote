@@ -24,7 +24,7 @@ const status: AppStatus = {
   active_microphone: "System Default",
   microphone_warning: null,
   runtime_warning: null,
-  threshold_dbfs: -60,
+  threshold_dbfs: -42,
   level: {
     current_dbfs: -120,
     peak_dbfs: -120,

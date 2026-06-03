@@ -64,13 +64,13 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 | Setting | Default | Range |
 | --- | --- | --- |
-| Threshold | `-60 dBFS` | `-90 … -10` |
+| Threshold | `-42 dBFS` | `-90 … -10` |
 | Attack | `300 ms` | `50 … 2 000` |
-| Release | `1 500 ms` | `250 … 5 000` |
-| Pre-roll | `300 ms` | `0 … 1 500` |
+| Release | `600 ms` | `250 … 5 000` |
+| Pre-roll | `600 ms` | `0 … 1 500` |
 | Post-roll | `300 ms` | `0 … 2 000` |
-| Min chunk | `500 ms` | `100 … 5 000` |
-| Max chunk | `120 000 ms` (2 min) | `10 000 … 900 000` |
+| Min chunk | `600 ms` | `100 … 5 000` |
+| Max chunk | `60 000 ms` (1 min) | `10 000 … 900 000` |
 | Audio format | `m4a` | `m4a` / `wav` |
 | Save root | `~/Documents/WakeNote` | any directory |
 | Default model | `whisper-medium` | from registry |

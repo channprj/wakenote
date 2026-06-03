@@ -94,7 +94,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     assert_eq!(metadata.device_id, "builtin-input");
     assert_eq!(metadata.device_name, "Built-in Microphone");
     assert_eq!(metadata.sample_rate, 16_000);
-    assert_eq!(metadata.threshold_dbfs, -60.0);
+    assert_eq!(metadata.threshold_dbfs, -42.0);
     assert_eq!(metadata.duration_ms, 2_000);
     assert_eq!(
         metadata.transcription_status,
