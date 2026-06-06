@@ -72,7 +72,7 @@ const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
-const MAX_PARALLEL_TRANSCRIPTIONS: usize = 2;
+const MAX_PARALLEL_TRANSCRIPTIONS: usize = 1;
 const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
 /// Sleep inserted between a watchdog-driven `stop` and the immediately
 /// following `start`. macOS CoreAudio occasionally retains wedged state

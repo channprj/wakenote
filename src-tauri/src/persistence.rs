@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::queue::{QueueJobStatus, TranscriptionQueue};
+use crate::queue::{COMPLETED_JOB_HISTORY_LIMIT, QueueJobStatus, TranscriptionQueue};
 use crate::settings::{AppSettings, SettingsPatch};
 
 #[derive(Debug, Clone)]
@@ -42,12 +42,19 @@ impl AppPersistence {
         let Some(mut queue) = read_json_if_exists::<TranscriptionQueue>(&self.queue_path())? else {
             return Ok(None);
         };
+        let original = queue.clone();
         queue.recover_running_as_pending();
+        queue.prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
+        if queue != original {
+            self.save_queue(&queue)?;
+        }
         Ok(Some(queue))
     }
 
     pub fn save_queue(&self, queue: &TranscriptionQueue) -> Result<(), PersistenceError> {
-        write_json_atomic(&self.queue_path(), queue)
+        let mut persisted = queue.clone();
+        persisted.prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
+        write_json_atomic(&self.queue_path(), &persisted)
     }
 
     fn settings_path(&self) -> PathBuf {

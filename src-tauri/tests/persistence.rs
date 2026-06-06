@@ -120,6 +120,43 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
 }
 
 #[test]
+fn persistence_compacts_completed_queue_history_on_load() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    let mut queue = TranscriptionQueue::new();
+    let mut ids = Vec::new();
+    for index in 0..102 {
+        let id = queue.enqueue_file(
+            format!("/recordings/20260506/{index:06}.wav"),
+            "whisper-medium",
+        );
+        queue.mark_completed(id).expect("complete job");
+        ids.push(id);
+    }
+    let pending = queue.enqueue_file("/recordings/20260506/pending.wav", "whisper-medium");
+    std::fs::write(
+        tmp.path().join("transcription-queue.json"),
+        serde_json::to_vec_pretty(&queue).expect("queue json"),
+    )
+    .expect("raw queue json");
+
+    let loaded = store.load_queue().expect("load queue").expect("queue");
+
+    assert_eq!(loaded.job(ids[0]), None);
+    assert_eq!(loaded.job(ids[1]), None);
+    assert_eq!(
+        loaded.job(ids[2]).unwrap().status,
+        QueueJobStatus::Completed
+    );
+    assert_eq!(
+        loaded.job(*ids.last().unwrap()).unwrap().status,
+        QueueJobStatus::Completed
+    );
+    assert_eq!(loaded.job(pending).unwrap().status, QueueJobStatus::Pending);
+    assert_eq!(loaded.snapshot().jobs.len(), 101);
+}
+
+#[test]
 fn backend_loaded_from_dir_persists_settings_and_queue_mutations() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp

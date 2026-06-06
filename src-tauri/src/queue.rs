@@ -5,6 +5,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+pub const COMPLETED_JOB_HISTORY_LIMIT: usize = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueJobStatus {
@@ -63,9 +65,17 @@ impl TranscriptionQueue {
         audio_path: impl Into<PathBuf>,
         model_id: impl Into<String>,
     ) -> u64 {
+        self.enqueue_file_if_new(audio_path, model_id).0
+    }
+
+    pub fn enqueue_file_if_new(
+        &mut self,
+        audio_path: impl Into<PathBuf>,
+        model_id: impl Into<String>,
+    ) -> (u64, bool) {
         let audio_path = audio_path.into();
         if let Some(job) = self.jobs.iter().find(|job| job.audio_path == audio_path) {
-            return job.id;
+            return (job.id, false);
         }
 
         self.next_id += 1;
@@ -77,7 +87,7 @@ impl TranscriptionQueue {
             status: QueueJobStatus::Pending,
             error: None,
         });
-        id
+        (id, true)
     }
 
     pub fn enqueue_backlog(&mut self, scan: BacklogScan, model_id: impl Into<String>) -> Vec<u64> {
@@ -132,7 +142,7 @@ impl TranscriptionQueue {
         model_ids: &HashSet<String>,
         max_running: usize,
     ) -> Option<QueueJob> {
-        if max_running == 0 || self.running_job_count() >= max_running {
+        if max_running == 0 || self.running_job_count() > 0 {
             return None;
         }
 
@@ -230,6 +240,27 @@ impl TranscriptionQueue {
 
     pub fn jobs_mut(&mut self) -> &mut [QueueJob] {
         &mut self.jobs
+    }
+
+    pub fn prune_completed_history(&mut self, max_completed: usize) -> bool {
+        let completed_count = self
+            .jobs
+            .iter()
+            .filter(|job| job.status == QueueJobStatus::Completed)
+            .count();
+        if completed_count <= max_completed {
+            return false;
+        }
+
+        let mut remaining_to_prune = completed_count - max_completed;
+        self.jobs.retain(|job| {
+            if job.status == QueueJobStatus::Completed && remaining_to_prune > 0 {
+                remaining_to_prune -= 1;
+                return false;
+            }
+            true
+        });
+        true
     }
 
     fn job_mut(&mut self, id: u64) -> Option<&mut QueueJob> {

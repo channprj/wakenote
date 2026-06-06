@@ -17,7 +17,10 @@ use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControll
 use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
-use crate::queue::{BacklogScan, QueueSnapshot, TranscriptionQueue, is_importable_audio_path};
+use crate::queue::{
+    BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
+    is_importable_audio_path,
+};
 use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::storage::copy_uploaded_audio_file;
@@ -936,8 +939,10 @@ impl AppBackend {
         }
 
         let model_id = model_id.unwrap_or_else(|| self.settings.selected_model.clone());
-        self.queue.enqueue_file(audio_path, model_id);
-        self.persist_queue();
+        let (_, inserted) = self.queue.enqueue_file_if_new(audio_path, model_id);
+        if inserted {
+            self.persist_queue();
+        }
         self.queue.snapshot()
     }
 
@@ -947,9 +952,12 @@ impl AppBackend {
     ) -> std::io::Result<QueueSnapshot> {
         let save_root = expand_user_path(save_root.as_ref().to_string_lossy());
         let scan = BacklogScan::scan(&save_root)?;
-        self.queue
+        let enqueued = self
+            .queue
             .enqueue_backlog(scan, self.settings.selected_model.clone());
-        self.persist_queue();
+        if !enqueued.is_empty() {
+            self.persist_queue();
+        }
         Ok(self.queue.snapshot())
     }
 
@@ -1182,7 +1190,9 @@ impl AppBackend {
         }
     }
 
-    fn persist_queue(&self) {
+    fn persist_queue(&mut self) {
+        self.queue
+            .prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
         if let Some(persistence) = &self.persistence {
             let _ = persistence.save_queue(&self.queue);
         }
@@ -1210,6 +1220,7 @@ impl AppBackend {
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
+        let mut queue_changed = false;
         for event in events {
             match event {
                 CaptureControllerEvent::ChunkStarted {
@@ -1252,7 +1263,9 @@ impl AppBackend {
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
                     if let Some(model_id) = model_id {
-                        self.queue.enqueue_file(chunk.audio_path.clone(), model_id);
+                        let (_, inserted) =
+                            self.queue.enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                        queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
                         chunk_id,
@@ -1264,7 +1277,9 @@ impl AppBackend {
             }
         }
 
-        self.persist_queue();
+        if queue_changed {
+            self.persist_queue();
+        }
     }
 
     fn emit_live_event(&mut self, event: LiveTranscriptEvent) {

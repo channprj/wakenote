@@ -107,7 +107,7 @@ fn queue_does_not_start_next_job_while_another_job_is_running() {
 }
 
 #[test]
-fn queue_can_start_multiple_jobs_up_to_parallel_limit() {
+fn queue_starts_only_one_job_even_when_parallel_limit_is_higher() {
     let mut queue = TranscriptionQueue::new();
     let first = queue.enqueue_file("/recordings/first.wav", "whisper-medium");
     let second = queue.enqueue_file("/recordings/second.wav", "whisper-medium");
@@ -116,20 +116,46 @@ fn queue_can_start_multiple_jobs_up_to_parallel_limit() {
 
     let started_first = queue
         .start_next_for_model_ids_up_to(&selectable, 2)
-        .expect("first parallel job");
-    let started_second = queue
-        .start_next_for_model_ids_up_to(&selectable, 2)
-        .expect("second parallel job");
+        .expect("first sequential job");
+    let blocked_second = queue.start_next_for_model_ids_up_to(&selectable, 2);
     let blocked_third = queue.start_next_for_model_ids_up_to(&selectable, 2);
 
     assert_eq!(started_first.id, first);
-    assert_eq!(started_second.id, second);
+    assert_eq!(blocked_second, None);
     assert_eq!(blocked_third, None);
     assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Running);
-    assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Pending);
     assert_eq!(queue.job(third).unwrap().status, QueueJobStatus::Pending);
-    assert_eq!(queue.snapshot().running_count, 2);
-    assert_eq!(queue.snapshot().pending_count, 1);
+    assert_eq!(queue.snapshot().running_count, 1);
+    assert_eq!(queue.snapshot().pending_count, 2);
+}
+
+#[test]
+fn queue_prunes_old_completed_jobs_but_keeps_active_and_recent_completed_jobs() {
+    let mut queue = TranscriptionQueue::new();
+    let old_completed = queue.enqueue_file("/recordings/old-completed.wav", "whisper-medium");
+    let recent_completed = queue.enqueue_file("/recordings/recent-completed.wav", "whisper-medium");
+    let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
+    let running = queue.enqueue_file("/recordings/running.wav", "whisper-medium");
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+
+    queue.mark_completed(old_completed).expect("old completed");
+    queue
+        .mark_completed(recent_completed)
+        .expect("recent completed");
+    queue.start_next().expect("start pending");
+    queue.mark_failed(failed, "model missing").expect("failed");
+
+    assert!(queue.prune_completed_history(1));
+
+    assert_eq!(queue.job(old_completed), None);
+    assert_eq!(
+        queue.job(recent_completed).unwrap().status,
+        QueueJobStatus::Completed
+    );
+    assert_eq!(queue.job(pending).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(running).unwrap().status, QueueJobStatus::Pending);
+    assert_eq!(queue.job(failed).unwrap().status, QueueJobStatus::Failed);
 }
 
 #[test]

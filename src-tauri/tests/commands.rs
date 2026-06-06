@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
@@ -765,7 +765,7 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
 }
 
 #[test]
-fn backend_starts_parallel_transcription_jobs_up_to_limit() {
+fn backend_starts_one_transcription_job_at_a_time() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
     write_ready_local_model(&model_directory, "whisper-medium");
@@ -789,11 +789,19 @@ fn backend_starts_parallel_transcription_jobs_up_to_limit() {
     let started = backend.start_transcription_jobs_up_to(2);
     let snapshot = backend.queue_snapshot();
 
-    assert_eq!(started.len(), 2);
+    assert_eq!(started.len(), 1);
     assert_eq!(started[0].job.audio_path, first_audio);
-    assert_eq!(started[1].job.audio_path, second_audio);
-    assert_eq!(snapshot.running_count, 2);
-    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.running_count, 1);
+    assert_eq!(snapshot.pending_count, 2);
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|job| job.audio_path == second_audio)
+            .expect("second job")
+            .status,
+        wakenote::queue::QueueJobStatus::Pending
+    );
     assert_eq!(
         snapshot
             .jobs
@@ -803,6 +811,35 @@ fn backend_starts_parallel_transcription_jobs_up_to_limit() {
             .status,
         wakenote::queue::QueueJobStatus::Pending
     );
+}
+
+#[test]
+fn backend_does_not_persist_queue_for_capture_frames_without_queue_changes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230912.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"audio").expect("audio file");
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("load backend");
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    backend
+        .start_capture_session_for_test(16_000)
+        .expect("start capture");
+    let queue_path = tmp.path().join("transcription-queue.json");
+    let before = std::fs::metadata(&queue_path)
+        .expect("queue before")
+        .modified()
+        .expect("mtime before");
+    std::thread::sleep(Duration::from_millis(20));
+
+    backend
+        .process_audio_samples_for_test(&[0.0; 160], 10)
+        .expect("silent frame");
+
+    let after = std::fs::metadata(&queue_path)
+        .expect("queue after")
+        .modified()
+        .expect("mtime after");
+    assert_eq!(after, before);
 }
 
 #[test]
