@@ -18,6 +18,13 @@ pub enum FloatingOverlayPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionLanguage {
     Auto,
@@ -95,6 +102,7 @@ pub struct AppSettings {
     pub show_tray_icon: bool,
     pub show_floating_overlay: bool,
     pub floating_overlay_position: FloatingOverlayPosition,
+    pub theme_mode: ThemeMode,
     pub theme_primary_color: String,
 }
 
@@ -127,6 +135,7 @@ pub struct SettingsPatch {
     pub show_tray_icon: Option<bool>,
     pub show_floating_overlay: Option<bool>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
+    pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
 }
 
@@ -383,6 +392,9 @@ impl AppSettings {
         if let Some(value) = patch.floating_overlay_position {
             self.floating_overlay_position = value;
         }
+        if let Some(value) = patch.theme_mode {
+            self.theme_mode = value;
+        }
         if let Some(value) = patch.theme_primary_color {
             self.theme_primary_color = value;
         }
@@ -420,6 +432,7 @@ impl Default for AppSettings {
             show_tray_icon: true,
             show_floating_overlay: true,
             floating_overlay_position: FloatingOverlayPosition::Top,
+            theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
         }
     }

@@ -61,6 +61,7 @@ import {
   visibleWarningForDismissedKey,
 } from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
+import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 import appIcon from "./assets/wakenote-app.png";
 
 const sections = [
@@ -155,13 +156,7 @@ export default function App() {
       return;
     }
     const handleHideShortcut = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (key !== "h" || event.shiftKey || event.altKey) {
-        return;
-      }
-      const isMac = navigator.platform.toLowerCase().includes("mac");
-      const modifier = isMac ? event.metaKey : event.ctrlKey;
-      if (!modifier) {
+      if (!shouldHandleFrontendHideShortcut(event, navigator.platform)) {
         return;
       }
       event.preventDefault();
@@ -349,6 +344,15 @@ export default function App() {
   }
 
   const statusPresentation = captureStatusPresentation(snapshot);
+  const themeMode = snapshot.settings.theme_mode === "light" ? "light" : "dark";
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.documentElement.dataset.theme = themeMode;
+  }, [themeMode]);
+
   useEffect(() => {
     setDismissedWarningKey((current) => nextDismissedWarningKey(statusPresentation.warning, current));
   }, [statusPresentation.warning?.key]);
@@ -359,7 +363,7 @@ export default function App() {
   ];
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={themeMode}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand__mark">

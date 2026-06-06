@@ -171,6 +171,15 @@ describe("settings panel", () => {
     expect(markup).toContain('<option value="ko" selected="">Korean</option>');
   });
 
+  it("shows a light and dark appearance selector in advanced settings", () => {
+    const snapshot = mockSnapshot();
+    const markup = renderSettingsPanel(snapshot, "advanced");
+
+    expect(markup).toContain("Theme");
+    expect(markup).toContain('<option value="dark" selected="">Dark</option>');
+    expect(markup).toContain('<option value="light">Light</option>');
+  });
+
   it("shows microphone permission status in general controls", () => {
     const snapshot = mockSnapshot();
     snapshot.permissions.microphone = {

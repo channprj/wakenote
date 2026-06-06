@@ -151,6 +151,7 @@ export function defaultSettings(): AppSettings {
     show_tray_icon: true,
     show_floating_overlay: true,
     floating_overlay_position: "top",
+    theme_mode: "dark",
     theme_primary_color: "#000",
   };
 }

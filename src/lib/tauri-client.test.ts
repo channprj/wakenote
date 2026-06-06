@@ -60,6 +60,14 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
+  it("persists browser fallback theme mode patches", async () => {
+    const light = await saveSettingsPatch({ theme_mode: "light" });
+    expect(light.settings.theme_mode).toBe("light");
+
+    const dark = await saveSettingsPatch({ theme_mode: "dark" });
+    expect(dark.settings.theme_mode).toBe("dark");
+  });
+
   it("simulates live browser fallback level snapshots while input is active", async () => {
     await startLiveCapture();
 

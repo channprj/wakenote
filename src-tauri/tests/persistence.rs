@@ -1,7 +1,7 @@
 use wakenote::commands::AppBackend;
 use wakenote::persistence::AppPersistence;
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
-use wakenote::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch};
+use wakenote::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch, ThemeMode};
 
 #[test]
 fn persistence_round_trips_settings_json() {
@@ -14,6 +14,7 @@ fn persistence_round_trips_settings_json() {
         selected_microphone: Some("input-1-usb-mic".to_string()),
         selected_microphone_label: Some("USB Mic".to_string()),
         save_root: Some("/tmp/wakenote-recordings".to_string()),
+        theme_mode: Some(ThemeMode::Light),
         ..SettingsPatch::default()
     });
 
@@ -28,6 +29,7 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.selected_microphone, "input-1-usb-mic");
     assert_eq!(loaded.selected_microphone_label, "USB Mic");
     assert_eq!(loaded.save_root, "/tmp/wakenote-recordings");
+    assert_eq!(loaded.theme_mode, ThemeMode::Light);
     assert!(loaded.save_root_confirmed);
 }
 
@@ -65,6 +67,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert_eq!(loaded.selected_model, "whisper-medium");
     assert!(loaded.start_live_input_on_launch);
     assert!(loaded.suppress_low_confidence_transcripts);
+    assert_eq!(loaded.theme_mode, ThemeMode::Dark);
     assert_eq!(loaded.theme_primary_color, "#000");
     assert_eq!(
         loaded.floating_overlay_position,

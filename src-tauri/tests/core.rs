@@ -7,7 +7,7 @@ use wakenote::commands::{AppBackend, pinned_device_mismatch};
 use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
     AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    MicrophonePriorityEntry, SettingsPatch, TranscriptionLanguage, expand_user_path,
+    MicrophonePriorityEntry, SettingsPatch, ThemeMode, TranscriptionLanguage, expand_user_path,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_run, live_capture_should_start_on_launch,
 };
@@ -194,7 +194,20 @@ fn default_settings_match_prd_mvp_defaults() {
     assert!(settings.show_dock_icon);
     assert!(settings.show_tray_icon);
     assert!(settings.start_live_input_on_launch);
+    assert_eq!(settings.theme_mode, ThemeMode::Dark);
     assert_eq!(settings.theme_primary_color, "#000");
+}
+
+#[test]
+fn settings_patch_updates_theme_mode() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        theme_mode: Some(ThemeMode::Light),
+        ..SettingsPatch::default()
+    });
+
+    assert_eq!(settings.theme_mode, ThemeMode::Light);
 }
 
 #[test]

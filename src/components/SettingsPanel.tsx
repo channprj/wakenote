@@ -440,6 +440,16 @@ export function SettingsPanel({
             <option value="top">Top</option>
             <option value="bottom">Bottom</option>
           </Select>
+          <Select
+            label="Theme"
+            value={settings.theme_mode}
+            onChange={(event) =>
+              onPatch({ theme_mode: event.currentTarget.value as AppSettings["theme_mode"] })
+            }
+          >
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </Select>
           <div className="model-directory-row">
             <TextInput
               label="Model Directory"

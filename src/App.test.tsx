@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import App from "./App";
 
 describe("App branding", () => {
+  it("renders the app shell in dark theme by default", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toContain('<div class="app-shell" data-theme="dark">');
+  });
+
   it("does not show the old sidebar tagline", () => {
     const markup = renderToStaticMarkup(<App />);
 

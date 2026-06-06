@@ -87,38 +87,86 @@ pub struct TrayPresentation {
     pub tooltip: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayIconImage {
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrayRuntimePresentation {
     pub icon: TrayPresentation,
     pub visible: bool,
 }
 
+const TRAY_ICON_NORMAL_RGBA: [u8; 4] = [0, 0, 0, 255];
+const TRAY_ICON_RECORDING_RGBA: [u8; 4] = [22, 163, 74, 255];
+const TRAY_ICON_TRANSCRIBING_RGBA: [u8; 4] = [217, 119, 6, 255];
+const TRAY_ICON_DISCONNECTED_RGBA: [u8; 4] = [220, 38, 38, 255];
+const TRAY_ICON_IMAGE_SIZE: u32 = 64;
+const TRAY_ICON_DOT_DIAMETER: u32 = TRAY_ICON_IMAGE_SIZE / 2;
+
 pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
     match state {
         TrayState::Idle => TrayPresentation {
-            rgba: [100, 116, 139, 255],
+            rgba: TRAY_ICON_NORMAL_RGBA,
             tooltip: "WakeNote: Idle",
         },
         TrayState::Listening => TrayPresentation {
-            rgba: [0, 0, 0, 255],
+            rgba: TRAY_ICON_NORMAL_RGBA,
             tooltip: "WakeNote: Listening",
         },
         TrayState::Recording => TrayPresentation {
-            rgba: [22, 163, 74, 255],
+            rgba: TRAY_ICON_RECORDING_RGBA,
             tooltip: "WakeNote: Recording",
         },
         TrayState::Transcribing => TrayPresentation {
-            rgba: [217, 119, 6, 255],
+            rgba: TRAY_ICON_TRANSCRIBING_RGBA,
             tooltip: "WakeNote: Transcribing",
         },
         TrayState::Paused => TrayPresentation {
-            rgba: [71, 85, 105, 255],
+            rgba: TRAY_ICON_NORMAL_RGBA,
             tooltip: "WakeNote: Paused",
         },
         TrayState::Error => TrayPresentation {
-            rgba: [220, 38, 38, 255],
+            rgba: TRAY_ICON_NORMAL_RGBA,
             tooltip: "WakeNote: Error",
         },
+    }
+}
+
+pub fn tray_icon_image_for_presentation(presentation: TrayPresentation) -> TrayIconImage {
+    let width = TRAY_ICON_IMAGE_SIZE;
+    let height = TRAY_ICON_IMAGE_SIZE;
+    let radius = TRAY_ICON_DOT_DIAMETER as f32 / 2.0;
+    let center = TRAY_ICON_IMAGE_SIZE as f32 / 2.0;
+    let mut rgba = vec![0; (width * height * 4) as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 + 0.5 - center;
+            let dy = y as f32 + 0.5 - center;
+            let distance = dx.mul_add(dx, dy * dy).sqrt();
+            let alpha = if distance <= radius - 0.5 {
+                255
+            } else if distance < radius + 0.5 {
+                ((radius + 0.5 - distance) * 255.0).round() as u8
+            } else {
+                0
+            };
+            if alpha > 0 {
+                let offset = ((y * width + x) * 4) as usize;
+                rgba[offset..offset + 3].copy_from_slice(&presentation.rgba[..3]);
+                rgba[offset + 3] = alpha;
+            }
+        }
+    }
+
+    TrayIconImage {
+        rgba,
+        width,
+        height,
     }
 }
 
@@ -126,10 +174,25 @@ pub fn tray_runtime_presentation(
     settings: &AppSettings,
     status: &AppStatus,
 ) -> TrayRuntimePresentation {
+    let mut icon = tray_presentation_for_state(status.tray_state);
+    if tray_status_has_microphone_connection_failure(status) {
+        icon.rgba = TRAY_ICON_DISCONNECTED_RGBA;
+        icon.tooltip = "WakeNote: Microphone disconnected";
+    }
+
     TrayRuntimePresentation {
-        icon: tray_presentation_for_state(status.tray_state),
+        icon,
         visible: settings.show_tray_icon,
     }
+}
+
+fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {
+    status.microphone_warning.is_some()
+        || status
+            .runtime_warning
+            .as_deref()
+            .map(|warning| warning.starts_with("Live input stream error:"))
+            .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

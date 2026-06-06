@@ -46,6 +46,18 @@ fn macos_bundle_uses_regular_windowing_policy() {
 }
 
 #[test]
+fn main_window_config_uses_current_default_size() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_path = manifest_dir.join("tauri.conf.json");
+    let config: Value =
+        serde_json::from_str(&std::fs::read_to_string(config_path).expect("tauri config"))
+            .expect("valid tauri config json");
+
+    assert_eq!(config["app"]["windows"][0]["width"], 1040);
+    assert_eq!(config["app"]["windows"][0]["height"], 922);
+}
+
+#[test]
 fn main_window_capability_allows_dialog_open_for_audio_uploads() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let capability_path = manifest_dir.join("capabilities/default.json");

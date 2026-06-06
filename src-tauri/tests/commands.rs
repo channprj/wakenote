@@ -1,12 +1,13 @@
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
     audio_playback_content_type, main_window_close_action, microphone_devices_from_input_devices,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, with_live_runtime_warning, with_runtime_warning,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
+    with_runtime_warning,
 };
 use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
@@ -14,7 +15,9 @@ use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
 };
-use wakenote::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
+use wakenote::transcription::{
+    Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
+};
 
 fn epoch_local_path_parts() -> (String, String) {
     let local = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH.with_timezone(&chrono::Local);
@@ -1623,28 +1626,76 @@ fn backend_cancel_current_operation_cancels_active_model_download() {
 }
 
 #[test]
-fn tray_presentation_uses_distinct_icon_colors_for_prd_states() {
-    let states = [
-        TrayState::Idle,
-        TrayState::Listening,
-        TrayState::Recording,
-        TrayState::Transcribing,
-        TrayState::Paused,
-        TrayState::Error,
-    ];
-    let colors = states
-        .iter()
-        .map(|state| tray_presentation_for_state(*state).rgba)
-        .collect::<HashSet<_>>();
-
-    assert_eq!(colors.len(), states.len());
+fn tray_presentation_uses_voice_capture_colors_for_active_states() {
+    assert_eq!(tray_presentation_for_state(TrayState::Idle).rgba, [0, 0, 0, 255]);
     assert_eq!(
         tray_presentation_for_state(TrayState::Listening).rgba,
         [0, 0, 0, 255]
     );
     assert_eq!(
+        tray_presentation_for_state(TrayState::Recording).rgba,
+        [22, 163, 74, 255]
+    );
+    assert_eq!(
+        tray_presentation_for_state(TrayState::Transcribing).rgba,
+        [217, 119, 6, 255]
+    );
+    assert_eq!(
         tray_presentation_for_state(TrayState::Recording).tooltip,
         "WakeNote: Recording"
+    );
+}
+
+#[test]
+fn tray_runtime_presentation_uses_red_only_for_microphone_connection_failures() {
+    let mut backend = AppBackend::default();
+    let normal = tray_runtime_presentation(&backend.settings(), &backend.app_status());
+    assert_eq!(normal.icon.rgba, [0, 0, 0, 255]);
+
+    backend.capture_start_failed("Microphone unavailable: BY-V disconnected");
+    let mic_failure = tray_runtime_presentation(&backend.settings(), &backend.app_status());
+    assert_eq!(mic_failure.icon.rgba, [220, 38, 38, 255]);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("missing.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio file");
+    let mut queue_failure = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    let snapshot =
+        queue_failure.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    let job_id = snapshot.jobs.last().expect("queued job").id;
+    queue_failure
+        .finish_transcription_job(TranscriptionJobOutcome::failed(
+            job_id,
+            "transcription failed",
+        ))
+        .expect("fail queue job");
+    let queue_failure_presentation =
+        tray_runtime_presentation(&queue_failure.settings(), &queue_failure.app_status());
+    assert_eq!(queue_failure_presentation.icon.rgba, [0, 0, 0, 255]);
+}
+
+#[test]
+fn tray_icon_image_draws_centered_half_size_circle() {
+    let presentation = tray_presentation_for_state(TrayState::Listening);
+    let image = tray_icon_image_for_presentation(presentation);
+
+    assert_eq!(image.width, 64);
+    assert_eq!(image.height, 64);
+    assert_eq!(image.rgba.len(), (64 * 64 * 4) as usize);
+
+    let center = ((32 * image.width + 32) * 4) as usize;
+    assert_eq!(&image.rgba[center..center + 4], &[0, 0, 0, 255]);
+    let corner = 0;
+    assert_eq!(&image.rgba[corner..corner + 4], &[0, 0, 0, 0]);
+
+    let filled_pixels = image
+        .rgba
+        .chunks_exact(4)
+        .filter(|pixel| pixel[3] > 0)
+        .count();
+    assert!(
+        (760..=860).contains(&filled_pixels),
+        "32px diameter circle should fill roughly half-size area, got {filled_pixels}"
     );
 }
 

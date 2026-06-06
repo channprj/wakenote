@@ -22,8 +22,9 @@ use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
     MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState, UploadedAudio,
     main_window_close_action, microphone_devices_from_input_devices, pinned_device_mismatch,
-    reveal_save_folder_request, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
+    with_live_runtime_warning,
 };
 use wakenote::live_capture::{
     AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -59,8 +60,8 @@ const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "WakeNote";
 const CLOSE_SETTINGS_WINDOW_MENU_ID: &str = "close-settings-window";
-const MAIN_WINDOW_WIDTH: f64 = 1180.0;
-const MAIN_WINDOW_HEIGHT: f64 = 760.0;
+const MAIN_WINDOW_WIDTH: f64 = 1040.0;
+const MAIN_WINDOW_HEIGHT: f64 = 922.0;
 const MAIN_WINDOW_MIN_WIDTH: f64 = 980.0;
 const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 /// How long we wait for cpal's `host.input_devices()` enumeration to
@@ -1921,7 +1922,8 @@ fn setup_tray(
             icon: tray_presentation_for_state(wakenote::commands::TrayState::Listening),
             visible: true,
         });
-    let icon = Image::new_owned(presentation.icon.rgba.to_vec(), 1, 1);
+    let icon_image = tray_icon_image_for_presentation(presentation.icon);
+    let icon = Image::new_owned(icon_image.rgba, icon_image.width, icon_image.height);
     let tray = TrayIconBuilder::with_id("wakenote")
         .tooltip(presentation.icon.tooltip)
         .icon(icon)
@@ -1949,10 +1951,11 @@ fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, stat
         return;
     };
     let presentation = tray_runtime_presentation(settings, status);
+    let icon_image = tray_icon_image_for_presentation(presentation.icon);
     let _ = tray.set_icon(Some(Image::new_owned(
-        presentation.icon.rgba.to_vec(),
-        1,
-        1,
+        icon_image.rgba,
+        icon_image.width,
+        icon_image.height,
     )));
     let _ = tray.set_tooltip(Some(presentation.icon.tooltip));
     let _ = tray.set_visible(presentation.visible);
@@ -2050,6 +2053,12 @@ mod tests {
             MAIN_WINDOW_MIN_WIDTH as u32,
             MAIN_WINDOW_MIN_HEIGHT as u32,
         ));
+    }
+
+    #[test]
+    fn main_window_default_size_matches_current_settings_window() {
+        assert_eq!(MAIN_WINDOW_WIDTH as u32, 1040);
+        assert_eq!(MAIN_WINDOW_HEIGHT as u32, 922);
     }
 
     #[test]

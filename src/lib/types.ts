@@ -1,6 +1,7 @@
 export type AudioFormat = "m4a" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type ThemeMode = "light" | "dark";
 export type TranscriptionLanguage =
   | "auto"
   | "ko"
@@ -77,6 +78,7 @@ export interface AppSettings {
   show_tray_icon: boolean;
   show_floating_overlay: boolean;
   floating_overlay_position: FloatingOverlayPosition;
+  theme_mode: ThemeMode;
   theme_primary_color: string;
 }
 
