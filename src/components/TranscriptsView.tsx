@@ -176,6 +176,16 @@ export function TranscriptsView({
   const hasEntries = activeEntries.length > 0;
   const isLoadingActive = loadingDay === effectiveActiveDay;
 
+  // The calendar count (size-based) can exceed the entries we managed to load
+  // when some of the day's sidecars are iCloud-evicted (skipped on the
+  // no-download navigation read). The gap is what an explicit reload would fetch.
+  const availableCount = useMemo(
+    () => days.find((entry) => entry.day === effectiveActiveDay)?.count ?? 0,
+    [days, effectiveActiveDay],
+  );
+  const pendingCount = Math.max(0, availableCount - activeEntries.length);
+  const hasPending = pendingCount > 0 && !isLoadingActive;
+
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const handlePrevWeek = () => setViewWeekStart(addDays(effectiveWeekStart, -7));
   const handleNextWeek = () => setViewWeekStart(addDays(effectiveWeekStart, 7));
@@ -248,6 +258,11 @@ export function TranscriptsView({
                 )}
               </Button>
             ) : null}
+            {hasPending && hasEntries ? (
+              <span className="transcript-day__icloud-hint">
+                iCloud에 {pendingCount}개 더 있음
+              </span>
+            ) : null}
             <Button
               aria-label="해당 일자 다시 불러오기"
               disabled={isLoadingActive}
@@ -276,7 +291,11 @@ export function TranscriptsView({
           </div>
         ) : (
           <div className="transcripts-empty">
-            {isLoadingActive ? "Loading…" : "No transcripts for this day"}
+            {isLoadingActive
+              ? "Loading…"
+              : hasPending
+                ? `iCloud에 ${pendingCount}개 있습니다 — 다시 불러오기를 누르세요`
+                : "No transcripts for this day"}
           </div>
         )}
       </article>

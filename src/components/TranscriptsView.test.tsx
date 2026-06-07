@@ -166,6 +166,42 @@ describe("TranscriptsView", () => {
     expect(markup).toContain('src="file:///tmp/WakeNote/20260510/010203.m4a"');
     expect(markup).toContain("Now playing");
   });
+
+  it("hints that more entries are in iCloud when the day count exceeds loaded entries", () => {
+    const markup = view({
+      today: new Date("2026-05-14T12:00:00+09:00"),
+      days: [{ day: "2026-05-14", count: 3 }],
+      entriesByDay: new Map([
+        ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "local one" })]],
+      ]),
+    });
+    // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
+    expect(markup).toContain("iCloud에 2개 더 있음");
+    expect(markup).toContain("local one");
+    expect(markup).toContain('aria-label="해당 일자 다시 불러오기"');
+  });
+
+  it("prompts a reload in the empty state when a day is entirely iCloud-evicted", () => {
+    const markup = view({
+      today: new Date("2026-05-14T12:00:00+09:00"),
+      days: [{ day: "2026-05-14", count: 5 }],
+      entriesByDay: new Map(),
+    });
+    expect(markup).toContain("iCloud에 5개 있습니다 — 다시 불러오기를 누르세요");
+    expect(markup).not.toContain("No transcripts for this day");
+  });
+
+  it("shows no iCloud hint when all of the day's entries are loaded", () => {
+    const markup = view({
+      today: new Date("2026-05-14T12:00:00+09:00"),
+      days: [{ day: "2026-05-14", count: 1 }],
+      entriesByDay: new Map([
+        ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "only one" })]],
+      ]),
+    });
+    expect(markup).not.toContain("iCloud에");
+    expect(markup).toContain("only one");
+  });
 });
 
 describe("weekStartFor", () => {

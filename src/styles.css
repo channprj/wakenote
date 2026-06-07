@@ -2179,6 +2179,12 @@ tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+.transcript-day__icloud-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .transcript-entry__timestamp {
   flex: 0 0 auto;
   color: var(--muted);
