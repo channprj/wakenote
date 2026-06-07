@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -1495,18 +1495,22 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
         return Vec::new();
     }
 
-    let mut day_dirs = collect_day_dirs(root);
+    let mut days = collect_day_keys(root);
     // Newest day first.
-    day_dirs.sort_by(|left, right| right.0.cmp(&left.0));
+    days.sort_by(|left, right| right.cmp(left));
 
     let _dataless_guard = DatalessMaterializationGuard::disabled();
-    let mut transcripts = Vec::with_capacity(limit);
-    for (_day, dir) in day_dirs {
+    let mut transcripts = Vec::new();
+    for day in days {
         if transcripts.len() >= limit {
             break;
         }
+        // Merge both sources for this day before sorting, mirroring
+        // `transcripts_for_day_from_save_root`, so the within-day order (and
+        // any `limit` truncation) spans top-level and `uploaded` together.
         let mut paths = Vec::new();
-        collect_day_sidecar_paths(&dir, &mut paths);
+        collect_day_sidecar_paths(&root.join(&day), &mut paths);
+        collect_day_sidecar_paths(&root.join("uploaded").join(&day), &mut paths);
         // Newest within the day first.
         paths.sort_by(|left, right| {
             transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
@@ -1523,16 +1527,17 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
     transcripts
 }
 
-/// All `YYYYMMDD` day directories under `root` (top-level + `uploaded/`),
-/// returned as `(compact_day, dir_path)`.
-fn collect_day_dirs(root: &Path) -> Vec<(String, PathBuf)> {
-    let mut dirs = Vec::new();
-    push_day_dirs(root, &mut dirs);
-    push_day_dirs(&root.join("uploaded"), &mut dirs);
-    dirs
+/// Unique compact `YYYYMMDD` day codes that have a folder under `root`
+/// (top-level) or `root/uploaded`. Order is unspecified (caller sorts).
+fn collect_day_keys(root: &Path) -> Vec<String> {
+    let mut days = BTreeSet::new();
+    push_day_keys(root, &mut days);
+    push_day_keys(&root.join("uploaded"), &mut days);
+    days.into_iter().collect()
 }
 
-fn push_day_dirs(parent: &Path, dirs: &mut Vec<(String, PathBuf)>) {
+/// Inserts each `YYYYMMDD`-named subdirectory of `parent` into `days`.
+fn push_day_keys(parent: &Path, days: &mut BTreeSet<String>) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
@@ -1543,7 +1548,7 @@ fn push_day_dirs(parent: &Path, dirs: &mut Vec<(String, PathBuf)>) {
         let name = entry.file_name();
         let name = name.to_str().unwrap_or_default();
         if name.len() == 8 && name.bytes().all(|byte| byte.is_ascii_digit()) {
-            dirs.push((name.to_string(), entry.path()));
+            days.insert(name.to_string());
         }
     }
 }
@@ -2190,6 +2195,38 @@ mod tests {
         let limited = recent_transcripts_from_save_root(root, 1);
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].text, "newer evening");
+    }
+
+    #[test]
+    fn recent_transcripts_merges_uploaded_into_same_day_before_sorting() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        let top = root.join("20260512");
+        std::fs::create_dir_all(&top).expect("top day");
+        std::fs::write(top.join("090000.txt"), "top morning").expect("t1");
+
+        let uploaded = root.join("uploaded").join("20260512");
+        std::fs::create_dir_all(&uploaded).expect("uploaded day");
+        std::fs::write(uploaded.join("200000.txt"), "uploaded evening").expect("t2");
+
+        let all = recent_transcripts_from_save_root(root, 10);
+        let texts: Vec<&str> = all.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts.len(), 2);
+        assert!(texts.contains(&"top morning"));
+        assert!(texts.contains(&"uploaded evening"));
+        // Within the day, both sources are merged before sorting, so the
+        // 20:00 uploaded entry precedes the 09:00 top-level one.
+        assert!(
+            texts.iter().position(|t| *t == "uploaded evening")
+                < texts.iter().position(|t| *t == "top morning")
+        );
+
+        // The merge happens before truncation: limit 1 keeps the newest of
+        // the merged day, which lives in `uploaded/`.
+        let limited = recent_transcripts_from_save_root(root, 1);
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].text, "uploaded evening");
     }
 
     #[test]
