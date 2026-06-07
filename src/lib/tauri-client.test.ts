@@ -28,6 +28,10 @@ function browserCaptureNumber(audioPath: string | undefined) {
 }
 
 describe("transcript day loaders (browser fallback)", () => {
+  // Only verifies the empty-state contract: the browser snapshot's
+  // recent_transcripts isn't seedable with controllable days in this harness
+  // (browserSnapshot is module-private and the only writer, processNextTranscription,
+  // always stamps the current time), so grouping/count/filter isn't exercised here.
   it("returns an array of days and an empty list for a day with no entries", async () => {
     const days = await loadTranscriptDays();
     expect(Array.isArray(days)).toBe(true);

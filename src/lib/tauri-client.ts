@@ -239,6 +239,9 @@ function transcriptDayFromBrowser(transcript: RecentTranscript): string {
   return formatLocalTimestamp(transcript.recorded_at).slice(0, 10);
 }
 
+// Returns days in ascending order; the backend (BTreeMap) and this browser
+// fallback agree. Consumers that need newest-first should sort themselves
+// (TranscriptsView derives its own ordering).
 export async function loadTranscriptDays(): Promise<TranscriptDay[]> {
   if (!isTauriRuntime()) {
     const counts = new Map<string, number>();
