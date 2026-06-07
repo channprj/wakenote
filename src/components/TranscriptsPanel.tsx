@@ -35,7 +35,12 @@ export function TranscriptsPanel() {
     }
   }, []);
 
-  // First navigation to a day loads it once; reload re-reads explicitly.
+  // TranscriptsView fires onActiveDayChange(effectiveActiveDay) on mount (with
+  // today) and whenever the active day changes. ensureDayLoaded's requestedRef
+  // guard is what keeps each day loaded at most once across those effect
+  // re-fires — do not remove it, or navigating back and forth re-loads days.
+  // reloadDay and the live-transcript-final handler intentionally bypass the
+  // guard (they pre-add the day and call loadDay directly) to force a re-read.
   const ensureDayLoaded = useCallback(
     (day: string) => {
       if (requestedRef.current.has(day)) {
