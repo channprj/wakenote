@@ -1383,10 +1383,14 @@ impl AppBackend {
     }
 }
 
-/// Lists the `YYYY-MM-DD` days that contain at least one transcript sidecar,
-/// with a per-day sidecar count. Reads only directory entries (no file
-/// contents), scanning both top-level `YYYYMMDD` folders and `uploaded/YYYYMMDD`.
+/// Lists the `YYYY-MM-DD` days that contain at least one non-empty transcript
+/// sidecar, with a per-day sidecar count. Scans both top-level `YYYYMMDD`
+/// folders and `uploaded/YYYYMMDD`. Reads `.txt` content (not just metadata) so
+/// the count matches what the day view actually renders: empty/suppressed
+/// sidecars are excluded, exactly as `recent_transcript_from_sidecar` does.
 pub fn transcript_days_from_save_root(root: &Path) -> Vec<TranscriptDay> {
+    let _dataless_guard = DatalessMaterializationGuard::disabled();
+
     // `accumulate_day_counts` never inserts zero-count entries, so every entry
     // here is already a day with at least one sidecar. BTreeMap keeps days sorted.
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -1419,6 +1423,11 @@ fn accumulate_day_counts(parent: &Path, counts: &mut BTreeMap<String, usize>) {
     }
 }
 
+/// Counts transcript sidecars in a single day directory. Reads file CONTENT
+/// (not just metadata): a sidecar is counted only if it is a non-`.error.txt`
+/// `.txt` AND its trimmed content is non-empty. This keeps the count consistent
+/// with the entries the day view renders — empty/suppressed sidecars (e.g. those
+/// written for low-confidence transcripts) are excluded from both count and list.
 fn count_transcript_sidecars(dir: &Path) -> usize {
     let Ok(entries) = fs::read_dir(dir) else {
         return 0;
@@ -1426,7 +1435,13 @@ fn count_transcript_sidecars(dir: &Path) -> usize {
     entries
         .flatten()
         .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
-        .filter(|entry| is_transcript_sidecar(&entry.path()))
+        .map(|entry| entry.path())
+        .filter(|path| is_transcript_sidecar(path))
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false)
+        })
         .count()
 }
 
@@ -2125,6 +2140,33 @@ mod tests {
                 TranscriptDay { day: "2026-05-10".to_string(), count: 2 },
                 TranscriptDay { day: "2026-05-11".to_string(), count: 2 },
             ]
+        );
+    }
+
+    #[test]
+    fn transcript_days_excludes_empty_sidecars_to_match_day_view() {
+        // Suppressed (low-confidence) transcripts are written as empty `.txt`
+        // files. They must NOT inflate the calendar count, otherwise a day would
+        // look selectable but open to "No transcripts for this day".
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // Day with ONLY an empty/whitespace sidecar -> excluded entirely (count 0).
+        let suppressed_only = root.join("20260512");
+        std::fs::create_dir_all(&suppressed_only).expect("suppressed_only");
+        std::fs::write(suppressed_only.join("100000.txt"), "  \n").expect("empty");
+
+        // Day with one empty + one real sidecar -> count == 1 (only the real one).
+        let mixed = root.join("20260513");
+        std::fs::create_dir_all(&mixed).expect("mixed");
+        std::fs::write(mixed.join("090000.txt"), "   ").expect("empty");
+        std::fs::write(mixed.join("100000.txt"), "real transcript").expect("real");
+
+        let days = transcript_days_from_save_root(root);
+
+        assert_eq!(
+            days,
+            vec![TranscriptDay { day: "2026-05-13".to_string(), count: 1 }]
         );
     }
 
