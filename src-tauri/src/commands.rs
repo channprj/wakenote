@@ -1389,10 +1389,10 @@ impl AppBackend {
 /// the count matches what the day view actually renders: empty/suppressed
 /// sidecars are excluded, exactly as `recent_transcript_from_sidecar` does.
 pub fn transcript_days_from_save_root(root: &Path) -> Vec<TranscriptDay> {
-    let _dataless_guard = DatalessMaterializationGuard::disabled();
-
-    // `accumulate_day_counts` never inserts zero-count entries, so every entry
-    // here is already a day with at least one sidecar. BTreeMap keeps days sorted.
+    // Counts are size-based (see `sidecar_has_content`): no file content is read
+    // here, so this never triggers an iCloud download and works on evicted
+    // (dataless) days. `accumulate_day_counts` never inserts zero-count entries,
+    // so every entry is a day with at least one sidecar. BTreeMap keeps days sorted.
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     accumulate_day_counts(root, &mut counts);
     accumulate_day_counts(&root.join("uploaded"), &mut counts);
@@ -1423,11 +1423,16 @@ fn accumulate_day_counts(parent: &Path, counts: &mut BTreeMap<String, usize>) {
     }
 }
 
-/// Counts transcript sidecars in a single day directory. Reads file CONTENT
-/// (not just metadata): a sidecar is counted only if it is a non-`.error.txt`
-/// `.txt` AND its trimmed content is non-empty. This keeps the count consistent
-/// with the entries the day view renders — empty/suppressed sidecars (e.g. those
-/// written for low-confidence transcripts) are excluded from both count and list.
+/// Counts transcript sidecars in a single day directory using file SIZE only
+/// (no content read). A sidecar counts when it is a non-`.error.txt` `.txt`
+/// larger than one byte. Empty/suppressed transcripts are written as a lone
+/// `"\n"` (one byte) by `write_text_sidecar`, so `len > 1` excludes them,
+/// keeping the count aligned with what the day view (which trims) renders.
+///
+/// Size comes from `stat`, which returns the logical size of an iCloud
+/// "dataless" (evicted) file WITHOUT downloading it. Reading content here would
+/// instead fail under the dataless guard — so evicted days would wrongly count
+/// as empty — or force a download of the entire archive.
 fn count_transcript_sidecars(dir: &Path) -> usize {
     let Ok(entries) = fs::read_dir(dir) else {
         return 0;
@@ -1437,12 +1442,15 @@ fn count_transcript_sidecars(dir: &Path) -> usize {
         .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
         .map(|entry| entry.path())
         .filter(|path| is_transcript_sidecar(path))
-        .filter(|path| {
-            std::fs::read_to_string(path)
-                .map(|text| !text.trim().is_empty())
-                .unwrap_or(false)
-        })
+        .filter(|path| sidecar_has_content(path))
         .count()
+}
+
+/// Whether a sidecar holds real content, judged from size alone so it works on
+/// iCloud dataless files without downloading them. One byte or less is the
+/// empty/suppressed `"\n"` stub and counts as contentless.
+fn sidecar_has_content(path: &Path) -> bool {
+    fs::metadata(path).map(|meta| meta.len() > 1).unwrap_or(false)
 }
 
 /// "20260510" -> Some("2026-05-10"); anything that is not 8 ASCII digits -> None.
@@ -1469,12 +1477,25 @@ fn compact_day_from_dashed(day: &str) -> Option<String> {
 /// Materializes every non-empty transcript sidecar for a single `YYYY-MM-DD`
 /// day, reading only that day's `YYYYMMDD` folder (and its `uploaded` twin).
 /// Entries are returned in ascending (oldest-first) order.
-pub fn transcripts_for_day_from_save_root(root: &Path, day: &str) -> Vec<RecentTranscript> {
+///
+/// When `download` is false (on-navigation load) the dataless guard is held so
+/// iCloud-evicted sidecars are skipped instead of downloaded. When `download`
+/// is true (an explicit user reload) the guard is dropped so the requested
+/// day's evicted sidecars are materialized (fetched) and returned.
+pub fn transcripts_for_day_from_save_root(
+    root: &Path,
+    day: &str,
+    download: bool,
+) -> Vec<RecentTranscript> {
     let Some(compact) = compact_day_from_dashed(day) else {
         return Vec::new();
     };
 
-    let _dataless_guard = DatalessMaterializationGuard::disabled();
+    let _dataless_guard = if download {
+        None
+    } else {
+        Some(DatalessMaterializationGuard::disabled())
+    };
     let day_dir = root.join(&compact);
     let uploaded_dir = root.join("uploaded").join(&compact);
     let mut paths = Vec::new();
@@ -2145,22 +2166,23 @@ mod tests {
 
     #[test]
     fn transcript_days_excludes_empty_sidecars_to_match_day_view() {
-        // Suppressed (low-confidence) transcripts are written as empty `.txt`
-        // files. They must NOT inflate the calendar count, otherwise a day would
-        // look selectable but open to "No transcripts for this day".
+        // Suppressed (low-confidence) transcripts are written as a lone "\n"
+        // (one byte) by `write_text_sidecar`. The size-based count must exclude
+        // them, otherwise a day would look selectable but open to "No
+        // transcripts for this day".
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
 
-        // Day with ONLY an empty/whitespace sidecar -> excluded entirely (count 0).
+        // Day with ONLY a one-byte suppressed stub -> excluded entirely (count 0).
         let suppressed_only = root.join("20260512");
         std::fs::create_dir_all(&suppressed_only).expect("suppressed_only");
-        std::fs::write(suppressed_only.join("100000.txt"), "  \n").expect("empty");
+        std::fs::write(suppressed_only.join("100000.txt"), "\n").expect("suppressed");
 
-        // Day with one empty + one real sidecar -> count == 1 (only the real one).
+        // Day with one suppressed stub + one real sidecar -> count == 1.
         let mixed = root.join("20260513");
         std::fs::create_dir_all(&mixed).expect("mixed");
-        std::fs::write(mixed.join("090000.txt"), "   ").expect("empty");
-        std::fs::write(mixed.join("100000.txt"), "real transcript").expect("real");
+        std::fs::write(mixed.join("090000.txt"), "\n").expect("suppressed");
+        std::fs::write(mixed.join("100000.txt"), "real transcript\n").expect("real");
 
         let days = transcript_days_from_save_root(root);
 
@@ -2189,7 +2211,7 @@ mod tests {
         std::fs::create_dir_all(&other).expect("other");
         std::fs::write(other.join("090000.txt"), "other day").expect("t4");
 
-        let result = transcripts_for_day_from_save_root(root, "2026-05-10");
+        let result = transcripts_for_day_from_save_root(root, "2026-05-10", false);
         let texts: Vec<&str> = result.iter().map(|item| item.text.as_str()).collect();
 
         // Empty sidecar skipped; other day excluded; uploaded merged in.
@@ -2211,8 +2233,25 @@ mod tests {
     #[test]
     fn transcripts_for_day_rejects_malformed_day() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        assert!(transcripts_for_day_from_save_root(tmp.path(), "20260510").is_empty());
-        assert!(transcripts_for_day_from_save_root(tmp.path(), "not-a-day").is_empty());
+        assert!(transcripts_for_day_from_save_root(tmp.path(), "20260510", false).is_empty());
+        assert!(transcripts_for_day_from_save_root(tmp.path(), "not-a-day", false).is_empty());
+    }
+
+    #[test]
+    fn transcripts_for_day_download_flag_is_equivalent_for_local_files() {
+        // For materialized (non-evicted) files the dataless guard has no effect,
+        // so the on-navigation (download=false) and reload (download=true) reads
+        // return the same entries. The flag only matters for iCloud-evicted files.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        std::fs::write(day.join("090000.txt"), "morning\n").expect("t1");
+        std::fs::write(day.join("180000.txt"), "evening\n").expect("t2");
+
+        let local = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", false);
+        let downloaded = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", true);
+        assert_eq!(local, downloaded);
+        assert_eq!(local.len(), 2);
     }
 
     #[test]

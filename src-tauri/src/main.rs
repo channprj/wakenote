@@ -469,6 +469,7 @@ async fn transcript_days(
 async fn transcripts_for_day(
     state: State<'_, BackendState>,
     day: String,
+    download: bool,
 ) -> Result<Vec<RecentTranscript>, String> {
     let save_root = {
         let backend = state.lock().map_err(|error| error.to_string())?;
@@ -476,7 +477,7 @@ async fn transcripts_for_day(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        wakenote::commands::transcripts_for_day_from_save_root(&save_root, &day)
+        wakenote::commands::transcripts_for_day_from_save_root(&save_root, &day, download)
     })
     .await
     .map_err(|error| error.to_string())

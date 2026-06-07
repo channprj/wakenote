@@ -19,10 +19,13 @@ export function TranscriptsPanel() {
     }
   }, []);
 
-  const loadDay = useCallback(async (day: string) => {
+  // `download` is false for on-navigation loads (iCloud-evicted sidecars are
+  // skipped, no network) and true for an explicit reload (evicted sidecars for
+  // that day are fetched).
+  const loadDay = useCallback(async (day: string, download = false) => {
     setLoadingDay(day);
     try {
-      const entries = await loadTranscriptsForDay(day);
+      const entries = await loadTranscriptsForDay(day, download);
       setEntriesByDay((prev) => {
         const next = new Map(prev);
         next.set(day, entries);
@@ -39,15 +42,16 @@ export function TranscriptsPanel() {
   // today) and whenever the active day changes. ensureDayLoaded's requestedRef
   // guard is what keeps each day loaded at most once across those effect
   // re-fires — do not remove it, or navigating back and forth re-loads days.
-  // reloadDay and the live-transcript-final handler intentionally bypass the
-  // guard (they pre-add the day and call loadDay directly) to force a re-read.
+  // First-nav loads stay local (download=false); reloadDay and the
+  // live-transcript-final handler intentionally bypass the guard to force a
+  // re-read (reload additionally downloads evicted sidecars).
   const ensureDayLoaded = useCallback(
     (day: string) => {
       if (requestedRef.current.has(day)) {
         return;
       }
       requestedRef.current.add(day);
-      void loadDay(day);
+      void loadDay(day, false);
     },
     [loadDay],
   );
@@ -55,7 +59,7 @@ export function TranscriptsPanel() {
   const reloadDay = useCallback(
     (day: string) => {
       requestedRef.current.add(day);
-      void loadDay(day);
+      void loadDay(day, true);
       void refreshDays();
     },
     [loadDay, refreshDays],
@@ -66,6 +70,10 @@ export function TranscriptsPanel() {
   }, [refreshDays]);
 
   // Auto-refresh today's bucket as new transcripts are finalized (live or queue).
+  // Only today is reloaded (locally — today's files are freshly written, never
+  // evicted); the full day list is NOT re-scanned per final, since today is
+  // always selectable in the calendar regardless of its count. Re-scanning the
+  // whole archive on every transcription would stat thousands of files.
   useEffect(() => {
     if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
       return;
@@ -78,8 +86,7 @@ export function TranscriptsPanel() {
       const stop = await listen("live-transcript-final", () => {
         const todayDay = formatLocalDay(new Date());
         requestedRef.current.add(todayDay);
-        void loadDay(todayDay);
-        void refreshDays();
+        void loadDay(todayDay, false);
       });
       if (cancelled) {
         stop();
@@ -92,7 +99,7 @@ export function TranscriptsPanel() {
       cancelled = true;
       unlisten?.();
     };
-  }, [loadDay, refreshDays]);
+  }, [loadDay]);
 
   return (
     <TranscriptsView

@@ -259,14 +259,19 @@ export async function loadTranscriptDays(): Promise<TranscriptDay[]> {
   return invoke<TranscriptDay[]>("transcript_days");
 }
 
-export async function loadTranscriptsForDay(day: string): Promise<RecentTranscript[]> {
+// `download` lets an explicit reload fetch iCloud-evicted sidecars; the default
+// (on-navigation load) leaves them on the server and shows only local files.
+export async function loadTranscriptsForDay(
+  day: string,
+  download = false,
+): Promise<RecentTranscript[]> {
   if (!isTauriRuntime()) {
     return (browserSnapshot.recent_transcripts ?? []).filter(
       (transcript) => transcriptDayFromBrowser(transcript) === day,
     );
   }
 
-  return invoke<RecentTranscript[]>("transcripts_for_day", { day });
+  return invoke<RecentTranscript[]>("transcripts_for_day", { day, download });
 }
 
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
