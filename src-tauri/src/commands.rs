@@ -1440,8 +1440,6 @@ fn dashed_day_from_compact(name: &str) -> Option<String> {
 }
 
 /// "2026-05-10" -> Some("20260510"); malformed input -> None.
-// Used by transcripts_for_day_from_save_root (next task).
-#[allow(dead_code)]
 fn compact_day_from_dashed(day: &str) -> Option<String> {
     let bytes = day.as_bytes();
     let well_formed = day.len() == 10
@@ -1451,6 +1449,42 @@ fn compact_day_from_dashed(day: &str) -> Option<String> {
         && day[5..7].bytes().all(|byte| byte.is_ascii_digit())
         && day[8..10].bytes().all(|byte| byte.is_ascii_digit());
     well_formed.then(|| format!("{}{}{}", &day[0..4], &day[5..7], &day[8..10]))
+}
+
+/// Materializes every non-empty transcript sidecar for a single `YYYY-MM-DD`
+/// day, reading only that day's `YYYYMMDD` folder (and its `uploaded` twin).
+pub fn transcripts_for_day_from_save_root(root: &Path, day: &str) -> Vec<RecentTranscript> {
+    let Some(compact) = compact_day_from_dashed(day) else {
+        return Vec::new();
+    };
+
+    let mut paths = Vec::new();
+    collect_day_sidecar_paths(&root.join(&compact), &mut paths);
+    collect_day_sidecar_paths(&root.join("uploaded").join(&compact), &mut paths);
+    paths.sort_by(|left, right| {
+        transcript_path_sort_key(left).cmp(&transcript_path_sort_key(right))
+    });
+
+    let _dataless_guard = DatalessMaterializationGuard::disabled();
+    paths
+        .iter()
+        .filter_map(|path| recent_transcript_from_sidecar(path))
+        .collect()
+}
+
+/// Non-recursive: collect non-error `.txt` sidecars directly inside `dir`.
+fn collect_day_sidecar_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false)
+            && is_transcript_sidecar(&path)
+        {
+            paths.push(path);
+        }
+    }
 }
 
 pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<RecentTranscript> {
@@ -2076,6 +2110,43 @@ mod tests {
                 TranscriptDay { day: "2026-05-11".to_string(), count: 2 },
             ]
         );
+    }
+
+    #[test]
+    fn transcripts_for_day_reads_only_that_day_including_uploaded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        let target = root.join("20260510");
+        std::fs::create_dir_all(&target).expect("target");
+        std::fs::write(target.join("090000.txt"), "morning").expect("t1");
+        std::fs::write(target.join("180000.txt"), "evening").expect("t2");
+        std::fs::write(target.join("190000.txt"), "  \n").expect("empty");
+
+        let uploaded = root.join("uploaded").join("20260510");
+        std::fs::create_dir_all(&uploaded).expect("uploaded");
+        std::fs::write(uploaded.join("memo.txt"), "imported").expect("t3");
+
+        let other = root.join("20260511");
+        std::fs::create_dir_all(&other).expect("other");
+        std::fs::write(other.join("090000.txt"), "other day").expect("t4");
+
+        let result = transcripts_for_day_from_save_root(root, "2026-05-10");
+        let texts: Vec<&str> = result.iter().map(|item| item.text.as_str()).collect();
+
+        // Empty sidecar skipped; other day excluded; uploaded merged in.
+        assert_eq!(result.len(), 3);
+        assert!(texts.contains(&"morning"));
+        assert!(texts.contains(&"evening"));
+        assert!(texts.contains(&"imported"));
+        assert!(!texts.contains(&"other day"));
+    }
+
+    #[test]
+    fn transcripts_for_day_rejects_malformed_day() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(transcripts_for_day_from_save_root(tmp.path(), "20260510").is_empty());
+        assert!(transcripts_for_day_from_save_root(tmp.path(), "not-a-day").is_empty());
     }
 
     #[test]
