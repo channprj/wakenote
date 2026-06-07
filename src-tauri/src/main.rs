@@ -450,6 +450,39 @@ async fn recent_transcripts(
 }
 
 #[tauri::command]
+async fn transcript_days(
+    state: State<'_, BackendState>,
+) -> Result<Vec<wakenote::commands::TranscriptDay>, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::commands::transcript_days_from_save_root(&save_root)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn transcripts_for_day(
+    state: State<'_, BackendState>,
+    day: String,
+) -> Result<Vec<RecentTranscript>, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::commands::transcripts_for_day_from_save_root(&save_root, &day)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
     let path = PathBuf::from(audio_path);
     validate_audio_playback_file(&path)?;
@@ -1764,6 +1797,8 @@ fn main() {
             request_microphone_permission,
             open_microphone_permission_settings,
             recent_transcripts,
+            transcript_days,
+            transcripts_for_day,
             allow_audio_playback,
             upload_audio_file,
             analyze_audio_waveform,
