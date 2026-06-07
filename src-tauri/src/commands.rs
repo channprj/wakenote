@@ -363,6 +363,12 @@ pub struct RecentTranscript {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptDay {
+    pub day: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UploadedAudio {
     pub audio_path: String,
     pub original_filename: String,
@@ -1377,6 +1383,76 @@ impl AppBackend {
     }
 }
 
+/// Lists the `YYYY-MM-DD` days that contain at least one transcript sidecar,
+/// with a per-day sidecar count. Reads only directory entries (no file
+/// contents), scanning both top-level `YYYYMMDD` folders and `uploaded/YYYYMMDD`.
+pub fn transcript_days_from_save_root(root: &Path) -> Vec<TranscriptDay> {
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    accumulate_day_counts(root, &mut counts);
+    accumulate_day_counts(&root.join("uploaded"), &mut counts);
+
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(day, count)| TranscriptDay { day, count })
+        .collect()
+}
+
+fn accumulate_day_counts(
+    parent: &Path,
+    counts: &mut std::collections::BTreeMap<String, usize>,
+) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(day) = dashed_day_from_compact(name.to_str().unwrap_or_default()) else {
+            continue;
+        };
+        let count = count_transcript_sidecars(&entry.path());
+        if count > 0 {
+            *counts.entry(day).or_insert(0) += count;
+        }
+    }
+}
+
+fn count_transcript_sidecars(dir: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+        .filter(|entry| is_transcript_sidecar(&entry.path()))
+        .count()
+}
+
+/// "20260510" -> Some("2026-05-10"); anything that is not 8 ASCII digits -> None.
+fn dashed_day_from_compact(name: &str) -> Option<String> {
+    if name.len() == 8 && name.bytes().all(|byte| byte.is_ascii_digit()) {
+        Some(format!("{}-{}-{}", &name[0..4], &name[4..6], &name[6..8]))
+    } else {
+        None
+    }
+}
+
+/// "2026-05-10" -> Some("20260510"); malformed input -> None.
+#[allow(dead_code)]
+fn compact_day_from_dashed(day: &str) -> Option<String> {
+    let bytes = day.as_bytes();
+    let well_formed = day.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && day[0..4].bytes().all(|byte| byte.is_ascii_digit())
+        && day[5..7].bytes().all(|byte| byte.is_ascii_digit())
+        && day[8..10].bytes().all(|byte| byte.is_ascii_digit());
+    well_formed.then(|| format!("{}{}{}", &day[0..4], &day[5..7], &day[8..10]))
+}
+
 pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<RecentTranscript> {
     if limit == 0 {
         return Vec::new();
@@ -1963,6 +2039,43 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(settings.selected_microphone, "input-3-by-v");
+    }
+
+    #[test]
+    fn transcript_days_counts_sidecars_per_day_including_uploaded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        let day1 = root.join("20260510");
+        std::fs::create_dir_all(&day1).expect("day1");
+        std::fs::write(day1.join("010203.txt"), "morning").expect("t1");
+        std::fs::write(day1.join("110203.txt"), "noon").expect("t2");
+        // error / empty-by-name sidecars must not be counted as transcripts.
+        std::fs::write(day1.join("120000.error.txt"), "boom").expect("err");
+        // audio without a transcript must not be counted.
+        std::fs::write(day1.join("130000.m4a"), b"audio").expect("audio");
+
+        let day2 = root.join("20260511");
+        std::fs::create_dir_all(&day2).expect("day2");
+        std::fs::write(day2.join("090000.txt"), "second day").expect("t3");
+
+        // Uploaded files live under uploaded/YYYYMMDD and merge into the same day bucket.
+        let uploaded = root.join("uploaded").join("20260511");
+        std::fs::create_dir_all(&uploaded).expect("uploaded");
+        std::fs::write(uploaded.join("memo.txt"), "imported").expect("t4");
+
+        // A non-date directory must be ignored.
+        std::fs::create_dir_all(root.join("notes")).expect("notes");
+
+        let days = transcript_days_from_save_root(root);
+
+        assert_eq!(
+            days,
+            vec![
+                TranscriptDay { day: "2026-05-10".to_string(), count: 2 },
+                TranscriptDay { day: "2026-05-11".to_string(), count: 2 },
+            ]
+        );
     }
 
     #[test]
