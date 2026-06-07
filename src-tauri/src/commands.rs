@@ -1495,23 +1495,57 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
         return Vec::new();
     }
 
-    let mut paths = Vec::new();
-    collect_transcript_sidecar_paths(root, &mut paths);
-    paths.sort_by(|left, right| {
-        transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
-    });
+    let mut day_dirs = collect_day_dirs(root);
+    // Newest day first.
+    day_dirs.sort_by(|left, right| right.0.cmp(&left.0));
 
     let _dataless_guard = DatalessMaterializationGuard::disabled();
-    let mut transcripts = Vec::with_capacity(limit.min(paths.len()));
-    for path in paths {
+    let mut transcripts = Vec::with_capacity(limit);
+    for (_day, dir) in day_dirs {
         if transcripts.len() >= limit {
             break;
         }
-        if let Some(transcript) = recent_transcript_from_sidecar(&path) {
-            transcripts.push(transcript);
+        let mut paths = Vec::new();
+        collect_day_sidecar_paths(&dir, &mut paths);
+        // Newest within the day first.
+        paths.sort_by(|left, right| {
+            transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
+        });
+        for path in paths {
+            if transcripts.len() >= limit {
+                break;
+            }
+            if let Some(transcript) = recent_transcript_from_sidecar(&path) {
+                transcripts.push(transcript);
+            }
         }
     }
     transcripts
+}
+
+/// All `YYYYMMDD` day directories under `root` (top-level + `uploaded/`),
+/// returned as `(compact_day, dir_path)`.
+fn collect_day_dirs(root: &Path) -> Vec<(String, PathBuf)> {
+    let mut dirs = Vec::new();
+    push_day_dirs(root, &mut dirs);
+    push_day_dirs(&root.join("uploaded"), &mut dirs);
+    dirs
+}
+
+fn push_day_dirs(parent: &Path, dirs: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_str().unwrap_or_default();
+        if name.len() == 8 && name.bytes().all(|byte| byte.is_ascii_digit()) {
+            dirs.push((name.to_string(), entry.path()));
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1587,32 +1621,6 @@ struct DatalessMaterializationGuard;
 impl DatalessMaterializationGuard {
     fn disabled() -> Self {
         Self
-    }
-}
-
-fn collect_transcript_sidecar_paths(root: &Path, paths: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            collect_transcript_sidecar_paths(&path, paths);
-            continue;
-        }
-
-        if !file_type.is_file() {
-            continue;
-        }
-        if !is_transcript_sidecar(&path) {
-            continue;
-        }
-
-        paths.push(path);
     }
 }
 
@@ -2158,6 +2166,30 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         assert!(transcripts_for_day_from_save_root(tmp.path(), "20260510").is_empty());
         assert!(transcripts_for_day_from_save_root(tmp.path(), "not-a-day").is_empty());
+    }
+
+    #[test]
+    fn recent_transcripts_orders_newest_day_first_across_buckets() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        let older = root.join("20260510");
+        std::fs::create_dir_all(&older).expect("older");
+        std::fs::write(older.join("090000.txt"), "older day").expect("t1");
+
+        let newer = root.join("20260512");
+        std::fs::create_dir_all(&newer).expect("newer");
+        std::fs::write(newer.join("080000.txt"), "newer morning").expect("t2");
+        std::fs::write(newer.join("200000.txt"), "newer evening").expect("t3");
+
+        let all = recent_transcripts_from_save_root(root, 10);
+        let texts: Vec<&str> = all.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, vec!["newer evening", "newer morning", "older day"]);
+
+        // Limit stops once filled, newest first.
+        let limited = recent_transcripts_from_save_root(root, 1);
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].text, "newer evening");
     }
 
     #[test]
