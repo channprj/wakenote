@@ -130,6 +130,11 @@ export interface RecentTranscript {
   text: string;
 }
 
+export interface TranscriptDay {
+  day: string;
+  count: number;
+}
+
 export interface UploadedAudio {
   audio_path: string;
   original_filename: string;

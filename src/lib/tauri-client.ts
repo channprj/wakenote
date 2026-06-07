@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { formatLocalTimestamp } from "./transcript-history";
 import {
   defaultSettings,
   defaultLevelSnapshot,
@@ -20,6 +21,7 @@ import type {
   QueueSnapshot,
   RecentTranscript,
   SettingsPatch,
+  TranscriptDay,
   UploadedAudio,
   AudioWaveform,
   AppPermissions,
@@ -231,6 +233,37 @@ export async function loadRecentTranscripts(
   }
 
   return invoke<RecentTranscript[]>("recent_transcripts", { limit });
+}
+
+function transcriptDayFromBrowser(transcript: RecentTranscript): string {
+  return formatLocalTimestamp(transcript.recorded_at).slice(0, 10);
+}
+
+export async function loadTranscriptDays(): Promise<TranscriptDay[]> {
+  if (!isTauriRuntime()) {
+    const counts = new Map<string, number>();
+    for (const transcript of browserSnapshot.recent_transcripts ?? []) {
+      const day = transcriptDayFromBrowser(transcript);
+      if (day) {
+        counts.set(day, (counts.get(day) ?? 0) + 1);
+      }
+    }
+    return [...counts]
+      .map(([day, count]) => ({ day, count }))
+      .sort((left, right) => left.day.localeCompare(right.day));
+  }
+
+  return invoke<TranscriptDay[]>("transcript_days");
+}
+
+export async function loadTranscriptsForDay(day: string): Promise<RecentTranscript[]> {
+  if (!isTauriRuntime()) {
+    return (browserSnapshot.recent_transcripts ?? []).filter(
+      (transcript) => transcriptDayFromBrowser(transcript) === day,
+    );
+  }
+
+  return invoke<RecentTranscript[]>("transcripts_for_day", { day });
 }
 
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {

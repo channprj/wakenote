@@ -11,6 +11,8 @@ import {
   enqueueBacklog,
   enqueueAudioFiles,
   loadSnapshot,
+  loadTranscriptDays,
+  loadTranscriptsForDay,
   processNextTranscription,
   retryJob,
   saveSettingsPatch,
@@ -24,6 +26,16 @@ function browserCaptureNumber(audioPath: string | undefined) {
   const match = audioPath?.match(/browser-capture-(\d+)\./);
   return match ? Number(match[1]) : null;
 }
+
+describe("transcript day loaders (browser fallback)", () => {
+  it("returns an array of days and an empty list for a day with no entries", async () => {
+    const days = await loadTranscriptDays();
+    expect(Array.isArray(days)).toBe(true);
+
+    const none = await loadTranscriptsForDay("2099-01-01");
+    expect(none).toEqual([]);
+  });
+});
 
 describe("tauri live capture client", () => {
   it("returns browser-safe snapshots for live capture actions outside Tauri", async () => {
