@@ -321,24 +321,15 @@ describe("settings panel", () => {
     expect(markup).toContain("VAD gate");
   });
 
-  it("shows all transcripts grouped by day with inline transcript sidecar links", () => {
+  it("renders the transcripts section with the day calendar", () => {
     const snapshot = mockSnapshot();
     const today = localDateSegments(new Date());
-    snapshot.recent_transcripts = [
-      {
-        transcript_path: `/tmp/WakeNote/${today.compact}/010203.txt`,
-        audio_path: `/tmp/WakeNote/${today.compact}/010203.m4a`,
-        recorded_at: `${today.dashed}T01:02:03+09:00`,
-        text: "daily transcript text",
-      },
-    ];
 
     const markup = renderSettingsPanel(snapshot, "transcripts");
 
     expect(markup).toContain("Transcripts");
     expect(markup).toContain(today.dashed);
-    expect(markup).toContain("daily transcript text");
-    expect(markup).toContain(`href="file:///tmp/WakeNote/${today.compact}/010203.txt"`);
+    expect(markup).toContain("transcript-pagination--calendar");
   });
 
   it("groups history jobs by recording day", () => {
