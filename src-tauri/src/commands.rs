@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -1387,21 +1387,19 @@ impl AppBackend {
 /// with a per-day sidecar count. Reads only directory entries (no file
 /// contents), scanning both top-level `YYYYMMDD` folders and `uploaded/YYYYMMDD`.
 pub fn transcript_days_from_save_root(root: &Path) -> Vec<TranscriptDay> {
-    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    // `accumulate_day_counts` never inserts zero-count entries, so every entry
+    // here is already a day with at least one sidecar. BTreeMap keeps days sorted.
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     accumulate_day_counts(root, &mut counts);
     accumulate_day_counts(&root.join("uploaded"), &mut counts);
 
     counts
         .into_iter()
-        .filter(|(_, count)| *count > 0)
         .map(|(day, count)| TranscriptDay { day, count })
         .collect()
 }
 
-fn accumulate_day_counts(
-    parent: &Path,
-    counts: &mut std::collections::BTreeMap<String, usize>,
-) {
+fn accumulate_day_counts(parent: &Path, counts: &mut BTreeMap<String, usize>) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
@@ -1414,6 +1412,7 @@ fn accumulate_day_counts(
             continue;
         };
         let count = count_transcript_sidecars(&entry.path());
+        // Skip empty days so the map only ever holds days with sidecars.
         if count > 0 {
             *counts.entry(day).or_insert(0) += count;
         }
@@ -1441,6 +1440,7 @@ fn dashed_day_from_compact(name: &str) -> Option<String> {
 }
 
 /// "2026-05-10" -> Some("20260510"); malformed input -> None.
+// Used by transcripts_for_day_from_save_root (next task).
 #[allow(dead_code)]
 fn compact_day_from_dashed(day: &str) -> Option<String> {
     let bytes = day.as_bytes();
