@@ -77,7 +77,6 @@ const sections = [
 
 const launchAutoStartPollWindowMs = 130_000;
 
-
 function preserveRecentTranscripts(current: AppSnapshot, next: AppSnapshot): AppSnapshot {
   if (next.recent_transcripts.length > 0) {
     return next;
