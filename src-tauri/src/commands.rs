@@ -1453,19 +1453,22 @@ fn compact_day_from_dashed(day: &str) -> Option<String> {
 
 /// Materializes every non-empty transcript sidecar for a single `YYYY-MM-DD`
 /// day, reading only that day's `YYYYMMDD` folder (and its `uploaded` twin).
+/// Entries are returned in ascending (oldest-first) order.
 pub fn transcripts_for_day_from_save_root(root: &Path, day: &str) -> Vec<RecentTranscript> {
     let Some(compact) = compact_day_from_dashed(day) else {
         return Vec::new();
     };
 
+    let _dataless_guard = DatalessMaterializationGuard::disabled();
+    let day_dir = root.join(&compact);
+    let uploaded_dir = root.join("uploaded").join(&compact);
     let mut paths = Vec::new();
-    collect_day_sidecar_paths(&root.join(&compact), &mut paths);
-    collect_day_sidecar_paths(&root.join("uploaded").join(&compact), &mut paths);
+    collect_day_sidecar_paths(&day_dir, &mut paths);
+    collect_day_sidecar_paths(&uploaded_dir, &mut paths);
     paths.sort_by(|left, right| {
         transcript_path_sort_key(left).cmp(&transcript_path_sort_key(right))
     });
 
-    let _dataless_guard = DatalessMaterializationGuard::disabled();
     paths
         .iter()
         .filter_map(|path| recent_transcript_from_sidecar(path))
@@ -2140,6 +2143,14 @@ mod tests {
         assert!(texts.contains(&"evening"));
         assert!(texts.contains(&"imported"));
         assert!(!texts.contains(&"other day"));
+
+        // Ascending (oldest-first): morning (09:00) precedes evening (18:00).
+        // The uploaded "imported" entry sorts by full path, so only assert the
+        // two same-folder entries' relative order.
+        assert!(
+            texts.iter().position(|text| *text == "morning")
+                < texts.iter().position(|text| *text == "evening")
+        );
     }
 
     #[test]
