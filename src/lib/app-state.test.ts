@@ -246,11 +246,11 @@ describe("app state derivation", () => {
     expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
     expect(snapshot.settings.threshold_dbfs).toBe(-42);
     expect(snapshot.settings.attack_ms).toBe(300);
-    expect(snapshot.settings.release_ms).toBe(600);
+    expect(snapshot.settings.release_ms).toBe(1_000);
     expect(snapshot.settings.pre_roll_ms).toBe(600);
     expect(snapshot.settings.post_roll_ms).toBe(300);
     expect(snapshot.settings.min_chunk_ms).toBe(600);
-    expect(snapshot.settings.max_chunk_ms).toBe(60_000);
+    expect(snapshot.settings.max_chunk_ms).toBe(120_000);
     expect(snapshot.settings.transcription_language).toBe("ko");
     expect(snapshot.settings.suppress_low_confidence_transcripts).toBe(true);
     expect(snapshot.settings.show_dock_icon).toBe(true);
