@@ -13,4 +13,5 @@ pub mod recorder;
 pub mod settings;
 pub mod sources;
 pub mod storage;
+pub mod system_audio;
 pub mod transcription;
