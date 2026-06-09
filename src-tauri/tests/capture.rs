@@ -3,6 +3,7 @@ use wakenote::capture::{
     CaptureController, CaptureControllerConfig, CaptureControllerEvent, CaptureProcessor,
     CaptureProcessorConfig,
 };
+use wakenote::recorder::ChunkSource;
 use wakenote::settings::{AppSettings, AudioFormat};
 
 fn settings() -> AppSettings {
@@ -45,6 +46,8 @@ fn capture_processor_rejects_spikes_shorter_than_attack() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     processor.process_samples(&[0.0; 1], 100).expect("silence");
@@ -71,6 +74,8 @@ fn capture_processor_writes_chunk_after_attack_and_release() {
         used_fallback_device: false,
         base_time,
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {
@@ -99,6 +104,8 @@ fn capture_processor_starts_after_exact_attack_window() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..3 {
@@ -133,6 +140,8 @@ fn capture_processor_includes_pre_onset_audio_in_chunk() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {
@@ -174,6 +183,8 @@ fn capture_processor_writes_configured_post_roll_audio_samples() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..2 {
@@ -205,6 +216,8 @@ fn capture_processor_rolls_over_at_max_chunk_without_dropping_stream() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..10 {
@@ -232,6 +245,8 @@ fn capture_processor_rollover_repeats_tail_context_for_next_chunk() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for index in 0..10 {
@@ -272,6 +287,8 @@ fn capture_processor_rollover_does_not_write_silence_only_chunk_when_speech_stop
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {
@@ -299,6 +316,8 @@ fn capture_controller_flushes_active_chunk_when_recording_is_disabled() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {
@@ -328,6 +347,8 @@ fn capture_controller_flushes_active_chunk_when_paused() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {
@@ -355,6 +376,8 @@ fn capture_controller_flushes_active_chunk_before_threshold_settings_change() {
         used_fallback_device: false,
         base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
         app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
     });
 
     for _ in 0..5 {

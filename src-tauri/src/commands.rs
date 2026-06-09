@@ -21,7 +21,7 @@ use crate::queue::{
     BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
     is_importable_audio_path,
 };
-use crate::recorder::{ChunkMetadata, RecordedChunk, TranscriptionStatus};
+use crate::recorder::{ChunkMetadata, ChunkSource, RecordedChunk, TranscriptionStatus};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
@@ -403,6 +403,9 @@ pub struct AppBackend {
     settings: AppSettings,
     queue: TranscriptionQueue,
     capture: Option<CaptureController>,
+    /// Parallel capture session for system-audio frames. Mirrors `capture`
+    /// but has no level/health monitoring and tags chunks `source = System`.
+    system_capture: Option<CaptureController>,
     level_monitor: LevelMonitor,
     active_microphone_label: Option<String>,
     microphone_warning: Option<String>,
@@ -425,6 +428,7 @@ impl std::fmt::Debug for AppBackend {
             .field("settings", &self.settings)
             .field("queue", &self.queue)
             .field("capture", &self.capture)
+            .field("system_capture", &self.system_capture)
             .field("level_monitor", &self.level_monitor)
             .field("active_microphone_label", &self.active_microphone_label)
             .field("microphone_warning", &self.microphone_warning)
@@ -448,6 +452,7 @@ impl Default for AppBackend {
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
             capture: None,
+            system_capture: None,
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
@@ -470,6 +475,7 @@ impl AppBackend {
             settings: persistence.load_settings()?.unwrap_or_default(),
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
+            system_capture: None,
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
@@ -763,6 +769,8 @@ impl AppBackend {
             used_fallback_device,
             base_time,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
+            source: ChunkSource::Microphone,
+            source_label: None,
         }));
         Ok(self.app_status())
     }
@@ -978,6 +986,94 @@ impl AppBackend {
             .map_err(|error| error.to_string())?;
         self.handle_capture_events(events);
         Ok(self.app_status())
+    }
+
+    /// Open a parallel capture session for system-audio frames. Unlike the
+    /// microphone path this has no level meter, no health watchdog and no
+    /// device resolution: the caller (system-audio input) already owns those.
+    /// Chunks it produces are tagged `source = System` and slugged with
+    /// `source_id` so they never collide with mic chunks from the same second.
+    pub fn start_system_capture_session(
+        &mut self,
+        sample_rate: u32,
+        base_time: chrono::DateTime<chrono::Utc>,
+        app_name: String,
+        source_id: String,
+    ) -> Result<AppStatus, String> {
+        if let Some(capture) = self.system_capture.as_mut() {
+            let events = capture.flush().map_err(|error| error.to_string())?;
+            self.handle_system_capture_events(events);
+        }
+        self.system_capture = Some(CaptureController::new(CaptureControllerConfig {
+            save_root: self.save_root_path(),
+            settings: self.settings.clone(),
+            sample_rate,
+            device_id: source_id.clone(),
+            device_name: app_name,
+            used_fallback_device: false,
+            base_time,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            source: ChunkSource::System,
+            source_label: Some(source_id),
+        }));
+        Ok(self.app_status())
+    }
+
+    /// Feed one system-audio frame into the parallel capture session. Mirrors
+    /// `process_audio_frame` but routes completed chunks through the same
+    /// transcription queue without touching the mic level/health monitors or
+    /// emitting mic-specific live-capture events.
+    pub fn process_system_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
+        let capture = self
+            .system_capture
+            .as_mut()
+            .ok_or_else(|| "system capture session is not running".to_string())?;
+        let events = capture
+            .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
+            .map_err(|error| error.to_string())?;
+        self.handle_system_capture_events(events);
+        Ok(self.app_status())
+    }
+
+    /// Flush the active system chunk and tear down the system capture session.
+    /// Mirrors `stop_capture_session`'s flush-then-clear so an in-progress
+    /// system recording is finalized and enqueued before the session closes.
+    pub fn stop_system_capture_session(&mut self) -> Result<AppStatus, String> {
+        if let Some(capture) = self.system_capture.as_mut() {
+            let events = capture.flush().map_err(|error| error.to_string())?;
+            self.handle_system_capture_events(events);
+        }
+        self.system_capture = None;
+        Ok(self.app_status())
+    }
+
+    /// Enqueue completed system chunks into the shared transcription queue,
+    /// honoring the same transcription-enabled + single-insert dedup rules as
+    /// the mic path. System chunks do not emit live-capture/overlay events for
+    /// v1 (that plumbing is mic-specific); they are recorded and enqueued only.
+    fn handle_system_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
+        let mut queue_changed = false;
+        for event in events {
+            if let CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } = event {
+                let model_id = self.transcription_model_for_completed_chunk(&chunk);
+                eprintln!(
+                    "[wakenote] system-capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
+                    chunk.audio_path.display(),
+                    model_id
+                );
+                self.remember_chunk_id(&chunk.audio_path, chunk_id);
+                if let Some(model_id) = model_id {
+                    let (_, inserted) = self
+                        .queue
+                        .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                    queue_changed |= inserted;
+                }
+            }
+        }
+
+        if queue_changed {
+            self.persist_queue();
+        }
     }
 
     pub fn process_audio_samples_for_test(

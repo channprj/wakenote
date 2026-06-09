@@ -30,6 +30,11 @@ pub struct CaptureProcessorConfig {
     pub used_fallback_device: bool,
     pub base_time: DateTime<Utc>,
     pub app_version: String,
+    /// Audio source these chunks are tagged with (mic vs. system audio).
+    pub source: ChunkSource,
+    /// Optional slug (e.g. app name) that suffixes the chunk filename so a
+    /// system chunk never collides with a mic chunk from the same second.
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +47,11 @@ pub struct CaptureControllerConfig {
     pub used_fallback_device: bool,
     pub base_time: DateTime<Utc>,
     pub app_version: String,
+    /// Audio source these chunks are tagged with (mic vs. system audio).
+    pub source: ChunkSource,
+    /// Optional slug (e.g. app name) that suffixes the chunk filename so a
+    /// system chunk never collides with a mic chunk from the same second.
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -429,8 +439,8 @@ impl CaptureProcessor {
             transcription_enabled: self.config.settings.transcription_enabled,
             app_version: &self.config.app_version,
             live_capture_chunk_id: chunk_id,
-            source: ChunkSource::Microphone,
-            source_label: None,
+            source: self.config.source,
+            source_label: self.config.source_label.as_deref(),
         })?;
 
         self.completed_chunks.push(chunk.clone());
@@ -473,6 +483,71 @@ fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> 
         .unwrap_or(0)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recorder::ChunkMetadata;
+    use crate::settings::{AppSettings, AudioFormat};
+    use chrono::TimeZone;
+
+    fn settings() -> AppSettings {
+        AppSettings {
+            audio_format: AudioFormat::Wav,
+            transcription_enabled: false,
+            threshold_dbfs: -45.0,
+            attack_ms: 300,
+            release_ms: 1_500,
+            pre_roll_ms: 200,
+            post_roll_ms: 200,
+            min_chunk_ms: 500,
+            max_chunk_ms: 30_000,
+            ..AppSettings::default()
+        }
+    }
+
+    #[test]
+    fn system_source_controller_writes_chunk_with_system_source_and_slug() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+        let stem = base_time
+            .with_timezone(&chrono::Local)
+            .format("%H%M%S")
+            .to_string();
+        let mut controller = CaptureController::new(CaptureControllerConfig {
+            save_root: tmp.path().to_path_buf(),
+            settings: settings(),
+            sample_rate: 10,
+            device_id: "google-meet".to_string(),
+            device_name: "Google Meet".to_string(),
+            used_fallback_device: false,
+            base_time,
+            app_version: "0.1.0".to_string(),
+            source: ChunkSource::System,
+            source_label: Some("meet".to_string()),
+        });
+
+        for _ in 0..5 {
+            controller.process_samples(&[0.8; 1], 100).expect("speech");
+        }
+        controller.flush().expect("flush");
+
+        let chunks = controller.completed_chunks();
+        assert_eq!(chunks.len(), 1);
+        assert!(
+            chunks[0].audio_path.ends_with(format!("{stem}-meet.wav")),
+            "audio path should carry the source slug: {}",
+            chunks[0].audio_path.display()
+        );
+
+        let metadata: ChunkMetadata =
+            serde_json::from_str(&std::fs::read_to_string(&chunks[0].metadata_path).expect("meta"))
+                .expect("parse metadata");
+        assert_eq!(metadata.source, ChunkSource::System);
+        assert_eq!(metadata.source_label.as_deref(), Some("meet"));
+        assert_eq!(metadata.device_name, "Google Meet");
+    }
+}
+
 fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
     CaptureProcessorConfig {
         save_root: config.save_root.clone(),
@@ -483,5 +558,7 @@ fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig 
         used_fallback_device: config.used_fallback_device,
         base_time: config.base_time,
         app_version: config.app_version.clone(),
+        source: config.source,
+        source_label: config.source_label.clone(),
     }
 }
