@@ -2152,11 +2152,12 @@ tr:last-child td {
 }
 
 .transcript-entry[data-selected="true"] {
-  background: rgba(15, 23, 42, 0.08);
+  background: var(--primary-soft-bg);
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .transcript-entry[data-selected="true"]:hover {
-  background: rgba(15, 23, 42, 0.12);
+  background: var(--primary-soft-border);
 }
 
 .transcript-day__actions {

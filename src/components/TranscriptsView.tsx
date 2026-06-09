@@ -151,6 +151,7 @@ export function TranscriptsView({
     try {
       await navigator.clipboard.writeText(text);
       setCopyToast(kind);
+      setSelectedPaths(new Set());
       window.setTimeout(() => setCopyToast(null), 1500);
     } catch {
       // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
