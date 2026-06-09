@@ -11,6 +11,7 @@ pub mod persistence;
 pub mod queue;
 pub mod recorder;
 pub mod settings;
+pub mod source_watcher;
 pub mod sources;
 pub mod storage;
 pub mod system_audio;
