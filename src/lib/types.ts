@@ -102,6 +102,19 @@ export interface RecognizedSourceInfo {
   auto_prompt: boolean;
 }
 
+/** A recognized source currently detected on screen (source-detected/ended). */
+export interface SourcePayload {
+  source_id: string;
+  label: string;
+  app_name: string;
+}
+
+/** Current system-audio detection/capture state (source_capture_status). */
+export interface SourceCaptureStatus {
+  detected: SourcePayload | null;
+  capturing: boolean;
+}
+
 export interface MicrophoneDevice {
   id: string;
   label: string;

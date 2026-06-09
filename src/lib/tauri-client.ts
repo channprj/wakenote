@@ -25,6 +25,8 @@ import type {
   UploadedAudio,
   AudioWaveform,
   AppPermissions,
+  RecognizedSourceInfo,
+  SourceCaptureStatus,
 } from "./types";
 
 declare global {
@@ -484,6 +486,58 @@ export async function openScreenRecordingSettings(): Promise<AppSnapshot> {
 
   await invoke("open_screen_recording_settings");
   return loadSnapshot();
+}
+
+// Mirrors the Rust built-in recognized-source list so browser/mock dev keeps
+// parity with `list_recognized_sources` (locked-behaviors §10).
+const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
+  id: string;
+  label: string;
+  defaultAutoPrompt: boolean;
+}> = [
+  { id: "meet", label: "Google Meet", defaultAutoPrompt: true },
+  { id: "youtube", label: "YouTube", defaultAutoPrompt: false },
+];
+
+function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceInfo[] {
+  return BROWSER_RECOGNIZED_SOURCES.map((source) => {
+    const override = settings.source_auto_prompt.find((entry) => entry.source_id === source.id);
+    return {
+      id: source.id,
+      label: source.label,
+      auto_prompt: override ? override.auto_prompt : source.defaultAutoPrompt,
+    };
+  });
+}
+
+export async function loadRecognizedSources(): Promise<RecognizedSourceInfo[]> {
+  if (!isTauriRuntime()) {
+    return recognizedSourcesFromBrowser(browserSnapshot.settings ?? defaultSettings());
+  }
+  return invoke<RecognizedSourceInfo[]>("list_recognized_sources");
+}
+
+export async function startSourceCapture(sourceId: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+  await invoke("start_source_capture", { sourceId });
+  return loadSnapshot();
+}
+
+export async function stopSourceCapture(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+  await invoke("stop_source_capture");
+  return loadSnapshot();
+}
+
+export async function loadSourceCaptureStatus(): Promise<SourceCaptureStatus> {
+  if (!isTauriRuntime()) {
+    return { detected: null, capturing: false };
+  }
+  return invoke<SourceCaptureStatus>("source_capture_status");
 }
 
 export function browserUploadedPathFromSource(

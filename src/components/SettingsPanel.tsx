@@ -5,6 +5,7 @@ import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
 import { AudioUploadPanel } from "./AudioUploadPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
+import { SystemAudioSettings } from "./SystemAudioSettings";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
 import { modelStatusBadgeTone } from "../lib/status-summary";
@@ -499,21 +500,24 @@ export function SettingsPanel({
           title="Capture the other side of Google Meet calls and other app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
         />
         {settings.system_audio_enabled ? (
-          <PermissionRow
-            label="Screen Recording Permission"
-            statusLabel={screenRecordingPermission.label}
-            detail={screenRecordingPermission.detail}
-            actionLabel={
-              screenRecordingPermission.status === "granted"
-                ? null
-                : screenRecordingPermission.can_request
-                  ? "Allow Screen Recording"
-                  : screenRecordingPermission.can_open_settings
-                    ? "Open System Settings"
-                    : null
-            }
-            onAction={onRequestScreenRecordingPermission}
-          />
+          <>
+            <PermissionRow
+              label="Screen Recording Permission"
+              statusLabel={screenRecordingPermission.label}
+              detail={screenRecordingPermission.detail}
+              actionLabel={
+                screenRecordingPermission.status === "granted"
+                  ? null
+                  : screenRecordingPermission.can_request
+                    ? "Allow Screen Recording"
+                    : screenRecordingPermission.can_open_settings
+                      ? "Open System Settings"
+                      : null
+              }
+              onAction={onRequestScreenRecordingPermission}
+            />
+            <SystemAudioSettings onPatch={onPatch} />
+          </>
         ) : null}
         <ToggleRow
           label="Recording"

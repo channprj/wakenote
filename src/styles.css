@@ -616,6 +616,25 @@ svg {
   padding: 8px 12px;
 }
 
+.system-audio-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.system-audio-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  border: 1px solid var(--primary-soft-border);
+  border-radius: 8px;
+  background: var(--primary-soft-bg);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 .permission-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
