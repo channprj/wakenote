@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
 };
+use crate::source_watcher::WindowSnapshot;
 
 /// Sample rate fed into the transcription pipeline. ScreenCaptureKit is asked
 /// to deliver audio at this rate so no resampling is required downstream.
@@ -57,6 +58,15 @@ impl AudioInputBackend for SystemAudioInput {
         let sample_rate = config.sample_rate.unwrap_or(PIPELINE_SAMPLE_RATE);
         macos::start_system_audio(self.target_pid, sample_rate, on_frame)
     }
+}
+
+/// Snapshot of the on-screen windows for source detection. Queries the same
+/// `SCShareableContent` the capture path uses; requires Screen Recording
+/// permission to return window titles. Returns an empty vec on non-macOS or on
+/// any query failure (e.g. permission not yet granted) so the watcher polls
+/// safely without surfacing transient errors.
+pub fn enumerate_windows() -> Vec<WindowSnapshot> {
+    macos::enumerate_windows()
 }
 
 /// Downmix an interleaved multi-channel f32 buffer to mono by averaging the
@@ -100,6 +110,10 @@ mod macos {
             "system-audio capture is only supported on macOS".to_string(),
         ))
     }
+
+    pub(super) fn enumerate_windows() -> Vec<WindowSnapshot> {
+        Vec::new()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -124,8 +138,8 @@ mod macos {
     };
 
     use super::{
-        AudioFrame, AudioStreamHandle, LiveCaptureError, downmix_interleaved_to_mono,
-        frame_duration_ms,
+        AudioFrame, AudioStreamHandle, LiveCaptureError, WindowSnapshot,
+        downmix_interleaved_to_mono, frame_duration_ms,
     };
 
     const SHAREABLE_CONTENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -286,6 +300,31 @@ mod macos {
             _output: output,
             runtime_error,
         }))
+    }
+
+    /// Enumerate the on-screen windows visible to ScreenCaptureKit, reduced to
+    /// the title / owning-app name / owning-app pid the detector needs. Returns
+    /// empty when shareable content cannot be queried (e.g. Screen Recording
+    /// permission not yet granted) so the watcher treats it as "nothing on
+    /// screen" rather than an error.
+    pub(super) fn enumerate_windows() -> Vec<WindowSnapshot> {
+        let Ok(content) = fetch_shareable_content() else {
+            return Vec::new();
+        };
+        let windows = unsafe { content.windows() };
+        windows
+            .iter()
+            .filter(|window| unsafe { window.isOnScreen() })
+            .filter_map(|window| {
+                let title = unsafe { window.title() }?.to_string();
+                let app = unsafe { window.owningApplication() }?;
+                Some(WindowSnapshot {
+                    title,
+                    app_name: unsafe { app.applicationName() }.to_string(),
+                    pid: unsafe { app.processID() } as i32,
+                })
+            })
+            .collect()
     }
 
     /// Resolve the running applications/displays available to capture.

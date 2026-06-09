@@ -16,6 +16,7 @@ use tauri::menu::{
 };
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
+use tauri_plugin_notification::NotificationExt;
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
@@ -27,7 +28,8 @@ use wakenote::commands::{
     with_live_runtime_warning,
 };
 use wakenote::live_capture::{
-    AudioInputConfig, CpalAudioInput, LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
+    AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
+    LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
 };
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
@@ -41,7 +43,13 @@ use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
     SettingsPatch, expand_user_path, launch_at_login_action_for_patch,
     live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
+    resolve_auto_prompt,
 };
+use wakenote::source_watcher::{
+    DetectedSource, SourceTransition, compute_source_transition, should_prompt_capture,
+};
+use wakenote::sources::recognized_sources;
+use wakenote::system_audio::{SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
     TranscriptionWorkerOptions, WhisperTranscriber,
@@ -51,12 +59,26 @@ type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
+/// Open system-audio stream handle (dropping it stops capture). Held alongside
+/// the mic runtime so the two capture paths are independent. Managed as an
+/// `Arc<Mutex<…>>` so the watcher thread and IPC commands share one handle.
+type SystemCaptureState = Arc<Mutex<Option<Box<dyn AudioStreamHandle>>>>;
+/// The recognized source currently detected on screen, threaded across polls by
+/// the watcher and read by the capture commands.
+type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
 
 const EVENT_LIVE_STARTED: &str = "live-transcript-started";
 const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
 const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
+const EVENT_SOURCE_DETECTED: &str = "source-detected";
+const EVENT_SOURCE_ENDED: &str = "source-ended";
+const EVENT_SOURCE_CAPTURE_STARTED: &str = "source-capture-started";
+const EVENT_SOURCE_CAPTURE_STOPPED: &str = "source-capture-stopped";
+const EVENT_SOURCE_CAPTURE_ERROR: &str = "source-capture-error";
+/// How often the watcher re-enumerates windows while the feature is enabled.
+const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "WakeNote";
 const CLOSE_SETTINGS_WINDOW_MENU_ID: &str = "close-settings-window";
@@ -118,6 +140,69 @@ struct LiveFailedPayload {
     chunk_id: Option<u64>,
     audio_path: String,
     error: String,
+}
+
+/// Emitted on `source-detected` / `source-ended`, and reused inside the capture
+/// status snapshot to describe the recognized source on screen.
+#[derive(Debug, Clone, Serialize)]
+struct SourcePayload {
+    source_id: String,
+    label: String,
+    app_name: String,
+}
+
+impl From<&DetectedSource> for SourcePayload {
+    fn from(source: &DetectedSource) -> Self {
+        Self {
+            source_id: source.source_id.clone(),
+            label: source.label.clone(),
+            app_name: source.app_name.clone(),
+        }
+    }
+}
+
+/// Emitted on `source-capture-started` / `source-capture-stopped`.
+#[derive(Debug, Clone, Serialize)]
+struct SourceCapturePayload {
+    source_id: String,
+    label: String,
+}
+
+/// Emitted on `source-capture-error`.
+#[derive(Debug, Clone, Serialize)]
+struct SourceCaptureErrorPayload {
+    source_id: String,
+    error: String,
+}
+
+/// One recognized source returned by `list_recognized_sources`, with its
+/// effective auto-prompt preference resolved against current settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct RecognizedSourceInfo {
+    id: String,
+    label: String,
+    auto_prompt: bool,
+}
+
+/// Snapshot returned by `source_capture_status`.
+#[derive(Debug, Clone, Serialize)]
+struct SourceCaptureStatus {
+    detected: Option<SourcePayload>,
+    capturing: bool,
+}
+
+/// Map the built-in recognized sources to `RecognizedSourceInfo`, resolving each
+/// source's effective auto-prompt against the given settings. Pure so it can be
+/// unit-tested without a backend.
+fn recognized_source_infos(settings: &AppSettings) -> Vec<RecognizedSourceInfo> {
+    recognized_sources()
+        .iter()
+        .map(|source| RecognizedSourceInfo {
+            id: source.id.to_string(),
+            label: source.label.to_string(),
+            auto_prompt: resolve_auto_prompt(settings, source.id),
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -880,6 +965,307 @@ fn stop_live_capture_runtime(
         }
     }
     Ok(status)
+}
+
+#[tauri::command]
+fn list_recognized_sources(backend_state: State<'_, BackendState>) -> Vec<RecognizedSourceInfo> {
+    let settings = backend_state
+        .lock()
+        .map(|backend| backend.settings())
+        .unwrap_or_default();
+    recognized_source_infos(&settings)
+}
+
+#[tauri::command]
+fn source_capture_status(
+    system_capture_state: State<'_, SystemCaptureState>,
+    detected_source_state: State<'_, DetectedSourceState>,
+) -> SourceCaptureStatus {
+    let detected = detected_source_state
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(SourcePayload::from));
+    let capturing = system_capture_state
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false);
+    SourceCaptureStatus {
+        detected,
+        capturing,
+    }
+}
+
+#[tauri::command]
+fn start_source_capture(
+    source_id: String,
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    system_capture_state: State<'_, SystemCaptureState>,
+    detected_source_state: State<'_, DetectedSourceState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
+) -> Result<AppStatus, String> {
+    start_source_capture_runtime(
+        &app,
+        &source_id,
+        backend_state.inner(),
+        system_capture_state.inner(),
+        detected_source_state.inner(),
+        transcription_state.inner().clone(),
+    )
+}
+
+/// Start system-audio capture for a detected source. The source must currently
+/// be detected (its pid is the ScreenCaptureKit target) and its id must match.
+fn start_source_capture_runtime(
+    app: &AppHandle,
+    source_id: &str,
+    backend_state: &BackendState,
+    system_capture_state: &SystemCaptureState,
+    detected_source_state: &DetectedSourceState,
+    transcription_state: AutoTranscriptionState,
+) -> Result<AppStatus, String> {
+    let source = {
+        let slot = detected_source_state.lock().map_err(|e| e.to_string())?;
+        match slot.as_ref() {
+            Some(source) if source.source_id == source_id => source.clone(),
+            _ => {
+                let error = format!("source '{source_id}' is not currently detected");
+                emit_source_capture_error(app, source_id, &error);
+                return Err(error);
+            }
+        }
+    };
+
+    // Already capturing: report current status without restarting.
+    if system_capture_state
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false)
+    {
+        let backend = backend_state.lock().map_err(|e| e.to_string())?;
+        return Ok(backend.app_status());
+    }
+
+    let sample_rate = system_audio_sample_rate();
+    {
+        let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
+        backend.start_system_capture_session(
+            sample_rate,
+            chrono::Utc::now(),
+            source.app_name.clone(),
+            source.source_id.clone(),
+        )?;
+    }
+
+    let callback_backend = Arc::clone(backend_state);
+    let callback_app = app.clone();
+    let callback_transcription = transcription_state.clone();
+    let on_frame = move |frame: AudioFrame| {
+        let should_kick = if let Ok(mut backend) = callback_backend.lock() {
+            backend
+                .process_system_audio_frame(frame)
+                .map(|_| backend.should_process_transcriptions())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if should_kick {
+            kick_transcription_worker(
+                callback_app.clone(),
+                callback_backend.clone(),
+                callback_transcription.clone(),
+            );
+        }
+    };
+
+    let mut input = SystemAudioInput::new();
+    input.set_target_pid(source.pid);
+    let stream = match input.start(
+        AudioInputConfig {
+            device_id: source.source_id.clone(),
+            sample_rate: Some(sample_rate),
+            label_hint: None,
+        },
+        Arc::new(on_frame),
+    ) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let message = format!("system-audio capture failed: {error}");
+            // Roll back the capture session we opened above.
+            if let Ok(mut backend) = backend_state.lock() {
+                let _ = backend.stop_system_capture_session();
+            }
+            emit_source_capture_error(app, source_id, &message);
+            return Err(message);
+        }
+    };
+    *system_capture_state.lock().map_err(|e| e.to_string())? = Some(stream);
+
+    let _ = app.emit(
+        EVENT_SOURCE_CAPTURE_STARTED,
+        SourceCapturePayload {
+            source_id: source.source_id.clone(),
+            label: source.label.clone(),
+        },
+    );
+
+    let backend = backend_state.lock().map_err(|e| e.to_string())?;
+    Ok(backend.app_status())
+}
+
+#[tauri::command]
+fn stop_source_capture(
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    system_capture_state: State<'_, SystemCaptureState>,
+    detected_source_state: State<'_, DetectedSourceState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
+) -> Result<AppStatus, String> {
+    let status = stop_source_capture_runtime(
+        &app,
+        backend_state.inner(),
+        system_capture_state.inner(),
+        detected_source_state.inner(),
+    )?;
+    kick_transcription_worker_if_needed(
+        app,
+        backend_state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+    Ok(status)
+}
+
+fn stop_source_capture_runtime(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    system_capture_state: &SystemCaptureState,
+    detected_source_state: &DetectedSourceState,
+) -> Result<AppStatus, String> {
+    // Dropping the handle stops the ScreenCaptureKit stream.
+    *system_capture_state.lock().map_err(|e| e.to_string())? = None;
+    let status = {
+        let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
+        backend.stop_system_capture_session()?
+    };
+    let payload = detected_source_state
+        .lock()
+        .ok()
+        .and_then(|slot| {
+            slot.as_ref().map(|source| SourceCapturePayload {
+                source_id: source.source_id.clone(),
+                label: source.label.clone(),
+            })
+        })
+        .unwrap_or(SourceCapturePayload {
+            source_id: String::new(),
+            label: String::new(),
+        });
+    let _ = app.emit(EVENT_SOURCE_CAPTURE_STOPPED, payload);
+    Ok(status)
+}
+
+fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
+    let _ = app.emit(
+        EVENT_SOURCE_CAPTURE_ERROR,
+        SourceCaptureErrorPayload {
+            source_id: source_id.to_string(),
+            error: error.to_string(),
+        },
+    );
+}
+
+/// ScreenCaptureKit is asked to deliver audio at the transcription pipeline rate
+/// so no resampling is needed; mirror that here for the capture session.
+fn system_audio_sample_rate() -> u32 {
+    16_000
+}
+
+/// Background watcher: while `system_audio_enabled`, poll the on-screen windows
+/// every [`SOURCE_WATCH_INTERVAL`] and react to source transitions. Cheap when
+/// the feature is off (it just re-reads the flag and sleeps). Notifications are
+/// posted at most once per source per app session via an in-memory snooze set.
+fn spawn_source_watcher(
+    app: AppHandle,
+    backend_state: BackendState,
+    system_capture_state: SystemCaptureState,
+    detected_source_state: DetectedSourceState,
+) {
+    thread::spawn(move || {
+        // Source ids already notified this session, so a still-present source
+        // is not re-prompted on every poll.
+        let mut snoozed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            thread::sleep(SOURCE_WATCH_INTERVAL);
+
+            let settings = match backend_state.lock() {
+                Ok(backend) => backend.settings(),
+                Err(_) => continue,
+            };
+            if !settings.system_audio_enabled {
+                continue;
+            }
+
+            let windows = enumerate_windows();
+            let previous = match detected_source_state.lock() {
+                Ok(slot) => slot.clone(),
+                Err(_) => continue,
+            };
+            match compute_source_transition(previous.as_ref(), &windows) {
+                SourceTransition::Detected(source) => {
+                    if let Ok(mut slot) = detected_source_state.lock() {
+                        *slot = Some(source.clone());
+                    }
+                    let _ = app.emit(EVENT_SOURCE_DETECTED, SourcePayload::from(&source));
+
+                    let already_capturing = system_capture_state
+                        .lock()
+                        .map(|slot| slot.is_some())
+                        .unwrap_or(false);
+                    let auto_prompt = resolve_auto_prompt(&settings, &source.source_id);
+                    let snoozed_this_session = snoozed.contains(&source.source_id);
+                    if should_prompt_capture(
+                        settings.system_audio_enabled,
+                        auto_prompt,
+                        already_capturing,
+                        snoozed_this_session,
+                    ) {
+                        snoozed.insert(source.source_id.clone());
+                        if let Err(error) = app
+                            .notification()
+                            .builder()
+                            .title("WakeNote")
+                            .body(format!("{} detected — start capturing audio?", source.label))
+                            .show()
+                        {
+                            eprintln!("[source-watch] notification failed: {error}");
+                        }
+                    }
+                }
+                SourceTransition::Ended(source) => {
+                    if let Ok(mut slot) = detected_source_state.lock() {
+                        *slot = None;
+                    }
+                    let _ = app.emit(EVENT_SOURCE_ENDED, SourcePayload::from(&source));
+
+                    let capturing = system_capture_state
+                        .lock()
+                        .map(|slot| slot.is_some())
+                        .unwrap_or(false);
+                    if capturing {
+                        if let Err(error) = stop_source_capture_runtime(
+                            &app,
+                            &backend_state,
+                            &system_capture_state,
+                            &detected_source_state,
+                        ) {
+                            eprintln!("[source-watch] auto-stop failed: {error}");
+                        }
+                    }
+                }
+                SourceTransition::Unchanged => {}
+            }
+        }
+    });
 }
 
 fn kick_transcription_worker_if_needed(
@@ -1695,10 +2081,21 @@ fn main() {
             let backend_state = Arc::new(Mutex::new(backend));
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
+            let system_capture_state: SystemCaptureState = Arc::new(Mutex::new(None));
+            let detected_source_state: DetectedSourceState = Arc::new(Mutex::new(None));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             app.manage(live_transcriber_state.clone());
+            app.manage(system_capture_state.clone());
+            app.manage(detected_source_state.clone());
+
+            spawn_source_watcher(
+                app.handle().clone(),
+                backend_state.clone(),
+                system_capture_state,
+                detected_source_state,
+            );
 
             wire_live_transcription(
                 app.handle().clone(),
@@ -1827,7 +2224,11 @@ fn main() {
             reveal_save_folder,
             process_next_transcription,
             start_live_capture,
-            stop_live_capture
+            stop_live_capture,
+            list_recognized_sources,
+            source_capture_status,
+            start_source_capture,
+            stop_source_capture
         ])
         .build(tauri::generate_context!())
         .expect("failed to build WakeNote")
@@ -2080,6 +2481,37 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wakenote::settings::SourceAutoPromptEntry;
+
+    #[test]
+    fn recognized_source_infos_use_default_auto_prompt() {
+        let settings = AppSettings::default();
+        let infos = recognized_source_infos(&settings);
+        assert_eq!(infos.len(), 2);
+        let meet = infos.iter().find(|i| i.id == "meet").expect("meet listed");
+        let youtube = infos
+            .iter()
+            .find(|i| i.id == "youtube")
+            .expect("youtube listed");
+        assert_eq!(meet.label, "Google Meet");
+        assert!(meet.auto_prompt);
+        assert!(!youtube.auto_prompt);
+    }
+
+    #[test]
+    fn recognized_source_infos_honor_user_override() {
+        let mut settings = AppSettings::default();
+        settings.source_auto_prompt = vec![SourceAutoPromptEntry {
+            source_id: "youtube".into(),
+            auto_prompt: true,
+        }];
+        let infos = recognized_source_infos(&settings);
+        let youtube = infos
+            .iter()
+            .find(|i| i.id == "youtube")
+            .expect("youtube listed");
+        assert!(youtube.auto_prompt);
+    }
 
     #[test]
     fn main_window_size_restore_detects_zero_sized_window() {
