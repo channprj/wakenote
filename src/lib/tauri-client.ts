@@ -27,6 +27,7 @@ import type {
   AppPermissions,
   RecognizedSourceInfo,
   SourceCaptureStatus,
+  SourcePayload,
 } from "./types";
 
 declare global {
@@ -39,6 +40,11 @@ let browserSnapshot = mockSnapshot();
 let browserCaptureSessionId = 0;
 let browserQueuedCaptureSessionId: number | null = null;
 let browserCaptureSessionTranscriptionRequested = false;
+// Simulated system-audio capture state for non-Tauri dev (locked-behaviors §10).
+// `startSourceCapture` flips it on (and simulates detecting that source);
+// `stopSourceCapture` flips it off so dev reflects session active/inactive.
+let browserSourceCapturing = false;
+let browserDetectedSource: SourcePayload | null = null;
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 const defaultRecentTranscriptLimit = 50;
 
@@ -519,6 +525,15 @@ export async function loadRecognizedSources(): Promise<RecognizedSourceInfo[]> {
 
 export async function startSourceCapture(sourceId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    const source = BROWSER_RECOGNIZED_SOURCES.find((entry) => entry.id === sourceId);
+    if (source) {
+      browserDetectedSource = {
+        source_id: source.id,
+        label: source.label,
+        app_name: source.label,
+      };
+      browserSourceCapturing = true;
+    }
     return loadSnapshot();
   }
   await invoke("start_source_capture", { sourceId });
@@ -527,6 +542,7 @@ export async function startSourceCapture(sourceId: string): Promise<AppSnapshot>
 
 export async function stopSourceCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
+    browserSourceCapturing = false;
     return loadSnapshot();
   }
   await invoke("stop_source_capture");
@@ -535,7 +551,10 @@ export async function stopSourceCapture(): Promise<AppSnapshot> {
 
 export async function loadSourceCaptureStatus(): Promise<SourceCaptureStatus> {
   if (!isTauriRuntime()) {
-    return { detected: null, capturing: false };
+    return {
+      detected: browserDetectedSource,
+      capturing: browserSourceCapturing,
+    };
   }
   return invoke<SourceCaptureStatus>("source_capture_status");
 }

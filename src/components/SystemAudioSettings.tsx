@@ -47,13 +47,7 @@ export function SystemAudioSettings({
       const { listen } = await import("@tauri-apps/api/event");
       const subscriptions: Array<[string, (payload: unknown) => void]> = [
         ["source-detected", (payload) => setDetected(payload as SourcePayload)],
-        [
-          "source-ended",
-          () => {
-            setDetected(null);
-            setCapturing(false);
-          },
-        ],
+        ["source-ended", () => setDetected(null)],
         ["source-capture-started", () => setCapturing(true)],
         ["source-capture-stopped", () => setCapturing(false)],
         ["source-capture-error", () => setCapturing(false)],

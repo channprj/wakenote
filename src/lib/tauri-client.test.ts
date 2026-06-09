@@ -19,6 +19,9 @@ import {
   skipJob,
   startLiveCapture,
   stopLiveCapture,
+  startSourceCapture,
+  stopSourceCapture,
+  loadSourceCaptureStatus,
   verifyModel,
 } from "./tauri-client";
 
@@ -714,5 +717,21 @@ describe("tauri live capture client", () => {
       status: "pending",
       error: null,
     });
+  });
+});
+
+describe("tauri source capture client (browser fallback)", () => {
+  it("flips simulated source capture state on start and stop (locked-behaviors §10)", async () => {
+    const initial = await loadSourceCaptureStatus();
+    expect(initial.capturing).toBe(false);
+
+    await startSourceCapture("meet");
+    const active = await loadSourceCaptureStatus();
+    expect(active.capturing).toBe(true);
+    expect(active.detected).toMatchObject({ source_id: "meet", label: "Google Meet" });
+
+    await stopSourceCapture();
+    const stopped = await loadSourceCaptureStatus();
+    expect(stopped.capturing).toBe(false);
   });
 });

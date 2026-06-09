@@ -1376,6 +1376,28 @@ impl AppBackend {
         }
     }
 
+    /// Propagate the current settings to an active system-audio capture session
+    /// so a settings change mid-capture (e.g. threshold/chunk timing) takes
+    /// effect without restarting the stream. Mirrors `sync_capture_settings`'s
+    /// controller update for the mic path; tearing the session down on a
+    /// disabled/paused state is the caller's job (it also owns the stream
+    /// handle), so this is a no-op when no system capture is running.
+    pub fn sync_system_capture_settings(&mut self) {
+        let Some(capture) = self.system_capture.as_mut() else {
+            return;
+        };
+        if let Ok(events) = capture.update_settings(self.settings.clone()) {
+            self.handle_system_capture_events(events);
+        }
+    }
+
+    /// Whether a system-audio capture session is currently open. Used by the
+    /// settings path to decide if it must tear down or sync the session, and by
+    /// tests to assert the disable/pause teardown behavior.
+    pub fn is_system_capturing(&self) -> bool {
+        self.system_capture.is_some()
+    }
+
     fn clear_capture_session_state(&mut self) {
         self.capture = None;
         self.active_microphone_label = None;

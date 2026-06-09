@@ -22,7 +22,7 @@ use crate::source_watcher::WindowSnapshot;
 
 /// Sample rate fed into the transcription pipeline. ScreenCaptureKit is asked
 /// to deliver audio at this rate so no resampling is required downstream.
-const PIPELINE_SAMPLE_RATE: u32 = 16_000;
+pub const PIPELINE_SAMPLE_RATE: u32 = 16_000;
 
 /// ScreenCaptureKit system-audio capture backend.
 ///

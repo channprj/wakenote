@@ -1798,3 +1798,41 @@ fn main_window_close_hides_settings_to_support_tray_only_mode() {
         MainWindowCloseAction::AllowClose
     );
 }
+
+#[test]
+fn system_capture_session_lifecycle_reports_active_state() {
+    let mut backend = AppBackend::default();
+    assert!(!backend.is_system_capturing());
+
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_system_capture_session(16_000, base_time, "Google Chrome".into(), "meet".into())
+        .expect("start system capture session");
+    assert!(backend.is_system_capturing());
+
+    backend
+        .stop_system_capture_session()
+        .expect("stop system capture session");
+    assert!(!backend.is_system_capturing());
+}
+
+#[test]
+fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
+    let mut backend = AppBackend::default();
+    // No active session: syncing must not crash or open one.
+    backend.sync_system_capture_settings();
+    assert!(!backend.is_system_capturing());
+
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_system_capture_session(16_000, base_time, "Google Chrome".into(), "meet".into())
+        .expect("start system capture session");
+
+    // A settings change must propagate to the live controller, not tear down
+    // the session (teardown is the runtime/stream-handle owner's job).
+    backend.update_settings(SettingsPatch {
+        threshold_dbfs: Some(-40.0),
+        ..SettingsPatch::default()
+    });
+    assert!(backend.is_system_capturing());
+}

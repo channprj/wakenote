@@ -49,7 +49,7 @@ use wakenote::source_watcher::{
     DetectedSource, SourceTransition, compute_source_transition, should_prompt_capture,
 };
 use wakenote::sources::recognized_sources;
-use wakenote::system_audio::{SystemAudioInput, enumerate_windows};
+use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
     TranscriptionWorkerOptions, WhisperTranscriber,
@@ -228,6 +228,8 @@ fn update_settings(
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     live_transcriber_state: State<'_, LiveTranscriberState>,
+    system_capture_state: State<'_, SystemCaptureState>,
+    detected_source_state: State<'_, DetectedSourceState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
     let (
@@ -278,6 +280,13 @@ fn update_settings(
         transcription_state.inner().clone(),
         live_capture_action,
     )?;
+    apply_system_capture_settings_action(
+        &app,
+        &settings,
+        state.inner(),
+        system_capture_state.inner(),
+        detected_source_state.inner(),
+    )?;
     kick_transcription_worker_if_needed(
         app.clone(),
         state.inner().clone(),
@@ -318,6 +327,71 @@ fn apply_overlay_position_change(app: &AppHandle, settings: &AppSettings) {
     if let Err(error) = result {
         eprintln!("[overlay] position change failed: {error}");
     }
+}
+
+/// What to do with an active system-audio capture session after a settings
+/// change. `None` means no session is open (nothing to do).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemCaptureSettingsAction {
+    /// Feature/recording disabled or paused: tear the session down.
+    Stop,
+    /// Keep capturing; propagate the new settings to the live controller.
+    Sync,
+    None,
+}
+
+/// Pure decision for `apply_system_capture_settings_action`. The session must be
+/// stopped when the feature is disabled, recording is off, or pause-all is on
+/// (§7/§2 pause semantics); otherwise the live settings are synced so the
+/// running capture never operates on a frozen snapshot.
+fn system_capture_settings_action(
+    settings: &AppSettings,
+    capturing: bool,
+) -> SystemCaptureSettingsAction {
+    if !capturing {
+        return SystemCaptureSettingsAction::None;
+    }
+    if !settings.system_audio_enabled || !settings.recording_enabled || settings.pause_all {
+        SystemCaptureSettingsAction::Stop
+    } else {
+        SystemCaptureSettingsAction::Sync
+    }
+}
+
+/// Reconcile an active system-audio capture session with newly applied settings.
+/// If the feature was disabled, recording turned off, or pause-all turned on,
+/// tear the session down the same way `stop_source_capture` does (drop the
+/// stream handle, flush/stop the backend session, clear detection, emit
+/// `source-capture-stopped`). Otherwise propagate the new settings to the live
+/// system `CaptureController` so threshold/chunk-timing changes take effect
+/// mid-capture without restarting the stream.
+fn apply_system_capture_settings_action(
+    app: &AppHandle,
+    settings: &AppSettings,
+    backend_state: &BackendState,
+    system_capture_state: &SystemCaptureState,
+    detected_source_state: &DetectedSourceState,
+) -> Result<(), String> {
+    let capturing = system_capture_state
+        .lock()
+        .map(|slot| slot.is_some())
+        .unwrap_or(false);
+    match system_capture_settings_action(settings, capturing) {
+        SystemCaptureSettingsAction::Stop => {
+            stop_source_capture_runtime(
+                app,
+                backend_state,
+                system_capture_state,
+                detected_source_state,
+            )?;
+        }
+        SystemCaptureSettingsAction::Sync => {
+            let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+            backend.sync_system_capture_settings();
+        }
+        SystemCaptureSettingsAction::None => {}
+    }
+    Ok(())
 }
 
 fn live_events_for_dispatch(
@@ -1177,7 +1251,7 @@ fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
 /// ScreenCaptureKit is asked to deliver audio at the transcription pipeline rate
 /// so no resampling is needed; mirror that here for the capture session.
 fn system_audio_sample_rate() -> u32 {
-    16_000
+    PIPELINE_SAMPLE_RATE
 }
 
 /// Background watcher: while `system_audio_enabled`, poll the on-screen windows
@@ -2511,6 +2585,54 @@ mod tests {
             .find(|i| i.id == "youtube")
             .expect("youtube listed");
         assert!(youtube.auto_prompt);
+    }
+
+    #[test]
+    fn system_capture_action_is_none_without_active_session() {
+        let settings = AppSettings::default();
+        assert_eq!(
+            system_capture_settings_action(&settings, false),
+            SystemCaptureSettingsAction::None
+        );
+    }
+
+    #[test]
+    fn system_capture_action_syncs_while_enabled_and_recording() {
+        let mut settings = AppSettings::default();
+        settings.system_audio_enabled = true;
+        assert!(settings.recording_enabled);
+        assert!(!settings.pause_all);
+        assert_eq!(
+            system_capture_settings_action(&settings, true),
+            SystemCaptureSettingsAction::Sync
+        );
+    }
+
+    #[test]
+    fn system_capture_action_stops_when_feature_disabled() {
+        let mut settings = AppSettings::default();
+        settings.system_audio_enabled = false;
+        assert_eq!(
+            system_capture_settings_action(&settings, true),
+            SystemCaptureSettingsAction::Stop
+        );
+    }
+
+    #[test]
+    fn system_capture_action_stops_when_recording_off_or_paused() {
+        let mut recording_off = AppSettings::default();
+        recording_off.recording_enabled = false;
+        assert_eq!(
+            system_capture_settings_action(&recording_off, true),
+            SystemCaptureSettingsAction::Stop
+        );
+
+        let mut paused = AppSettings::default();
+        paused.pause_all = true;
+        assert_eq!(
+            system_capture_settings_action(&paused, true),
+            SystemCaptureSettingsAction::Stop
+        );
     }
 
     #[test]
