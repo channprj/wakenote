@@ -19,6 +19,16 @@ pub enum TranscriptionStatus {
     Failed,
 }
 
+/// Which audio source a chunk came from. `Microphone` is the default so chunk
+/// metadata written before this field existed deserializes unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ChunkSource {
+    #[default]
+    Microphone,
+    System,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkMetadata {
     pub model_id: String,
@@ -34,6 +44,10 @@ pub struct ChunkMetadata {
     pub used_fallback_device: bool,
     #[serde(default)]
     pub live_capture_chunk_id: Option<u64>,
+    #[serde(default)]
+    pub source: ChunkSource,
+    #[serde(default)]
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug)]
@@ -50,6 +64,8 @@ pub struct RecordingRequest<'a> {
     pub transcription_enabled: bool,
     pub app_version: &'a str,
     pub live_capture_chunk_id: Option<u64>,
+    pub source: ChunkSource,
+    pub source_label: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +110,7 @@ impl Recorder {
             request.save_root,
             request.started_at,
             request.settings.audio_format,
+            request.source_label,
         )?;
 
         match request.settings.audio_format {
@@ -122,6 +139,8 @@ impl Recorder {
             app_version: request.app_version.to_string(),
             used_fallback_device: request.used_fallback_device,
             live_capture_chunk_id: request.live_capture_chunk_id,
+            source: request.source,
+            source_label: request.source_label.map(str::to_string),
         };
         write_metadata(&target.metadata_path, &metadata)?;
 
@@ -225,4 +244,65 @@ fn update_metadata_status_if_present(
         update_metadata_status(path, status)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample_metadata(source: ChunkSource, source_label: Option<String>) -> ChunkMetadata {
+        let now = Utc::now();
+        ChunkMetadata {
+            model_id: "whisper-medium".into(),
+            device_id: "default".into(),
+            device_name: "System Default".into(),
+            sample_rate: 16_000,
+            threshold_dbfs: -42.0,
+            started_at: now,
+            ended_at: now,
+            duration_ms: 0,
+            transcription_status: TranscriptionStatus::Queued,
+            app_version: "0.0.0".into(),
+            used_fallback_device: false,
+            live_capture_chunk_id: Some(1),
+            source,
+            source_label,
+        }
+    }
+
+    #[test]
+    fn chunk_source_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ChunkSource::System).unwrap(),
+            "\"system\""
+        );
+        assert_eq!(ChunkSource::default(), ChunkSource::Microphone);
+    }
+
+    #[test]
+    fn metadata_round_trips_system_source() {
+        let meta = sample_metadata(ChunkSource::System, Some("meet".into()));
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: ChunkMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, ChunkSource::System);
+        assert_eq!(back.source_label.as_deref(), Some("meet"));
+    }
+
+    #[test]
+    fn legacy_metadata_without_source_defaults_to_microphone() {
+        // Sidecar JSON written before source/source_label existed.
+        let json = r#"{
+            "model_id": "whisper-medium", "device_id": "default",
+            "device_name": "System Default", "sample_rate": 16000,
+            "threshold_dbfs": -42.0,
+            "started_at": "2026-06-09T01:02:03Z", "ended_at": "2026-06-09T01:02:04Z",
+            "duration_ms": 1000, "transcription_status": "completed",
+            "app_version": "0.1.0", "used_fallback_device": false
+        }"#;
+        let meta: ChunkMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.source, ChunkSource::Microphone);
+        assert_eq!(meta.source_label, None);
+        assert_eq!(meta.live_capture_chunk_id, None);
+    }
 }

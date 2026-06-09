@@ -1,6 +1,7 @@
 use chrono::{TimeZone, Utc};
 use wakenote::recorder::{
-    ChunkMetadata, Recorder, RecordingRequest, TranscriptionSidecar, TranscriptionStatus,
+    ChunkMetadata, ChunkSource, Recorder, RecordingRequest, TranscriptionSidecar,
+    TranscriptionStatus,
 };
 use wakenote::settings::{AppSettings, AudioFormat};
 
@@ -37,6 +38,8 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
         transcription_enabled: false,
         app_version: "0.1.0",
         live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
     })
     .expect("record m4a chunk");
 
@@ -78,6 +81,8 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
         transcription_enabled: false,
         app_version: "0.1.0",
         live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
     })
     .expect("record chunk");
 
@@ -124,6 +129,8 @@ fn transcription_sidecar_writes_txt_and_updates_metadata_on_success() {
         transcription_enabled: true,
         app_version: "0.1.0",
         live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
     })
     .expect("record chunk");
 
@@ -161,6 +168,8 @@ fn transcription_sidecar_writes_error_without_removing_audio() {
         transcription_enabled: true,
         app_version: "0.1.0",
         live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
     })
     .expect("record chunk");
 

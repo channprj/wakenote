@@ -113,7 +113,7 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     let dir = local.format("%Y%m%d").to_string();
     let stem = local.format("%H%M%S").to_string();
 
-    let first = next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("first path");
+    let first = next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("first path");
     assert_eq!(first.basename, OutputBasename::new(stem.clone()));
     assert!(first.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
     assert!(first.metadata_path.ends_with(format!("{dir}/{stem}.json")));
@@ -128,7 +128,7 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     std::fs::write(&first.audio_path, b"existing").expect("collision file");
 
     let second =
-        next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("second path");
+        next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("second path");
     assert_eq!(second.basename, OutputBasename::new(format!("{stem}-2")));
     assert!(second.audio_path.ends_with(format!("{dir}/{stem}-2.m4a")));
 
@@ -138,7 +138,7 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     std::fs::write(&second.transcript_path, b"transcript").expect("collision sidecar");
 
     let third =
-        next_available_output(tmp.path(), timestamp, AudioFormat::M4a).expect("third path");
+        next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("third path");
     assert_eq!(third.basename, OutputBasename::new(format!("{stem}-3")));
     assert!(third.audio_path.ends_with(format!("{dir}/{stem}-3.m4a")));
 }

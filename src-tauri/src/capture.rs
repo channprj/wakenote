@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::audio::{GateConfig, GateDecision, SpeechGate, dbfs_from_samples};
-use crate::recorder::{RecordedChunk, Recorder, RecorderError, RecordingRequest};
+use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecorderError, RecordingRequest};
 use crate::settings::AppSettings;
 
 /// How often the live transcription tap fires while a chunk is recording.
@@ -429,6 +429,8 @@ impl CaptureProcessor {
             transcription_enabled: self.config.settings.transcription_enabled,
             app_version: &self.config.app_version,
             live_capture_chunk_id: chunk_id,
+            source: ChunkSource::Microphone,
+            source_label: None,
         })?;
 
         self.completed_chunks.push(chunk.clone());

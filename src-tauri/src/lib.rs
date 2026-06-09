@@ -11,5 +11,6 @@ pub mod persistence;
 pub mod queue;
 pub mod recorder;
 pub mod settings;
+pub mod sources;
 pub mod storage;
 pub mod transcription;

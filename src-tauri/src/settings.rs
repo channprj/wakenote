@@ -67,6 +67,16 @@ pub struct MicrophonePriorityEntry {
     pub label: String,
 }
 
+/// Per-source override for "auto-prompt on detection". Only recognized source
+/// ids (see [`crate::sources`]) are kept; entries with an unknown id are dropped
+/// during [`AppSettings::apply_patch`]. Sources without an entry fall back to the
+/// source's `default_auto_prompt`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceAutoPromptEntry {
+    pub source_id: String,
+    pub auto_prompt: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
@@ -104,6 +114,12 @@ pub struct AppSettings {
     pub floating_overlay_position: FloatingOverlayPosition,
     pub theme_mode: ThemeMode,
     pub theme_primary_color: String,
+    /// Master switch for system-audio (Google Meet / YouTube …) capture.
+    #[serde(default)]
+    pub system_audio_enabled: bool,
+    /// Per-source "auto-prompt on detection" overrides; see [`resolve_auto_prompt`].
+    #[serde(default)]
+    pub source_auto_prompt: Vec<SourceAutoPromptEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -137,6 +153,8 @@ pub struct SettingsPatch {
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
+    pub system_audio_enabled: Option<bool>,
+    pub source_auto_prompt: Option<Vec<SourceAutoPromptEntry>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +237,22 @@ pub fn live_capture_should_run(settings: &AppSettings) -> bool {
 
 pub fn live_capture_should_start_on_launch(settings: &AppSettings) -> bool {
     settings.start_live_input_on_launch && live_capture_should_run(settings)
+}
+
+/// Whether detection should auto-prompt for a recognized source. A user override
+/// in `source_auto_prompt` wins; otherwise the source's `default_auto_prompt`.
+/// Unknown source ids return `false`.
+pub fn resolve_auto_prompt(settings: &AppSettings, source_id: &str) -> bool {
+    if let Some(entry) = settings
+        .source_auto_prompt
+        .iter()
+        .find(|entry| entry.source_id == source_id)
+    {
+        return entry.auto_prompt;
+    }
+    crate::sources::recognized_source(source_id)
+        .map(|source| source.default_auto_prompt)
+        .unwrap_or(false)
 }
 
 pub fn expand_user_path(path: impl AsRef<str>) -> PathBuf {
@@ -398,6 +432,16 @@ impl AppSettings {
         if let Some(value) = patch.theme_primary_color {
             self.theme_primary_color = value;
         }
+        if let Some(value) = patch.system_audio_enabled {
+            self.system_audio_enabled = value;
+        }
+        if let Some(list) = patch.source_auto_prompt {
+            // Normalize against the built-in source list: drop unknown ids.
+            self.source_auto_prompt = list
+                .into_iter()
+                .filter(|entry| crate::sources::recognized_source(&entry.source_id).is_some())
+                .collect();
+        }
     }
 }
 
@@ -434,6 +478,74 @@ impl Default for AppSettings {
             floating_overlay_position: FloatingOverlayPosition::Top,
             theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
+            system_audio_enabled: false,
+            source_auto_prompt: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_sets_system_audio_enabled() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.system_audio_enabled);
+        settings.apply_patch(SettingsPatch {
+            system_audio_enabled: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.system_audio_enabled);
+    }
+
+    #[test]
+    fn source_auto_prompt_override_kept_and_unknown_dropped() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            source_auto_prompt: Some(vec![
+                SourceAutoPromptEntry {
+                    source_id: "youtube".into(),
+                    auto_prompt: true,
+                },
+                SourceAutoPromptEntry {
+                    source_id: "zoom".into(),
+                    auto_prompt: true,
+                },
+            ]),
+            ..Default::default()
+        });
+        assert_eq!(settings.source_auto_prompt.len(), 1);
+        assert!(resolve_auto_prompt(&settings, "youtube"));
+        assert!(!resolve_auto_prompt(&settings, "zoom"));
+    }
+
+    #[test]
+    fn resolve_auto_prompt_uses_source_defaults() {
+        let settings = AppSettings::default();
+        assert!(resolve_auto_prompt(&settings, "meet"));
+        assert!(!resolve_auto_prompt(&settings, "youtube"));
+        assert!(!resolve_auto_prompt(&settings, "unknown"));
+    }
+
+    #[test]
+    fn legacy_settings_without_new_fields_deserialize() {
+        let json = r##"{
+            "recording_enabled": true, "transcription_enabled": true,
+            "transcription_language": "ko", "suppress_low_confidence_transcripts": true,
+            "pause_all": false, "selected_microphone": "default",
+            "selected_microphone_label": "System Default", "save_root": "~/Documents/WakeNote",
+            "save_root_confirmed": false, "audio_format": "m4a", "threshold_dbfs": -42.0,
+            "calibration_completed": false, "attack_ms": 300, "release_ms": 1000,
+            "pre_roll_ms": 600, "post_roll_ms": 300, "min_chunk_ms": 600, "max_chunk_ms": 120000,
+            "selected_model": "whisper-medium",
+            "model_directory": "~/Library/Application Support/WakeNote/models",
+            "vad_enabled": false, "launch_at_login": false, "start_live_input_on_launch": true,
+            "show_dock_icon": true, "show_tray_icon": true, "show_floating_overlay": true,
+            "floating_overlay_position": "top", "theme_mode": "dark", "theme_primary_color": "#000"
+        }"##;
+        let settings: AppSettings = serde_json::from_str(json).expect("legacy settings deserialize");
+        assert!(!settings.system_audio_enabled);
+        assert!(settings.source_auto_prompt.is_empty());
     }
 }
