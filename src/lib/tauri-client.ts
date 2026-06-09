@@ -429,6 +429,7 @@ export async function requestMicrophonePermission(): Promise<AppSnapshot> {
     browserSnapshot = {
       ...browserSnapshot,
       permissions: {
+        ...(browserSnapshot.permissions ?? defaultPermissions()),
         microphone: {
           status: "granted",
           label: "Allowed",
@@ -451,6 +452,37 @@ export async function openMicrophonePermissionSettings(): Promise<AppSnapshot> {
   }
 
   await invoke("open_microphone_permission_settings");
+  return loadSnapshot();
+}
+
+export async function requestScreenRecordingPermission(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      permissions: {
+        ...(browserSnapshot.permissions ?? defaultPermissions()),
+        screen_recording: {
+          status: "granted",
+          label: "Allowed",
+          detail: "WakeNote can capture system audio (Google Meet, YouTube).",
+          can_request: false,
+          can_open_settings: true,
+        },
+      },
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<AppPermissions>("request_screen_recording_permission");
+  return loadSnapshot();
+}
+
+export async function openScreenRecordingSettings(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+
+  await invoke("open_screen_recording_settings");
   return loadSnapshot();
 }
 

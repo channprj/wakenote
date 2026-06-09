@@ -276,6 +276,13 @@ export function defaultPermissions(): AppPermissions {
       can_request: false,
       can_open_settings: true,
     },
+    screen_recording: {
+      status: "granted",
+      label: "Allowed",
+      detail: "WakeNote can capture system audio (Google Meet, YouTube).",
+      can_request: false,
+      can_open_settings: true,
+    },
   };
 }
 

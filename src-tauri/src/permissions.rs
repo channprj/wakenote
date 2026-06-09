@@ -25,6 +25,7 @@ pub struct PermissionState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppPermissions {
     pub microphone: PermissionState,
+    pub screen_recording: PermissionState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,12 +37,93 @@ pub struct PermissionSettingsRequest {
 pub fn permission_snapshot() -> AppPermissions {
     AppPermissions {
         microphone: microphone_permission_state_for_status(microphone_permission_status()),
+        screen_recording: screen_recording_permission_state_for_status(
+            screen_recording_permission_status(),
+        ),
     }
 }
 
 pub fn request_microphone_permission() -> AppPermissions {
     AppPermissions {
         microphone: microphone_permission_state_for_status(request_microphone_access_if_needed()),
+        screen_recording: screen_recording_permission_state_for_status(
+            screen_recording_permission_status(),
+        ),
+    }
+}
+
+pub fn request_screen_recording_permission() -> AppPermissions {
+    AppPermissions {
+        microphone: microphone_permission_state_for_status(microphone_permission_status()),
+        screen_recording: screen_recording_permission_state_for_status(
+            request_screen_recording_access(),
+        ),
+    }
+}
+
+pub fn open_screen_recording_permission_settings() -> Result<(), String> {
+    let request = screen_recording_permission_settings_request();
+    Command::new(request.program)
+        .arg(request.target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub fn screen_recording_permission_settings_request() -> PermissionSettingsRequest {
+    PermissionSettingsRequest {
+        program: PathBuf::from("/usr/bin/open"),
+        target: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            .to_string(),
+    }
+}
+
+pub fn screen_recording_permission_state_for_status(
+    status: PermissionGrantStatus,
+) -> PermissionState {
+    match status {
+        PermissionGrantStatus::Granted => PermissionState {
+            status,
+            label: "Allowed",
+            detail: "WakeNote can capture system audio (Google Meet, YouTube).",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::NotDetermined => PermissionState {
+            status,
+            label: "Not requested",
+            detail: "WakeNote needs Screen Recording access to capture system audio.",
+            can_request: true,
+            can_open_settings: false,
+        },
+        PermissionGrantStatus::Denied => PermissionState {
+            status,
+            label: "Denied",
+            detail: "Enable Screen Recording for WakeNote in System Settings.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Restricted => PermissionState {
+            status,
+            label: "Restricted",
+            detail: "Screen Recording access is restricted by macOS policy.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Unsupported => PermissionState {
+            status,
+            label: "Unsupported",
+            detail: "This platform does not expose Screen Recording permission status.",
+            can_request: false,
+            can_open_settings: false,
+        },
+        PermissionGrantStatus::Unknown => PermissionState {
+            status,
+            label: "Unknown",
+            detail: "WakeNote could not determine Screen Recording permission status.",
+            can_request: false,
+            can_open_settings: true,
+        },
     }
 }
 
@@ -170,4 +252,75 @@ fn request_microphone_access_if_needed() -> PermissionGrantStatus {
 #[cfg(not(target_os = "macos"))]
 fn request_microphone_access_if_needed() -> PermissionGrantStatus {
     PermissionGrantStatus::Unsupported
+}
+
+#[cfg(target_os = "macos")]
+fn screen_recording_permission_status() -> PermissionGrantStatus {
+    use objc2_core_graphics::CGPreflightScreenCaptureAccess;
+
+    // Preflight reports granted-or-not without prompting. It can't tell "denied"
+    // apart from "never asked", so a non-grant maps to NotDetermined and the UI
+    // offers a request (which is a no-op prompt if the user already decided).
+    if CGPreflightScreenCaptureAccess() {
+        PermissionGrantStatus::Granted
+    } else {
+        PermissionGrantStatus::NotDetermined
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_recording_permission_status() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}
+
+#[cfg(target_os = "macos")]
+fn request_screen_recording_access() -> PermissionGrantStatus {
+    use objc2_core_graphics::CGRequestScreenCaptureAccess;
+
+    // Prompts on first call and returns whether access is granted; later calls
+    // return the current grant state without re-prompting.
+    if CGRequestScreenCaptureAccess() {
+        PermissionGrantStatus::Granted
+    } else {
+        PermissionGrantStatus::Denied
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_screen_recording_access() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screen_recording_granted_state_is_not_requestable() {
+        let state = screen_recording_permission_state_for_status(PermissionGrantStatus::Granted);
+        assert_eq!(state.status, PermissionGrantStatus::Granted);
+        assert!(!state.can_request);
+        assert!(state.can_open_settings);
+    }
+
+    #[test]
+    fn screen_recording_not_determined_is_requestable() {
+        let state =
+            screen_recording_permission_state_for_status(PermissionGrantStatus::NotDetermined);
+        assert!(state.can_request);
+        assert!(!state.can_open_settings);
+    }
+
+    #[test]
+    fn screen_recording_denied_points_to_settings() {
+        let state = screen_recording_permission_state_for_status(PermissionGrantStatus::Denied);
+        assert!(!state.can_request);
+        assert!(state.can_open_settings);
+    }
+
+    #[test]
+    fn screen_recording_settings_link_targets_screen_capture_pane() {
+        let request = screen_recording_permission_settings_request();
+        assert!(request.target.contains("Privacy_ScreenCapture"));
+    }
 }

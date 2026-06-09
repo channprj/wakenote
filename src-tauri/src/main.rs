@@ -432,6 +432,18 @@ fn open_microphone_permission_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn request_screen_recording_permission() -> Result<AppPermissions, String> {
+    tauri::async_runtime::spawn_blocking(permissions::request_screen_recording_permission)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_screen_recording_settings() -> Result<(), String> {
+    permissions::open_screen_recording_permission_settings()
+}
+
+#[tauri::command]
 async fn recent_transcripts(
     state: State<'_, BackendState>,
     limit: Option<usize>,
@@ -1642,7 +1654,8 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             schedule_settings_window_for_reopen(app, "single-instance launch");
         }))
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init());
 
     #[cfg(target_os = "macos")]
     {
@@ -1797,6 +1810,8 @@ fn main() {
             permission_snapshot,
             request_microphone_permission,
             open_microphone_permission_settings,
+            request_screen_recording_permission,
+            open_screen_recording_settings,
             recent_transcripts,
             transcript_days,
             transcripts_for_day,

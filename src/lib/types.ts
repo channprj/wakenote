@@ -177,6 +177,7 @@ export interface PermissionState {
 
 export interface AppPermissions {
   microphone: PermissionState;
+  screen_recording: PermissionState;
 }
 
 export interface LevelSnapshot {
