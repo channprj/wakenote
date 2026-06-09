@@ -153,6 +153,8 @@ export function defaultSettings(): AppSettings {
     floating_overlay_position: "top",
     theme_mode: "dark",
     theme_primary_color: "#000",
+    system_audio_enabled: false,
+    source_auto_prompt: [],
   };
 }
 

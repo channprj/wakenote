@@ -80,9 +80,27 @@ export interface AppSettings {
   floating_overlay_position: FloatingOverlayPosition;
   theme_mode: ThemeMode;
   theme_primary_color: string;
+  system_audio_enabled: boolean;
+  source_auto_prompt: SourceAutoPromptEntry[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;
+
+/** Audio source a recorded chunk came from. Mirrors the Rust `ChunkSource`. */
+export type ChunkSource = "microphone" | "system";
+
+/** Per-source "auto-prompt on detection" override. */
+export interface SourceAutoPromptEntry {
+  source_id: string;
+  auto_prompt: boolean;
+}
+
+/** A built-in recognized capture source with its resolved auto-prompt setting. */
+export interface RecognizedSourceInfo {
+  id: string;
+  label: string;
+  auto_prompt: boolean;
+}
 
 export interface MicrophoneDevice {
   id: string;

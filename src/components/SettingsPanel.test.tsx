@@ -33,6 +33,7 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onRevealSaveFolder={() => {}}
       onChooseModelDirectory={() => {}}
       onRequestMicrophonePermission={() => {}}
+      onRequestScreenRecordingPermission={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
       onCancelCurrent={() => {}}
@@ -76,6 +77,19 @@ function localDateSegments(date: Date) {
 }
 
 describe("settings panel", () => {
+  it("shows the system-audio toggle and reveals the screen-recording permission row only when enabled", () => {
+    const base = mockSnapshot();
+    const off = renderSettingsPanel(base);
+    expect(off).toContain("Capture system audio (Google Meet, YouTube)");
+    expect(off).not.toContain("Screen Recording Permission");
+
+    const on = renderSettingsPanel({
+      ...base,
+      settings: { ...base.settings, system_audio_enabled: true },
+    });
+    expect(on).toContain("Screen Recording Permission");
+  });
+
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.selected_microphone = "input-9-missing-airpods";

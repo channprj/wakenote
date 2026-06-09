@@ -104,6 +104,7 @@ export function SettingsPanel({
   onRevealSaveFolder,
   onChooseModelDirectory,
   onRequestMicrophonePermission,
+  onRequestScreenRecordingPermission,
   onImportAudioFiles,
   onEnqueueBacklog,
   onCancelCurrent,
@@ -125,6 +126,7 @@ export function SettingsPanel({
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;
   onRequestMicrophonePermission: () => void;
+  onRequestScreenRecordingPermission: () => void;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onCancelCurrent: () => void;
@@ -138,6 +140,7 @@ export function SettingsPanel({
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
   const microphonePermission = snapshot.permissions.microphone;
+  const screenRecordingPermission = snapshot.permissions.screen_recording;
   // The backend's invariant is priority[0].id === selected_microphone. When a
   // snapshot is constructed in tests or transient UI state, the two can drift;
   // we resync here so the UI always treats `selected_microphone` as position 0
@@ -489,6 +492,29 @@ export function SettingsPanel({
           }
           onAction={onRequestMicrophonePermission}
         />
+        <ToggleRow
+          label="Capture system audio (Google Meet, YouTube)"
+          checked={settings.system_audio_enabled}
+          onChange={(system_audio_enabled) => onPatch({ system_audio_enabled })}
+          title="Capture the other side of Google Meet calls and other app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
+        />
+        {settings.system_audio_enabled ? (
+          <PermissionRow
+            label="Screen Recording Permission"
+            statusLabel={screenRecordingPermission.label}
+            detail={screenRecordingPermission.detail}
+            actionLabel={
+              screenRecordingPermission.status === "granted"
+                ? null
+                : screenRecordingPermission.can_request
+                  ? "Allow Screen Recording"
+                  : screenRecordingPermission.can_open_settings
+                    ? "Open System Settings"
+                    : null
+            }
+            onAction={onRequestScreenRecordingPermission}
+          />
+        ) : null}
         <ToggleRow
           label="Recording"
           checked={settings.recording_enabled}

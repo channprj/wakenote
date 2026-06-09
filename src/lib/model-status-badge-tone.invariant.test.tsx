@@ -61,6 +61,7 @@ function renderSettingsPanelSectionBadgeClass(status: ModelStatus): string {
       onRevealSaveFolder={() => {}}
       onChooseModelDirectory={() => {}}
       onRequestMicrophonePermission={() => {}}
+      onRequestScreenRecordingPermission={() => {}}
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
       onCancelCurrent={() => {}}

@@ -38,6 +38,8 @@ import {
   loadSnapshot,
   requestMicrophonePermission,
   openMicrophonePermissionSettings,
+  requestScreenRecordingPermission,
+  openScreenRecordingSettings,
   processNextTranscription,
   retryJob,
   saveSettingsPatch,
@@ -448,6 +450,13 @@ export default function App() {
               snapshot.permissions.microphone.can_request
                 ? requestMicrophonePermission
                 : openMicrophonePermissionSettings,
+            )
+          }
+          onRequestScreenRecordingPermission={() =>
+            void runAction(
+              snapshot.permissions.screen_recording.can_request
+                ? requestScreenRecordingPermission
+                : openScreenRecordingSettings,
             )
           }
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
