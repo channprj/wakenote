@@ -108,6 +108,8 @@ describe("settings panel", () => {
 
     expect(markup).toContain("Zoom");
     expect(markup).toContain("Zoom Meeting");
+    expect(markup.match(/aria-label="Custom source"/g) ?? []).toHaveLength(1);
+    expect(markup).not.toContain("Window title patterns");
   });
 
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {

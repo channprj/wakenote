@@ -52,10 +52,6 @@ export function SystemAudioSettings({
   }, [fallbackSources]);
 
   useEffect(() => {
-    setCustomDrafts(settings.custom_sources);
-  }, [settings.custom_sources]);
-
-  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const [list, status] = await Promise.all([
@@ -227,21 +223,14 @@ export function SystemAudioSettings({
         {customDrafts.map((source) => (
           <div className="custom-source-row" key={source.id}>
             <input
-              aria-label="Source name"
+              aria-label="Custom source"
               className="ui-input"
-              value={source.label}
-              onChange={(event) =>
-                setCustomSource(source.id, { label: event.currentTarget.value })
-              }
-              onBlur={commitCustomSources}
-            />
-            <input
-              aria-label="Window title patterns"
-              className="ui-input"
-              value={source.title_patterns.join(", ")}
+              placeholder="Zoom Meeting"
+              value={customSourceText(source)}
               onChange={(event) =>
                 setCustomSource(source.id, {
-                  title_patterns: splitTitlePatterns(event.currentTarget.value),
+                  label: event.currentTarget.value,
+                  title_patterns: [event.currentTarget.value],
                 })
               }
               onBlur={commitCustomSources}
@@ -294,11 +283,8 @@ function recognizedSourcesFromSettings(settings: AppSettings): RecognizedSourceI
   ];
 }
 
-function splitTitlePatterns(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+function customSourceText(source: CustomSourceEntry): string {
+  return source.title_patterns[0] ?? source.label;
 }
 
 function nextCustomSourceId(sources: CustomSourceEntry[]): string {
