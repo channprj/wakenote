@@ -166,6 +166,12 @@ impl TranscriptionSidecar {
         }
         update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Failed)
     }
+
+    pub fn reset_for_regenerate(chunk: &RecordedChunk) -> Result<(), RecorderError> {
+        remove_file_if_present(&chunk.transcript_path)?;
+        remove_file_if_present(&chunk.error_path)?;
+        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Queued)
+    }
 }
 
 fn recorded_chunk(target: OutputTarget) -> RecordedChunk {
@@ -228,6 +234,14 @@ fn write_text_sidecar(path: &Path, text: &str) -> Result<(), RecorderError> {
     let mut file = fs::File::create(path)?;
     writeln!(file, "{text}")?;
     Ok(())
+}
+
+fn remove_file_if_present(path: &Path) -> Result<(), RecorderError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<(), RecorderError> {

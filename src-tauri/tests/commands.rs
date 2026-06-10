@@ -11,6 +11,7 @@ use wakenote::commands::{
 };
 use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
+use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
@@ -439,6 +440,70 @@ fn backend_manual_import_queues_only_existing_audio_files() {
 
     assert_eq!(snapshot.pending_count, 1);
     assert_eq!(snapshot.jobs[0].audio_path, audio_path);
+}
+
+#[test]
+fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let audio_path = tmp.path().join("20260611").join("024304-spotify.wav");
+    std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let now = chrono::Utc::now();
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        device_id: "custom-source-2".into(),
+        device_name: "Spotify".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        started_at: now,
+        ended_at: now,
+        duration_ms: 1000,
+        transcription_status: TranscriptionStatus::Queued,
+        app_version: "0.0.0".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: None,
+        source: ChunkSource::System,
+        source_label: Some("Spotify".into()),
+    };
+    std::fs::write(
+        audio_path.with_extension("json"),
+        serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("complete imported job");
+    std::fs::write(audio_path.with_extension("txt"), b"old transcript\n").expect("old transcript");
+    std::fs::write(audio_path.with_extension("error.txt"), b"old error\n").expect("old error");
+
+    let snapshot = backend
+        .regenerate_transcript(&audio_path)
+        .expect("regenerate transcript");
+
+    assert_eq!(snapshot.pending_count, 1);
+    let job = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == audio_path)
+        .expect("requeued job");
+    assert_eq!(job.status, QueueJobStatus::Pending);
+    assert_eq!(job.model_id, "whisper-medium");
+    assert!(!audio_path.with_extension("txt").exists());
+    assert!(!audio_path.with_extension("error.txt").exists());
+    let updated: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(audio_path.with_extension("json")).expect("metadata"),
+    )
+    .expect("metadata json");
+    assert_eq!(updated.transcription_status, TranscriptionStatus::Queued);
 }
 
 #[test]
@@ -1897,7 +1962,13 @@ fn system_capture_session_lifecycle_reports_active_state() {
 
     let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
     backend
-        .start_system_capture_session(16_000, base_time, "Google Chrome".into(), "meet".into())
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
         .expect("start system capture session");
     assert!(backend.is_system_capturing());
 
@@ -1916,7 +1987,13 @@ fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
 
     let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
     backend
-        .start_system_capture_session(16_000, base_time, "Google Chrome".into(), "meet".into())
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
         .expect("start system capture session");
 
     // A settings change must propagate to the live controller, not tear down

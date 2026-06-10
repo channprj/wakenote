@@ -22,7 +22,9 @@ use crate::queue::{
     BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
     is_importable_audio_path,
 };
-use crate::recorder::{ChunkMetadata, ChunkSource, RecordedChunk, TranscriptionStatus};
+use crate::recorder::{
+    ChunkMetadata, ChunkSource, RecordedChunk, TranscriptionSidecar, TranscriptionStatus,
+};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
@@ -1010,14 +1012,15 @@ impl AppBackend {
     /// Open a parallel capture session for system-audio frames. Unlike the
     /// microphone path this has no level meter, no health watchdog and no
     /// device resolution: the caller (system-audio input) already owns those.
-    /// Chunks it produces are tagged `source = System` and slugged with
-    /// `source_id` so they never collide with mic chunks from the same second.
+    /// Chunks it produces are tagged `source = System` and slugged with a
+    /// source label so they never collide with mic chunks from the same second.
     pub fn start_system_capture_session(
         &mut self,
         sample_rate: u32,
         base_time: chrono::DateTime<chrono::Utc>,
         app_name: String,
         source_id: String,
+        source_label: String,
     ) -> Result<AppStatus, String> {
         if let Some(capture) = self.system_capture.as_mut() {
             let events = capture.flush().map_err(|error| error.to_string())?;
@@ -1026,8 +1029,8 @@ impl AppBackend {
         append_debug_log(
             self.save_root_path(),
             format!(
-                "[system-capture] start source_id={} app={} sample_rate={}",
-                source_id, app_name, sample_rate
+                "[system-capture] start source_id={} label={} app={} sample_rate={}",
+                source_id, source_label, app_name, sample_rate
             ),
         );
         self.system_capture = Some(CaptureController::new(CaptureControllerConfig {
@@ -1040,7 +1043,7 @@ impl AppBackend {
             base_time,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             source: ChunkSource::System,
-            source_label: Some(source_id),
+            source_label: Some(source_label),
         }));
         Ok(self.app_status())
     }
@@ -1164,6 +1167,22 @@ impl AppBackend {
 
     pub fn retry_job(&mut self, id: u64) -> Result<QueueSnapshot, String> {
         self.queue.retry(id)?;
+        self.persist_queue();
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn regenerate_transcript(
+        &mut self,
+        audio_path: impl Into<std::path::PathBuf>,
+    ) -> Result<QueueSnapshot, String> {
+        let audio_path = audio_path.into();
+        if !is_importable_audio_path(&audio_path) {
+            return Err("only existing m4a and wav audio files can be regenerated".to_string());
+        }
+        let chunk = RecordedChunk::from_audio_path(audio_path.clone());
+        TranscriptionSidecar::reset_for_regenerate(&chunk).map_err(|error| error.to_string())?;
+        self.queue
+            .requeue_file(audio_path, self.settings.selected_model.clone())?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }

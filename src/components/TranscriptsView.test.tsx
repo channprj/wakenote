@@ -26,6 +26,7 @@ function view(props: {
   loadingDay?: string | null;
   initialPlayingTranscriptPath?: string | null;
   sourceLabels?: Record<string, string>;
+  onRegenerate?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
     <TranscriptsView
@@ -34,6 +35,7 @@ function view(props: {
       loadingDay={props.loadingDay ?? null}
       initialPlayingTranscriptPath={props.initialPlayingTranscriptPath}
       sourceLabels={props.sourceLabels}
+      onRegenerate={props.onRegenerate}
       today={props.today}
     />,
   );
@@ -130,6 +132,18 @@ describe("TranscriptsView", () => {
     expect(markup).toContain('aria-label="Play recording from 2026-05-10 01:02:03"');
     expect(markup).toContain("transcript-entry__play");
     expect(markup).toContain('<a class="transcript-entry__timestamp" href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>');
+  });
+
+  it("marks playable transcript rows as regeneration context-menu targets", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
+      onRegenerate: () => undefined,
+    });
+
+    expect(markup).toContain('data-regenerate-available="true"');
+    expect(markup).toContain('data-audio-path="/tmp/WakeNote/20260510/010203.m4a"');
   });
 
   it("renders source badges inline between timestamp and transcript text", () => {

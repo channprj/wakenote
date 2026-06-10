@@ -782,6 +782,66 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function regenerateTranscript(audioPath: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    if (!isBrowserImportableAudioPath(audioPath)) {
+      return browserSnapshot;
+    }
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    let matched = false;
+    let blocked = false;
+    let changed = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (job.audio_path !== audioPath) {
+        return job;
+      }
+      matched = true;
+      if (job.status === "running") {
+        blocked = true;
+        return job;
+      }
+      changed = true;
+      return {
+        ...job,
+        model_id: settings.selected_model,
+        status: "pending" as const,
+        error: null,
+      };
+    });
+    if (blocked) {
+      return browserSnapshot;
+    }
+    if (!matched) {
+      const nextId = Math.max(0, ...jobs.map((job) => job.id)) + 1;
+      jobs.push({
+        id: nextId,
+        audio_path: audioPath,
+        model_id: settings.selected_model,
+        status: "pending",
+        error: null,
+      });
+      changed = true;
+    }
+    if (!changed) {
+      return browserSnapshot;
+    }
+
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+      recent_transcripts: (browserSnapshot.recent_transcripts ?? []).filter(
+        (entry) => entry.audio_path !== audioPath,
+      ),
+    };
+    return browserSnapshot;
+  }
+
+  await invoke<QueueSnapshot>("regenerate_transcript", { audioPath });
+  return loadSnapshot();
+}
+
 export async function startLiveCapture(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();

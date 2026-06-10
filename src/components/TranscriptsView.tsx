@@ -11,7 +11,10 @@ import {
   X,
   Youtube,
 } from "lucide-react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
 import {
@@ -30,6 +33,12 @@ interface DragState {
   visited: Set<string>;
 }
 
+interface TranscriptContextMenu {
+  entry: RecentTranscript;
+  x: number;
+  y: number;
+}
+
 const KOREAN_DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
 export function TranscriptsView({
@@ -38,6 +47,7 @@ export function TranscriptsView({
   loadingDay = null,
   sourceLabels = {},
   onActiveDayChange,
+  onRegenerate,
   onReload,
   initialPlayingTranscriptPath = null,
   today = new Date(),
@@ -47,6 +57,7 @@ export function TranscriptsView({
   loadingDay?: string | null;
   sourceLabels?: Readonly<Record<string, string>>;
   onActiveDayChange?: (day: string) => void;
+  onRegenerate?: (entry: RecentTranscript) => void | Promise<void>;
   onReload?: (day: string) => void;
   initialPlayingTranscriptPath?: string | null;
   today?: Date;
@@ -75,6 +86,7 @@ export function TranscriptsView({
   );
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const [copyToast, setCopyToast] = useState<CopyToastKind | null>(null);
+  const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
 
   const effectiveActiveDay = activeDay ?? todayDay;
@@ -124,6 +136,26 @@ export function TranscriptsView({
       window.removeEventListener("pointercancel", endDrag);
     };
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+    const close = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
 
   const beginDragSelection = useCallback((path: string) => {
     setSelectedPaths((prev) => {
@@ -186,6 +218,27 @@ export function TranscriptsView({
   const handleClearSelection = useCallback(() => {
     setSelectedPaths(new Set());
   }, []);
+
+  const openContextMenu = useCallback((entry: RecentTranscript, x: number, y: number) => {
+    const menuWidth = 168;
+    const menuHeight = 44;
+    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+    setContextMenu({
+      entry,
+      x: Math.min(Math.max(8, x), maxX),
+      y: Math.min(Math.max(8, y), maxY),
+    });
+  }, []);
+
+  const handleRegenerateFromMenu = useCallback(() => {
+    if (!contextMenu) {
+      return;
+    }
+    const entry = contextMenu.entry;
+    setContextMenu(null);
+    void onRegenerate?.(entry);
+  }, [contextMenu, onRegenerate]);
 
   const selectionCount = selectedPaths.size;
   const hasEntries = activeEntries.length > 0;
@@ -299,9 +352,11 @@ export function TranscriptsView({
                 isSelected={selectedPaths.has(entry.transcript_path)}
                 key={entry.transcript_path}
                 sourceLabels={sourceLabels}
+                onOpenContextMenu={openContextMenu}
                 onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
                 onPointerDownSelect={beginDragSelection}
                 onPointerEnterSelect={continueDragSelection}
+                onRegenerate={onRegenerate}
               />
             ))}
           </div>
@@ -321,6 +376,19 @@ export function TranscriptsView({
           onClose={() => setPlayingTranscriptPath(null)}
         />
       ) : null}
+      {contextMenu ? (
+        <div
+          className="transcript-context-menu"
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button onClick={handleRegenerateFromMenu} role="menuitem" type="button">
+            <RotateCw aria-hidden="true" />
+            Regenerate
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -330,19 +398,24 @@ function TranscriptEntryRow({
   isPlaying,
   isSelected,
   sourceLabels,
+  onOpenContextMenu,
   onPlay,
   onPointerDownSelect,
   onPointerEnterSelect,
+  onRegenerate,
 }: {
   entry: RecentTranscript;
   isPlaying: boolean;
   isSelected: boolean;
   sourceLabels: Readonly<Record<string, string>>;
+  onOpenContextMenu: (entry: RecentTranscript, x: number, y: number) => void;
   onPlay: () => void;
   onPointerDownSelect: (path: string) => void;
   onPointerEnterSelect: (path: string) => void;
+  onRegenerate?: (entry: RecentTranscript) => void | Promise<void>;
 }) {
   const timestamp = formatLocalTimestamp(entry.recorded_at);
+  const regenerateAvailable = Boolean(entry.audio_path && onRegenerate);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -356,11 +429,26 @@ function TranscriptEntryRow({
     onPointerEnterSelect(entry.transcript_path);
   };
 
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!regenerateAvailable) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("a, button")) {
+      return;
+    }
+    event.preventDefault();
+    onOpenContextMenu(entry, event.clientX, event.clientY);
+  };
+
   return (
     <div
       aria-selected={isSelected}
       className="transcript-entry transcript-entry--condensed"
+      data-audio-path={regenerateAvailable ? entry.audio_path ?? undefined : undefined}
+      data-regenerate-available={regenerateAvailable ? "true" : undefined}
       data-selected={isSelected ? "true" : undefined}
+      onContextMenu={handleContextMenu}
       onPointerDown={handlePointerDown}
       onPointerEnter={handlePointerEnter}
     >

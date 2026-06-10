@@ -33,7 +33,7 @@ pub fn next_available_output(
     let date_dir = local.format("%Y%m%d").to_string();
     // Non-mic sources get a `-{slug}` suffix (e.g. HHMMSS-meet) so a system chunk
     // never collides with a mic chunk that started the same second.
-    let stem = match source_slug {
+    let stem = match source_slug.and_then(normalize_source_slug) {
         Some(slug) => format!("{}-{slug}", local.format("%H%M%S")),
         None => local.format("%H%M%S").to_string(),
     };
@@ -80,6 +80,27 @@ fn collision_basename(stem: &str, index: usize) -> String {
     } else {
         // index 1 → "-2", index 2 → "-3" … keep names short and human-friendly.
         format!("{stem}-{}", index + 1)
+    }
+}
+
+fn normalize_source_slug(source_slug: &str) -> Option<String> {
+    let mut normalized = String::new();
+    let mut pending_separator = false;
+    for character in source_slug.chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_separator && !normalized.is_empty() {
+                normalized.push('-');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            pending_separator = false;
+        } else {
+            pending_separator = true;
+        }
+    }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
 }
 
@@ -174,10 +195,19 @@ mod tests {
     #[test]
     fn source_slug_suffixes_the_stem() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let target =
-            next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("meet")).expect("target");
+        let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("meet"))
+            .expect("target");
         let name = target.audio_path.file_name().unwrap().to_string_lossy();
         assert!(name.ends_with("-meet.m4a"), "got {name}");
+    }
+
+    #[test]
+    fn source_slug_suffix_is_normalized_for_human_labels() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("Spotify"))
+            .expect("target");
+        let name = target.audio_path.file_name().unwrap().to_string_lossy();
+        assert!(name.ends_with("-spotify.m4a"), "got {name}");
     }
 
     #[test]
@@ -196,8 +226,8 @@ mod tests {
         let first =
             next_available_output(tmp.path(), ts(), AudioFormat::Wav, Some("meet")).expect("first");
         std::fs::write(&first.audio_path, b"x").expect("write first");
-        let second =
-            next_available_output(tmp.path(), ts(), AudioFormat::Wav, Some("meet")).expect("second");
+        let second = next_available_output(tmp.path(), ts(), AudioFormat::Wav, Some("meet"))
+            .expect("second");
         let name = second.audio_path.file_name().unwrap().to_string_lossy();
         assert!(name.ends_with("-meet-2.wav"), "got {name}");
     }

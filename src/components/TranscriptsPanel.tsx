@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadTranscriptDays, loadTranscriptsForDay } from "../lib/tauri-client";
+import {
+  loadTranscriptDays,
+  loadTranscriptsForDay,
+  regenerateTranscript,
+} from "../lib/tauri-client";
 import type { CustomSourceEntry, RecentTranscript, TranscriptDay } from "../lib/types";
 import { TranscriptsView, formatLocalDay } from "./TranscriptsView";
 
@@ -69,6 +73,20 @@ export function TranscriptsPanel({
     [loadDay, refreshDays],
   );
 
+  const regenerateEntry = useCallback(
+    async (entry: RecentTranscript) => {
+      if (!entry.audio_path) {
+        return;
+      }
+      await regenerateTranscript(entry.audio_path);
+      const day = formatLocalDay(new Date(entry.recorded_at));
+      requestedRef.current.add(day);
+      await loadDay(day, true);
+      void refreshDays();
+    },
+    [loadDay, refreshDays],
+  );
+
   useEffect(() => {
     void refreshDays();
   }, [refreshDays]);
@@ -112,6 +130,7 @@ export function TranscriptsPanel({
       loadingDay={loadingDay}
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
       onActiveDayChange={ensureDayLoaded}
+      onRegenerate={regenerateEntry}
       onReload={reloadDay}
     />
   );

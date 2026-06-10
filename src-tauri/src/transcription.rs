@@ -5,7 +5,9 @@ use thiserror::Error;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
-use crate::recorder::{RecordedChunk, RecorderError, TranscriptionSidecar};
+use crate::recorder::{
+    ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
+};
 use crate::settings::{TranscriptionLanguage, expand_user_path};
 
 #[derive(Debug, Clone, Copy)]
@@ -133,13 +135,14 @@ impl<T: Transcriber> TranscriptionWorker<T> {
 
         match self.transcriber.transcribe(request) {
             Ok(transcript) => {
-                let transcript = if self.suppress_low_confidence_transcripts
-                    && should_suppress_transcript_artifact(&transcript)
-                {
-                    String::new()
-                } else {
-                    transcript
-                };
+                let suppress_artifacts = self.suppress_low_confidence_transcripts
+                    && should_apply_artifact_suppression(&chunk);
+                let transcript =
+                    if suppress_artifacts && should_suppress_transcript_artifact(&transcript) {
+                        String::new()
+                    } else {
+                        transcript
+                    };
                 TranscriptionSidecar::write_success(&chunk, &transcript)?;
                 Ok(TranscriptionJobOutcome::completed(job.id))
             }
@@ -168,6 +171,20 @@ impl<T: Transcriber> TranscriptionWorker<T> {
 
         Ok(Some(job.id))
     }
+}
+
+fn should_apply_artifact_suppression(chunk: &RecordedChunk) -> bool {
+    !chunk_is_system_audio(chunk)
+}
+
+fn chunk_is_system_audio(chunk: &RecordedChunk) -> bool {
+    let Ok(bytes) = std::fs::read(&chunk.metadata_path) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_slice::<ChunkMetadata>(&bytes) else {
+        return false;
+    };
+    metadata.source == ChunkSource::System
 }
 
 pub fn should_suppress_transcript_artifact(text: &str) -> bool {

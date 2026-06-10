@@ -14,6 +14,7 @@ import {
   loadTranscriptDays,
   loadTranscriptsForDay,
   processNextTranscription,
+  regenerateTranscript,
   retryJob,
   saveSettingsPatch,
   skipJob,
@@ -376,6 +377,19 @@ describe("tauri live capture client", () => {
     const snapshot = await enqueueAudioFiles([audioPath]);
 
     expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
+  });
+
+  it("requeues completed browser fallback audio for regeneration", async () => {
+    const audioPath = "/tmp/imported/regenerate.wav";
+    await enqueueAudioFiles([audioPath]);
+    await processNextTranscription();
+
+    const snapshot = await regenerateTranscript(audioPath);
+
+    expect(snapshot.queue.jobs.find((job) => job.audio_path === audioPath)).toMatchObject({
+      status: "pending",
+      error: null,
+    });
   });
 
   it("ignores non-audio browser fallback imports", async () => {

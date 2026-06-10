@@ -170,6 +170,14 @@ impl From<&DetectedSource> for SourcePayload {
     }
 }
 
+fn recording_source_label(source: &DetectedSource) -> String {
+    if source.source_id.starts_with("custom-source-") {
+        source.label.clone()
+    } else {
+        source.source_id.clone()
+    }
+}
+
 /// Emitted on `source-capture-started` / `source-capture-stopped`.
 #[derive(Debug, Clone, Serialize)]
 struct SourceCapturePayload {
@@ -761,6 +769,25 @@ fn retry_job(
 }
 
 #[tauri::command]
+fn regenerate_transcript(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
+    audio_path: String,
+) -> Result<QueueSnapshot, String> {
+    let snapshot = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.regenerate_transcript(audio_path)?
+    };
+    kick_transcription_worker_if_needed(
+        app,
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+    Ok(snapshot)
+}
+
+#[tauri::command]
 fn skip_job(state: State<'_, BackendState>, id: u64) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.skip_job(id)
@@ -1142,13 +1169,19 @@ fn start_source_capture_runtime(
     }
 
     let sample_rate = system_audio_sample_rate();
+    let source_label = recording_source_label(&source);
     {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
         append_runtime_debug_log(
             &backend.settings(),
             format!(
-                "[source-capture] start source_id={} label={} app={} pid={} sample_rate={}",
-                source.source_id, source.label, source.app_name, source.pid, sample_rate
+                "[source-capture] start source_id={} label={} recording_label={} app={} pid={} sample_rate={}",
+                source.source_id,
+                source.label,
+                source_label,
+                source.app_name,
+                source.pid,
+                sample_rate
             ),
         );
         backend.start_system_capture_session(
@@ -1156,6 +1189,7 @@ fn start_source_capture_runtime(
             chrono::Utc::now(),
             source.app_name.clone(),
             source.source_id.clone(),
+            source_label,
         )?;
     }
 
@@ -2398,6 +2432,7 @@ fn main() {
             enqueue_audio_file,
             enqueue_backlog,
             retry_job,
+            regenerate_transcript,
             skip_job,
             cancel_current_transcription,
             cancel_current_operation,
@@ -2737,6 +2772,25 @@ mod tests {
         assert!(zoom.custom);
         assert_eq!(zoom.title_patterns, vec!["Zoom Meeting"]);
         assert!(zoom.auto_prompt);
+    }
+
+    #[test]
+    fn recording_source_label_uses_custom_label_and_builtin_id() {
+        let custom = DetectedSource {
+            source_id: "custom-source-2".into(),
+            label: "Spotify".into(),
+            app_name: "Spotify".into(),
+            pid: 42,
+        };
+        let builtin = DetectedSource {
+            source_id: "youtube".into(),
+            label: "YouTube".into(),
+            app_name: "Google Chrome".into(),
+            pid: 43,
+        };
+
+        assert_eq!(recording_source_label(&custom), "Spotify");
+        assert_eq!(recording_source_label(&builtin), "youtube");
     }
 
     #[test]

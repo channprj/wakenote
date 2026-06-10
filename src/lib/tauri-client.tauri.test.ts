@@ -46,6 +46,8 @@ function mockInvoke(command: string) {
       return Promise.resolve(mockModels());
     case "queue_snapshot":
       return Promise.resolve(queue satisfies QueueSnapshot);
+    case "regenerate_transcript":
+      return Promise.resolve(queue satisfies QueueSnapshot);
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
@@ -92,5 +94,18 @@ describe("tauri runtime client snapshots", () => {
 
     expect(transcripts).toHaveLength(1);
     expect(mocks.invoke).toHaveBeenCalledWith("recent_transcripts", { limit: 50 });
+  });
+
+  it("invokes regenerate_transcript and reloads the Tauri snapshot", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { regenerateTranscript } = await import("./tauri-client");
+
+    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a");
+
+    expect(mocks.invoke).toHaveBeenCalledWith("regenerate_transcript", {
+      audioPath: "/tmp/WakeNote/20260611/024304-spotify.m4a",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
   });
 });

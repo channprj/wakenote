@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
+use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
@@ -116,6 +117,55 @@ fn transcription_worker_can_keep_bracketed_text_when_suppression_is_disabled() {
         TranscriptionWorkerOptions {
             language: TranscriptionLanguage::Ko,
             suppress_low_confidence_transcripts: false,
+        },
+    );
+
+    worker
+        .process_next(&mut queue)
+        .expect("process")
+        .expect("processed job");
+
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
+        "[감사합니다]\n"
+    );
+}
+
+#[test]
+fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230712-spotify.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let now = chrono::Utc::now();
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        device_id: "custom-source-2".into(),
+        device_name: "Spotify".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        started_at: now,
+        ended_at: now,
+        duration_ms: 1000,
+        transcription_status: TranscriptionStatus::Queued,
+        app_version: "0.0.0".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: None,
+        source: ChunkSource::System,
+        source_label: Some("Spotify".into()),
+    };
+    std::fs::write(
+        audio_path.with_extension("json"),
+        serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::with_options(
+        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
+        TranscriptionWorkerOptions {
+            language: TranscriptionLanguage::Ko,
+            suppress_low_confidence_transcripts: true,
         },
     );
 

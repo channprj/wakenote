@@ -109,6 +109,30 @@ impl TranscriptionQueue {
             .collect()
     }
 
+    pub fn requeue_file(
+        &mut self,
+        audio_path: impl Into<PathBuf>,
+        model_id: impl Into<String>,
+    ) -> Result<u64, String> {
+        let audio_path = audio_path.into();
+        let model_id = model_id.into();
+        if let Some(job) = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.audio_path == audio_path)
+        {
+            if job.status == QueueJobStatus::Running {
+                return Err(format!("job {} is currently running", job.id));
+            }
+            job.model_id = model_id;
+            job.status = QueueJobStatus::Pending;
+            job.error = None;
+            return Ok(job.id);
+        }
+
+        Ok(self.enqueue_file(audio_path, model_id))
+    }
+
     pub fn start_next(&mut self) -> Option<QueueJob> {
         if self
             .jobs
