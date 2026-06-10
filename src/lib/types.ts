@@ -82,6 +82,7 @@ export interface AppSettings {
   theme_primary_color: string;
   system_audio_enabled: boolean;
   source_auto_prompt: SourceAutoPromptEntry[];
+  custom_sources: CustomSourceEntry[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -95,11 +96,21 @@ export interface SourceAutoPromptEntry {
   auto_prompt: boolean;
 }
 
-/** A built-in recognized capture source with its resolved auto-prompt setting. */
+/** User-defined system-audio source matched by window title. */
+export interface CustomSourceEntry {
+  id: string;
+  label: string;
+  title_patterns: string[];
+  auto_prompt: boolean;
+}
+
+/** A recognized capture source with its resolved auto-capture setting. */
 export interface RecognizedSourceInfo {
   id: string;
   label: string;
   auto_prompt: boolean;
+  title_patterns: string[];
+  custom: boolean;
 }
 
 /** A recognized source currently detected on screen (source-detected/ended). */
@@ -159,6 +170,8 @@ export interface RecentTranscript {
   audio_path: string | null;
   recorded_at: string;
   text: string;
+  source?: ChunkSource;
+  source_label?: string | null;
 }
 
 export interface TranscriptDay {

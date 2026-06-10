@@ -21,6 +21,7 @@ import {
   stopLiveCapture,
   startSourceCapture,
   stopSourceCapture,
+  loadRecognizedSources,
   loadSourceCaptureStatus,
   verifyModel,
 } from "./tauri-client";
@@ -721,6 +722,23 @@ describe("tauri live capture client", () => {
 });
 
 describe("tauri source capture client (browser fallback)", () => {
+  it("includes custom system-audio sources in browser fallback", async () => {
+    await saveSettingsPatch({
+      custom_sources: [
+        {
+          id: "zoom",
+          label: "Zoom",
+          title_patterns: ["Zoom Meeting"],
+          auto_prompt: true,
+        },
+      ],
+    });
+
+    const sources = await loadRecognizedSources();
+
+    expect(sources.some((source) => source.id === "zoom" && source.custom)).toBe(true);
+  });
+
   it("flips simulated source capture state on start and stop (locked-behaviors §10)", async () => {
     const initial = await loadSourceCaptureStatus();
     expect(initial.capturing).toBe(false);

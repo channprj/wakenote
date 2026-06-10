@@ -499,21 +499,50 @@ export async function openScreenRecordingSettings(): Promise<AppSnapshot> {
 const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
   id: string;
   label: string;
+  titlePatterns: string[];
   defaultAutoPrompt: boolean;
+  custom: boolean;
 }> = [
-  { id: "meet", label: "Google Meet", defaultAutoPrompt: true },
-  { id: "youtube", label: "YouTube", defaultAutoPrompt: false },
+  {
+    id: "meet",
+    label: "Google Meet",
+    titlePatterns: ["google meet", "meet - "],
+    defaultAutoPrompt: true,
+    custom: false,
+  },
+  {
+    id: "youtube",
+    label: "YouTube",
+    titlePatterns: ["- youtube", "youtube"],
+    defaultAutoPrompt: true,
+    custom: false,
+  },
 ];
 
 function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceInfo[] {
-  return BROWSER_RECOGNIZED_SOURCES.map((source) => {
+  const builtIns = BROWSER_RECOGNIZED_SOURCES.map((source) => {
     const override = settings.source_auto_prompt.find((entry) => entry.source_id === source.id);
     return {
       id: source.id,
       label: source.label,
       auto_prompt: override ? override.auto_prompt : source.defaultAutoPrompt,
+      title_patterns: source.titlePatterns,
+      custom: source.custom,
     };
   });
+  return [
+    ...builtIns,
+    ...settings.custom_sources.map((source) => {
+      const override = settings.source_auto_prompt.find((entry) => entry.source_id === source.id);
+      return {
+        id: source.id,
+        label: source.label,
+        auto_prompt: override ? override.auto_prompt : source.auto_prompt,
+        title_patterns: source.title_patterns,
+        custom: true,
+      };
+    }),
+  ];
 }
 
 export async function loadRecognizedSources(): Promise<RecognizedSourceInfo[]> {
@@ -525,7 +554,8 @@ export async function loadRecognizedSources(): Promise<RecognizedSourceInfo[]> {
 
 export async function startSourceCapture(sourceId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
-    const source = BROWSER_RECOGNIZED_SOURCES.find((entry) => entry.id === sourceId);
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const source = recognizedSourcesFromBrowser(settings).find((entry) => entry.id === sourceId);
     if (source) {
       browserDetectedSource = {
         source_id: source.id,

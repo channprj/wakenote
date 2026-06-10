@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -16,7 +17,6 @@ use tauri::menu::{
 };
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
-use tauri_plugin_notification::NotificationExt;
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
@@ -46,9 +46,9 @@ use wakenote::settings::{
     resolve_auto_prompt,
 };
 use wakenote::source_watcher::{
-    DetectedSource, SourceTransition, compute_source_transition, should_prompt_capture,
+    DetectedSource, SourceTransition, compute_source_transition, should_auto_capture_source,
 };
-use wakenote::sources::recognized_sources;
+use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
     TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
@@ -66,6 +66,8 @@ type SystemCaptureState = Arc<Mutex<Option<Box<dyn AudioStreamHandle>>>>;
 /// The recognized source currently detected on screen, threaded across polls by
 /// the watcher and read by the capture commands.
 type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
+/// Source ids the user paused manually while the source remains detected.
+type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 
 const EVENT_LIVE_STARTED: &str = "live-transcript-started";
 const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
@@ -182,6 +184,8 @@ struct RecognizedSourceInfo {
     id: String,
     label: String,
     auto_prompt: bool,
+    title_patterns: Vec<String>,
+    custom: bool,
 }
 
 /// Snapshot returned by `source_capture_status`.
@@ -195,12 +199,14 @@ struct SourceCaptureStatus {
 /// source's effective auto-prompt against the given settings. Pure so it can be
 /// unit-tested without a backend.
 fn recognized_source_infos(settings: &AppSettings) -> Vec<RecognizedSourceInfo> {
-    recognized_sources()
-        .iter()
+    source_definitions(settings)
+        .into_iter()
         .map(|source| RecognizedSourceInfo {
-            id: source.id.to_string(),
-            label: source.label.to_string(),
-            auto_prompt: resolve_auto_prompt(settings, source.id),
+            auto_prompt: resolve_auto_prompt(settings, &source.id),
+            id: source.id,
+            label: source.label,
+            title_patterns: source.title_patterns,
+            custom: source.custom,
         })
         .collect()
 }
@@ -1080,8 +1086,12 @@ fn start_source_capture(
     backend_state: State<'_, BackendState>,
     system_capture_state: State<'_, SystemCaptureState>,
     detected_source_state: State<'_, DetectedSourceState>,
+    source_capture_pause_state: State<'_, SourceCapturePauseState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
+    if let Ok(mut paused) = source_capture_pause_state.lock() {
+        paused.remove(&source_id);
+    }
     start_source_capture_runtime(
         &app,
         &source_id,
@@ -1197,8 +1207,18 @@ fn stop_source_capture(
     backend_state: State<'_, BackendState>,
     system_capture_state: State<'_, SystemCaptureState>,
     detected_source_state: State<'_, DetectedSourceState>,
+    source_capture_pause_state: State<'_, SourceCapturePauseState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
+    if let Some(source_id) = detected_source_state
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()))
+    {
+        if let Ok(mut paused) = source_capture_pause_state.lock() {
+            paused.insert(source_id);
+        }
+    }
     let status = stop_source_capture_runtime(
         &app,
         backend_state.inner(),
@@ -1258,6 +1278,17 @@ fn system_audio_sample_rate() -> u32 {
     PIPELINE_SAMPLE_RATE
 }
 
+fn source_watcher_should_enumerate_windows(
+    settings: &AppSettings,
+    screen_recording_status: permissions::PermissionGrantStatus,
+) -> bool {
+    settings.system_audio_enabled
+        && matches!(
+            screen_recording_status,
+            permissions::PermissionGrantStatus::Granted
+        )
+}
+
 /// Background watcher: while `system_audio_enabled`, poll the on-screen windows
 /// every [`SOURCE_WATCH_INTERVAL`] and react to source transitions. Cheap when
 /// the feature is off (it just re-reads the flag and sleeps). Notifications are
@@ -1267,11 +1298,10 @@ fn spawn_source_watcher(
     backend_state: BackendState,
     system_capture_state: SystemCaptureState,
     detected_source_state: DetectedSourceState,
+    source_capture_pause_state: SourceCapturePauseState,
+    transcription_state: AutoTranscriptionState,
 ) {
     thread::spawn(move || {
-        // Source ids already notified this session, so a still-present source
-        // is not re-prompted on every poll.
-        let mut snoozed: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             thread::sleep(SOURCE_WATCH_INTERVAL);
 
@@ -1282,13 +1312,19 @@ fn spawn_source_watcher(
             if !settings.system_audio_enabled {
                 continue;
             }
+            let screen_recording_status =
+                permissions::permission_snapshot().screen_recording.status;
+            if !source_watcher_should_enumerate_windows(&settings, screen_recording_status) {
+                continue;
+            }
 
             let windows = enumerate_windows();
+            let source_defs = source_definitions(&settings);
             let previous = match detected_source_state.lock() {
                 Ok(slot) => slot.clone(),
                 Err(_) => continue,
             };
-            match compute_source_transition(previous.as_ref(), &windows) {
+            match compute_source_transition(previous.as_ref(), &windows, &source_defs) {
                 SourceTransition::Detected(source) => {
                     if let Ok(mut slot) = detected_source_state.lock() {
                         *slot = Some(source.clone());
@@ -1299,27 +1335,33 @@ fn spawn_source_watcher(
                         .lock()
                         .map(|slot| slot.is_some())
                         .unwrap_or(false);
-                    let auto_prompt = resolve_auto_prompt(&settings, &source.source_id);
-                    let snoozed_this_session = snoozed.contains(&source.source_id);
-                    if should_prompt_capture(
+                    let auto_capture = resolve_auto_prompt(&settings, &source.source_id);
+                    let paused_this_session = source_capture_pause_state
+                        .lock()
+                        .map(|paused| paused.contains(&source.source_id))
+                        .unwrap_or(false);
+                    if should_auto_capture_source(
                         settings.system_audio_enabled,
-                        auto_prompt,
+                        auto_capture,
                         already_capturing,
-                        snoozed_this_session,
+                        paused_this_session,
                     ) {
-                        snoozed.insert(source.source_id.clone());
-                        if let Err(error) = app
-                            .notification()
-                            .builder()
-                            .title("WakeNote")
-                            .body(format!("{} detected — start capturing audio?", source.label))
-                            .show()
-                        {
-                            eprintln!("[source-watch] notification failed: {error}");
+                        if let Err(error) = start_source_capture_runtime(
+                            &app,
+                            &source.source_id,
+                            &backend_state,
+                            &system_capture_state,
+                            &detected_source_state,
+                            transcription_state.clone(),
+                        ) {
+                            eprintln!("[source-watch] auto-capture failed: {error}");
                         }
                     }
                 }
                 SourceTransition::Ended(source) => {
+                    if let Ok(mut paused) = source_capture_pause_state.lock() {
+                        paused.remove(&source.source_id);
+                    }
                     if let Ok(mut slot) = detected_source_state.lock() {
                         *slot = None;
                     }
@@ -2161,18 +2203,23 @@ fn main() {
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
             let system_capture_state: SystemCaptureState = Arc::new(Mutex::new(None));
             let detected_source_state: DetectedSourceState = Arc::new(Mutex::new(None));
+            let source_capture_pause_state: SourceCapturePauseState =
+                Arc::new(Mutex::new(HashSet::new()));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             app.manage(live_transcriber_state.clone());
             app.manage(system_capture_state.clone());
             app.manage(detected_source_state.clone());
+            app.manage(source_capture_pause_state.clone());
 
             spawn_source_watcher(
                 app.handle().clone(),
                 backend_state.clone(),
                 system_capture_state,
                 detected_source_state,
+                source_capture_pause_state,
+                transcription_state.clone(),
             );
 
             wire_live_transcription(
@@ -2573,7 +2620,9 @@ mod tests {
             .expect("youtube listed");
         assert_eq!(meet.label, "Google Meet");
         assert!(meet.auto_prompt);
-        assert!(!youtube.auto_prompt);
+        assert!(youtube.auto_prompt);
+        assert_eq!(youtube.title_patterns, vec!["- youtube", "youtube"]);
+        assert!(!youtube.custom);
     }
 
     #[test]
@@ -2589,6 +2638,25 @@ mod tests {
             .find(|i| i.id == "youtube")
             .expect("youtube listed");
         assert!(youtube.auto_prompt);
+    }
+
+    #[test]
+    fn recognized_source_infos_include_custom_sources() {
+        let mut settings = AppSettings::default();
+        settings.custom_sources = vec![wakenote::settings::CustomSourceEntry {
+            id: "zoom".into(),
+            label: "Zoom".into(),
+            title_patterns: vec!["Zoom Meeting".into()],
+            auto_prompt: true,
+        }];
+
+        let infos = recognized_source_infos(&settings);
+        let zoom = infos.iter().find(|i| i.id == "zoom").expect("zoom listed");
+
+        assert_eq!(zoom.label, "Zoom");
+        assert!(zoom.custom);
+        assert_eq!(zoom.title_patterns, vec!["Zoom Meeting"]);
+        assert!(zoom.auto_prompt);
     }
 
     #[test]
@@ -2637,6 +2705,31 @@ mod tests {
             system_capture_settings_action(&paused, true),
             SystemCaptureSettingsAction::Stop
         );
+    }
+
+    #[test]
+    fn source_watcher_enumerates_windows_only_after_screen_recording_grant() {
+        let mut settings = AppSettings::default();
+        settings.system_audio_enabled = true;
+
+        assert!(!source_watcher_should_enumerate_windows(
+            &settings,
+            permissions::PermissionGrantStatus::NotDetermined
+        ));
+        assert!(!source_watcher_should_enumerate_windows(
+            &settings,
+            permissions::PermissionGrantStatus::Denied
+        ));
+        assert!(source_watcher_should_enumerate_windows(
+            &settings,
+            permissions::PermissionGrantStatus::Granted
+        ));
+
+        settings.system_audio_enabled = false;
+        assert!(!source_watcher_should_enumerate_windows(
+            &settings,
+            permissions::PermissionGrantStatus::Granted
+        ));
     }
 
     #[test]

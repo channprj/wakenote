@@ -494,10 +494,10 @@ export function SettingsPanel({
           onAction={onRequestMicrophonePermission}
         />
         <ToggleRow
-          label="Capture system audio (Google Meet, YouTube)"
+          label="Capture system audio"
           checked={settings.system_audio_enabled}
           onChange={(system_audio_enabled) => onPatch({ system_audio_enabled })}
-          title="Capture the other side of Google Meet calls and other app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
+          title="Capture Google Meet, YouTube, and custom app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
         />
         {settings.system_audio_enabled ? (
           <>
@@ -516,7 +516,7 @@ export function SettingsPanel({
               }
               onAction={onRequestScreenRecordingPermission}
             />
-            <SystemAudioSettings onPatch={onPatch} />
+            <SystemAudioSettings settings={settings} onPatch={onPatch} />
           </>
         ) : null}
         <ToggleRow

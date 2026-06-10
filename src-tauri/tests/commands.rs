@@ -11,7 +11,7 @@ use wakenote::commands::{
 };
 use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
-use wakenote::recorder::ChunkMetadata;
+use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
 };
@@ -209,6 +209,49 @@ fn backend_transcript_sidecars_include_recording_metadata_for_ui_links() {
             .recorded_at
             .starts_with("2026-05-10T01:02:03")
     );
+}
+
+#[test]
+fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    write_transcript_sidecar(
+        tmp.path(),
+        "20260510/010203-youtube.txt",
+        "system transcript\n",
+    );
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        device_id: "youtube".into(),
+        device_name: "Google Chrome".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        started_at: chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 3).unwrap(),
+        ended_at: chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 4).unwrap(),
+        duration_ms: 1_000,
+        transcription_status: TranscriptionStatus::Completed,
+        app_version: "0.1.1".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: None,
+        source: ChunkSource::System,
+        source_label: Some("youtube".into()),
+    };
+    let metadata_path = tmp.path().join("20260510/010203-youtube.json");
+    std::fs::write(
+        metadata_path,
+        serde_json::to_vec(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+
+    let transcripts = backend.recent_transcripts(1);
+
+    assert_eq!(transcripts[0].source, ChunkSource::System);
+    assert_eq!(transcripts[0].source_label.as_deref(), Some("youtube"));
 }
 
 #[test]
@@ -1672,7 +1715,10 @@ fn backend_cancel_current_operation_cancels_active_model_download() {
 
 #[test]
 fn tray_presentation_uses_voice_capture_colors_for_active_states() {
-    assert_eq!(tray_presentation_for_state(TrayState::Idle).rgba, [0, 0, 0, 255]);
+    assert_eq!(
+        tray_presentation_for_state(TrayState::Idle).rgba,
+        [0, 0, 0, 255]
+    );
     assert_eq!(
         tray_presentation_for_state(TrayState::Listening).rgba,
         [0, 0, 0, 255]

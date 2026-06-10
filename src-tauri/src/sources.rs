@@ -1,7 +1,6 @@
-//! Recognized system-audio capture sources (Google Meet, YouTube, …).
-//!
-//! The list is fixed and code-defined. The only per-source user setting is
-//! whether detection auto-prompts — see [`crate::settings::resolve_auto_prompt`].
+//! System-audio capture sources (Google Meet, YouTube, user-defined, …).
+
+use crate::settings::AppSettings;
 
 /// A system-audio source WakeNote can recognize by window title.
 pub struct RecognizedSource {
@@ -16,6 +15,17 @@ pub struct RecognizedSource {
     pub default_auto_prompt: bool,
 }
 
+/// Runtime source definition used by the watcher. Built-ins and user-defined
+/// sources share this shape so matching stays in one path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceDefinition {
+    pub id: String,
+    pub label: String,
+    pub title_patterns: Vec<String>,
+    pub default_auto_prompt: bool,
+    pub custom: bool,
+}
+
 const RECOGNIZED_SOURCES: &[RecognizedSource] = &[
     RecognizedSource {
         id: "meet",
@@ -27,7 +37,7 @@ const RECOGNIZED_SOURCES: &[RecognizedSource] = &[
         id: "youtube",
         label: "YouTube",
         title_patterns: &["- youtube", "youtube"],
-        default_auto_prompt: false,
+        default_auto_prompt: true,
     },
 ];
 
@@ -37,6 +47,55 @@ pub fn recognized_sources() -> &'static [RecognizedSource] {
 
 pub fn recognized_source(id: &str) -> Option<&'static RecognizedSource> {
     RECOGNIZED_SOURCES.iter().find(|source| source.id == id)
+}
+
+pub fn source_definitions(settings: &AppSettings) -> Vec<SourceDefinition> {
+    let mut sources = RECOGNIZED_SOURCES
+        .iter()
+        .map(|source| SourceDefinition {
+            id: source.id.to_string(),
+            label: source.label.to_string(),
+            title_patterns: source
+                .title_patterns
+                .iter()
+                .map(|pattern| pattern.to_string())
+                .collect(),
+            default_auto_prompt: source.default_auto_prompt,
+            custom: false,
+        })
+        .collect::<Vec<_>>();
+
+    sources.extend(
+        settings
+            .custom_sources
+            .iter()
+            .map(|source| SourceDefinition {
+                id: source.id.clone(),
+                label: source.label.clone(),
+                title_patterns: source.title_patterns.clone(),
+                default_auto_prompt: source.auto_prompt,
+                custom: true,
+            }),
+    );
+
+    sources
+}
+
+pub fn match_source<'a>(
+    window_title: &str,
+    sources: &'a [SourceDefinition],
+) -> Option<&'a SourceDefinition> {
+    let title = window_title.to_lowercase();
+    if title.trim().is_empty() {
+        return None;
+    }
+    sources.iter().find(|source| {
+        source
+            .title_patterns
+            .iter()
+            .map(|pattern| pattern.to_lowercase())
+            .any(|pattern| title.contains(&pattern))
+    })
 }
 
 /// Attribute a window title to a recognized source, if any. Case-insensitive.
@@ -109,8 +168,25 @@ mod tests {
     }
 
     #[test]
-    fn default_auto_prompt_meet_on_youtube_off() {
+    fn default_auto_prompt_meet_and_youtube_on() {
         assert!(recognized_source("meet").unwrap().default_auto_prompt);
-        assert!(!recognized_source("youtube").unwrap().default_auto_prompt);
+        assert!(recognized_source("youtube").unwrap().default_auto_prompt);
+    }
+
+    #[test]
+    fn matches_custom_source_titles_from_settings() {
+        let mut settings = crate::settings::AppSettings::default();
+        settings.custom_sources = vec![crate::settings::CustomSourceEntry {
+            id: "zoom".into(),
+            label: "Zoom".into(),
+            title_patterns: vec!["Zoom Meeting".into()],
+            auto_prompt: true,
+        }];
+        let sources = source_definitions(&settings);
+
+        assert_eq!(
+            match_source("Daily sync - Zoom Meeting", &sources).map(|source| source.id.as_str()),
+            Some("zoom")
+        );
     }
 }

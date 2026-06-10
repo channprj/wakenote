@@ -91,10 +91,10 @@ pub fn screen_recording_permission_state_for_status(
         },
         PermissionGrantStatus::NotDetermined => PermissionState {
             status,
-            label: "Not requested",
-            detail: "WakeNote needs Screen Recording access to capture system audio.",
-            can_request: true,
-            can_open_settings: false,
+            label: "Needs access",
+            detail: "Enable Screen & System Audio Recording for WakeNote in System Settings, then restart WakeNote if it was just reinstalled.",
+            can_request: false,
+            can_open_settings: true,
         },
         PermissionGrantStatus::Denied => PermissionState {
             status,
@@ -304,11 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn screen_recording_not_determined_is_requestable() {
+    fn screen_recording_not_determined_points_to_settings_without_native_request() {
         let state =
             screen_recording_permission_state_for_status(PermissionGrantStatus::NotDetermined);
-        assert!(state.can_request);
-        assert!(!state.can_open_settings);
+        assert_eq!(state.label, "Needs access");
+        assert!(state.detail.contains("System Settings"));
+        assert!(!state.can_request);
+        assert!(state.can_open_settings);
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! Detection of recognized system-audio sources (Google Meet, YouTube …) from
-//! the list of on-screen windows.
+//! Detection of system-audio sources (Google Meet, YouTube, custom sources …)
+//! from the list of on-screen windows.
 //!
 //! The on-screen window enumeration (via ScreenCaptureKit's `SCShareableContent`)
 //! and the polling timer live in a thin platform wrapper. The decision logic —
@@ -8,7 +8,7 @@
 //! switch away from an active source until that source's window disappears,
 //! which avoids flapping between e.g. a Meet tab and a YouTube tab).
 
-use crate::sources::match_recognized_source;
+use crate::sources::{SourceDefinition, match_source};
 
 /// A window observed on screen, reduced to what detection needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,11 +39,14 @@ pub enum SourceTransition {
 }
 
 /// First window (in enumeration order) that maps to a recognized source.
-fn first_candidate(windows: &[WindowSnapshot]) -> Option<DetectedSource> {
+fn first_candidate(
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+) -> Option<DetectedSource> {
     windows.iter().find_map(|window| {
-        match_recognized_source(&window.title).map(|source| DetectedSource {
-            source_id: source.id.to_string(),
-            label: source.label.to_string(),
+        match_source(&window.title, sources).map(|source| DetectedSource {
+            source_id: source.id.clone(),
+            label: source.label.clone(),
             app_name: window.app_name.clone(),
             pid: window.pid,
         })
@@ -51,10 +54,14 @@ fn first_candidate(windows: &[WindowSnapshot]) -> Option<DetectedSource> {
 }
 
 /// Is the currently-active source still represented by one of the windows?
-fn source_still_present(active: &DetectedSource, windows: &[WindowSnapshot]) -> bool {
+fn source_still_present(
+    active: &DetectedSource,
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+) -> bool {
     windows.iter().any(|window| {
         window.pid == active.pid
-            && match_recognized_source(&window.title).map(|source| source.id)
+            && match_source(&window.title, sources).map(|source| source.id.as_str())
                 == Some(active.source_id.as_str())
     })
 }
@@ -67,14 +74,15 @@ fn source_still_present(active: &DetectedSource, windows: &[WindowSnapshot]) -> 
 pub fn compute_source_transition(
     previous: Option<&DetectedSource>,
     windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
 ) -> SourceTransition {
     match previous {
-        None => match first_candidate(windows) {
+        None => match first_candidate(windows, sources) {
             Some(detected) => SourceTransition::Detected(detected),
             None => SourceTransition::Unchanged,
         },
         Some(active) => {
-            if source_still_present(active, windows) {
+            if source_still_present(active, windows, sources) {
                 SourceTransition::Unchanged
             } else {
                 SourceTransition::Ended(active.clone())
@@ -83,23 +91,27 @@ pub fn compute_source_transition(
     }
 }
 
-/// Whether a freshly-detected source should raise the "start capturing?" prompt.
-/// The per-source auto-prompt preference is resolved by the caller via
+/// Whether a freshly-detected source should start capturing automatically. The
+/// per-source auto-capture preference is resolved by the caller via
 /// [`crate::settings::resolve_auto_prompt`]; this only combines the gating flags
-/// so the policy is testable in one place. Sources whose auto-prompt is off (e.g.
-/// YouTube by default) are surfaced for manual start instead of prompting.
-pub fn should_prompt_capture(
+/// so the policy is testable in one place.
+pub fn should_auto_capture_source(
     system_audio_enabled: bool,
-    auto_prompt: bool,
+    auto_capture: bool,
     already_capturing: bool,
-    snoozed_this_session: bool,
+    paused_this_session: bool,
 ) -> bool {
-    system_audio_enabled && auto_prompt && !already_capturing && !snoozed_this_session
+    system_audio_enabled && auto_capture && !already_capturing && !paused_this_session
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::source_definitions;
+
+    fn sources() -> Vec<SourceDefinition> {
+        source_definitions(&crate::settings::AppSettings::default())
+    }
 
     fn window(title: &str, app: &str, pid: i32) -> WindowSnapshot {
         WindowSnapshot {
@@ -112,7 +124,7 @@ mod tests {
     #[test]
     fn detects_when_idle_and_a_meet_window_appears() {
         let windows = [window("Weekly sync - Google Meet", "Google Chrome", 42)];
-        match compute_source_transition(None, &windows) {
+        match compute_source_transition(None, &windows, &sources()) {
             SourceTransition::Detected(d) => {
                 assert_eq!(d.source_id, "meet");
                 assert_eq!(d.app_name, "Google Chrome");
@@ -132,7 +144,7 @@ mod tests {
         };
         let windows = [window("Weekly sync - Google Meet", "Google Chrome", 42)];
         assert_eq!(
-            compute_source_transition(Some(&active), &windows),
+            compute_source_transition(Some(&active), &windows, &sources()),
             SourceTransition::Unchanged
         );
     }
@@ -147,7 +159,7 @@ mod tests {
         };
         let windows = [window("Inbox - Gmail", "Google Chrome", 42)];
         assert_eq!(
-            compute_source_transition(Some(&active), &windows),
+            compute_source_transition(Some(&active), &windows, &sources()),
             SourceTransition::Ended(active)
         );
     }
@@ -156,7 +168,7 @@ mod tests {
     fn idle_ignores_unrecognized_windows() {
         let windows = [window("Slack | general", "Slack", 7)];
         assert_eq!(
-            compute_source_transition(None, &windows),
+            compute_source_transition(None, &windows, &sources()),
             SourceTransition::Unchanged
         );
     }
@@ -167,7 +179,7 @@ mod tests {
             window("Lo-fi - YouTube", "Google Chrome", 10),
             window("Standup - Google Meet", "Google Chrome", 10),
         ];
-        match compute_source_transition(None, &windows) {
+        match compute_source_transition(None, &windows, &sources()) {
             SourceTransition::Detected(d) => assert_eq!(d.source_id, "youtube"),
             other => panic!("expected Detected(youtube), got {other:?}"),
         }
@@ -184,11 +196,11 @@ mod tests {
         // Meet gone, YouTube present in a different process: first poll ends Meet.
         let windows = [window("Lo-fi - YouTube", "Safari", 99)];
         assert_eq!(
-            compute_source_transition(Some(&active), &windows),
+            compute_source_transition(Some(&active), &windows, &sources()),
             SourceTransition::Ended(active)
         );
         // After the caller clears the active source, the next poll detects YouTube.
-        match compute_source_transition(None, &windows) {
+        match compute_source_transition(None, &windows, &sources()) {
             SourceTransition::Detected(d) => {
                 assert_eq!(d.source_id, "youtube");
                 assert_eq!(d.pid, 99);
@@ -198,15 +210,36 @@ mod tests {
     }
 
     #[test]
-    fn prompts_only_when_enabled_auto_prompt_idle_and_not_snoozed() {
-        assert!(should_prompt_capture(true, true, false, false));
+    fn auto_captures_only_when_enabled_preferred_idle_and_not_paused() {
+        assert!(should_auto_capture_source(true, true, false, false));
         // master off
-        assert!(!should_prompt_capture(false, true, false, false));
-        // auto-prompt off (e.g. YouTube default) → manual start, no prompt
-        assert!(!should_prompt_capture(true, false, false, false));
+        assert!(!should_auto_capture_source(false, true, false, false));
+        // auto-capture off -> manual resume/start only
+        assert!(!should_auto_capture_source(true, false, false, false));
         // already capturing
-        assert!(!should_prompt_capture(true, true, true, false));
-        // snoozed for this session
-        assert!(!should_prompt_capture(true, true, false, true));
+        assert!(!should_auto_capture_source(true, true, true, false));
+        // paused for this session
+        assert!(!should_auto_capture_source(true, true, false, true));
+    }
+
+    #[test]
+    fn detects_custom_source_when_definition_is_provided() {
+        let sources = vec![crate::sources::SourceDefinition {
+            id: "zoom".into(),
+            label: "Zoom".into(),
+            title_patterns: vec!["zoom meeting".into()],
+            default_auto_prompt: true,
+            custom: true,
+        }];
+        let windows = [window("Daily sync - Zoom Meeting", "zoom.us", 77)];
+
+        match compute_source_transition(None, &windows, &sources) {
+            SourceTransition::Detected(detected) => {
+                assert_eq!(detected.source_id, "zoom");
+                assert_eq!(detected.label, "Zoom");
+                assert_eq!(detected.pid, 77);
+            }
+            other => panic!("expected Detected(zoom), got {other:?}"),
+        }
     }
 }

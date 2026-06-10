@@ -1,4 +1,15 @@
-import { Check, ChevronLeft, ChevronRight, Copy, Play, RotateCw, X } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Mic,
+  MonitorSpeaker,
+  Play,
+  RotateCw,
+  X,
+  Youtube,
+} from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
@@ -347,13 +358,16 @@ function TranscriptEntryRow({
       onPointerDown={handlePointerDown}
       onPointerEnter={handlePointerEnter}
     >
-      <a
-        className="transcript-entry__timestamp"
-        href={fileUrlFromPath(entry.transcript_path)}
-        title={entry.transcript_path}
-      >
-        <span>{timestamp || entry.transcript_path}</span>
-      </a>
+      <div className="transcript-entry__meta">
+        <a
+          className="transcript-entry__timestamp"
+          href={fileUrlFromPath(entry.transcript_path)}
+          title={entry.transcript_path}
+        >
+          <span>{timestamp || entry.transcript_path}</span>
+        </a>
+        <TranscriptSourceBadge entry={entry} />
+      </div>
       <p className="transcript-entry__text">{entry.text}</p>
       <Button
         aria-label={timestamp ? `Play recording from ${timestamp}` : "Play recording"}
@@ -370,6 +384,55 @@ function TranscriptEntryRow({
       </Button>
     </div>
   );
+}
+
+function TranscriptSourceBadge({ entry }: { entry: RecentTranscript }) {
+  const presentation = transcriptSourcePresentation(entry);
+  const Icon = presentation.icon;
+  return (
+    <span
+      className={`transcript-source-badge transcript-source-badge--${presentation.tone}`}
+      title={presentation.title}
+    >
+      <Icon aria-hidden="true" />
+      {presentation.label}
+    </span>
+  );
+}
+
+function transcriptSourcePresentation(entry: RecentTranscript): {
+  label: string;
+  title: string;
+  tone: "microphone" | "system";
+  icon: typeof Mic;
+} {
+  if ((entry.source ?? "microphone") !== "system") {
+    return {
+      label: "Mic",
+      title: "Microphone transcript",
+      tone: "microphone",
+      icon: Mic,
+    };
+  }
+
+  const label = humanSourceLabel(entry.source_label);
+  return {
+    label,
+    title: `${label} system-audio transcript`,
+    tone: "system",
+    icon: entry.source_label === "youtube" ? Youtube : MonitorSpeaker,
+  };
+}
+
+function humanSourceLabel(sourceLabel?: string | null): string {
+  if (!sourceLabel) return "System";
+  if (sourceLabel === "meet") return "Meet";
+  if (sourceLabel === "youtube") return "YouTube";
+  return sourceLabel
+    .split(/[-_ ]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export function formatLocalDay(date: Date): string {

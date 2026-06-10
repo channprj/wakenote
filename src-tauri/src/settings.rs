@@ -77,6 +77,16 @@ pub struct SourceAutoPromptEntry {
     pub auto_prompt: bool,
 }
 
+/// User-defined system-audio source. WakeNote matches the active window title
+/// against `title_patterns` and captures the owning app process when matched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomSourceEntry {
+    pub id: String,
+    pub label: String,
+    pub title_patterns: Vec<String>,
+    pub auto_prompt: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
@@ -120,6 +130,9 @@ pub struct AppSettings {
     /// Per-source "auto-prompt on detection" overrides; see [`resolve_auto_prompt`].
     #[serde(default)]
     pub source_auto_prompt: Vec<SourceAutoPromptEntry>,
+    /// User-defined system-audio sources matched by window title.
+    #[serde(default)]
+    pub custom_sources: Vec<CustomSourceEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -155,6 +168,7 @@ pub struct SettingsPatch {
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
     pub source_auto_prompt: Option<Vec<SourceAutoPromptEntry>>,
+    pub custom_sources: Option<Vec<CustomSourceEntry>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,7 +266,22 @@ pub fn resolve_auto_prompt(settings: &AppSettings, source_id: &str) -> bool {
     }
     crate::sources::recognized_source(source_id)
         .map(|source| source.default_auto_prompt)
+        .or_else(|| {
+            settings
+                .custom_sources
+                .iter()
+                .find(|source| source.id == source_id)
+                .map(|source| source.auto_prompt)
+        })
         .unwrap_or(false)
+}
+
+fn source_id_is_known(settings: &AppSettings, source_id: &str) -> bool {
+    crate::sources::recognized_source(source_id).is_some()
+        || settings
+            .custom_sources
+            .iter()
+            .any(|source| source.id == source_id)
 }
 
 pub fn expand_user_path(path: impl AsRef<str>) -> PathBuf {
@@ -282,6 +311,88 @@ fn clamp_threshold_dbfs(value: f32) -> f32 {
 
 fn clamp_ms(value: u64, min: u64, max: u64) -> u64 {
     value.clamp(min, max)
+}
+
+fn slugify_source_id(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_separator = false;
+    for ch in value.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_separator = false;
+        } else if (ch.is_ascii_whitespace() || ch == '-' || ch == '_') && !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn normalize_source_id(
+    requested_id: &str,
+    label: &str,
+    index: usize,
+    used: &mut std::collections::HashSet<String>,
+) -> String {
+    let mut base = slugify_source_id(requested_id);
+    if base.is_empty() {
+        base = slugify_source_id(label);
+    }
+    if base.is_empty() {
+        base = format!("source-{}", index + 1);
+    }
+    if crate::sources::recognized_source(&base).is_some() {
+        base = format!("custom-{base}");
+    }
+
+    let mut candidate = base.clone();
+    let mut suffix = 2;
+    while used.contains(&candidate) || crate::sources::recognized_source(&candidate).is_some() {
+        candidate = format!("{base}-{suffix}");
+        suffix += 1;
+    }
+    used.insert(candidate.clone());
+    candidate
+}
+
+fn normalize_custom_sources(list: Vec<CustomSourceEntry>) -> Vec<CustomSourceEntry> {
+    let mut used_ids = std::collections::HashSet::new();
+    list.into_iter()
+        .enumerate()
+        .filter_map(|(index, source)| {
+            let label = source.label.trim().to_string();
+            if label.is_empty() {
+                return None;
+            }
+
+            let mut seen_patterns = std::collections::HashSet::new();
+            let title_patterns = source
+                .title_patterns
+                .into_iter()
+                .filter_map(|pattern| {
+                    let trimmed = pattern.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    let key = trimmed.to_lowercase();
+                    if !seen_patterns.insert(key) {
+                        return None;
+                    }
+                    Some(trimmed.to_string())
+                })
+                .collect::<Vec<_>>();
+            if title_patterns.is_empty() {
+                return None;
+            }
+
+            Some(CustomSourceEntry {
+                id: normalize_source_id(&source.id, &label, index, &mut used_ids),
+                label,
+                title_patterns,
+                auto_prompt: source.auto_prompt,
+            })
+        })
+        .collect()
 }
 
 impl AppSettings {
@@ -435,11 +546,14 @@ impl AppSettings {
         if let Some(value) = patch.system_audio_enabled {
             self.system_audio_enabled = value;
         }
+        if let Some(list) = patch.custom_sources {
+            self.custom_sources = normalize_custom_sources(list);
+        }
         if let Some(list) = patch.source_auto_prompt {
-            // Normalize against the built-in source list: drop unknown ids.
+            // Normalize against the known source list: drop unknown ids.
             self.source_auto_prompt = list
                 .into_iter()
-                .filter(|entry| crate::sources::recognized_source(&entry.source_id).is_some())
+                .filter(|entry| source_id_is_known(self, &entry.source_id))
                 .collect();
         }
     }
@@ -480,6 +594,7 @@ impl Default for AppSettings {
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
             source_auto_prompt: Vec::new(),
+            custom_sources: Vec::new(),
         }
     }
 }
@@ -521,10 +636,43 @@ mod tests {
     }
 
     #[test]
+    fn patch_keeps_valid_custom_sources_and_drops_empty_entries() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            custom_sources: Some(vec![
+                CustomSourceEntry {
+                    id: "zoom".into(),
+                    label: " Zoom ".into(),
+                    title_patterns: vec!["Zoom Meeting".into(), "".into(), " zoom meeting ".into()],
+                    auto_prompt: true,
+                },
+                CustomSourceEntry {
+                    id: "empty".into(),
+                    label: " ".into(),
+                    title_patterns: vec!["".into()],
+                    auto_prompt: true,
+                },
+            ]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.custom_sources,
+            vec![CustomSourceEntry {
+                id: "zoom".into(),
+                label: "Zoom".into(),
+                title_patterns: vec!["Zoom Meeting".into()],
+                auto_prompt: true,
+            }]
+        );
+        assert!(resolve_auto_prompt(&settings, "zoom"));
+    }
+
+    #[test]
     fn resolve_auto_prompt_uses_source_defaults() {
         let settings = AppSettings::default();
         assert!(resolve_auto_prompt(&settings, "meet"));
-        assert!(!resolve_auto_prompt(&settings, "youtube"));
+        assert!(resolve_auto_prompt(&settings, "youtube"));
         assert!(!resolve_auto_prompt(&settings, "unknown"));
     }
 
@@ -544,8 +692,10 @@ mod tests {
             "show_dock_icon": true, "show_tray_icon": true, "show_floating_overlay": true,
             "floating_overlay_position": "top", "theme_mode": "dark", "theme_primary_color": "#000"
         }"##;
-        let settings: AppSettings = serde_json::from_str(json).expect("legacy settings deserialize");
+        let settings: AppSettings =
+            serde_json::from_str(json).expect("legacy settings deserialize");
         assert!(!settings.system_audio_enabled);
         assert!(settings.source_auto_prompt.is_empty());
+        assert!(settings.custom_sources.is_empty());
     }
 }

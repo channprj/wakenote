@@ -130,6 +130,34 @@ describe("TranscriptsView", () => {
     expect(markup).toContain('<a class="transcript-entry__timestamp" href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>');
   });
 
+  it("renders source badges for microphone and system transcripts", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 2 }],
+      entriesByDay: new Map([
+        ["2026-05-10", [
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+            source: "microphone",
+            source_label: null,
+            text: "mic transcript",
+          }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+            recorded_at: "2026-05-10T01:02:04+09:00",
+            source: "system",
+            source_label: "youtube",
+            text: "youtube transcript",
+          }),
+        ]],
+      ]),
+    });
+
+    expect(markup).toContain("Mic");
+    expect(markup).toContain("YouTube");
+    expect(markup).toContain("transcript-source-badge--system");
+  });
+
   it("always renders a reload button and shows copy actions only when the day has entries", () => {
     const withEntries = view({
       today: new Date("2026-05-19T18:00:00+09:00"),

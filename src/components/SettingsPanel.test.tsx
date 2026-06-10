@@ -80,7 +80,8 @@ describe("settings panel", () => {
   it("shows the system-audio toggle and reveals the screen-recording permission row only when enabled", () => {
     const base = mockSnapshot();
     const off = renderSettingsPanel(base);
-    expect(off).toContain("Capture system audio (Google Meet, YouTube)");
+    expect(off).toContain("Capture system audio");
+    expect(off).not.toContain("Capture system audio (Google Meet, YouTube)");
     expect(off).not.toContain("Screen Recording Permission");
 
     const on = renderSettingsPanel({
@@ -88,6 +89,25 @@ describe("settings panel", () => {
       settings: { ...base.settings, system_audio_enabled: true },
     });
     expect(on).toContain("Screen Recording Permission");
+    expect(on).toContain("Add Source");
+  });
+
+  it("renders custom system-audio sources from settings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.system_audio_enabled = true;
+    snapshot.settings.custom_sources = [
+      {
+        id: "zoom",
+        label: "Zoom",
+        title_patterns: ["Zoom Meeting"],
+        auto_prompt: true,
+      },
+    ];
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Zoom");
+    expect(markup).toContain("Zoom Meeting");
   });
 
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {

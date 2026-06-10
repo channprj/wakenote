@@ -360,6 +360,8 @@ pub struct RecentTranscript {
     pub audio_path: Option<String>,
     pub recorded_at: String,
     pub text: String,
+    pub source: ChunkSource,
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1459,8 +1461,9 @@ impl AppBackend {
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
                     if let Some(model_id) = model_id {
-                        let (_, inserted) =
-                            self.queue.enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                        let (_, inserted) = self
+                            .queue
+                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
                         queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
@@ -1566,7 +1569,12 @@ fn count_transcript_sidecars(dir: &Path) -> usize {
     };
     entries
         .flatten()
-        .filter(|entry| entry.file_type().map(|kind| kind.is_file()).unwrap_or(false))
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+        })
         .map(|entry| entry.path())
         .filter(|path| is_transcript_sidecar(path))
         .filter(|path| sidecar_has_content(path))
@@ -1577,7 +1585,9 @@ fn count_transcript_sidecars(dir: &Path) -> usize {
 /// iCloud dataless files without downloading them. One byte or less is the
 /// empty/suppressed `"\n"` stub and counts as contentless.
 fn sidecar_has_content(path: &Path) -> bool {
-    fs::metadata(path).map(|meta| meta.len() > 1).unwrap_or(false)
+    fs::metadata(path)
+        .map(|meta| meta.len() > 1)
+        .unwrap_or(false)
 }
 
 /// "20260510" -> Some("2026-05-10"); anything that is not 8 ASCII digits -> None.
@@ -1645,7 +1655,10 @@ fn collect_day_sidecar_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false)
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
             && is_transcript_sidecar(&path)
         {
             paths.push(path);
@@ -1797,13 +1810,19 @@ fn recent_transcript_from_sidecar(path: &Path) -> Option<RecentTranscript> {
     if text.is_empty() {
         return None;
     }
+    let metadata = metadata_for_transcript(path);
 
     Some(RecentTranscript {
         transcript_path: path.to_string_lossy().to_string(),
         audio_path: audio_path_for_transcript(path)
             .map(|audio_path| audio_path.to_string_lossy().to_string()),
-        recorded_at: recorded_at_for_transcript(path),
+        recorded_at: recorded_at_for_transcript(path, metadata.as_ref()),
         text,
+        source: metadata
+            .as_ref()
+            .map(|metadata| metadata.source)
+            .unwrap_or_default(),
+        source_label: metadata.and_then(|metadata| metadata.source_label),
     })
 }
 
@@ -1818,13 +1837,17 @@ fn audio_path_for_transcript(path: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.exists())
 }
 
-fn recorded_at_for_transcript(path: &Path) -> String {
+fn metadata_for_transcript(path: &Path) -> Option<ChunkMetadata> {
     path.with_extension("json")
         .try_exists()
         .ok()
         .filter(|exists| *exists)
         .and_then(|_| fs::read(path.with_extension("json")).ok())
         .and_then(|bytes| serde_json::from_slice::<ChunkMetadata>(&bytes).ok())
+}
+
+fn recorded_at_for_transcript(path: &Path, metadata: Option<&ChunkMetadata>) -> String {
+    metadata
         .map(|metadata| metadata.started_at.to_rfc3339())
         .or_else(|| recorded_at_from_path(path))
         .unwrap_or_else(|| {
@@ -2146,11 +2169,7 @@ mod tests {
         // Legacy settings might not have a label. Without a label, fall back
         // to id equality only.
         assert!(pinned_device_mismatch(
-            "input-3",
-            "",
-            "input-5",
-            "Some Mic",
-            false,
+            "input-3", "", "input-5", "Some Mic", false,
         ));
     }
 
@@ -2180,12 +2199,8 @@ mod tests {
             vec![("input-3-by-v", "BY-V"), ("input-7-airpods", "AirPods")],
         );
 
-        let changed = reconcile_device_id_in_settings(
-            &mut settings,
-            "input-3-by-v",
-            "input-5-by-v",
-            "BY-V",
-        );
+        let changed =
+            reconcile_device_id_in_settings(&mut settings, "input-3-by-v", "input-5-by-v", "BY-V");
 
         assert!(changed);
         assert_eq!(settings.selected_microphone, "input-5-by-v");
@@ -2198,11 +2213,8 @@ mod tests {
     fn reconcile_device_id_in_settings_skips_when_label_does_not_match() {
         // If the resolver returned a different label for the same id, we
         // can't be sure it's the same physical device — leave settings alone.
-        let mut settings = settings_with_priority(
-            "input-3-by-v",
-            "BY-V",
-            vec![("input-3-by-v", "BY-V")],
-        );
+        let mut settings =
+            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
 
         let changed = reconcile_device_id_in_settings(
             &mut settings,
@@ -2218,18 +2230,11 @@ mod tests {
 
     #[test]
     fn reconcile_device_id_in_settings_noop_when_ids_equal() {
-        let mut settings = settings_with_priority(
-            "input-3-by-v",
-            "BY-V",
-            vec![("input-3-by-v", "BY-V")],
-        );
+        let mut settings =
+            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
 
-        let changed = reconcile_device_id_in_settings(
-            &mut settings,
-            "input-3-by-v",
-            "input-3-by-v",
-            "BY-V",
-        );
+        let changed =
+            reconcile_device_id_in_settings(&mut settings, "input-3-by-v", "input-3-by-v", "BY-V");
 
         assert!(!changed);
     }
@@ -2237,18 +2242,11 @@ mod tests {
     #[test]
     fn reconcile_device_id_in_settings_noop_when_resolved_label_empty() {
         // No label means we can't safely identify the device; skip.
-        let mut settings = settings_with_priority(
-            "input-3-by-v",
-            "BY-V",
-            vec![("input-3-by-v", "BY-V")],
-        );
+        let mut settings =
+            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
 
-        let changed = reconcile_device_id_in_settings(
-            &mut settings,
-            "input-3-by-v",
-            "input-5-by-v",
-            "",
-        );
+        let changed =
+            reconcile_device_id_in_settings(&mut settings, "input-3-by-v", "input-5-by-v", "");
 
         assert!(!changed);
         assert_eq!(settings.selected_microphone, "input-3-by-v");
@@ -2285,8 +2283,14 @@ mod tests {
         assert_eq!(
             days,
             vec![
-                TranscriptDay { day: "2026-05-10".to_string(), count: 2 },
-                TranscriptDay { day: "2026-05-11".to_string(), count: 2 },
+                TranscriptDay {
+                    day: "2026-05-10".to_string(),
+                    count: 2
+                },
+                TranscriptDay {
+                    day: "2026-05-11".to_string(),
+                    count: 2
+                },
             ]
         );
     }
@@ -2315,7 +2319,10 @@ mod tests {
 
         assert_eq!(
             days,
-            vec![TranscriptDay { day: "2026-05-13".to_string(), count: 1 }]
+            vec![TranscriptDay {
+                day: "2026-05-13".to_string(),
+                count: 1
+            }]
         );
     }
 

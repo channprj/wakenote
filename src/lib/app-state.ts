@@ -155,6 +155,7 @@ export function defaultSettings(): AppSettings {
     theme_primary_color: "#000",
     system_audio_enabled: false,
     source_auto_prompt: [],
+    custom_sources: [],
   };
 }
 
