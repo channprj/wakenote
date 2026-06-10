@@ -7,6 +7,7 @@ import {
   MonitorSpeaker,
   Play,
   RotateCw,
+  Video,
   X,
   Youtube,
 } from "lucide-react";
@@ -358,16 +359,14 @@ function TranscriptEntryRow({
       onPointerDown={handlePointerDown}
       onPointerEnter={handlePointerEnter}
     >
-      <div className="transcript-entry__meta">
-        <a
-          className="transcript-entry__timestamp"
-          href={fileUrlFromPath(entry.transcript_path)}
-          title={entry.transcript_path}
-        >
-          <span>{timestamp || entry.transcript_path}</span>
-        </a>
-        <TranscriptSourceBadge entry={entry} />
-      </div>
+      <a
+        className="transcript-entry__timestamp"
+        href={fileUrlFromPath(entry.transcript_path)}
+        title={entry.transcript_path}
+      >
+        <span>{timestamp || entry.transcript_path}</span>
+      </a>
+      <TranscriptSourceBadge entry={entry} />
       <p className="transcript-entry__text">{entry.text}</p>
       <Button
         aria-label={timestamp ? `Play recording from ${timestamp}` : "Play recording"}
@@ -403,7 +402,7 @@ function TranscriptSourceBadge({ entry }: { entry: RecentTranscript }) {
 function transcriptSourcePresentation(entry: RecentTranscript): {
   label: string;
   title: string;
-  tone: "microphone" | "system";
+  tone: "microphone" | "youtube" | "meet" | "system";
   icon: typeof Mic;
 } {
   if ((entry.source ?? "microphone") !== "system") {
@@ -416,11 +415,27 @@ function transcriptSourcePresentation(entry: RecentTranscript): {
   }
 
   const label = humanSourceLabel(entry.source_label);
+  if (entry.source_label === "youtube") {
+    return {
+      label,
+      title: "YouTube system-audio transcript",
+      tone: "youtube",
+      icon: Youtube,
+    };
+  }
+  if (entry.source_label === "meet") {
+    return {
+      label,
+      title: "Google Meet system-audio transcript",
+      tone: "meet",
+      icon: Video,
+    };
+  }
   return {
     label,
     title: `${label} system-audio transcript`,
     tone: "system",
-    icon: entry.source_label === "youtube" ? Youtube : MonitorSpeaker,
+    icon: MonitorSpeaker,
   };
 }
 

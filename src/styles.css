@@ -2250,14 +2250,8 @@ tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
-.transcript-entry__meta {
-  flex: 0 0 auto;
-  display: grid;
-  gap: 3px;
-  min-width: 116px;
-}
-
 .transcript-entry__timestamp {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -2270,6 +2264,7 @@ tr:last-child td {
 }
 
 .transcript-source-badge {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2295,6 +2290,18 @@ tr:last-child td {
 }
 
 .transcript-source-badge--system {
+  border-color: var(--primary-soft-border);
+  background: var(--primary-soft-bg);
+  color: var(--primary);
+}
+
+.transcript-source-badge--youtube {
+  border-color: rgba(255, 0, 0, 0.34);
+  background: rgba(255, 0, 0, 0.11);
+  color: #dc2626;
+}
+
+.transcript-source-badge--meet {
   border-color: var(--primary-soft-border);
   background: var(--primary-soft-bg);
   color: var(--primary);
