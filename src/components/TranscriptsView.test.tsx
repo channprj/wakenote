@@ -25,6 +25,7 @@ function view(props: {
   entriesByDay?: Map<string, RecentTranscript[]>;
   loadingDay?: string | null;
   initialPlayingTranscriptPath?: string | null;
+  sourceLabels?: Record<string, string>;
 }) {
   return renderToStaticMarkup(
     <TranscriptsView
@@ -32,6 +33,7 @@ function view(props: {
       entriesByDay={props.entriesByDay ?? new Map()}
       loadingDay={props.loadingDay ?? null}
       initialPlayingTranscriptPath={props.initialPlayingTranscriptPath}
+      sourceLabels={props.sourceLabels}
       today={props.today}
     />,
   );
@@ -173,6 +175,28 @@ describe("TranscriptsView", () => {
     expect(youtubeRowStart).toBeGreaterThan(-1);
     expect(youtubeBadge).toBeGreaterThan(youtubeRowStart);
     expect(youtubeBadge).toBeLessThan(youtubeText);
+  });
+
+  it("renders custom source labels from settings for system transcripts", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      sourceLabels: { "custom-source-2": "Spotify" },
+      entriesByDay: new Map([
+        ["2026-05-10", [
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010206-custom-source-2.txt",
+            recorded_at: "2026-05-10T01:02:06+09:00",
+            source: "system",
+            source_label: "custom-source-2",
+            text: "spotify transcript",
+          }),
+        ]],
+      ]),
+    });
+
+    expect(markup).toContain("Spotify");
+    expect(markup).not.toContain("Custom Source 2");
   });
 
   it("always renders a reload button and shows copy actions only when the day has entries", () => {

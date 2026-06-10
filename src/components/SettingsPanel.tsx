@@ -411,7 +411,7 @@ export function SettingsPanel({
   if (activeSection === "transcripts") {
     return (
       <Section title="Transcripts" eyebrow="Daily archive">
-        <TranscriptsPanel />
+        <TranscriptsPanel customSources={settings.custom_sources} />
       </Section>
     );
   }

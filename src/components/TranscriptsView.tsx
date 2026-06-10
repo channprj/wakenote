@@ -36,6 +36,7 @@ export function TranscriptsView({
   days,
   entriesByDay,
   loadingDay = null,
+  sourceLabels = {},
   onActiveDayChange,
   onReload,
   initialPlayingTranscriptPath = null,
@@ -44,6 +45,7 @@ export function TranscriptsView({
   days: TranscriptDay[];
   entriesByDay: ReadonlyMap<string, RecentTranscript[]>;
   loadingDay?: string | null;
+  sourceLabels?: Readonly<Record<string, string>>;
   onActiveDayChange?: (day: string) => void;
   onReload?: (day: string) => void;
   initialPlayingTranscriptPath?: string | null;
@@ -296,6 +298,7 @@ export function TranscriptsView({
                 isPlaying={entry.transcript_path === playingTranscriptPath}
                 isSelected={selectedPaths.has(entry.transcript_path)}
                 key={entry.transcript_path}
+                sourceLabels={sourceLabels}
                 onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
                 onPointerDownSelect={beginDragSelection}
                 onPointerEnterSelect={continueDragSelection}
@@ -326,6 +329,7 @@ function TranscriptEntryRow({
   entry,
   isPlaying,
   isSelected,
+  sourceLabels,
   onPlay,
   onPointerDownSelect,
   onPointerEnterSelect,
@@ -333,6 +337,7 @@ function TranscriptEntryRow({
   entry: RecentTranscript;
   isPlaying: boolean;
   isSelected: boolean;
+  sourceLabels: Readonly<Record<string, string>>;
   onPlay: () => void;
   onPointerDownSelect: (path: string) => void;
   onPointerEnterSelect: (path: string) => void;
@@ -366,7 +371,7 @@ function TranscriptEntryRow({
       >
         <span>{timestamp || entry.transcript_path}</span>
       </a>
-      <TranscriptSourceBadge entry={entry} />
+      <TranscriptSourceBadge entry={entry} sourceLabels={sourceLabels} />
       <p className="transcript-entry__text">{entry.text}</p>
       <Button
         aria-label={timestamp ? `Play recording from ${timestamp}` : "Play recording"}
@@ -385,8 +390,14 @@ function TranscriptEntryRow({
   );
 }
 
-function TranscriptSourceBadge({ entry }: { entry: RecentTranscript }) {
-  const presentation = transcriptSourcePresentation(entry);
+function TranscriptSourceBadge({
+  entry,
+  sourceLabels,
+}: {
+  entry: RecentTranscript;
+  sourceLabels: Readonly<Record<string, string>>;
+}) {
+  const presentation = transcriptSourcePresentation(entry, sourceLabels);
   const Icon = presentation.icon;
   return (
     <span
@@ -399,7 +410,10 @@ function TranscriptSourceBadge({ entry }: { entry: RecentTranscript }) {
   );
 }
 
-function transcriptSourcePresentation(entry: RecentTranscript): {
+function transcriptSourcePresentation(
+  entry: RecentTranscript,
+  sourceLabels: Readonly<Record<string, string>>,
+): {
   label: string;
   title: string;
   tone: "microphone" | "youtube" | "meet" | "system";
@@ -414,7 +428,7 @@ function transcriptSourcePresentation(entry: RecentTranscript): {
     };
   }
 
-  const label = humanSourceLabel(entry.source_label);
+  const label = sourceLabelForTranscript(entry.source_label, sourceLabels);
   if (entry.source_label === "youtube") {
     return {
       label,
@@ -437,6 +451,16 @@ function transcriptSourcePresentation(entry: RecentTranscript): {
     tone: "system",
     icon: MonitorSpeaker,
   };
+}
+
+function sourceLabelForTranscript(
+  sourceLabel: string | null | undefined,
+  sourceLabels: Readonly<Record<string, string>>,
+): string {
+  if (sourceLabel && sourceLabels[sourceLabel]) {
+    return sourceLabels[sourceLabel];
+  }
+  return humanSourceLabel(sourceLabel);
 }
 
 function humanSourceLabel(sourceLabel?: string | null): string {

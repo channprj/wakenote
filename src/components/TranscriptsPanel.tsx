@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadTranscriptDays, loadTranscriptsForDay } from "../lib/tauri-client";
-import type { RecentTranscript, TranscriptDay } from "../lib/types";
+import type { CustomSourceEntry, RecentTranscript, TranscriptDay } from "../lib/types";
 import { TranscriptsView, formatLocalDay } from "./TranscriptsView";
 
-export function TranscriptsPanel() {
+export function TranscriptsPanel({
+  customSources = [],
+}: {
+  customSources?: readonly CustomSourceEntry[];
+}) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
     () => new Map(),
@@ -106,8 +110,17 @@ export function TranscriptsPanel() {
       days={days}
       entriesByDay={entriesByDay}
       loadingDay={loadingDay}
+      sourceLabels={sourceLabelsFromCustomSources(customSources)}
       onActiveDayChange={ensureDayLoaded}
       onReload={reloadDay}
     />
+  );
+}
+
+function sourceLabelsFromCustomSources(
+  customSources: readonly CustomSourceEntry[],
+): Record<string, string> {
+  return Object.fromEntries(
+    customSources.map((source) => [source.id, source.label]),
   );
 }
