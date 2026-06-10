@@ -2,14 +2,14 @@
 
 use crate::settings::AppSettings;
 
-/// A system-audio source WakeNote can recognize by window title.
+/// A system-audio source WakeNote can recognize by window title or app name.
 pub struct RecognizedSource {
     /// Stable id. Doubles as the metadata `source_label` and the audio file slug.
     pub id: &'static str,
     /// Human-facing label shown in settings / notifications.
     pub label: &'static str,
-    /// Lower-cased substrings; a window whose (lower-cased) title contains any of
-    /// these is attributed to this source.
+    /// Lower-cased substrings; a window whose (lower-cased) title or owning app
+    /// name contains any of these is attributed to this source.
     pub title_patterns: &'static [&'static str],
     /// Whether detection auto-prompts for capture by default.
     pub default_auto_prompt: bool,

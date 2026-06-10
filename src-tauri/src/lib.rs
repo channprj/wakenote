@@ -2,6 +2,7 @@ pub mod audio;
 pub mod audio_analysis;
 pub mod capture;
 pub mod commands;
+pub mod debug_log;
 pub mod live_capture;
 pub mod live_transcription;
 pub mod models;

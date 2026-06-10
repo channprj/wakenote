@@ -1,5 +1,5 @@
 //! Detection of system-audio sources (Google Meet, YouTube, custom sources …)
-//! from the list of on-screen windows.
+//! from the list of on-screen windows and owning applications.
 //!
 //! The on-screen window enumeration (via ScreenCaptureKit's `SCShareableContent`)
 //! and the polling timer live in a thin platform wrapper. The decision logic —
@@ -44,7 +44,7 @@ fn first_candidate(
     sources: &[SourceDefinition],
 ) -> Option<DetectedSource> {
     windows.iter().find_map(|window| {
-        match_source(&window.title, sources).map(|source| DetectedSource {
+        match_window_source(window, sources).map(|source| DetectedSource {
             source_id: source.id.clone(),
             label: source.label.clone(),
             app_name: window.app_name.clone(),
@@ -61,9 +61,16 @@ fn source_still_present(
 ) -> bool {
     windows.iter().any(|window| {
         window.pid == active.pid
-            && match_source(&window.title, sources).map(|source| source.id.as_str())
+            && match_window_source(window, sources).map(|source| source.id.as_str())
                 == Some(active.source_id.as_str())
     })
+}
+
+fn match_window_source<'a>(
+    window: &WindowSnapshot,
+    sources: &'a [SourceDefinition],
+) -> Option<&'a SourceDefinition> {
+    match_source(&window.title, sources).or_else(|| match_source(&window.app_name, sources))
 }
 
 /// Compute the per-poll transition. The caller threads state: on `Detected` set
@@ -240,6 +247,27 @@ mod tests {
                 assert_eq!(detected.pid, 77);
             }
             other => panic!("expected Detected(zoom), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detects_custom_source_by_app_name_when_title_does_not_match() {
+        let sources = vec![crate::sources::SourceDefinition {
+            id: "spotify".into(),
+            label: "Spotify".into(),
+            title_patterns: vec!["spotify".into()],
+            default_auto_prompt: true,
+            custom: true,
+        }];
+        let windows = [window("Song Title - Artist", "Spotify", 5819)];
+
+        match compute_source_transition(None, &windows, &sources) {
+            SourceTransition::Detected(detected) => {
+                assert_eq!(detected.source_id, "spotify");
+                assert_eq!(detected.label, "Spotify");
+                assert_eq!(detected.pid, 5819);
+            }
+            other => panic!("expected Detected(spotify), got {other:?}"),
         }
     }
 }

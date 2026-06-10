@@ -225,7 +225,7 @@ export function SystemAudioSettings({
             <input
               aria-label="Custom source"
               className="ui-input"
-              placeholder="Zoom Meeting"
+              placeholder="Spotify or Zoom Meeting"
               value={customSourceText(source)}
               onChange={(event) =>
                 setCustomSource(source.id, {

@@ -78,7 +78,8 @@ pub struct SourceAutoPromptEntry {
 }
 
 /// User-defined system-audio source. WakeNote matches the active window title
-/// against `title_patterns` and captures the owning app process when matched.
+/// or owning app name against `title_patterns` and captures the owning app
+/// process when matched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomSourceEntry {
     pub id: String,
@@ -130,7 +131,7 @@ pub struct AppSettings {
     /// Per-source "auto-prompt on detection" overrides; see [`resolve_auto_prompt`].
     #[serde(default)]
     pub source_auto_prompt: Vec<SourceAutoPromptEntry>,
-    /// User-defined system-audio sources matched by window title.
+    /// User-defined system-audio sources matched by window title or app name.
     #[serde(default)]
     pub custom_sources: Vec<CustomSourceEntry>,
 }

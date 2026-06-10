@@ -96,7 +96,7 @@ export interface SourceAutoPromptEntry {
   auto_prompt: boolean;
 }
 
-/** User-defined system-audio source matched by window title. */
+/** User-defined system-audio source matched by window title or app name. */
 export interface CustomSourceEntry {
   id: string;
   label: string;

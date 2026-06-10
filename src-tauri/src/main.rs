@@ -27,6 +27,7 @@ use wakenote::commands::{
     tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
     with_live_runtime_warning,
 };
+use wakenote::debug_log::append_debug_log;
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
     LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -68,6 +69,12 @@ type SystemCaptureState = Arc<Mutex<Option<Box<dyn AudioStreamHandle>>>>;
 type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
 /// Source ids the user paused manually while the source remains detected.
 type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
+
+#[derive(Debug, Clone)]
+struct TrayPresentationUpdate {
+    settings: AppSettings,
+    status: AppStatus,
+}
 
 const EVENT_LIVE_STARTED: &str = "live-transcript-started";
 const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
@@ -1137,6 +1144,13 @@ fn start_source_capture_runtime(
     let sample_rate = system_audio_sample_rate();
     {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
+        append_runtime_debug_log(
+            &backend.settings(),
+            format!(
+                "[source-capture] start source_id={} label={} app={} pid={} sample_rate={}",
+                source.source_id, source.label, source.app_name, source.pid, sample_rate
+            ),
+        );
         backend.start_system_capture_session(
             sample_rate,
             chrono::Utc::now(),
@@ -1181,6 +1195,13 @@ fn start_source_capture_runtime(
             let message = format!("system-audio capture failed: {error}");
             // Roll back the capture session we opened above.
             if let Ok(mut backend) = backend_state.lock() {
+                append_runtime_debug_log(
+                    &backend.settings(),
+                    format!(
+                        "[source-capture] error source_id={} label={} app={} pid={} error={}",
+                        source.source_id, source.label, source.app_name, source.pid, message
+                    ),
+                );
                 let _ = backend.stop_system_capture_session();
             }
             emit_source_capture_error(app, source_id, &message);
@@ -1243,6 +1264,7 @@ fn stop_source_capture_runtime(
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
     let status = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
+        append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
         backend.stop_system_capture_session()?
     };
     let payload = detected_source_state
@@ -1276,6 +1298,10 @@ fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
 /// so no resampling is needed; mirror that here for the capture session.
 fn system_audio_sample_rate() -> u32 {
     PIPELINE_SAMPLE_RATE
+}
+
+fn append_runtime_debug_log(settings: &AppSettings, message: impl AsRef<str>) {
+    append_debug_log(expand_user_path(&settings.save_root), message);
 }
 
 fn source_watcher_should_enumerate_windows(
@@ -1329,6 +1355,13 @@ fn spawn_source_watcher(
                     if let Ok(mut slot) = detected_source_state.lock() {
                         *slot = Some(source.clone());
                     }
+                    append_runtime_debug_log(
+                        &settings,
+                        format!(
+                            "[source-watch] detected source_id={} label={} app={} pid={}",
+                            source.source_id, source.label, source.app_name, source.pid
+                        ),
+                    );
                     let _ = app.emit(EVENT_SOURCE_DETECTED, SourcePayload::from(&source));
 
                     let already_capturing = system_capture_state
@@ -1359,6 +1392,13 @@ fn spawn_source_watcher(
                     }
                 }
                 SourceTransition::Ended(source) => {
+                    append_runtime_debug_log(
+                        &settings,
+                        format!(
+                            "[source-watch] ended source_id={} label={} app={} pid={}",
+                            source.source_id, source.label, source.app_name, source.pid
+                        ),
+                    );
                     if let Ok(mut paused) = source_capture_pause_state.lock() {
                         paused.remove(&source.source_id);
                     }
@@ -2246,6 +2286,21 @@ fn main() {
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
             if let Some(settings) = initial_settings.as_ref() {
+                let custom_sources = settings
+                    .custom_sources
+                    .iter()
+                    .map(|source| format!("{}:{}", source.id, source.label))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                append_runtime_debug_log(
+                    settings,
+                    format!(
+                        "[app] launched version={} system_audio_enabled={} custom_sources=[{}]",
+                        env!("CARGO_PKG_VERSION"),
+                        settings.system_audio_enabled,
+                        custom_sources
+                    ),
+                );
                 let _ = apply_launch_at_login_preference(app.handle(), settings.launch_at_login);
             }
             app.manage(tray_menu_items);
@@ -2523,7 +2578,32 @@ fn setup_tray(
     })
 }
 
+fn tray_presentation_update_payload(
+    settings: &AppSettings,
+    status: &AppStatus,
+) -> TrayPresentationUpdate {
+    TrayPresentationUpdate {
+        settings: settings.clone(),
+        status: status.clone(),
+    }
+}
+
 fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
+    let app_handle = app.clone();
+    let payload = tray_presentation_update_payload(settings, status);
+    let log_settings = payload.settings.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        apply_tray_presentation(&app_handle, &payload.settings, &payload.status);
+    }) {
+        append_runtime_debug_log(
+            &log_settings,
+            format!("[tray] failed to schedule presentation update: {error}"),
+        );
+        eprintln!("[tray] failed to schedule presentation update: {error}");
+    }
+}
+
+fn apply_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
     let Some(tray) = app.tray_by_id("wakenote") else {
         return;
     };
@@ -2730,6 +2810,21 @@ mod tests {
             &settings,
             permissions::PermissionGrantStatus::Granted
         ));
+    }
+
+    #[test]
+    fn tray_presentation_update_payload_is_send_static_for_main_thread_dispatch() {
+        fn assert_send_static<T: Send + 'static>(_: &T) {}
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+        let settings = backend.settings();
+        let status = backend.app_status();
+        let payload = tray_presentation_update_payload(&settings, &status);
+
+        assert_send_static(&payload);
+        assert_eq!(payload.settings, settings);
+        assert_eq!(payload.status, status);
     }
 
     #[test]

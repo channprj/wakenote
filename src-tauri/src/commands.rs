@@ -14,6 +14,7 @@ use crate::audio::{
     MicHealthVerdict, dbfs_from_samples, list_input_devices,
 };
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
+use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
@@ -750,6 +751,13 @@ impl AppBackend {
             "[mic-start] device_id={device_id} label={device_name} fallback={used_fallback_device} warning={:?}",
             self.microphone_warning
         );
+        append_debug_log(
+            self.save_root_path(),
+            format!(
+                "[mic-start] device_id={} label={} fallback={} warning={:?}",
+                device_id, device_name, used_fallback_device, self.microphone_warning
+            ),
+        );
         let priority_ids: Vec<String> = self
             .settings
             .microphone_priority
@@ -1015,6 +1023,13 @@ impl AppBackend {
             let events = capture.flush().map_err(|error| error.to_string())?;
             self.handle_system_capture_events(events);
         }
+        append_debug_log(
+            self.save_root_path(),
+            format!(
+                "[system-capture] start source_id={} app={} sample_rate={}",
+                source_id, app_name, sample_rate
+            ),
+        );
         self.system_capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: self.save_root_path(),
             settings: self.settings.clone(),
@@ -1055,6 +1070,7 @@ impl AppBackend {
             self.handle_system_capture_events(events);
         }
         self.system_capture = None;
+        append_debug_log(self.save_root_path(), "[system-capture] stop");
         Ok(self.app_status())
     }
 
@@ -1071,6 +1087,15 @@ impl AppBackend {
                     "[wakenote] system-capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
                     chunk.audio_path.display(),
                     model_id
+                );
+                append_debug_log(
+                    self.save_root_path(),
+                    format!(
+                        "[system-capture] chunk_completed chunk_id={} path={} queue_model={:?}",
+                        chunk_id,
+                        chunk.audio_path.display(),
+                        model_id
+                    ),
                 );
                 self.remember_chunk_id(&chunk.audio_path, chunk_id);
                 if let Some(model_id) = model_id {
