@@ -927,7 +927,7 @@ fn start_live_capture_runtime(
                 &frame.samples,
                 overlay::OVERLAY_WAVEFORM_BAR_COUNT,
             );
-            let (should_kick, handler, events, emit_waveform) =
+            let (should_kick, handler, events, emit_waveform, tray_status) =
                 if let Ok(mut backend) = callback_backend.lock() {
                     let status = backend.process_audio_frame(frame);
                     let emit_waveform = status
@@ -937,12 +937,16 @@ fn start_live_capture_runtime(
                     let should_kick = status
                         .map(|_| backend.should_process_transcriptions())
                         .unwrap_or(false);
+                    let tray_status = Some((backend.settings(), backend.app_status()));
                     let (handler, events) = live_events_for_dispatch(&mut backend);
-                    (should_kick, handler, events, emit_waveform)
+                    (should_kick, handler, events, emit_waveform, tray_status)
                 } else {
-                    (false, None, Vec::new(), false)
+                    (false, None, Vec::new(), false, None)
                 };
             dispatch_live_events(handler, events);
+            if let Some((settings, status)) = tray_status {
+                update_tray_presentation(&callback_app, &settings, &status);
+            }
             if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
                 overlay::emit_waveform_levels(&callback_app, waveform_levels);
             }

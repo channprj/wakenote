@@ -490,6 +490,51 @@ fn backend_clears_mic_recovery_pending_after_successful_start() {
 }
 
 #[test]
+fn backend_clears_active_microphone_warning_after_healthy_audio_on_selected_device() {
+    let mut backend = AppBackend::default();
+    backend
+        .start_capture_session_with_device(
+            10,
+            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            "default",
+            "System Default",
+            false,
+        )
+        .expect("start selected microphone capture");
+    backend.set_microphone_warning(
+        "Microphone has not produced audio after several recovery attempts. Try Refresh.",
+    );
+    assert_eq!(
+        tray_runtime_presentation(&backend.settings(), &backend.app_status())
+            .icon
+            .rgba,
+        [220, 38, 38, 255],
+        "standing microphone warning should force the disconnected tray color",
+    );
+
+    backend
+        .process_audio_frame(AudioFrame {
+            samples: vec![0.8; 10],
+            duration_ms: 100,
+            captured_at: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+        })
+        .expect("healthy audio frame");
+
+    let status = backend.app_status();
+    assert!(
+        status.microphone_warning.is_none(),
+        "healthy audio on the selected microphone should clear the recoverable warning",
+    );
+    assert_ne!(
+        tray_runtime_presentation(&backend.settings(), &status)
+            .icon
+            .rgba,
+        [220, 38, 38, 255],
+        "cleared warning should release the disconnected tray color",
+    );
+}
+
+#[test]
 fn backend_reports_idle_after_capture_session_stops() {
     let mut backend = AppBackend::default();
     backend

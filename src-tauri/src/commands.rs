@@ -10,8 +10,8 @@ use std::{
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::audio::{
-    InputDevice, LevelMonitor, LevelSnapshot, MicHealthAction, MicHealthMonitor, MicHealthVerdict,
-    dbfs_from_samples, list_input_devices,
+    InputDevice, LevelMonitor, LevelSnapshot, MIC_NONZERO_DBFS, MicHealthAction, MicHealthMonitor,
+    MicHealthVerdict, dbfs_from_samples, list_input_devices,
 };
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::live_capture::AudioFrame;
@@ -981,6 +981,15 @@ impl AppBackend {
         let dbfs = dbfs_from_samples(&frame.samples);
         self.level_monitor.observe_samples(&frame.samples);
         self.mic_health.observe_frame(dbfs, Instant::now());
+        if dbfs > MIC_NONZERO_DBFS
+            && self
+                .active_microphone_label
+                .as_deref()
+                .map(|label| label == self.settings.selected_microphone_label)
+                .unwrap_or(false)
+        {
+            self.microphone_warning = None;
+        }
         let events = capture
             .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
