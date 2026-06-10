@@ -1,7 +1,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Local, NaiveDate};
+
+static DEBUG_LOG_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub fn debug_log_path_for(save_root: impl AsRef<Path>, date: NaiveDate) -> PathBuf {
     save_root
@@ -20,6 +23,10 @@ pub fn append_debug_log_at(
     message: impl AsRef<str>,
 ) -> std::io::Result<PathBuf> {
     let path = debug_log_path_for(save_root, timestamp.date_naive());
+    let _guard = DEBUG_LOG_WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
