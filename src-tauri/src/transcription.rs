@@ -10,6 +10,10 @@ use crate::recorder::{
 };
 use crate::settings::{TranscriptionLanguage, expand_user_path};
 
+const WHISPER_SAMPLE_RATE: usize = 16_000;
+const MIN_TRANSCRIBABLE_SAMPLES: usize = WHISPER_SAMPLE_RATE / 2;
+const MIN_TRANSCRIBABLE_RMS: f32 = 0.003;
+
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
     pub audio_path: &'a Path,
@@ -318,8 +322,24 @@ impl Transcriber for WhisperTranscriber {
         }
 
         let samples = decode_audio_for_whisper(request.audio_path)?;
+        if should_skip_low_signal_audio(&samples) {
+            return Ok(String::new());
+        }
         run_whisper(&model_path, &samples, request.language)
     }
+}
+
+pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
+    if samples.len() < MIN_TRANSCRIBABLE_SAMPLES {
+        return true;
+    }
+
+    let mean_square = samples
+        .iter()
+        .map(|sample| sample.clamp(-1.0, 1.0).powi(2))
+        .sum::<f32>()
+        / samples.len() as f32;
+    mean_square.sqrt() < MIN_TRANSCRIBABLE_RMS
 }
 
 pub(crate) fn configure_whisper_language(

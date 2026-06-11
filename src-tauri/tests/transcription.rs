@@ -6,7 +6,7 @@ use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
     TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome,
-    decode_audio_for_whisper, default_whisper_context_parameters,
+    decode_audio_for_whisper, default_whisper_context_parameters, should_skip_low_signal_audio,
     should_suppress_transcript_artifact,
 };
 
@@ -188,6 +188,17 @@ fn transcript_artifact_filter_preserves_plain_speech() {
     assert!(!should_suppress_transcript_artifact(
         "오늘 회의 내용을 정리하겠습니다."
     ));
+}
+
+#[test]
+fn low_signal_audio_gate_skips_quiet_or_too_short_chunks() {
+    let quiet_one_second = vec![0.0002_f32; 16_000];
+    let short_voice = vec![0.08_f32; 4_000];
+    let clear_voice = vec![0.08_f32; 16_000];
+
+    assert!(should_skip_low_signal_audio(&quiet_one_second));
+    assert!(should_skip_low_signal_audio(&short_voice));
+    assert!(!should_skip_low_signal_audio(&clear_voice));
 }
 
 #[test]
