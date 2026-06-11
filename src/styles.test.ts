@@ -73,6 +73,23 @@ describe("narrow shell styling", () => {
   });
 });
 
+describe("storage path pattern styling", () => {
+  it("uses theme-aware high-contrast code tokens", () => {
+    const rootRule = cssRule(":root");
+    const lightRule = cssRule(":root[data-theme=\"light\"],\n[data-theme=\"light\"]");
+    const pathPatternCodeRule = cssRule(".path-pattern code");
+    const pathPatternLabelRule = cssRule(".path-pattern span,\n.offline-note span");
+
+    expect(rootRule).toContain("--code-text: #e7edf5;");
+    expect(rootRule).toContain("--code-bg: rgba(231, 237, 245, 0.08);");
+    expect(lightRule).toContain("--code-text: #0f172a;");
+    expect(css).toContain("code {\n  overflow-wrap: anywhere;\n  color: var(--code-text);");
+    expect(pathPatternCodeRule).toContain("background: var(--code-bg);");
+    expect(pathPatternCodeRule).toContain("border: 1px solid var(--code-border);");
+    expect(pathPatternLabelRule).toContain("color: var(--text);");
+  });
+});
+
 function cssRule(selector: string, source = css) {
   const start = source.indexOf(`${selector} {`);
   expect(start, `expected CSS rule for ${selector}`).toBeGreaterThanOrEqual(0);

@@ -35,6 +35,9 @@
   --success-soft-bg: rgba(34, 197, 94, 0.14);
   --success-soft-border: rgba(34, 197, 94, 0.32);
   --success-soft-text: #4ade80;
+  --code-text: #e7edf5;
+  --code-bg: rgba(231, 237, 245, 0.08);
+  --code-border: rgba(231, 237, 245, 0.16);
   --switch-off: #566273;
   --switch-knob: #f8fafc;
   --footer-bg: rgba(15, 19, 25, 0.94);
@@ -81,6 +84,9 @@
   --success-soft-bg: rgba(22, 163, 74, 0.1);
   --success-soft-border: rgba(22, 163, 74, 0.24);
   --success-soft-text: #15803d;
+  --code-text: #0f172a;
+  --code-bg: rgba(15, 23, 42, 0.05);
+  --code-border: rgba(15, 23, 42, 0.12);
   --switch-off: #94a3b8;
   --switch-knob: #ffffff;
   --footer-bg: rgba(255, 255, 255, 0.96);
@@ -2469,15 +2475,23 @@ tr:last-child td {
 
 .path-pattern span,
 .offline-note span {
-  color: var(--muted);
+  color: var(--text);
   font-size: 12px;
+  font-weight: 600;
 }
 
 code {
   overflow-wrap: anywhere;
-  color: #1e293b;
+  color: var(--code-text);
   font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
   font-size: 12px;
+}
+
+.path-pattern code {
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  padding: 7px 8px;
 }
 
 .path-pattern code > a {
