@@ -477,16 +477,21 @@ fn run_whisper(
 }
 
 pub fn decode_audio_for_whisper(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
-    if path
+    let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("m4a"))
-        .unwrap_or(false)
-    {
-        return read_m4a_as_whisper_audio(path);
+        .unwrap_or("");
+    if matches_ignore_ascii_case(extension, &["m4a", "mp3"]) {
+        return read_native_audio_as_whisper_audio(path);
     }
 
     read_wav_as_whisper_audio(path)
+}
+
+fn matches_ignore_ascii_case(value: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| value.eq_ignore_ascii_case(candidate))
 }
 
 fn read_wav_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
@@ -524,7 +529,7 @@ fn read_wav_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError
     Ok(resample_linear(&mono, spec.sample_rate, 16_000))
 }
 
-fn read_m4a_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
+fn read_native_audio_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
     let wav_path = path.with_extension("decode.wav");
     let output = Command::new("/usr/bin/afconvert")
         .arg("-f")

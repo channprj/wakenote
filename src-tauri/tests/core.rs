@@ -1,17 +1,17 @@
 use chrono::{TimeZone, Utc};
 use wakenote::audio::{
-    GateConfig, GateDecision, MicHealthConfig, SpeechGate, TOP_PRIORITY_RECHECK, dbfs_from_rms,
-    input_devices_from_labels,
+    dbfs_from_rms, input_devices_from_labels, GateConfig, GateDecision, MicHealthConfig,
+    SpeechGate, TOP_PRIORITY_RECHECK,
 };
-use wakenote::commands::{AppBackend, pinned_device_mismatch};
-use wakenote::models::{ModelStatus, default_model_registry};
+use wakenote::commands::{pinned_device_mismatch, AppBackend};
+use wakenote::models::{default_model_registry, ModelStatus};
 use wakenote::settings::{
-    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    MicrophonePriorityEntry, SettingsPatch, ThemeMode, TranscriptionLanguage, expand_user_path,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run, live_capture_should_start_on_launch,
+    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run, live_capture_should_start_on_launch, AppSettings, AudioFormat,
+    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophonePriorityEntry, SettingsPatch,
+    ThemeMode, TranscriptionLanguage,
 };
-use wakenote::storage::{OutputBasename, next_available_output};
+use wakenote::storage::{next_available_output, OutputBasename};
 
 #[test]
 fn dbfs_conversion_clamps_silence_and_reports_full_scale() {
@@ -113,16 +113,15 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     let dir = local.format("%Y%m%d").to_string();
     let stem = local.format("%H%M%S").to_string();
 
-    let first = next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("first path");
+    let first =
+        next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("first path");
     assert_eq!(first.basename, OutputBasename::new(stem.clone()));
     assert!(first.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
     assert!(first.metadata_path.ends_with(format!("{dir}/{stem}.json")));
     assert!(first.transcript_path.ends_with(format!("{dir}/{stem}.txt")));
-    assert!(
-        first
-            .error_path
-            .ends_with(format!("{dir}/{stem}.error.txt"))
-    );
+    assert!(first
+        .error_path
+        .ends_with(format!("{dir}/{stem}.error.txt")));
 
     std::fs::create_dir_all(first.audio_path.parent().unwrap()).expect("date dir");
     std::fs::write(&first.audio_path, b"existing").expect("collision file");
@@ -141,6 +140,24 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("third path");
     assert_eq!(third.basename, OutputBasename::new(format!("{stem}-3")));
     assert!(third.audio_path.ends_with(format!("{dir}/{stem}-3.m4a")));
+}
+
+#[test]
+fn output_paths_support_mp3_recording_format() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let local = timestamp.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
+
+    let target =
+        next_available_output(tmp.path(), timestamp, AudioFormat::Mp3, None).expect("mp3 path");
+
+    assert!(target.audio_path.ends_with(format!("{dir}/{stem}.mp3")));
+    assert!(target.metadata_path.ends_with(format!("{dir}/{stem}.json")));
+    assert!(target
+        .transcript_path
+        .ends_with(format!("{dir}/{stem}.txt")));
 }
 
 #[test]
@@ -804,7 +821,11 @@ fn silence_warning_verdict_populates_app_status() {
         .silence_warning
         .expect("silence_warning should be Some after silence exceeds stall_threshold");
     assert!(!warning.device_label.is_empty());
-    assert!(warning.seconds >= 1, "seconds should be at least 1, got {}", warning.seconds);
+    assert!(
+        warning.seconds >= 1,
+        "seconds should be at least 1, got {}",
+        warning.seconds
+    );
 
     // A non-silent frame followed by another tick should clear the warning.
     clock += Duration::from_millis(30);

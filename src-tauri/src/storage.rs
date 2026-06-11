@@ -39,6 +39,7 @@ pub fn next_available_output(
     };
     let extension = match format {
         AudioFormat::M4a => "m4a",
+        AudioFormat::Mp3 => "mp3",
         AudioFormat::Wav => "wav",
     };
     let directory = save_root.join(date_dir);

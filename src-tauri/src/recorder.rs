@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::settings::{AppSettings, AudioFormat};
-use crate::storage::{OutputTarget, next_available_output};
+use crate::storage::{next_available_output, OutputTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,6 +94,8 @@ pub enum RecorderError {
     M4aRequiresNativeBridge,
     #[error("native m4a encoder failed: {0}")]
     M4aEncoder(String),
+    #[error("native mp3 encoder failed: {0}")]
+    Mp3Encoder(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("wav error: {0}")]
@@ -116,6 +118,9 @@ impl Recorder {
         match request.settings.audio_format {
             AudioFormat::Wav => {
                 write_wav(&target.audio_path, request.samples, request.sample_rate)?;
+            }
+            AudioFormat::Mp3 => {
+                write_mp3(&target.audio_path, request.samples, request.sample_rate)?;
             }
             AudioFormat::M4a => {
                 write_m4a(&target.audio_path, request.samples, request.sample_rate)?;
@@ -222,6 +227,44 @@ fn write_m4a(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), Recor
     }
 
     Ok(())
+}
+
+fn write_mp3(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
+    let temp_wav_path = path.with_extension("encoding.wav");
+    write_wav(&temp_wav_path, samples, sample_rate)?;
+    let output = ffmpeg_command()
+        .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
+        .arg(&temp_wav_path)
+        .args(["-acodec", "libmp3lame", "-b:a", "64k", "-ac", "1"])
+        .arg(path)
+        .output()?;
+
+    let _ = fs::remove_file(&temp_wav_path);
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(RecorderError::Mp3Encoder(if message.is_empty() {
+            format!("ffmpeg exited with status {}", output.status)
+        } else {
+            message
+        }));
+    }
+
+    Ok(())
+}
+
+fn ffmpeg_command() -> Command {
+    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"] {
+        if std::path::Path::new(candidate).exists() {
+            return Command::new(candidate);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let candidate = std::path::PathBuf::from(home).join(".local/bin/ffmpeg");
+        if candidate.exists() {
+            return Command::new(candidate);
+        }
+    }
+    Command::new("ffmpeg")
 }
 
 fn write_metadata(path: &Path, metadata: &ChunkMetadata) -> Result<(), RecorderError> {

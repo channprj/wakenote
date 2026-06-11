@@ -59,6 +59,43 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
 }
 
 #[test]
+fn recorder_writes_mp3_with_ffmpeg_encoder() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = AppSettings {
+        audio_format: AudioFormat::Mp3,
+        ..AppSettings::default()
+    };
+    let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 9, 12).unwrap();
+    let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 9, 14).unwrap();
+    let local = started_at.with_timezone(&chrono::Local);
+    let dir = local.format("%Y%m%d").to_string();
+    let stem = local.format("%H%M%S").to_string();
+
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.2, -0.2, 0.0].repeat(4_000),
+        sample_rate: 16_000,
+        started_at,
+        ended_at,
+        device_id: "builtin-input",
+        device_name: "Built-in Microphone",
+        used_fallback_device: false,
+        transcription_enabled: false,
+        app_version: "0.1.0",
+        live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
+    })
+    .expect("record mp3 chunk");
+
+    assert!(chunk.audio_path.ends_with(format!("{dir}/{stem}.mp3")));
+    assert!(chunk.audio_path.exists());
+    assert!(chunk.metadata_path.exists());
+    assert!(!chunk.audio_path.with_extension("wav").exists());
+}
+
+#[test]
 fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = wav_settings();

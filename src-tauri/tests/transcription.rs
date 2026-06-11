@@ -422,6 +422,30 @@ fn m4a_audio_is_decoded_through_native_bridge_for_whisper() {
     assert!(!decoded.is_empty());
 }
 
+#[test]
+fn mp3_audio_is_decoded_through_native_bridge_for_whisper() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let wav_path = tmp.path().join("source.wav");
+    let mp3_path = tmp.path().join("source.mp3");
+    write_test_wav(&wav_path);
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
+        .arg(&wav_path)
+        .args(["-acodec", "libmp3lame", "-b:a", "64k"])
+        .arg(&mp3_path)
+        .output()
+        .expect("ffmpeg");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let decoded = decode_audio_for_whisper(&mp3_path).expect("decode mp3");
+
+    assert!(!decoded.is_empty());
+}
+
 fn write_test_wav(path: &std::path::Path) {
     let spec = hound::WavSpec {
         channels: 1,
