@@ -111,6 +111,8 @@ pnpm build debug install      # debug build + install
 pnpm build install --path ~/Applications
 
 # Convenience aliases (same as above):
+#   pnpm dmg
+#   pnpm dmg:debug
 #   pnpm build:install
 #   pnpm build:install:open
 #   pnpm build:install:debug

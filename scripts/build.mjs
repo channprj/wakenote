@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Single entry point used by package.json `build` and friends.
-// Mirrors the markdowner build CLI: `pnpm build [debug|release] [install] [open]`.
+// Mirrors the markdowner build CLI: `pnpm build [debug|release] [app|dmg] [install] [open]`.
 // When invoked with no args (e.g. from Tauri's beforeBuildCommand), only the
 // frontend bundle is built (tsc + vite build).
 import { spawnSync } from 'node:child_process';
@@ -21,12 +21,15 @@ function usage() {
   console.log(`Usage:
   pnpm build
   pnpm build debug
+  pnpm build release dmg
   pnpm build install [open]
   pnpm build debug install [open]
 
 Options:
   debug, --debug       Build the Tauri debug bundle
   release, --release   Build the Tauri release bundle (default)
+  app                  Package the macOS .app bundle (default from tauri.conf)
+  dmg                  Package a macOS .dmg installer
   install              Install the resulting macOS .app bundle
   open, --open         Open the installed app after installation (alias: --launch)
   --no-build           Install an already-built bundle
@@ -84,6 +87,7 @@ function parseArgs(argv) {
     installPath: process.env.WAKENOTE_INSTALL_PATH ?? '/Applications',
     mode: 'release',
     open: false,
+    bundle: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -98,6 +102,10 @@ function parseArgs(argv) {
       options.mode = 'debug';
     } else if (arg === 'release' || arg === '--release') {
       options.mode = 'release';
+    } else if (arg === 'app') {
+      options.bundle = 'app';
+    } else if (arg === 'dmg') {
+      options.bundle = 'dmg';
     } else if (arg === 'install') {
       options.install = true;
     } else if (arg === 'open' || arg === '--open' || arg === '--launch') {
@@ -137,15 +145,17 @@ function buildFrontend() {
   run('pnpm', ['exec', 'vite', 'build']);
 }
 
-function buildTauri(mode, env = process.env) {
+function buildTauri(mode, bundle, env = process.env) {
   ensureDependencies();
+
+  const bundleArgs = bundle ? ['--bundles', bundle] : [];
 
   if (mode === 'debug') {
     console.log('==> Building Tauri app (debug)');
-    run('pnpm', ['tauri', 'build', '--debug'], { env });
+    run('pnpm', ['tauri', 'build', '--debug', ...bundleArgs], { env });
   } else {
     console.log('==> Building Tauri app (release)');
-    run('pnpm', ['tauri', 'build'], { env });
+    run('pnpm', ['tauri', 'build', ...bundleArgs], { env });
   }
 
   // Seal the freshly built bundle. See `sealBundleSignature` for why this
@@ -326,7 +336,7 @@ if (argv.length === 0) {
 const options = parseArgs(argv);
 
 if (options.doBuild) {
-  buildTauri(options.mode);
+  buildTauri(options.mode, options.bundle);
 }
 
 if (options.install) {
