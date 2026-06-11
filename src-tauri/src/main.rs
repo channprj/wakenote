@@ -178,8 +178,8 @@ fn recording_source_label(source: &DetectedSource) -> String {
     }
 }
 
-fn uses_whole_system_audio_mix(source: &DetectedSource) -> bool {
-    matches!(source.source_id.as_str(), "youtube" | "meet")
+fn source_capture_scope(_source: &DetectedSource) -> &'static str {
+    "target-app"
 }
 
 /// Emitted on `source-capture-started` / `source-capture-stopped`.
@@ -1227,12 +1227,8 @@ fn start_source_capture_runtime(
     };
 
     let mut input = SystemAudioInput::new();
-    let capture_scope = if uses_whole_system_audio_mix(&source) {
-        "system-mix"
-    } else {
-        input.set_target_app(source.pid, source.app_name.clone());
-        "target-app"
-    };
+    input.set_target_app(source.pid, source.app_name.clone());
+    let capture_scope = source_capture_scope(&source);
     if let Ok(backend) = backend_state.lock() {
         append_runtime_debug_log(
             &backend.settings(),
@@ -2826,7 +2822,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_sources_capture_whole_system_mix() {
+    fn browser_sources_use_target_app_capture_scope() {
         let youtube = DetectedSource {
             source_id: "youtube".into(),
             label: "YouTube".into(),
@@ -2846,9 +2842,9 @@ mod tests {
             pid: 44,
         };
 
-        assert!(uses_whole_system_audio_mix(&youtube));
-        assert!(uses_whole_system_audio_mix(&meet));
-        assert!(!uses_whole_system_audio_mix(&spotify));
+        assert_eq!(source_capture_scope(&youtube), "target-app");
+        assert_eq!(source_capture_scope(&meet), "target-app");
+        assert_eq!(source_capture_scope(&spotify), "target-app");
     }
 
     #[test]
