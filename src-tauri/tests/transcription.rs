@@ -4,10 +4,11 @@ use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
-    Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
-    TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome,
-    decode_audio_for_whisper, default_whisper_context_parameters, should_skip_low_signal_audio,
-    should_suppress_transcript_artifact,
+    apply_outcome, decode_audio_for_whisper, default_whisper_context_parameters,
+    should_skip_low_signal_audio, should_suppress_low_confidence_decode,
+    should_suppress_transcript_artifact, DecodedSegmentQuality, Transcriber, TranscriptionError,
+    TranscriptionJobOutcome, TranscriptionRequest, TranscriptionWorker, TranscriptionWorkerOptions,
+    WhisperTranscriber,
 };
 
 #[derive(Clone)]
@@ -202,6 +203,35 @@ fn low_signal_audio_gate_skips_quiet_or_too_short_chunks() {
 }
 
 #[test]
+fn low_confidence_decode_gate_suppresses_no_speech_or_low_token_probability() {
+    let high_no_speech = [DecodedSegmentQuality {
+        no_speech_probability: 0.92,
+        average_token_probability: 0.74,
+    }];
+    let low_token_probability = [DecodedSegmentQuality {
+        no_speech_probability: 0.12,
+        average_token_probability: 0.12,
+    }];
+    let confident_speech = [DecodedSegmentQuality {
+        no_speech_probability: 0.08,
+        average_token_probability: 0.71,
+    }];
+
+    assert!(should_suppress_low_confidence_decode(
+        "MBC 뉴스 김수근입니다.",
+        &high_no_speech
+    ));
+    assert!(should_suppress_low_confidence_decode(
+        "MBC 뉴스 김수근입니다.",
+        &low_token_probability
+    ));
+    assert!(!should_suppress_low_confidence_decode(
+        "오늘 회의 내용을 정리하겠습니다.",
+        &confident_speech
+    ));
+}
+
+#[test]
 fn transcription_worker_passes_configured_language_to_transcriber() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230812.wav");
@@ -266,12 +296,11 @@ fn transcription_worker_marks_job_failed_when_sidecar_write_fails() {
     assert_eq!(processed, id);
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Failed);
-    assert!(
-        job.error
-            .as_deref()
-            .unwrap_or("")
-            .contains("recorder error")
-    );
+    assert!(job
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("recorder error"));
 }
 
 #[test]

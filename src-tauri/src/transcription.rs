@@ -2,17 +2,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use thiserror::Error;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
+};
 
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
-use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::settings::{expand_user_path, TranscriptionLanguage};
 
 const WHISPER_SAMPLE_RATE: usize = 16_000;
 const MIN_TRANSCRIBABLE_SAMPLES: usize = WHISPER_SAMPLE_RATE / 2;
 const MIN_TRANSCRIBABLE_RMS: f32 = 0.003;
+const MAX_NO_SPEECH_PROBABILITY: f32 = 0.75;
+const MIN_AVERAGE_TOKEN_PROBABILITY: f32 = 0.20;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
@@ -342,6 +346,54 @@ pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
     mean_square.sqrt() < MIN_TRANSCRIBABLE_RMS
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DecodedSegmentQuality {
+    pub no_speech_probability: f32,
+    pub average_token_probability: f32,
+}
+
+pub fn should_suppress_low_confidence_decode(
+    text: &str,
+    qualities: &[DecodedSegmentQuality],
+) -> bool {
+    if text.trim().is_empty() || qualities.is_empty() {
+        return false;
+    }
+
+    let max_no_speech = qualities
+        .iter()
+        .map(|quality| quality.no_speech_probability)
+        .fold(0.0_f32, f32::max);
+    if max_no_speech >= MAX_NO_SPEECH_PROBABILITY {
+        return true;
+    }
+
+    let average_token_probability = qualities
+        .iter()
+        .map(|quality| quality.average_token_probability)
+        .sum::<f32>()
+        / qualities.len() as f32;
+    average_token_probability < MIN_AVERAGE_TOKEN_PROBABILITY
+}
+
+pub(crate) fn decoded_segment_quality(segment: &WhisperSegment<'_>) -> DecodedSegmentQuality {
+    let token_count = segment.n_tokens();
+    let average_token_probability = if token_count <= 0 {
+        0.0
+    } else {
+        (0..token_count)
+            .filter_map(|token_index| segment.get_token(token_index))
+            .map(|token| token.token_probability())
+            .sum::<f32>()
+            / token_count as f32
+    };
+
+    DecodedSegmentQuality {
+        no_speech_probability: segment.no_speech_probability(),
+        average_token_probability,
+    }
+}
+
 pub(crate) fn configure_whisper_language(
     params: &mut FullParams<'_, '_>,
     language: TranscriptionLanguage,
@@ -383,14 +435,18 @@ fn run_whisper(
         .full(params, samples)
         .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
 
-    let transcript = state
-        .as_iter()
-        .map(|segment| segment.to_string())
-        .collect::<Vec<_>>()
-        .join("")
-        .trim()
-        .to_string();
-    Ok(transcript)
+    let mut transcript = String::new();
+    let mut qualities = Vec::new();
+    for segment in state.as_iter() {
+        transcript.push_str(&segment.to_string());
+        qualities.push(decoded_segment_quality(&segment));
+    }
+    let transcript = transcript.trim().to_string();
+    if should_suppress_low_confidence_decode(&transcript, &qualities) {
+        Ok(String::new())
+    } else {
+        Ok(transcript)
+    }
 }
 
 pub fn decode_audio_for_whisper(path: &Path) -> Result<Vec<f32>, TranscriptionError> {

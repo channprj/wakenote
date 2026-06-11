@@ -4,9 +4,10 @@ use std::thread::{self, JoinHandle};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::settings::{expand_user_path, TranscriptionLanguage};
 use crate::transcription::{
-    configure_whisper_language, resample_linear, should_suppress_transcript_artifact,
+    configure_whisper_language, decoded_segment_quality, resample_linear,
+    should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
 };
 
 /// Whisper requires roughly 1 second of audio for a meaningful pass; below
@@ -370,15 +371,17 @@ fn run_whisper_partial(
         .full(params, &resampled)
         .map_err(|error| format!("decode: {error}"))?;
 
-    let text = state
-        .as_iter()
-        .map(|segment| segment.to_string())
-        .collect::<Vec<_>>()
-        .join("")
-        .trim()
-        .to_string();
+    let mut text = String::new();
+    let mut qualities = Vec::new();
+    for segment in state.as_iter() {
+        text.push_str(&segment.to_string());
+        qualities.push(decoded_segment_quality(&segment));
+    }
+    let text = text.trim().to_string();
     if text.is_empty()
-        || (suppress_low_confidence_transcripts && should_suppress_transcript_artifact(&text))
+        || (suppress_low_confidence_transcripts
+            && (should_suppress_transcript_artifact(&text)
+                || should_suppress_low_confidence_decode(&text, &qualities)))
     {
         Ok(None)
     } else {
