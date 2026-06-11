@@ -1,4 +1,4 @@
-export type AudioFormat = "m4a" | "wav";
+export type AudioFormat = "m4a" | "mp3" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
 export type ThemeMode = "light" | "dark";

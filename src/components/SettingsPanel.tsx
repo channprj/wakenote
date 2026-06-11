@@ -367,6 +367,7 @@ export function SettingsPanel({
             }
           >
             <option value="m4a">M4A / AAC</option>
+            <option value="mp3">MP3</option>
             <option value="wav">WAV / PCM</option>
           </Select>
           <div className="path-pattern">

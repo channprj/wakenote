@@ -1990,6 +1990,14 @@ describe("settings panel", () => {
     );
   });
 
+  it("offers m4a, mp3, and wav as recording formats", () => {
+    const markup = renderSettingsPanel(mockSnapshot(), "storage");
+
+    expect(markup).toContain('<option value="m4a" selected="">M4A / AAC</option>');
+    expect(markup).toContain('<option value="mp3">MP3</option>');
+    expect(markup).toContain('<option value="wav">WAV / PCM</option>');
+  });
+
   it("renders Open Save Folder only in the storage section", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.save_root = "/tmp/wakenote-recordings";
