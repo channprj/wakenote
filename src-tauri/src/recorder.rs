@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::settings::{AppSettings, AudioFormat};
+use crate::settings::{AppSettings, AudioFormat, clamp_audio_bitrate_kbps};
 use crate::storage::{next_available_output, OutputTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,10 +120,20 @@ impl Recorder {
                 write_wav(&target.audio_path, request.samples, request.sample_rate)?;
             }
             AudioFormat::Mp3 => {
-                write_mp3(&target.audio_path, request.samples, request.sample_rate)?;
+                write_mp3(
+                    &target.audio_path,
+                    request.samples,
+                    request.sample_rate,
+                    request.settings.audio_bitrate_kbps,
+                )?;
             }
             AudioFormat::M4a => {
-                write_m4a(&target.audio_path, request.samples, request.sample_rate)?;
+                write_m4a(
+                    &target.audio_path,
+                    request.samples,
+                    request.sample_rate,
+                    request.settings.audio_bitrate_kbps,
+                )?;
             }
         }
 
@@ -204,14 +214,22 @@ fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), Recor
     Ok(())
 }
 
-fn write_m4a(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
+fn write_m4a(
+    path: &Path,
+    samples: &[f32],
+    sample_rate: u32,
+    bitrate_kbps: u32,
+) -> Result<(), RecorderError> {
     let temp_wav_path = path.with_extension("encoding.wav");
     write_wav(&temp_wav_path, samples, sample_rate)?;
+    let bitrate_bps = (clamp_audio_bitrate_kbps(bitrate_kbps) * 1_000).to_string();
     let output = Command::new("/usr/bin/afconvert")
         .arg("-f")
         .arg("m4af")
         .arg("-d")
         .arg("aac")
+        .arg("-b")
+        .arg(&bitrate_bps)
         .arg(&temp_wav_path)
         .arg(path)
         .output()?;
@@ -229,13 +247,21 @@ fn write_m4a(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), Recor
     Ok(())
 }
 
-fn write_mp3(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
+fn write_mp3(
+    path: &Path,
+    samples: &[f32],
+    sample_rate: u32,
+    bitrate_kbps: u32,
+) -> Result<(), RecorderError> {
     let temp_wav_path = path.with_extension("encoding.wav");
     write_wav(&temp_wav_path, samples, sample_rate)?;
+    let bitrate_arg = format!("{}k", clamp_audio_bitrate_kbps(bitrate_kbps));
     let output = ffmpeg_command()
         .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(&temp_wav_path)
-        .args(["-acodec", "libmp3lame", "-b:a", "64k", "-ac", "1"])
+        .args(["-acodec", "libmp3lame", "-b:a"])
+        .arg(&bitrate_arg)
+        .args(["-ac", "1"])
         .arg(path)
         .output()?;
 

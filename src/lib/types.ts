@@ -61,6 +61,7 @@ export interface AppSettings {
   save_root: string;
   save_root_confirmed: boolean;
   audio_format: AudioFormat;
+  audio_bitrate_kbps: number;
   threshold_dbfs: number;
   calibration_completed: boolean;
   attack_ms: number;

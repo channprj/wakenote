@@ -107,6 +107,8 @@ pub struct AppSettings {
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
+    #[serde(default = "default_audio_bitrate_kbps")]
+    pub audio_bitrate_kbps: u32,
     pub threshold_dbfs: f32,
     pub calibration_completed: bool,
     pub attack_ms: u64,
@@ -149,6 +151,7 @@ pub struct SettingsPatch {
     pub microphone_priority: Option<Vec<MicrophonePriorityEntry>>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
+    pub audio_bitrate_kbps: Option<u32>,
     pub threshold_dbfs: Option<f32>,
     pub calibration_completed: Option<bool>,
     pub attack_ms: Option<u64>,
@@ -193,6 +196,18 @@ pub fn default_microphone_priority() -> Vec<MicrophonePriorityEntry> {
         id: "default".to_string(),
         label: "System Default".to_string(),
     }]
+}
+
+pub fn default_audio_bitrate_kbps() -> u32 {
+    96
+}
+
+pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
+    match value {
+        0..=80 => 64,
+        81..=112 => 96,
+        _ => 128,
+    }
 }
 
 pub fn launch_at_login_action_for_patch(
@@ -488,6 +503,9 @@ impl AppSettings {
         if let Some(value) = patch.audio_format {
             self.audio_format = value;
         }
+        if let Some(value) = patch.audio_bitrate_kbps {
+            self.audio_bitrate_kbps = clamp_audio_bitrate_kbps(value);
+        }
         if let Some(value) = patch.threshold_dbfs {
             self.threshold_dbfs = clamp_threshold_dbfs(value);
         }
@@ -575,6 +593,7 @@ impl Default for AppSettings {
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
+            audio_bitrate_kbps: default_audio_bitrate_kbps(),
             threshold_dbfs: -42.0,
             calibration_completed: false,
             attack_ms: 300,
@@ -614,6 +633,33 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.system_audio_enabled);
+    }
+
+    #[test]
+    fn default_audio_bitrate_is_96_kbps() {
+        assert_eq!(AppSettings::default().audio_bitrate_kbps, 96);
+    }
+
+    #[test]
+    fn patch_snaps_audio_bitrate_to_supported_presets() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            audio_bitrate_kbps: Some(128),
+            ..Default::default()
+        });
+        assert_eq!(settings.audio_bitrate_kbps, 128);
+
+        settings.apply_patch(SettingsPatch {
+            audio_bitrate_kbps: Some(95),
+            ..Default::default()
+        });
+        assert_eq!(settings.audio_bitrate_kbps, 96);
+
+        settings.apply_patch(SettingsPatch {
+            audio_bitrate_kbps: Some(1),
+            ..Default::default()
+        });
+        assert_eq!(settings.audio_bitrate_kbps, 64);
     }
 
     #[test]
@@ -696,6 +742,7 @@ mod tests {
         }"##;
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
+        assert_eq!(settings.audio_bitrate_kbps, 96);
         assert!(!settings.system_audio_enabled);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());

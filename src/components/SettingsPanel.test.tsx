@@ -1998,6 +1998,26 @@ describe("settings panel", () => {
     expect(markup).toContain('<option value="wav">WAV / PCM</option>');
   });
 
+  it("offers compressed audio bitrate presets with 96 kbps selected by default", () => {
+    const markup = renderSettingsPanel(mockSnapshot(), "storage");
+
+    expect(markup).toContain("Compressed Bitrate");
+    expect(markup).toContain('<option value="64">64 kbps</option>');
+    expect(markup).toContain('<option value="96" selected="">96 kbps</option>');
+    expect(markup).toContain('<option value="128">128 kbps</option>');
+  });
+
+  it("disables compressed bitrate controls for wav recordings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.audio_format = "wav";
+
+    const markup = renderSettingsPanel(snapshot, "storage");
+
+    expect(markup).toMatch(
+      /<select class="ui-select" disabled="" title="WAV uses uncompressed PCM">/,
+    );
+  });
+
   it("renders Open Save Folder only in the storage section", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.save_root = "/tmp/wakenote-recordings";

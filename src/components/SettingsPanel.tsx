@@ -370,6 +370,19 @@ export function SettingsPanel({
             <option value="mp3">MP3</option>
             <option value="wav">WAV / PCM</option>
           </Select>
+          <Select
+            label="Compressed Bitrate"
+            value={String(settings.audio_bitrate_kbps)}
+            disabled={settings.audio_format === "wav"}
+            title={settings.audio_format === "wav" ? "WAV uses uncompressed PCM" : undefined}
+            onChange={(event) =>
+              onPatch({ audio_bitrate_kbps: Number(event.currentTarget.value) })
+            }
+          >
+            <option value="64">64 kbps</option>
+            <option value="96">96 kbps</option>
+            <option value="128">128 kbps</option>
+          </Select>
           <div className="path-pattern">
             <span>Pattern</span>
             <code>{renderSaveRoot(settings.save_root)}/YYYYMMDD/HHMMSS.{settings.audio_format}</code>

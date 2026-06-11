@@ -63,6 +63,7 @@ fn recorder_writes_mp3_with_ffmpeg_encoder() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = AppSettings {
         audio_format: AudioFormat::Mp3,
+        audio_bitrate_kbps: 128,
         ..AppSettings::default()
     };
     let started_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 9, 12).unwrap();
@@ -93,6 +94,10 @@ fn recorder_writes_mp3_with_ffmpeg_encoder() {
     assert!(chunk.audio_path.exists());
     assert!(chunk.metadata_path.exists());
     assert!(!chunk.audio_path.with_extension("wav").exists());
+    assert!(
+        mp3_bit_rate(&chunk.audio_path) >= 120_000,
+        "mp3 capture should honor the configured bitrate"
+    );
 }
 
 #[test]
@@ -223,4 +228,32 @@ fn transcription_sidecar_writes_error_without_removing_audio() {
             .expect("metadata json");
     assert_eq!(metadata.transcription_status, TranscriptionStatus::Failed);
     assert!(metadata.used_fallback_device);
+}
+
+fn mp3_bit_rate(path: &std::path::Path) -> u64 {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=bit_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .expect("ffprobe");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("mp3 bit_rate")
 }
