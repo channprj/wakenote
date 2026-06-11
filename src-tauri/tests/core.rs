@@ -1,17 +1,17 @@
 use chrono::{TimeZone, Utc};
 use wakenote::audio::{
-    dbfs_from_rms, input_devices_from_labels, GateConfig, GateDecision, MicHealthConfig,
-    SpeechGate, TOP_PRIORITY_RECHECK,
+    GateConfig, GateDecision, MicHealthConfig, SpeechGate, TOP_PRIORITY_RECHECK, dbfs_from_rms,
+    input_devices_from_labels,
 };
-use wakenote::commands::{pinned_device_mismatch, AppBackend};
-use wakenote::models::{default_model_registry, ModelStatus};
+use wakenote::commands::{AppBackend, pinned_device_mismatch};
+use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
-    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run, live_capture_should_start_on_launch, AppSettings, AudioFormat,
-    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophonePriorityEntry, SettingsPatch,
-    ThemeMode, TranscriptionLanguage,
+    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
+    MicrophonePriorityEntry, SettingsPatch, ThemeMode, TranscriptionLanguage, expand_user_path,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run, live_capture_should_start_on_launch,
 };
-use wakenote::storage::{next_available_output, OutputBasename};
+use wakenote::storage::{OutputBasename, next_available_output};
 
 #[test]
 fn dbfs_conversion_clamps_silence_and_reports_full_scale() {
@@ -119,9 +119,11 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     assert!(first.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
     assert!(first.metadata_path.ends_with(format!("{dir}/{stem}.json")));
     assert!(first.transcript_path.ends_with(format!("{dir}/{stem}.txt")));
-    assert!(first
-        .error_path
-        .ends_with(format!("{dir}/{stem}.error.txt")));
+    assert!(
+        first
+            .error_path
+            .ends_with(format!("{dir}/{stem}.error.txt"))
+    );
 
     std::fs::create_dir_all(first.audio_path.parent().unwrap()).expect("date dir");
     std::fs::write(&first.audio_path, b"existing").expect("collision file");
@@ -155,9 +157,11 @@ fn output_paths_support_mp3_recording_format() {
 
     assert!(target.audio_path.ends_with(format!("{dir}/{stem}.mp3")));
     assert!(target.metadata_path.ends_with(format!("{dir}/{stem}.json")));
-    assert!(target
-        .transcript_path
-        .ends_with(format!("{dir}/{stem}.txt")));
+    assert!(
+        target
+            .transcript_path
+            .ends_with(format!("{dir}/{stem}.txt"))
+    );
 }
 
 #[test]
@@ -196,9 +200,10 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.threshold_dbfs, -42.0);
     assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
     assert!(settings.suppress_low_confidence_transcripts);
-    assert_eq!(settings.attack_ms, 300);
+    assert_eq!(settings.attack_ms, 100);
     assert_eq!(settings.release_ms, 1_000);
-    assert_eq!(settings.pre_roll_ms, 600);
+    assert_eq!(settings.pre_roll_ms, 1_000);
+    assert_eq!(settings.lead_in_padding_ms, 300);
     assert_eq!(settings.post_roll_ms, 300);
     assert_eq!(settings.min_chunk_ms, 600);
     assert_eq!(settings.max_chunk_ms, 120_000);
@@ -284,6 +289,7 @@ fn settings_patch_clamps_voice_gate_values_to_ui_ranges() {
         attack_ms: Some(0),
         release_ms: Some(10_000),
         pre_roll_ms: Some(2_000),
+        lead_in_padding_ms: Some(10_000),
         post_roll_ms: Some(4_000),
         min_chunk_ms: Some(0),
         max_chunk_ms: Some(1_000_000),
@@ -294,6 +300,7 @@ fn settings_patch_clamps_voice_gate_values_to_ui_ranges() {
     assert_eq!(settings.attack_ms, 50);
     assert_eq!(settings.release_ms, 5_000);
     assert_eq!(settings.pre_roll_ms, 1_500);
+    assert_eq!(settings.lead_in_padding_ms, 2_000);
     assert_eq!(settings.post_roll_ms, 2_000);
     assert_eq!(settings.min_chunk_ms, 100);
     assert_eq!(settings.max_chunk_ms, 900_000);

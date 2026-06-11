@@ -678,7 +678,7 @@ describe("transcript history helpers", () => {
 });
 
 describe("formatTranscriptForCopy", () => {
-  it("formats a single entry as `YYYY-MM-DD HH:mm:SS - text`", () => {
+  it("formats a single entry as `YYYY-MM-DD HH:mm:SS [source] - text`", () => {
     const entry: RecentTranscript = {
       transcript_path: "/tmp/WakeNote/20260519/155323.txt",
       audio_path: "/tmp/WakeNote/20260519/155323.m4a",
@@ -686,7 +686,42 @@ describe("formatTranscriptForCopy", () => {
       text: "슬립~",
     };
 
-    expect(formatTranscriptForCopy(entry)).toBe("2026-05-19 15:53:23 - 슬립~");
+    expect(formatTranscriptForCopy(entry)).toBe("2026-05-19 15:53:23 [Mic] - 슬립~");
+  });
+
+  it("includes system-audio source labels when formatting copy text", () => {
+    const youtube: RecentTranscript = {
+      transcript_path: "/tmp/WakeNote/20260519/155323-youtube.txt",
+      audio_path: "/tmp/WakeNote/20260519/155323-youtube.m4a",
+      recorded_at: "2026-05-19T15:53:23+09:00",
+      text: "youtube text",
+      source: "system",
+      source_label: "youtube",
+    };
+    const meet: RecentTranscript = {
+      ...youtube,
+      transcript_path: "/tmp/WakeNote/20260519/155324-meet.txt",
+      recorded_at: "2026-05-19T15:53:24+09:00",
+      text: "meet text",
+      source_label: "meet",
+    };
+    const custom: RecentTranscript = {
+      ...youtube,
+      transcript_path: "/tmp/WakeNote/20260519/155325-custom-source-2.txt",
+      recorded_at: "2026-05-19T15:53:25+09:00",
+      text: "custom text",
+      source_label: "custom-source-2",
+    };
+
+    expect(formatTranscriptForCopy(youtube)).toBe(
+      "2026-05-19 15:53:23 [YouTube] - youtube text",
+    );
+    expect(formatTranscriptForCopy(meet)).toBe(
+      "2026-05-19 15:53:24 [Meet] - meet text",
+    );
+    expect(formatTranscriptForCopy(custom, { "custom-source-2": "Spotify" })).toBe(
+      "2026-05-19 15:53:25 [Spotify] - custom text",
+    );
   });
 });
 
@@ -708,7 +743,7 @@ describe("formatTranscriptsForCopy", () => {
     ];
 
     expect(formatTranscriptsForCopy(entries)).toBe(
-      "2026-05-19 15:53:23 - 슬립~\n2026-05-19 15:53:30 - 여보세요?",
+      "2026-05-19 15:53:23 [Mic] - 슬립~\n2026-05-19 15:53:30 [Mic] - 여보세요?",
     );
   });
 

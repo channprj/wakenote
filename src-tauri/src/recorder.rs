@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::settings::{AppSettings, AudioFormat, clamp_audio_bitrate_kbps};
-use crate::storage::{next_available_output, OutputTarget};
+use crate::storage::{OutputTarget, next_available_output};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +36,20 @@ pub struct ChunkMetadata {
     pub device_name: String,
     pub sample_rate: u32,
     pub threshold_dbfs: f32,
+    #[serde(default)]
+    pub attack_ms: u64,
+    #[serde(default)]
+    pub release_ms: u64,
+    #[serde(default)]
+    pub pre_roll_ms: u64,
+    #[serde(default)]
+    pub lead_in_padding_ms: u64,
+    #[serde(default)]
+    pub post_roll_ms: u64,
+    #[serde(default)]
+    pub min_chunk_ms: u64,
+    #[serde(default)]
+    pub max_chunk_ms: u64,
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub duration_ms: i64,
@@ -114,15 +128,20 @@ impl Recorder {
             request.settings.audio_format,
             request.source_label,
         )?;
+        let audio_samples = samples_with_lead_in_padding(
+            request.samples,
+            request.sample_rate,
+            request.settings.lead_in_padding_ms,
+        );
 
         match request.settings.audio_format {
             AudioFormat::Wav => {
-                write_wav(&target.audio_path, request.samples, request.sample_rate)?;
+                write_wav(&target.audio_path, &audio_samples, request.sample_rate)?;
             }
             AudioFormat::Mp3 => {
                 write_mp3(
                     &target.audio_path,
-                    request.samples,
+                    &audio_samples,
                     request.sample_rate,
                     request.settings.audio_bitrate_kbps,
                 )?;
@@ -130,7 +149,7 @@ impl Recorder {
             AudioFormat::M4a => {
                 write_m4a(
                     &target.audio_path,
-                    request.samples,
+                    &audio_samples,
                     request.sample_rate,
                     request.settings.audio_bitrate_kbps,
                 )?;
@@ -143,6 +162,13 @@ impl Recorder {
             device_name: request.device_name.to_string(),
             sample_rate: request.sample_rate,
             threshold_dbfs: request.settings.threshold_dbfs,
+            attack_ms: request.settings.attack_ms,
+            release_ms: request.settings.release_ms,
+            pre_roll_ms: request.settings.pre_roll_ms,
+            lead_in_padding_ms: request.settings.lead_in_padding_ms,
+            post_roll_ms: request.settings.post_roll_ms,
+            min_chunk_ms: request.settings.min_chunk_ms,
+            max_chunk_ms: request.settings.max_chunk_ms,
             started_at: request.started_at,
             ended_at: request.ended_at,
             duration_ms: (request.ended_at - request.started_at).num_milliseconds(),
@@ -198,6 +224,25 @@ fn recorded_chunk(target: OutputTarget) -> RecordedChunk {
     }
 }
 
+fn samples_with_lead_in_padding(samples: &[f32], sample_rate: u32, padding_ms: u64) -> Vec<f32> {
+    let padding_count = sample_count_for_duration_ms(sample_rate, padding_ms);
+    if padding_count == 0 {
+        return samples.to_vec();
+    }
+
+    let mut padded = Vec::with_capacity(padding_count.saturating_add(samples.len()));
+    padded.resize(padding_count, 0.0);
+    padded.extend_from_slice(samples);
+    padded
+}
+
+fn sample_count_for_duration_ms(sample_rate: u32, duration_ms: u64) -> usize {
+    if sample_rate == 0 || duration_ms == 0 {
+        return 0;
+    }
+    ((sample_rate as u128 * duration_ms as u128) / 1_000) as usize
+}
+
 fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), RecorderError> {
     let spec = hound::WavSpec {
         channels: 1,
@@ -227,7 +272,7 @@ fn write_m4a(
         .arg("-f")
         .arg("m4af")
         .arg("-d")
-        .arg("aac")
+        .arg("aac@44100")
         .arg("-b")
         .arg(&bitrate_bps)
         .arg(&temp_wav_path)
@@ -342,6 +387,13 @@ mod tests {
             device_name: "System Default".into(),
             sample_rate: 16_000,
             threshold_dbfs: -42.0,
+            attack_ms: 100,
+            release_ms: 1_000,
+            pre_roll_ms: 1_000,
+            lead_in_padding_ms: 300,
+            post_roll_ms: 300,
+            min_chunk_ms: 600,
+            max_chunk_ms: 120_000,
             started_at: now,
             ended_at: now,
             duration_ms: 0,
@@ -373,6 +425,25 @@ mod tests {
     }
 
     #[test]
+    fn metadata_round_trips_capture_timing_options() {
+        let mut meta = sample_metadata(ChunkSource::Microphone, None);
+        meta.attack_ms = 100;
+        meta.release_ms = 1_000;
+        meta.pre_roll_ms = 1_000;
+        meta.lead_in_padding_ms = 300;
+        meta.post_roll_ms = 600;
+        meta.min_chunk_ms = 600;
+        meta.max_chunk_ms = 120_000;
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: ChunkMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.attack_ms, 100);
+        assert_eq!(back.pre_roll_ms, 1_000);
+        assert_eq!(back.lead_in_padding_ms, 300);
+        assert_eq!(back.max_chunk_ms, 120_000);
+    }
+
+    #[test]
     fn legacy_metadata_without_source_defaults_to_microphone() {
         // Sidecar JSON written before source/source_label existed.
         let json = r#"{
@@ -387,5 +458,7 @@ mod tests {
         assert_eq!(meta.source, ChunkSource::Microphone);
         assert_eq!(meta.source_label, None);
         assert_eq!(meta.live_capture_chunk_id, None);
+        assert_eq!(meta.attack_ms, 0);
+        assert_eq!(meta.lead_in_padding_ms, 0);
     }
 }

@@ -121,6 +121,14 @@ export function pollSnapshotDependencyKey(
   });
 }
 
+export function shouldRefreshSnapshotForTauriEvent(eventName: string) {
+  return (
+    eventName === "source-capture-started" ||
+    eventName === "source-capture-stopped" ||
+    eventName === "source-capture-error"
+  );
+}
+
 export function defaultSettings(): AppSettings {
   return {
     recording_enabled: true,
@@ -137,9 +145,10 @@ export function defaultSettings(): AppSettings {
     audio_bitrate_kbps: 96,
     threshold_dbfs: -42,
     calibration_completed: false,
-    attack_ms: 300,
+    attack_ms: 100,
     release_ms: 1000,
-    pre_roll_ms: 600,
+    pre_roll_ms: 1000,
+    lead_in_padding_ms: 300,
     post_roll_ms: 300,
     min_chunk_ms: 600,
     max_chunk_ms: 120000,

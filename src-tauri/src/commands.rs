@@ -133,7 +133,7 @@ pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
             tooltip: "WakeNote: Paused",
         },
         TrayState::Error => TrayPresentation {
-            rgba: TRAY_ICON_NORMAL_RGBA,
+            rgba: TRAY_ICON_DISCONNECTED_RGBA,
             tooltip: "WakeNote: Error",
         },
     }
@@ -1079,33 +1079,73 @@ impl AppBackend {
 
     /// Enqueue completed system chunks into the shared transcription queue,
     /// honoring the same transcription-enabled + single-insert dedup rules as
-    /// the mic path. System chunks do not emit live-capture/overlay events for
-    /// v1 (that plumbing is mic-specific); they are recorded and enqueued only.
+    /// the mic path. System chunks also emit the same live transcript events as
+    /// microphone chunks so external-app audio appears in the live transcript
+    /// stream while it is being captured.
     fn handle_system_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
         let mut queue_changed = false;
         for event in events {
-            if let CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } = event {
-                let model_id = self.transcription_model_for_completed_chunk(&chunk);
-                eprintln!(
-                    "[wakenote] system-capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
-                    chunk.audio_path.display(),
-                    model_id
-                );
-                append_debug_log(
-                    self.save_root_path(),
-                    format!(
-                        "[system-capture] chunk_completed chunk_id={} path={} queue_model={:?}",
+            match event {
+                CaptureControllerEvent::ChunkStarted {
+                    chunk_id,
+                    started_at,
+                } => {
+                    eprintln!("[wakenote] system-capture: ChunkStarted chunk_id={chunk_id}");
+                    self.emit_live_event(LiveTranscriptEvent::Started {
                         chunk_id,
+                        started_at,
+                        overlay_position: self.settings.floating_overlay_position,
+                    });
+                }
+                CaptureControllerEvent::LiveSamplesReady {
+                    chunk_id,
+                    sample_rate,
+                    samples,
+                } => {
+                    eprintln!(
+                        "[wakenote] system-capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
+                        samples.len()
+                    );
+                    self.emit_live_event(LiveTranscriptEvent::SamplesReady {
+                        chunk_id,
+                        model_id: self.settings.selected_model.clone(),
+                        language: self.settings.transcription_language,
+                        suppress_low_confidence_transcripts: self
+                            .settings
+                            .suppress_low_confidence_transcripts,
+                        sample_rate,
+                        samples,
+                    });
+                }
+                CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } => {
+                    let model_id = self.transcription_model_for_completed_chunk(&chunk);
+                    eprintln!(
+                        "[wakenote] system-capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
                         chunk.audio_path.display(),
                         model_id
-                    ),
-                );
-                self.remember_chunk_id(&chunk.audio_path, chunk_id);
-                if let Some(model_id) = model_id {
-                    let (_, inserted) = self
-                        .queue
-                        .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
-                    queue_changed |= inserted;
+                    );
+                    append_debug_log(
+                        self.save_root_path(),
+                        format!(
+                            "[system-capture] chunk_completed chunk_id={} path={} queue_model={:?}",
+                            chunk_id,
+                            chunk.audio_path.display(),
+                            model_id
+                        ),
+                    );
+                    self.remember_chunk_id(&chunk.audio_path, chunk_id);
+                    if let Some(model_id) = model_id {
+                        let (_, inserted) = self
+                            .queue
+                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                        queue_changed |= inserted;
+                    }
+                    self.emit_live_event(LiveTranscriptEvent::Committed {
+                        chunk_id,
+                        audio_path: chunk.audio_path.clone(),
+                        overlay_position: self.settings.floating_overlay_position,
+                        will_transcribe: self.should_process_transcriptions(),
+                    });
                 }
             }
         }
@@ -1344,7 +1384,12 @@ impl AppBackend {
             .capture
             .as_ref()
             .map(|capture| capture.is_recording())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || self
+                .system_capture
+                .as_ref()
+                .map(|capture| capture.is_recording())
+                .unwrap_or(false);
         let is_monitoring = self.capture.is_some();
         let has_error = self.microphone_warning.is_some() || queue.failed_count > 0;
         let tray_state = derive_tray_state(
@@ -2014,16 +2059,16 @@ fn derive_tray_state(
     recording: bool,
     has_error: bool,
 ) -> TrayState {
-    if recording {
-        return TrayState::Recording;
+    if has_error {
+        return TrayState::Error;
     }
 
     if transcribing {
         return TrayState::Transcribing;
     }
 
-    if has_error {
-        return TrayState::Error;
+    if recording {
+        return TrayState::Recording;
     }
 
     match mode {
@@ -2153,10 +2198,10 @@ mod tests {
     }
 
     #[test]
-    fn tray_state_prefers_active_recording_over_running_transcription() {
+    fn tray_state_prefers_running_transcription_over_active_recording() {
         assert_eq!(
             derive_tray_state(AppMode::RecordingAndTranscription, true, true, true, false),
-            TrayState::Recording
+            TrayState::Transcribing
         );
     }
 

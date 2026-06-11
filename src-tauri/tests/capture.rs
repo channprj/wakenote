@@ -14,6 +14,7 @@ fn settings() -> AppSettings {
         attack_ms: 300,
         release_ms: 1_500,
         pre_roll_ms: 200,
+        lead_in_padding_ms: 0,
         post_roll_ms: 200,
         min_chunk_ms: 500,
         max_chunk_ms: 30_000,
@@ -163,6 +164,44 @@ fn capture_processor_includes_pre_onset_audio_in_chunk() {
     assert!(samples.len() >= 2, "chunk too short: {}", samples.len());
     assert_eq!(samples[0], 0, "first sample should be pre-onset silence");
     assert_eq!(samples[1], 0, "second sample should be pre-onset silence");
+}
+
+#[test]
+fn capture_processor_writes_lead_in_padding_before_chunk_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config_settings = settings();
+    config_settings.audio_format = AudioFormat::Wav;
+    config_settings.attack_ms = 100;
+    config_settings.release_ms = 200;
+    config_settings.pre_roll_ms = 0;
+    config_settings.lead_in_padding_ms = 300;
+    config_settings.post_roll_ms = 0;
+    config_settings.min_chunk_ms = 0;
+    let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: config_settings,
+        sample_rate: 10,
+        device_id: "default".to_string(),
+        device_name: "System Default".to_string(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+        app_version: "0.1.0".to_string(),
+        source: ChunkSource::Microphone,
+        source_label: None,
+    });
+
+    for _ in 0..2 {
+        processor.process_samples(&[0.8; 1], 100).expect("speech");
+    }
+    for _ in 0..4 {
+        processor.process_samples(&[0.0; 1], 100).expect("silence");
+    }
+
+    let chunks = processor.completed_chunks();
+    assert_eq!(chunks.len(), 1);
+    let samples = wav_samples(&chunks[0].audio_path);
+    assert_eq!(&samples[..3], &[0, 0, 0]);
+    assert_ne!(samples[3], 0, "speech should follow lead-in padding");
 }
 
 #[test]

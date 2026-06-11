@@ -67,6 +67,7 @@ export interface AppSettings {
   attack_ms: number;
   release_ms: number;
   pre_roll_ms: number;
+  lead_in_padding_ms: number;
   post_roll_ms: number;
   min_chunk_ms: number;
   max_chunk_ms: number;

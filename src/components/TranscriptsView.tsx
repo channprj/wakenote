@@ -21,6 +21,7 @@ import {
   fileUrlFromPath,
   formatLocalTimestamp,
   formatTranscriptsForCopy,
+  transcriptSourceLabel,
 } from "../lib/transcript-history";
 import type { RecentTranscript, TranscriptDay } from "../lib/types";
 import { Button } from "./ui/primitives";
@@ -205,15 +206,15 @@ export function TranscriptsView({
   }, []);
 
   const handleCopyAll = useCallback(() => {
-    void writeToClipboard(formatTranscriptsForCopy(activeEntries), "all");
-  }, [writeToClipboard, activeEntries]);
+    void writeToClipboard(formatTranscriptsForCopy(activeEntries, sourceLabels), "all");
+  }, [writeToClipboard, activeEntries, sourceLabels]);
 
   const handleCopySelected = useCallback(() => {
     const selected = activeEntries.filter((entry) =>
       selectedPaths.has(entry.transcript_path),
     );
-    void writeToClipboard(formatTranscriptsForCopy(selected), "selected");
-  }, [writeToClipboard, activeEntries, selectedPaths]);
+    void writeToClipboard(formatTranscriptsForCopy(selected, sourceLabels), "selected");
+  }, [writeToClipboard, activeEntries, selectedPaths, sourceLabels]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedPaths(new Set());
@@ -516,7 +517,7 @@ function transcriptSourcePresentation(
     };
   }
 
-  const label = sourceLabelForTranscript(entry.source_label, sourceLabels);
+  const label = transcriptSourceLabel(entry, sourceLabels);
   if (entry.source_label === "youtube") {
     return {
       label,
@@ -539,27 +540,6 @@ function transcriptSourcePresentation(
     tone: "system",
     icon: MonitorSpeaker,
   };
-}
-
-function sourceLabelForTranscript(
-  sourceLabel: string | null | undefined,
-  sourceLabels: Readonly<Record<string, string>>,
-): string {
-  if (sourceLabel && sourceLabels[sourceLabel]) {
-    return sourceLabels[sourceLabel];
-  }
-  return humanSourceLabel(sourceLabel);
-}
-
-function humanSourceLabel(sourceLabel?: string | null): string {
-  if (!sourceLabel) return "System";
-  if (sourceLabel === "meet") return "Meet";
-  if (sourceLabel === "youtube") return "YouTube";
-  return sourceLabel
-    .split(/[-_ ]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 export function formatLocalDay(date: Date): string {

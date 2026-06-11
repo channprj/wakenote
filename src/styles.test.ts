@@ -90,6 +90,17 @@ describe("storage path pattern styling", () => {
   });
 });
 
+describe("transcript archive density", () => {
+  it("keeps transcript rows compact for dense transcript lists", () => {
+    const entryRule = cssRule(".transcript-entry");
+    const textRule = cssRule(".transcript-entry__text");
+
+    expect(entryRule).toContain("gap: 6px;");
+    expect(entryRule).toContain("padding: 2px 6px;");
+    expect(textRule).toContain("line-height: 1.28;");
+  });
+});
+
 function cssRule(selector: string, source = css) {
   const start = source.indexOf(`${selector} {`);
   expect(start, `expected CSS rule for ${selector}`).toBeGreaterThanOrEqual(0);

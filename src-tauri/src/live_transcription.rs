@@ -4,7 +4,7 @@ use std::thread::{self, JoinHandle};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::settings::{expand_user_path, TranscriptionLanguage};
+use crate::settings::{TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
     configure_whisper_language, decoded_segment_quality, resample_linear,
     should_suppress_low_confidence_decode, should_suppress_transcript_artifact,

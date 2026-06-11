@@ -10,7 +10,7 @@ use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
-use crate::settings::{expand_user_path, TranscriptionLanguage};
+use crate::settings::{TranscriptionLanguage, expand_user_path};
 
 const WHISPER_SAMPLE_RATE: usize = 16_000;
 const MIN_TRANSCRIBABLE_SAMPLES: usize = WHISPER_SAMPLE_RATE / 2;

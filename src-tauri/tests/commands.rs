@@ -232,6 +232,13 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
         device_name: "Google Chrome".into(),
         sample_rate: 16_000,
         threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
         started_at: chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 3).unwrap(),
         ended_at: chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 4).unwrap(),
         duration_ms: 1_000,
@@ -306,6 +313,167 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
             .audio_path
             .ends_with(format!("{dir}/{stem}.wav"))
     );
+}
+
+#[test]
+fn backend_enqueues_completed_youtube_system_capture_chunks() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_system_capture_session(
+            10,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start system capture");
+
+    for end_ms in [100, 200] {
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.8],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube audio frame");
+    }
+    for end_ms in [300, 400, 500] {
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.0],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube silence frame");
+    }
+
+    let expected_local = base_time.with_timezone(&chrono::Local);
+    let expected_dir = expected_local.format("%Y%m%d").to_string();
+    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .ends_with(format!("{expected_dir}/{expected_stem}-youtube.wav"))
+    );
+
+    let metadata_path = snapshot.jobs[0].audio_path.with_extension("json");
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(metadata_path).expect("metadata"))
+            .expect("metadata json");
+    assert_eq!(metadata.source, ChunkSource::System);
+    assert_eq!(metadata.source_label.as_deref(), Some("youtube"));
+    assert_eq!(metadata.transcription_status, TranscriptionStatus::Queued);
+}
+
+#[test]
+fn backend_records_microphone_and_youtube_as_separate_parallel_inputs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_capture_session_with_device(10, base_time, "default", "System Default", false)
+        .expect("start mic capture");
+    backend
+        .start_system_capture_session(
+            10,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start youtube capture");
+
+    for end_ms in [100, 200] {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: vec![0.8],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("mic frame");
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.7],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube frame");
+    }
+    for end_ms in [300, 400, 500] {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: vec![0.0],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("mic silence");
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.0],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube silence");
+    }
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 2);
+    let expected_local = base_time.with_timezone(&chrono::Local);
+    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let mut paths = snapshot
+        .jobs
+        .iter()
+        .map(|job| job.audio_path.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.ends_with(format!("{expected_stem}.wav")))
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.ends_with(format!("{expected_stem}-youtube.wav")))
+    );
+
+    let mic_metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(paths[0].with_extension("json")).expect("metadata"))
+            .expect("metadata json");
+    let youtube_metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(paths[1].with_extension("json")).expect("metadata"))
+            .expect("metadata json");
+    let sources = [mic_metadata.source, youtube_metadata.source];
+    assert!(sources.contains(&ChunkSource::Microphone));
+    assert!(sources.contains(&ChunkSource::System));
 }
 
 #[test]
@@ -457,6 +625,13 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
         device_name: "Spotify".into(),
         sample_rate: 16_000,
         threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
         started_at: now,
         ended_at: now,
         duration_ms: 1000,
@@ -504,6 +679,77 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
     )
     .expect("metadata json");
     assert_eq!(updated.transcription_status, TranscriptionStatus::Queued);
+}
+
+#[test]
+fn backend_system_capture_emits_live_transcript_events() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    backend
+        .start_system_capture_session(
+            10,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start system capture");
+
+    for end_ms in [100, 200, 300, 400, 500, 600, 700, 800, 900, 1_000, 1_100] {
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.8],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube audio frame");
+    }
+    for end_ms in [1_200, 1_300, 1_400] {
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.0],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("youtube silence frame");
+    }
+
+    let events = backend.drain_live_events();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, LiveTranscriptEvent::Started { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, LiveTranscriptEvent::SamplesReady { .. }))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        LiveTranscriptEvent::Committed {
+            overlay_position: FloatingOverlayPosition::Bottom,
+            will_transcribe: true,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -1803,7 +2049,7 @@ fn tray_presentation_uses_voice_capture_colors_for_active_states() {
 }
 
 #[test]
-fn tray_runtime_presentation_uses_red_only_for_microphone_connection_failures() {
+fn tray_runtime_presentation_uses_red_for_runtime_failures() {
     let mut backend = AppBackend::default();
     let normal = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert_eq!(normal.icon.rgba, [0, 0, 0, 255]);
@@ -1827,7 +2073,73 @@ fn tray_runtime_presentation_uses_red_only_for_microphone_connection_failures() 
         .expect("fail queue job");
     let queue_failure_presentation =
         tray_runtime_presentation(&queue_failure.settings(), &queue_failure.app_status());
-    assert_eq!(queue_failure_presentation.icon.rgba, [0, 0, 0, 255]);
+    assert_eq!(queue_failure_presentation.icon.rgba, [220, 38, 38, 255]);
+}
+
+#[test]
+fn tray_state_prioritizes_errors_then_transcribing_then_active_recording() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let audio_path = tmp.path().join("recording.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio");
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    let started = backend.start_next_transcription_job();
+    assert!(started.is_some());
+    assert_eq!(backend.app_status().tray_state, TrayState::Transcribing);
+
+    backend
+        .start_capture_session_for_test(10)
+        .expect("start capture session");
+    for _ in 0..2 {
+        backend
+            .process_audio_samples_for_test(&[0.8], 100)
+            .expect("speech");
+    }
+    assert_eq!(
+        backend.app_status().tray_state,
+        TrayState::Transcribing,
+        "transcribing should outrank active recording"
+    );
+
+    backend.capture_start_failed("Microphone unavailable");
+    assert_eq!(
+        backend.app_status().tray_state,
+        TrayState::Error,
+        "fatal runtime errors should outrank transcribing and recording"
+    );
+}
+
+#[test]
+fn system_capture_session_without_audio_does_not_report_recording_tray_state() {
+    let mut backend = AppBackend::default();
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+    let status = backend
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start system capture session");
+
+    assert_eq!(status.tray_state, TrayState::Idle);
+    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
 }
 
 #[test]
@@ -1976,6 +2288,38 @@ fn system_capture_session_lifecycle_reports_active_state() {
         .stop_system_capture_session()
         .expect("stop system capture session");
     assert!(!backend.is_system_capturing());
+}
+
+#[test]
+fn system_capture_session_reports_recording_tray_state() {
+    let mut backend = AppBackend::default();
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+    backend.update_settings(SettingsPatch {
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        pre_roll_ms: Some(0),
+        ..SettingsPatch::default()
+    });
+    backend
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start system capture session");
+    let status = backend
+        .process_system_audio_frame(AudioFrame {
+            samples: vec![0.8; 1_600],
+            duration_ms: 100,
+            captured_at: base_time + chrono::Duration::milliseconds(100),
+        })
+        .expect("system audio frame");
+
+    assert_eq!(status.tray_state, TrayState::Recording);
+    assert_eq!(backend.app_status().tray_state, TrayState::Recording);
 }
 
 #[test]

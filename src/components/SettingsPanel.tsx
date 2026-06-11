@@ -22,6 +22,7 @@ const durationFields = [
   ["attack_ms", "Attack", 50, 2000],
   ["release_ms", "Release", 250, 5000],
   ["pre_roll_ms", "Pre-roll", 0, 1500],
+  ["lead_in_padding_ms", "Lead-in", 0, 2000],
   ["post_roll_ms", "Post-roll", 0, 2000],
   ["min_chunk_ms", "Min Chunk", 100, 5000],
 ] as const;

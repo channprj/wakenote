@@ -5,6 +5,7 @@ import {
   mockModels,
   mockSnapshot,
   pollSnapshotDependencyKey,
+  shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./app-state";
 
@@ -179,6 +180,14 @@ describe("app state derivation", () => {
     ).toBe(true);
   });
 
+  it("refreshes snapshots when system-audio capture lifecycle events arrive", () => {
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-started")).toBe(true);
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-stopped")).toBe(true);
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-error")).toBe(true);
+    expect(shouldRefreshSnapshotForTauriEvent("source-detected")).toBe(false);
+    expect(shouldRefreshSnapshotForTauriEvent("live-transcript-partial")).toBe(false);
+  });
+
   it("changes the polling dependency key when polling inputs change", () => {
     const snapshot = mockSnapshot();
     const baseKey = pollSnapshotDependencyKey(snapshot.status, snapshot.queue, snapshot.models);
@@ -245,9 +254,10 @@ describe("app state derivation", () => {
     expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
     expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
     expect(snapshot.settings.threshold_dbfs).toBe(-42);
-    expect(snapshot.settings.attack_ms).toBe(300);
+    expect(snapshot.settings.attack_ms).toBe(100);
     expect(snapshot.settings.release_ms).toBe(1_000);
-    expect(snapshot.settings.pre_roll_ms).toBe(600);
+    expect(snapshot.settings.pre_roll_ms).toBe(1_000);
+    expect(snapshot.settings.lead_in_padding_ms).toBe(300);
     expect(snapshot.settings.post_roll_ms).toBe(300);
     expect(snapshot.settings.min_chunk_ms).toBe(600);
     expect(snapshot.settings.max_chunk_ms).toBe(120_000);

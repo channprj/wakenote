@@ -342,13 +342,11 @@ fn input_device_resolution_ignores_empty_label_hint() {
     let resolved = resolve_input_device_from_candidates(
         "input-9-missing",
         Some(""),
-        &[
-            CandidateInputDevice {
-                id: "input-0-blank".to_string(),
-                label: String::new(),
-                is_default: true,
-            },
-        ],
+        &[CandidateInputDevice {
+            id: "input-0-blank".to_string(),
+            label: String::new(),
+            is_default: true,
+        }],
     )
     .expect("fallback to default");
 

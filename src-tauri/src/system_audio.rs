@@ -6,7 +6,7 @@
 //! YouTube) instead of the microphone.
 //!
 //! The capture target is the process id of the application to record, set via
-//! [`SystemAudioInput::set_target_pid`] before `start` (the cpal-shaped
+//! [`SystemAudioInput::set_target_app`] before `start` (the cpal-shaped
 //! [`AudioInputConfig`] carries no app identity, so the target lives on the
 //! backend rather than rippling a new field into the microphone path).
 //!
@@ -26,11 +26,18 @@ pub const PIPELINE_SAMPLE_RATE: u32 = 16_000;
 
 /// ScreenCaptureKit system-audio capture backend.
 ///
-/// Set [`SystemAudioInput::set_target_pid`] to the application's process id
-/// before calling `start`; without it the whole-system mix is captured.
+/// Set [`SystemAudioInput::set_target_app`] to the application's process id
+/// and app name before calling `start`; without it the whole-system mix is
+/// captured.
 #[derive(Debug, Default)]
 pub struct SystemAudioInput {
-    target_pid: Option<i32>,
+    target: Option<SystemAudioTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SystemAudioTarget {
+    pid: i32,
+    app_name: Option<String>,
 }
 
 impl SystemAudioInput {
@@ -41,11 +48,25 @@ impl SystemAudioInput {
     /// Pin capture to a specific application by process id. Must be called
     /// before `start`; changing it after a stream is running has no effect.
     pub fn set_target_pid(&mut self, pid: i32) {
-        self.target_pid = Some(pid);
+        self.target = Some(SystemAudioTarget {
+            pid,
+            app_name: None,
+        });
+    }
+
+    /// Pin capture to a specific application and related helper processes.
+    /// Browser audio is often emitted by helper processes, so the macOS filter
+    /// uses the app name to include the target app family instead of only the
+    /// window-owning pid.
+    pub fn set_target_app(&mut self, pid: i32, app_name: impl Into<String>) {
+        self.target = Some(SystemAudioTarget {
+            pid,
+            app_name: Some(app_name.into()),
+        });
     }
 
     pub fn target_pid(&self) -> Option<i32> {
-        self.target_pid
+        self.target.as_ref().map(|target| target.pid)
     }
 }
 
@@ -56,8 +77,41 @@ impl AudioInputBackend for SystemAudioInput {
         on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         let sample_rate = config.sample_rate.unwrap_or(PIPELINE_SAMPLE_RATE);
-        macos::start_system_audio(self.target_pid, sample_rate, on_frame)
+        macos::start_system_audio(self.target.clone(), sample_rate, on_frame)
     }
+}
+
+fn is_related_application(
+    target_name: Option<&str>,
+    target_bundle: Option<&str>,
+    candidate_name: &str,
+    candidate_bundle: &str,
+) -> bool {
+    if let Some(target_name) = target_name {
+        if !target_name.is_empty()
+            && (candidate_name == target_name
+                || candidate_name
+                    .strip_prefix(target_name)
+                    .map(|suffix| suffix.starts_with(' ') || suffix.starts_with(" Helper"))
+                    .unwrap_or(false))
+        {
+            return true;
+        }
+    }
+
+    if let Some(target_bundle) = target_bundle {
+        if !target_bundle.is_empty()
+            && (candidate_bundle == target_bundle
+                || candidate_bundle
+                    .strip_prefix(target_bundle)
+                    .map(|suffix| suffix.starts_with('.') || suffix.starts_with('-'))
+                    .unwrap_or(false))
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Snapshot of the on-screen windows for source detection. Queries the same
@@ -102,7 +156,7 @@ mod macos {
     use super::*;
 
     pub(super) fn start_system_audio(
-        _target_pid: Option<i32>,
+        _target: Option<SystemAudioTarget>,
         _sample_rate: u32,
         _on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
@@ -138,8 +192,8 @@ mod macos {
     };
 
     use super::{
-        AudioFrame, AudioStreamHandle, LiveCaptureError, WindowSnapshot,
-        downmix_interleaved_to_mono, frame_duration_ms,
+        AudioFrame, AudioStreamHandle, LiveCaptureError, SystemAudioTarget, WindowSnapshot,
+        downmix_interleaved_to_mono, frame_duration_ms, is_related_application,
     };
 
     const SHAREABLE_CONTENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -255,12 +309,12 @@ mod macos {
     }
 
     pub(super) fn start_system_audio(
-        target_pid: Option<i32>,
+        target: Option<SystemAudioTarget>,
         sample_rate: u32,
         on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         let content = fetch_shareable_content()?;
-        let filter = build_content_filter(&content, target_pid)?;
+        let filter = build_content_filter(&content, target.as_ref())?;
         let config = build_stream_configuration(sample_rate);
 
         let runtime_error = Arc::new(Mutex::new(None));
@@ -276,7 +330,10 @@ mod macos {
             )
         };
 
-        let queue = DispatchQueue::new("io.portrai.wakenote.system-audio", DispatchQueueAttr::SERIAL);
+        let queue = DispatchQueue::new(
+            "io.portrai.wakenote.system-audio",
+            DispatchQueueAttr::SERIAL,
+        );
         let stream_output = ProtocolObject::from_ref(&*output);
         unsafe {
             stream
@@ -363,11 +420,12 @@ mod macos {
     }
 
     /// Build a content filter that captures the target application's audio. The
-    /// filter is display-scoped (audio capture requires a display) but includes
-    /// only the target app's windows; with no target, captures the full mix.
+    /// filter is display-scoped (audio capture requires a display) and includes
+    /// the target app plus related helper apps; with no target, captures the
+    /// full mix.
     fn build_content_filter(
         content: &SCShareableContent,
-        target_pid: Option<i32>,
+        target: Option<&SystemAudioTarget>,
     ) -> Result<Retained<SCContentFilter>, LiveCaptureError> {
         let displays = unsafe { content.displays() };
         let Some(display) = displays.firstObject() else {
@@ -377,14 +435,16 @@ mod macos {
         };
 
         let applications = unsafe { content.applications() };
-        let included = match target_pid {
-            Some(pid) => {
-                let app = find_application_by_pid(&applications, pid).ok_or_else(|| {
-                    LiveCaptureError::Cpal(format!(
-                        "application with pid {pid} is not available for capture"
-                    ))
-                })?;
-                NSArray::from_retained_slice(&[app])
+        let included = match target {
+            Some(target) => {
+                let apps = find_related_applications(&applications, target);
+                if apps.is_empty() {
+                    return Err(LiveCaptureError::Cpal(format!(
+                        "application with pid {} is not available for capture",
+                        target.pid
+                    )));
+                }
+                NSArray::from_retained_slice(&apps)
             }
             None => applications,
         };
@@ -399,6 +459,37 @@ mod macos {
             )
         };
         Ok(filter)
+    }
+
+    fn find_related_applications(
+        applications: &NSArray<SCRunningApplication>,
+        target: &SystemAudioTarget,
+    ) -> Vec<Retained<SCRunningApplication>> {
+        let primary = find_application_by_pid(applications, target.pid);
+        let primary_bundle = primary
+            .as_ref()
+            .map(|app| unsafe { app.bundleIdentifier() }.to_string());
+        let target_name = target.app_name.as_deref();
+
+        let mut related = Vec::new();
+        for app in applications.iter() {
+            let pid = unsafe { app.processID() };
+            let name = unsafe { app.applicationName() }.to_string();
+            let bundle = unsafe { app.bundleIdentifier() }.to_string();
+            if pid == target.pid
+                || is_related_application(target_name, primary_bundle.as_deref(), &name, &bundle)
+            {
+                related.push(app);
+            }
+        }
+
+        if related.is_empty() {
+            if let Some(app) = primary {
+                related.push(app);
+            }
+        }
+
+        related
     }
 
     fn find_application_by_pid(
@@ -550,5 +641,27 @@ mod tests {
         assert_eq!(input.target_pid(), None);
         input.set_target_pid(4321);
         assert_eq!(input.target_pid(), Some(4321));
+    }
+
+    #[test]
+    fn related_application_includes_browser_helpers() {
+        assert!(is_related_application(
+            Some("Google Chrome"),
+            Some("com.google.Chrome"),
+            "Google Chrome Helper",
+            "com.google.Chrome.helper",
+        ));
+        assert!(is_related_application(
+            Some("Microsoft Edge"),
+            Some("com.microsoft.edgemac"),
+            "Microsoft Edge Helper",
+            "com.microsoft.edgemac.helper",
+        ));
+        assert!(!is_related_application(
+            Some("Google Chrome"),
+            Some("com.google.Chrome"),
+            "Spotify",
+            "com.spotify.client",
+        ));
     }
 }

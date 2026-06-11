@@ -114,6 +114,8 @@ pub struct AppSettings {
     pub attack_ms: u64,
     pub release_ms: u64,
     pub pre_roll_ms: u64,
+    #[serde(default = "default_lead_in_padding_ms")]
+    pub lead_in_padding_ms: u64,
     pub post_roll_ms: u64,
     pub min_chunk_ms: u64,
     pub max_chunk_ms: u64,
@@ -157,6 +159,7 @@ pub struct SettingsPatch {
     pub attack_ms: Option<u64>,
     pub release_ms: Option<u64>,
     pub pre_roll_ms: Option<u64>,
+    pub lead_in_padding_ms: Option<u64>,
     pub post_roll_ms: Option<u64>,
     pub min_chunk_ms: Option<u64>,
     pub max_chunk_ms: Option<u64>,
@@ -200,6 +203,10 @@ pub fn default_microphone_priority() -> Vec<MicrophonePriorityEntry> {
 
 pub fn default_audio_bitrate_kbps() -> u32 {
     96
+}
+
+pub fn default_lead_in_padding_ms() -> u64 {
+    300
 }
 
 pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
@@ -521,6 +528,9 @@ impl AppSettings {
         if let Some(value) = patch.pre_roll_ms {
             self.pre_roll_ms = clamp_ms(value, 0, 1_500);
         }
+        if let Some(value) = patch.lead_in_padding_ms {
+            self.lead_in_padding_ms = clamp_ms(value, 0, 2_000);
+        }
         if let Some(value) = patch.post_roll_ms {
             self.post_roll_ms = clamp_ms(value, 0, 2_000);
         }
@@ -596,9 +606,10 @@ impl Default for AppSettings {
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
             threshold_dbfs: -42.0,
             calibration_completed: false,
-            attack_ms: 300,
+            attack_ms: 100,
             release_ms: 1_000,
-            pre_roll_ms: 600,
+            pre_roll_ms: 1_000,
+            lead_in_padding_ms: default_lead_in_padding_ms(),
             post_roll_ms: 300,
             min_chunk_ms: 600,
             max_chunk_ms: 120_000,
@@ -638,6 +649,25 @@ mod tests {
     #[test]
     fn default_audio_bitrate_is_96_kbps() {
         assert_eq!(AppSettings::default().audio_bitrate_kbps, 96);
+    }
+
+    #[test]
+    fn default_vad_timing_uses_fast_attack_and_longer_pre_roll() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.threshold_dbfs, -42.0);
+        assert_eq!(settings.attack_ms, 100);
+        assert_eq!(settings.pre_roll_ms, 1_000);
+        assert_eq!(settings.lead_in_padding_ms, 300);
+    }
+
+    #[test]
+    fn patch_clamps_lead_in_padding() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            lead_in_padding_ms: Some(10_000),
+            ..Default::default()
+        });
+        assert_eq!(settings.lead_in_padding_ms, 2_000);
     }
 
     #[test]
@@ -743,6 +773,7 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
         assert_eq!(settings.audio_bitrate_kbps, 96);
+        assert_eq!(settings.lead_in_padding_ms, 300);
         assert!(!settings.system_audio_enabled);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());

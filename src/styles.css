@@ -2207,10 +2207,10 @@ tr:last-child td {
 .transcript-entry {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   background: transparent;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border-radius: 4px;
   cursor: pointer;
   user-select: none;
@@ -2319,7 +2319,7 @@ tr:last-child td {
   margin: 0;
   color: var(--text);
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.28;
   white-space: normal;
   word-break: keep-all;
   overflow-wrap: break-word;

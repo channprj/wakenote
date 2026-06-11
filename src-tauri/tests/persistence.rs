@@ -58,9 +58,10 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert!(loaded.save_root_confirmed);
     assert!(loaded.transcription_enabled);
     assert!(!loaded.calibration_completed);
-    assert_eq!(loaded.attack_ms, 300);
+    assert_eq!(loaded.attack_ms, 100);
     assert_eq!(loaded.release_ms, 1_000);
-    assert_eq!(loaded.pre_roll_ms, 600);
+    assert_eq!(loaded.pre_roll_ms, 1_000);
+    assert_eq!(loaded.lead_in_padding_ms, 300);
     assert_eq!(loaded.post_roll_ms, 300);
     assert_eq!(loaded.min_chunk_ms, 600);
     assert_eq!(loaded.max_chunk_ms, 120_000);

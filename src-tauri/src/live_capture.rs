@@ -373,11 +373,8 @@ fn build_cpal_stream(
     runtime_error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, LiveCaptureError> {
     let host = cpal::default_host();
-    let (device, _) = select_device_with_resolution(
-        &host,
-        &config.device_id,
-        config.label_hint.as_deref(),
-    )?;
+    let (device, _) =
+        select_device_with_resolution(&host, &config.device_id, config.label_hint.as_deref())?;
     let supported_config = device
         .default_input_config()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;

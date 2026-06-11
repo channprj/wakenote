@@ -359,7 +359,9 @@ pub enum MicHealthVerdict {
     /// Stream is alive (callbacks firing) but every frame has been digital
     /// silence for `since`. The watchdog does NOT switch devices — surfaced
     /// to the UI for the user to investigate manually.
-    SilenceWarning { since: Duration },
+    SilenceWarning {
+        since: Duration,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -453,12 +455,7 @@ impl MicHealthMonitor {
     /// priority list saturate at `priority.len()`. Both `escalate()` (real
     /// stall) and `mark_start_failed()` (start attempt failed) treat the
     /// saturated state as "start from `priority[0]`".
-    pub fn capture_started(
-        &mut self,
-        now: Instant,
-        priority: Vec<String>,
-        active_index: usize,
-    ) {
+    pub fn capture_started(&mut self, now: Instant, priority: Vec<String>, active_index: usize) {
         self.state = MicHealthState::Watching;
         self.capture_started_at = Some(now);
         self.last_frame_at = None;
@@ -707,10 +704,7 @@ impl MicHealthMonitor {
         // every time a non-silent frame arrives (see [`observe_frame`]).
         let exponent = self.consecutive_failures.saturating_sub(1).min(4);
         let multiplier = 1u32.checked_shl(exponent).unwrap_or(u32::MAX);
-        let scaled = self
-            .config
-            .recovery_cooldown
-            .saturating_mul(multiplier);
+        let scaled = self.config.recovery_cooldown.saturating_mul(multiplier);
         scaled.min(self.config.max_recovery_cooldown)
     }
 
@@ -731,8 +725,7 @@ impl MicHealthMonitor {
         // "default" device once — cpal queries the default fresh each time,
         // which tends to kick CoreAudio out of the stuck state.
         let prior_escalations = self.escalations_since_first_frame;
-        self.escalations_since_first_frame =
-            self.escalations_since_first_frame.saturating_add(1);
+        self.escalations_since_first_frame = self.escalations_since_first_frame.saturating_add(1);
         let force_default = prior_escalations >= self.config.force_default_after_escalations
             && self
                 .priority
@@ -950,9 +943,8 @@ mod mic_health_tests {
             priority(&["default"]),
             0,
         );
-        let (second_id, _) = expect_switch_to(
-            monitor.tick(started + Duration::from_millis(1_500 + 400)),
-        );
+        let (second_id, _) =
+            expect_switch_to(monitor.tick(started + Duration::from_millis(1_500 + 400)));
         assert_eq!(second_id, "default");
     }
 
@@ -1049,7 +1041,8 @@ mod mic_health_tests {
         );
 
         // Past the recheck window: voluntary upgrade attempt.
-        let (device_id, reason) = expect_switch_to(monitor.tick(started + Duration::from_millis(600)));
+        let (device_id, reason) =
+            expect_switch_to(monitor.tick(started + Duration::from_millis(600)));
         assert_eq!(device_id, "mic-A");
         assert!(
             reason.contains("retrying top-priority"),
@@ -1297,8 +1290,7 @@ mod mic_health_tests {
         monitor.capture_started(started, Vec::new(), 0);
         monitor.mark_start_failed(started, "no priority configured");
 
-        let (device_id, _) =
-            expect_switch_to(monitor.tick(started + Duration::from_millis(300)));
+        let (device_id, _) = expect_switch_to(monitor.tick(started + Duration::from_millis(300)));
         assert_eq!(device_id, "default");
     }
 
@@ -1498,7 +1490,11 @@ mod mic_health_tests {
             top_priority_recheck: Duration::from_secs(300),
             force_default_after_escalations: u32::MAX,
         });
-        let prio = vec!["mic-a".to_string(), "mic-b".to_string(), "mic-c".to_string()];
+        let prio = vec![
+            "mic-a".to_string(),
+            "mic-b".to_string(),
+            "mic-c".to_string(),
+        ];
         let now = Instant::now();
         // Saturated: active_index = priority.len() (off-list device).
         monitor.capture_started(now, prio.clone(), prio.len());

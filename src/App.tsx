@@ -51,6 +51,7 @@ import {
 import {
   mockSnapshot,
   pollSnapshotDependencyKey,
+  shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./lib/app-state";
 import {
@@ -219,6 +220,9 @@ export default function App() {
             error: data.error,
           };
         }],
+        ["source-capture-started", () => null],
+        ["source-capture-stopped", () => null],
+        ["source-capture-error", () => null],
       ];
 
       for (const [eventName, parse] of subscriptions) {
@@ -231,6 +235,9 @@ export default function App() {
           }
           if (eventName === "live-transcript-final") {
             void refreshTranscripts();
+          }
+          if (shouldRefreshSnapshotForTauriEvent(eventName)) {
+            void refreshQuietly();
           }
         });
         if (cancelled) {

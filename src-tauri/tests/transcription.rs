@@ -4,11 +4,11 @@ use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
+    DecodedSegmentQuality, Transcriber, TranscriptionError, TranscriptionJobOutcome,
+    TranscriptionRequest, TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber,
     apply_outcome, decode_audio_for_whisper, default_whisper_context_parameters,
     should_skip_low_signal_audio, should_suppress_low_confidence_decode,
-    should_suppress_transcript_artifact, DecodedSegmentQuality, Transcriber, TranscriptionError,
-    TranscriptionJobOutcome, TranscriptionRequest, TranscriptionWorker, TranscriptionWorkerOptions,
-    WhisperTranscriber,
+    should_suppress_transcript_artifact,
 };
 
 #[derive(Clone)]
@@ -145,6 +145,13 @@ fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
         device_name: "Spotify".into(),
         sample_rate: 16_000,
         threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
         started_at: now,
         ended_at: now,
         duration_ms: 1000,
@@ -307,11 +314,12 @@ fn transcription_worker_marks_job_failed_when_sidecar_write_fails() {
     assert_eq!(processed, id);
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Failed);
-    assert!(job
-        .error
-        .as_deref()
-        .unwrap_or("")
-        .contains("recorder error"));
+    assert!(
+        job.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("recorder error")
+    );
 }
 
 #[test]

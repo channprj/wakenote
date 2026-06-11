@@ -178,6 +178,10 @@ fn recording_source_label(source: &DetectedSource) -> String {
     }
 }
 
+fn uses_whole_system_audio_mix(source: &DetectedSource) -> bool {
+    matches!(source.source_id.as_str(), "youtube" | "meet")
+}
+
 /// Emitted on `source-capture-started` / `source-capture-stopped`.
 #[derive(Debug, Clone, Serialize)]
 struct SourceCapturePayload {
@@ -1197,14 +1201,22 @@ fn start_source_capture_runtime(
     let callback_app = app.clone();
     let callback_transcription = transcription_state.clone();
     let on_frame = move |frame: AudioFrame| {
-        let should_kick = if let Ok(mut backend) = callback_backend.lock() {
-            backend
-                .process_system_audio_frame(frame)
-                .map(|_| backend.should_process_transcriptions())
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let (should_kick, handler, events, tray_status) =
+            if let Ok(mut backend) = callback_backend.lock() {
+                let status = backend.process_system_audio_frame(frame);
+                let should_kick = status
+                    .map(|_| backend.should_process_transcriptions())
+                    .unwrap_or(false);
+                let tray_status = Some((backend.settings(), backend.app_status()));
+                let (handler, events) = live_events_for_dispatch(&mut backend);
+                (should_kick, handler, events, tray_status)
+            } else {
+                (false, None, Vec::new(), None)
+            };
+        dispatch_live_events(handler, events);
+        if let Some((settings, status)) = tray_status {
+            update_tray_presentation(&callback_app, &settings, &status);
+        }
         if should_kick {
             kick_transcription_worker(
                 callback_app.clone(),
@@ -1215,7 +1227,21 @@ fn start_source_capture_runtime(
     };
 
     let mut input = SystemAudioInput::new();
-    input.set_target_pid(source.pid);
+    let capture_scope = if uses_whole_system_audio_mix(&source) {
+        "system-mix"
+    } else {
+        input.set_target_app(source.pid, source.app_name.clone());
+        "target-app"
+    };
+    if let Ok(backend) = backend_state.lock() {
+        append_runtime_debug_log(
+            &backend.settings(),
+            format!(
+                "[source-capture] input_scope source_id={} scope={} app={} pid={}",
+                source.source_id, capture_scope, source.app_name, source.pid
+            ),
+        );
+    }
     let stream = match input.start(
         AudioInputConfig {
             device_id: source.source_id.clone(),
@@ -1252,8 +1278,12 @@ fn start_source_capture_runtime(
         },
     );
 
-    let backend = backend_state.lock().map_err(|e| e.to_string())?;
-    Ok(backend.app_status())
+    let (settings, status) = {
+        let backend = backend_state.lock().map_err(|e| e.to_string())?;
+        (backend.settings(), backend.app_status())
+    };
+    update_tray_presentation(app, &settings, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1296,11 +1326,13 @@ fn stop_source_capture_runtime(
 ) -> Result<AppStatus, String> {
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
-    let status = {
+    let (settings, status) = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
         append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
-        backend.stop_system_capture_session()?
+        let status = backend.stop_system_capture_session()?;
+        (backend.settings(), status)
     };
+    update_tray_presentation(app, &settings, &status);
     let payload = detected_source_state
         .lock()
         .ok()
@@ -2791,6 +2823,32 @@ mod tests {
 
         assert_eq!(recording_source_label(&custom), "Spotify");
         assert_eq!(recording_source_label(&builtin), "youtube");
+    }
+
+    #[test]
+    fn browser_sources_capture_whole_system_mix() {
+        let youtube = DetectedSource {
+            source_id: "youtube".into(),
+            label: "YouTube".into(),
+            app_name: "Google Chrome".into(),
+            pid: 42,
+        };
+        let meet = DetectedSource {
+            source_id: "meet".into(),
+            label: "Google Meet".into(),
+            app_name: "Google Chrome".into(),
+            pid: 43,
+        };
+        let spotify = DetectedSource {
+            source_id: "custom-source-2".into(),
+            label: "Spotify".into(),
+            app_name: "Spotify".into(),
+            pid: 44,
+        };
+
+        assert!(uses_whole_system_audio_mix(&youtube));
+        assert!(uses_whole_system_audio_mix(&meet));
+        assert!(!uses_whole_system_audio_mix(&spotify));
     }
 
     #[test]

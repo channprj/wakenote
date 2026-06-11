@@ -29,13 +29,43 @@ export function formatLocalTimestamp(value: string | Date): string {
   ].join("-") + ` ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
 
-export function formatTranscriptForCopy(entry: RecentTranscript): string {
+export function formatTranscriptForCopy(
+  entry: RecentTranscript,
+  sourceLabels: Readonly<Record<string, string>> = {},
+): string {
   const timestamp = formatLocalTimestamp(entry.recorded_at) || entry.recorded_at;
-  return `${timestamp} - ${entry.text}`;
+  return `${timestamp} [${transcriptSourceLabel(entry, sourceLabels)}] - ${entry.text}`;
 }
 
-export function formatTranscriptsForCopy(entries: RecentTranscript[]): string {
-  return entries.map(formatTranscriptForCopy).join("\n");
+export function formatTranscriptsForCopy(
+  entries: RecentTranscript[],
+  sourceLabels: Readonly<Record<string, string>> = {},
+): string {
+  return entries.map((entry) => formatTranscriptForCopy(entry, sourceLabels)).join("\n");
+}
+
+export function transcriptSourceLabel(
+  entry: Pick<RecentTranscript, "source" | "source_label">,
+  sourceLabels: Readonly<Record<string, string>> = {},
+): string {
+  if ((entry.source ?? "microphone") !== "system") {
+    return "Mic";
+  }
+  if (entry.source_label && sourceLabels[entry.source_label]) {
+    return sourceLabels[entry.source_label];
+  }
+  return humanSourceLabel(entry.source_label);
+}
+
+function humanSourceLabel(sourceLabel?: string | null): string {
+  if (!sourceLabel) return "System";
+  if (sourceLabel === "meet") return "Meet";
+  if (sourceLabel === "youtube") return "YouTube";
+  return sourceLabel
+    .split(/[-_ ]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export function appendRecentAge(

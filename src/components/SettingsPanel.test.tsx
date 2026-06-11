@@ -341,6 +341,17 @@ describe("settings panel", () => {
     expect(markup).toContain('aria-pressed="true"');
   });
 
+  it("shows lead-in padding as an adjustable recording timing control", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.lead_in_padding_ms = 300;
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup).toContain("Lead-in");
+    expect(markup).toContain("300 ms");
+    expect(markup).toContain('max="2000"');
+  });
+
   it("omits live recording status and capture actions from general settings", () => {
     const snapshot = mockSnapshot();
     snapshot.status.tray_state = "error";
