@@ -192,6 +192,17 @@ fn transcript_artifact_filter_preserves_plain_speech() {
 }
 
 #[test]
+fn transcript_artifact_filter_suppresses_broadcast_news_signoffs() {
+    assert!(should_suppress_transcript_artifact(
+        "MBC 뉴스 김수근입니다."
+    ));
+    assert!(should_suppress_transcript_artifact("KBS 뉴스 이지연입니다"));
+    assert!(!should_suppress_transcript_artifact(
+        "오늘 MBC 뉴스 사례를 회의에서 검토했습니다."
+    ));
+}
+
+#[test]
 fn low_signal_audio_gate_skips_quiet_or_too_short_chunks() {
     let quiet_one_second = vec![0.0002_f32; 16_000];
     let short_voice = vec![0.08_f32; 4_000];

@@ -215,6 +215,9 @@ pub fn should_suppress_transcript_artifact(text: &str) -> bool {
     let lowercase = normalized.to_lowercase();
     let compact = normalized.split_whitespace().collect::<String>();
     let compact_lowercase = compact.to_lowercase();
+    if is_broadcast_news_signoff(&normalized, &lowercase) {
+        return true;
+    }
     let common_hallucinations = [
         "thanks for watching",
         "thank you for watching",
@@ -226,6 +229,30 @@ pub fn should_suppress_transcript_artifact(text: &str) -> bool {
     common_hallucinations
         .iter()
         .any(|marker| lowercase == *marker || compact_lowercase == marker.replace(' ', ""))
+}
+
+fn is_broadcast_news_signoff(normalized: &str, lowercase: &str) -> bool {
+    if normalized.chars().count() > 32 {
+        return false;
+    }
+    let signoff_ending = normalized.ends_with("입니다.")
+        || normalized.ends_with("입니다")
+        || normalized.ends_with("였습니다.")
+        || normalized.ends_with("였습니다");
+    if !signoff_ending {
+        return false;
+    }
+
+    [
+        "mbc 뉴스 ",
+        "kbs 뉴스 ",
+        "sbs 뉴스 ",
+        "ytn 뉴스 ",
+        "jtbc 뉴스 ",
+        "뉴스 ",
+    ]
+    .iter()
+    .any(|prefix| lowercase.starts_with(prefix))
 }
 
 fn normalize_transcript_whitespace(text: &str) -> String {
