@@ -12,6 +12,7 @@
     "build:install:debug": "pnpm build debug install",
     "build:install:debug:open": "pnpm build debug install open",
     "dmg": "pnpm build release dmg",
+    "dmg:downloads": "node scripts/build-dmg-to-downloads.mjs",
     "dmg:debug": "pnpm build debug dmg",
     "preview": "vite preview",
     "tauri": "tauri",
