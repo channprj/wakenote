@@ -27,6 +27,13 @@ pub enum ThemeMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TrayClickAction {
+    TogglePause,
+    OpenMenu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TranscriptionLanguage {
     Auto,
     Ko,
@@ -124,8 +131,12 @@ pub struct AppSettings {
     pub vad_enabled: bool,
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
+    #[serde(default)]
+    pub auto_transcript_input_enabled: bool,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
+    #[serde(default = "default_tray_left_click_action")]
+    pub tray_left_click_action: TrayClickAction,
     pub show_floating_overlay: bool,
     pub floating_overlay_position: FloatingOverlayPosition,
     pub theme_mode: ThemeMode,
@@ -168,8 +179,10 @@ pub struct SettingsPatch {
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
+    pub auto_transcript_input_enabled: Option<bool>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
+    pub tray_left_click_action: Option<TrayClickAction>,
     pub show_floating_overlay: Option<bool>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
     pub theme_mode: Option<ThemeMode>,
@@ -207,6 +220,10 @@ pub fn default_audio_bitrate_kbps() -> u32 {
 
 pub fn default_lead_in_padding_ms() -> u64 {
     300
+}
+
+pub fn default_tray_left_click_action() -> TrayClickAction {
+    TrayClickAction::TogglePause
 }
 
 pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
@@ -555,11 +572,17 @@ impl AppSettings {
         if let Some(value) = patch.start_live_input_on_launch {
             self.start_live_input_on_launch = value;
         }
+        if let Some(value) = patch.auto_transcript_input_enabled {
+            self.auto_transcript_input_enabled = value;
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
         if let Some(value) = patch.show_tray_icon {
             self.show_tray_icon = value;
+        }
+        if let Some(value) = patch.tray_left_click_action {
+            self.tray_left_click_action = value;
         }
         if let Some(value) = patch.show_floating_overlay {
             self.show_floating_overlay = value;
@@ -618,8 +641,10 @@ impl Default for AppSettings {
             vad_enabled: false,
             launch_at_login: false,
             start_live_input_on_launch: true,
+            auto_transcript_input_enabled: false,
             show_dock_icon: true,
             show_tray_icon: true,
+            tray_left_click_action: default_tray_left_click_action(),
             show_floating_overlay: true,
             floating_overlay_position: FloatingOverlayPosition::Top,
             theme_mode: ThemeMode::Dark,
@@ -627,6 +652,15 @@ impl Default for AppSettings {
             system_audio_enabled: false,
             source_auto_prompt: Vec::new(),
             custom_sources: Vec::new(),
+        }
+    }
+}
+
+impl AppSettings {
+    pub fn tray_right_click_action(&self) -> TrayClickAction {
+        match self.tray_left_click_action {
+            TrayClickAction::TogglePause => TrayClickAction::OpenMenu,
+            TrayClickAction::OpenMenu => TrayClickAction::TogglePause,
         }
     }
 }
@@ -644,6 +678,48 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.system_audio_enabled);
+    }
+
+    #[test]
+    fn default_tray_left_click_toggles_app_and_right_click_opens_menu() {
+        let settings = AppSettings::default();
+
+        assert_eq!(
+            settings.tray_left_click_action,
+            TrayClickAction::TogglePause
+        );
+        assert_eq!(
+            settings.tray_right_click_action(),
+            TrayClickAction::OpenMenu
+        );
+    }
+
+    #[test]
+    fn patch_can_swap_tray_click_actions() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            tray_left_click_action: Some(TrayClickAction::OpenMenu),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.tray_left_click_action, TrayClickAction::OpenMenu);
+        assert_eq!(
+            settings.tray_right_click_action(),
+            TrayClickAction::TogglePause
+        );
+    }
+
+    #[test]
+    fn patch_sets_automatic_transcript_input_mode() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.auto_transcript_input_enabled);
+
+        settings.apply_patch(SettingsPatch {
+            auto_transcript_input_enabled: Some(true),
+            ..Default::default()
+        });
+
+        assert!(settings.auto_transcript_input_enabled);
     }
 
     #[test]

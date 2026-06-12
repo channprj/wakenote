@@ -450,6 +450,20 @@ export function SettingsPanel({
             onChange={(show_tray_icon) => onPatch({ show_tray_icon })}
           />
           <Select
+            label="Menu bar icon left click"
+            value={settings.tray_left_click_action}
+            onChange={(event) =>
+              onPatch({
+                tray_left_click_action: event.currentTarget
+                  .value as AppSettings["tray_left_click_action"],
+              })
+            }
+          >
+            <option value="toggle_pause">Toggle WakeNote on/off</option>
+            <option value="open_menu">Open dropdown menu</option>
+          </Select>
+          <p className="settings-hint">Right click uses the other action.</p>
+          <Select
             label="Floating overlay"
             value={settings.floating_overlay_position}
             onChange={(event) =>
@@ -552,6 +566,14 @@ export function SettingsPanel({
           label="Start input on launch"
           checked={settings.start_live_input_on_launch}
           onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
+        />
+        <ToggleRow
+          label="Auto-type transcripts into cursor"
+          checked={settings.auto_transcript_input_enabled}
+          onChange={(auto_transcript_input_enabled) =>
+            onPatch({ auto_transcript_input_enabled })
+          }
+          title="When a live transcript finishes, paste it into the currently focused text cursor."
         />
         <ToggleRow
           label="Hide low-confidence transcripts"

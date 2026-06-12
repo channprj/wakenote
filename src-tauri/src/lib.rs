@@ -16,4 +16,5 @@ pub mod source_watcher;
 pub mod sources;
 pub mod storage;
 pub mod system_audio;
+pub mod text_input;
 pub mod transcription;

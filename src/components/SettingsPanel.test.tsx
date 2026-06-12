@@ -313,6 +313,16 @@ describe("settings panel", () => {
     expect(suppressionSwitch).toContain('aria-checked="false"');
   });
 
+  it("shows automatic transcript input mode in general controls", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.auto_transcript_input_enabled = true;
+
+    const markup = renderSettingsPanel(snapshot);
+    const autoInputSwitch = switchTag(markup, "Auto-type transcripts into cursor");
+
+    expect(autoInputSwitch).toContain('aria-checked="true"');
+  });
+
   it("shows VAD gate as unavailable and forced off until VAD is implemented", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.vad_enabled = true;
@@ -351,6 +361,18 @@ describe("settings panel", () => {
 
     expect(dockSwitch).toContain('aria-checked="false"');
     expect(menuBarSwitch).toContain('aria-checked="false"');
+  });
+
+  it("shows the menu bar icon click behavior control in advanced settings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.tray_left_click_action = "open_menu";
+
+    const markup = renderSettingsPanel(snapshot, "advanced");
+
+    expect(markup).toContain("Menu bar icon left click");
+    expect(markup).toContain('<option value="toggle_pause">Toggle WakeNote on/off</option>');
+    expect(markup).toContain('<option value="open_menu" selected="">Open dropdown menu</option>');
+    expect(markup).toContain("Right click uses the other action.");
   });
 
   it("shows quick max chunk duration presets for transcription-friendly chunking", () => {

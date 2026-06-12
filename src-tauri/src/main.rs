@@ -15,7 +15,7 @@ use tauri::menu::{
     AboutMetadata, CheckMenuItem, HELP_SUBMENU_ID, Menu, MenuItem, PredefinedMenuItem, Submenu,
     WINDOW_SUBMENU_ID,
 };
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
@@ -42,7 +42,7 @@ use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, expand_user_path, launch_at_login_action_for_patch,
+    SettingsPatch, TrayClickAction, expand_user_path, launch_at_login_action_for_patch,
     live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
     resolve_auto_prompt,
 };
@@ -118,6 +118,23 @@ const MIC_RECOVERY_SETTLING_DELAY: Duration = Duration::from_millis(200);
 const MIC_WEDGE_WARNING_THRESHOLD: u32 = 4;
 const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
 const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 5_000;
+#[cfg(test)]
+const TRAY_MENU_ORDER: &[&str] = &[
+    "open-settings",
+    "separator",
+    "toggle-recording",
+    "toggle-transcription",
+    "active-model",
+    "active-microphone",
+    "threshold",
+    "separator",
+    "reveal-save-folder",
+    "pause-all",
+    "separator",
+    "cancel-current-operation",
+    "separator",
+    "quit",
+];
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -1770,11 +1787,25 @@ fn emit_outcome_to_frontend(
     audio_path: &Path,
     outcome: &TranscriptionJobOutcome,
 ) {
-    let chunk_id = backend_state
+    let (chunk_id, auto_input_enabled, settings_for_log) = backend_state
         .lock()
         .ok()
-        .and_then(|backend| backend.chunk_id_for_audio_path(audio_path))
-        .or_else(|| chunk_id_from_metadata(audio_path));
+        .map(|backend| {
+            (
+                backend
+                    .chunk_id_for_audio_path(audio_path)
+                    .or_else(|| chunk_id_from_metadata(audio_path)),
+                backend.settings().auto_transcript_input_enabled,
+                backend.settings(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                chunk_id_from_metadata(audio_path),
+                false,
+                AppSettings::default(),
+            )
+        });
     let audio_path_str = audio_path.to_string_lossy().to_string();
 
     match &outcome.status {
@@ -1796,6 +1827,23 @@ fn emit_outcome_to_frontend(
                 audio_path_str,
                 text.len()
             );
+            if wakenote::text_input::auto_transcript_input_should_type(
+                auto_input_enabled,
+                chunk_id,
+                &text,
+            ) {
+                let text_for_input = text.clone();
+                thread::spawn(move || {
+                    if let Err(error) =
+                        wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
+                    {
+                        append_runtime_debug_log(
+                            &settings_for_log,
+                            format!("[auto-input] failed to type transcript: {error}"),
+                        );
+                    }
+                });
+            }
             if let Err(error) = app.emit(
                 EVENT_LIVE_FINAL,
                 LiveFinalPayload {
@@ -2605,21 +2653,23 @@ fn setup_tray(
     let separator_one = PredefinedMenuItem::separator(app)?;
     let separator_two = PredefinedMenuItem::separator(app)?;
     let separator_three = PredefinedMenuItem::separator(app)?;
+    let separator_four = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
         app,
         &[
+            &open,
+            &separator_one,
             &recording,
             &transcription,
             &active_model,
             &active_mic,
             &threshold,
-            &separator_one,
-            &reveal,
-            &open,
-            &pause_all,
             &separator_two,
-            &cancel,
+            &reveal,
+            &pause_all,
             &separator_three,
+            &cancel,
+            &separator_four,
             &quit,
         ],
     )?;
@@ -2638,9 +2688,16 @@ fn setup_tray(
         .icon(icon)
         .icon_as_template(false)
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(
+            initial_settings
+                .map(tray_show_menu_on_left_click)
+                .unwrap_or(false),
+        )
         .on_menu_event(|app, event| {
             handle_tray_menu(app, event.id().as_ref());
+        })
+        .on_tray_icon_event(|tray, event| {
+            handle_tray_icon_event(tray.app_handle(), event);
         })
         .build(app)?;
     tray.set_visible(presentation.visible)?;
@@ -2693,6 +2750,7 @@ fn apply_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, statu
     )));
     let _ = tray.set_tooltip(Some(presentation.icon.tooltip));
     let _ = tray.set_visible(presentation.visible);
+    let _ = tray.set_show_menu_on_left_click(tray_show_menu_on_left_click(settings));
 
     if let Some(items) = app.try_state::<TrayMenuItems>() {
         let menu = tray_menu_presentation(settings, status);
@@ -2702,6 +2760,57 @@ fn apply_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, statu
         let _ = items.active_model.set_text(menu.active_model_text);
         let _ = items.active_mic.set_text(menu.active_microphone_text);
         let _ = items.threshold.set_text(menu.threshold_text);
+    }
+}
+
+#[cfg(test)]
+fn tray_menu_order() -> &'static [&'static str] {
+    TRAY_MENU_ORDER
+}
+
+fn tray_show_menu_on_left_click(settings: &AppSettings) -> bool {
+    settings.tray_left_click_action == TrayClickAction::OpenMenu
+}
+
+fn tray_click_action_for_button(
+    settings: &AppSettings,
+    button: MouseButton,
+) -> Option<TrayClickAction> {
+    match button {
+        MouseButton::Left => Some(settings.tray_left_click_action),
+        MouseButton::Right => Some(settings.tray_right_click_action()),
+        MouseButton::Middle => None,
+    }
+}
+
+fn handle_tray_icon_event(app: &tauri::AppHandle, event: TrayIconEvent) {
+    let TrayIconEvent::Click {
+        button,
+        button_state,
+        ..
+    } = event
+    else {
+        return;
+    };
+    if button_state != MouseButtonState::Up {
+        return;
+    }
+
+    let action = app
+        .try_state::<BackendState>()
+        .and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .and_then(|backend| tray_click_action_for_button(&backend.settings(), button))
+        })
+        .unwrap_or(TrayClickAction::OpenMenu);
+
+    if action == TrayClickAction::TogglePause {
+        patch_from_tray(app, |settings| SettingsPatch {
+            pause_all: Some(!settings.pause_all),
+            ..SettingsPatch::default()
+        });
     }
 }
 
@@ -2965,6 +3074,38 @@ mod tests {
         assert_send_static(&payload);
         assert_eq!(payload.settings, settings);
         assert_eq!(payload.status, status);
+    }
+
+    #[test]
+    fn tray_menu_order_starts_with_open_settings_then_separator() {
+        assert_eq!(
+            tray_menu_order(),
+            &[
+                "open-settings",
+                "separator",
+                "toggle-recording",
+                "toggle-transcription",
+                "active-model",
+                "active-microphone",
+                "threshold",
+                "separator",
+                "reveal-save-folder",
+                "pause-all",
+                "separator",
+                "cancel-current-operation",
+                "separator",
+                "quit",
+            ]
+        );
+    }
+
+    #[test]
+    fn tray_left_click_menu_flag_follows_click_action_setting() {
+        let mut settings = AppSettings::default();
+        assert!(!tray_show_menu_on_left_click(&settings));
+
+        settings.tray_left_click_action = wakenote::settings::TrayClickAction::OpenMenu;
+        assert!(tray_show_menu_on_left_click(&settings));
     }
 
     #[test]

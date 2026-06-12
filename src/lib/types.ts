@@ -2,6 +2,7 @@ export type AudioFormat = "m4a" | "mp3" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
 export type ThemeMode = "light" | "dark";
+export type TrayClickAction = "toggle_pause" | "open_menu";
 export type TranscriptionLanguage =
   | "auto"
   | "ko"
@@ -76,8 +77,10 @@ export interface AppSettings {
   vad_enabled: boolean;
   launch_at_login: boolean;
   start_live_input_on_launch: boolean;
+  auto_transcript_input_enabled: boolean;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
+  tray_left_click_action: TrayClickAction;
   show_floating_overlay: boolean;
   floating_overlay_position: FloatingOverlayPosition;
   theme_mode: ThemeMode;

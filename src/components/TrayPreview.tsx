@@ -36,6 +36,11 @@ export function TrayPreview({
         </Badge>
       </header>
       <div className="tray-menu">
+        <button disabled title={openSettingsDisabledReason()}>
+          <Settings />
+          Open Settings
+        </button>
+        <span className="tray-menu__separator" role="separator" />
         <button onClick={() => onPatch({ recording_enabled: !settings.recording_enabled })}>
           <Mic />
           Recording {settings.recording_enabled ? "On" : "Off"}
@@ -47,10 +52,6 @@ export function TrayPreview({
         <button onClick={onRevealSaveFolder}>
           <FolderOpen />
           Reveal Save Folder
-        </button>
-        <button disabled title={openSettingsDisabledReason()}>
-          <Settings />
-          Open Settings
         </button>
         <button onClick={() => onPatch({ pause_all: !settings.pause_all })}>
           {settings.pause_all ? <Square /> : <Pause />}

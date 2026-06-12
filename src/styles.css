@@ -901,6 +901,12 @@ svg {
   font-weight: 700;
 }
 
+.settings-hint {
+  margin: -6px 0 2px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .ui-input,
 .ui-select {
   width: 100%;
@@ -1185,6 +1191,12 @@ svg {
 .tray-menu button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.tray-menu__separator {
+  display: block;
+  height: 1px;
+  background: var(--line);
 }
 
 .tray-menu button:last-child {
