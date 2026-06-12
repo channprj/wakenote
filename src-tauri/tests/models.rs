@@ -78,6 +78,72 @@ fn model_store_loads_metadata_only_json_registry() {
 }
 
 #[test]
+fn default_registry_includes_requested_asr_provider_models() {
+    let registry = wakenote::models::default_model_registry();
+
+    let parakeet = registry
+        .get("parakeet-tdt-0.6b-v3")
+        .expect("Parakeet V3 model");
+    assert_eq!(parakeet.display_name, "Parakeet TDT 0.6B V3");
+    assert_eq!(parakeet.provider_runtime, "external-command");
+    assert!(
+        parakeet
+            .languages
+            .iter()
+            .any(|language| language == "multi")
+    );
+
+    let sensevoice = registry.get("sensevoice-small").expect("SenseVoice model");
+    assert_eq!(sensevoice.display_name, "SenseVoice Small");
+    assert_eq!(sensevoice.provider_runtime, "external-command");
+    assert!(sensevoice.languages.iter().any(|language| language == "ko"));
+
+    let cohere = registry
+        .get("cohere-transcribe-03-2026")
+        .expect("Cohere Transcribe model");
+    assert_eq!(cohere.provider_runtime, "cohere-api");
+    assert!(!cohere.offline);
+}
+
+#[test]
+fn model_store_marks_external_command_models_ready_from_command_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    let mut registry = vec![ModelDescriptor {
+        id: "parakeet-tdt-0.6b-v3".to_string(),
+        display_name: "Parakeet TDT 0.6B V3".to_string(),
+        engine: "NVIDIA Parakeet".to_string(),
+        provider_runtime: "external-command".to_string(),
+        download_url: None,
+        checksum_sha256: None,
+        size_mb: 1200,
+        languages: vec!["multi".to_string()],
+        speed_score: 8,
+        accuracy_score: 8,
+        offline: true,
+        status: ModelStatus::Missing,
+        download_progress: None,
+        download_error: None,
+    }];
+
+    store
+        .refresh_statuses(&mut registry)
+        .expect("refresh without command");
+    assert_eq!(registry[0].status, ModelStatus::Missing);
+
+    std::fs::write(
+        tmp.path().join("parakeet-tdt-0.6b-v3.command"),
+        "printf transcript",
+    )
+    .expect("command file");
+
+    store
+        .refresh_statuses(&mut registry)
+        .expect("refresh with command");
+    assert_eq!(registry[0].status, ModelStatus::Ready);
+}
+
+#[test]
 fn model_store_marks_missing_ready_and_error_states_from_local_files() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());

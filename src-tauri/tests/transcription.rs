@@ -4,11 +4,11 @@ use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::TranscriptionLanguage;
 use wakenote::transcription::{
-    DecodedSegmentQuality, Transcriber, TranscriptionError, TranscriptionJobOutcome,
-    TranscriptionRequest, TranscriptionWorker, TranscriptionWorkerOptions, WhisperTranscriber,
-    apply_outcome, decode_audio_for_whisper, default_whisper_context_parameters,
-    should_skip_low_signal_audio, should_suppress_low_confidence_decode,
-    should_suppress_transcript_artifact,
+    DecodedSegmentQuality, RuntimeTranscriber, Transcriber, TranscriptionError,
+    TranscriptionJobOutcome, TranscriptionRequest, TranscriptionWorker, TranscriptionWorkerOptions,
+    WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
+    default_whisper_context_parameters, model_supports_live_partials, should_skip_low_signal_audio,
+    should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
 };
 
 #[derive(Clone)]
@@ -383,6 +383,117 @@ fn whisper_transcriber_expands_tilde_model_directory() {
                 .join("missing-model-for-tilde-expansion.bin")
         )
     );
+}
+
+#[test]
+fn runtime_transcriber_runs_external_command_models_with_audio_environment() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    std::fs::create_dir_all(&model_directory).expect("model dir");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        r#"[
+          {
+            "id": "parakeet-tdt-0.6b-v3",
+            "display_name": "Parakeet TDT 0.6B V3",
+            "engine": "NVIDIA Parakeet",
+            "provider_runtime": "external-command",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 1200,
+            "languages": ["multi"],
+            "speed_score": 8,
+            "accuracy_score": 8,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry json");
+    std::fs::write(
+        model_directory.join("parakeet-tdt-0.6b-v3.command"),
+        "printf '%s:%s' \"$WAKENOTE_MODEL_ID\" \"$WAKENOTE_AUDIO_PATH\"",
+    )
+    .expect("command file");
+    let audio_path = tmp.path().join("sample.wav");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+
+    let transcriber = RuntimeTranscriber::new(&model_directory);
+    let transcript = transcriber
+        .transcribe(TranscriptionRequest {
+            audio_path: &audio_path,
+            model_id: "parakeet-tdt-0.6b-v3",
+            language: TranscriptionLanguage::Auto,
+        })
+        .expect("external command transcript");
+
+    assert_eq!(
+        transcript,
+        format!("parakeet-tdt-0.6b-v3:{}", audio_path.display())
+    );
+}
+
+#[test]
+fn runtime_transcriber_routes_cohere_models_to_api_runtime() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let transcriber = RuntimeTranscriber::with_cohere_api_key(tmp.path(), None);
+    let audio_path = tmp.path().join("sample.wav");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+
+    let error = transcriber
+        .transcribe(TranscriptionRequest {
+            audio_path: &audio_path,
+            model_id: "cohere-transcribe-03-2026",
+            language: TranscriptionLanguage::Ko,
+        })
+        .expect_err("missing API key should fail before whisper path");
+
+    assert_eq!(
+        error,
+        TranscriptionError::Engine("COHERE_API_KEY is required for Cohere Transcribe".to_string())
+    );
+}
+
+#[test]
+fn live_partial_support_is_limited_to_whisper_runtimes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("model-registry.json"),
+        r#"[
+          {
+            "id": "whisper-medium",
+            "display_name": "Whisper Medium",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["ko", "en", "multi"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          },
+          {
+            "id": "sensevoice-small",
+            "display_name": "SenseVoice Small",
+            "engine": "SenseVoice",
+            "provider_runtime": "external-command",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 1000,
+            "languages": ["ko", "en", "multi"],
+            "speed_score": 9,
+            "accuracy_score": 8,
+            "offline": true
+          }
+        ]"#,
+    )
+    .expect("registry");
+
+    assert!(model_supports_live_partials(tmp.path(), "whisper-medium"));
+    assert!(!model_supports_live_partials(
+        tmp.path(),
+        "sensevoice-small"
+    ));
 }
 
 #[test]

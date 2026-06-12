@@ -45,7 +45,7 @@ describe("app state derivation", () => {
     expect(deriveTrayState("recording_only", false, true)).toBe("error");
   });
 
-  it("keeps browser fallback models in sync with Korean-capable whisper options", () => {
+  it("keeps browser fallback models in sync with built-in model registry options", () => {
     const models = mockModels();
     const ids = models.map((model) => model.id);
 
@@ -55,10 +55,15 @@ describe("app state derivation", () => {
       "whisper-small",
       "whisper-tiny",
       "whisper-turbo",
+      "parakeet-tdt-0.6b-v3",
+      "sensevoice-small",
+      "cohere-transcribe-03-2026",
     ]);
-    for (const model of models) {
+    for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
     }
+    expect(models.find((model) => model.id === "sensevoice-small")?.languages).toContain("ko");
+    expect(models.find((model) => model.id === "cohere-transcribe-03-2026")?.offline).toBe(false);
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {

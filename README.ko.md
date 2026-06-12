@@ -13,7 +13,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - **음성 활성화 캡처** — RMS dBFS가 임계값 위로 *attack* 시간 이상 유지되어야 녹음이 시작되고, 임계값 아래로 *release* 시간 이상 유지되어야 종료됩니다. pre-roll / post-roll 버퍼로 발화의 시작과 끝이 잘리지 않게 보존합니다.
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
-- **Whisper 모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 레지스트리는 `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다.
+- **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공하며, 런타임을 설정하면 Parakeet V3, SenseVoice, Cohere Transcribe 항목도 사용할 수 있습니다.
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
 - **macOS 트레이 + Floating overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 녹음 또는 transcription 중일 때만 나타납니다.
@@ -80,6 +80,14 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 | 실행 시 입력 자동 시작 | `on` | `on` / `off` |
 
 설정은 `<app_data_dir>/settings.json`에 저장되며, patch가 적용될 때마다 안전 범위로 clamp됩니다.
+
+## 추가 ASR provider
+
+WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`, `cohere-transcribe-03-2026` 항목이 포함됩니다.
+
+- Parakeet V3와 SenseVoice는 external command adapter로 실행합니다. `<model_directory>/<model-id>.command` 파일에 실행할 shell command를 넣어두면 WakeNote가 해당 모델을 ready로 표시합니다. command는 `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, `WAKENOTE_LANGUAGE` 환경변수를 읽고, transcript를 stdout으로 출력해야 합니다.
+- Cohere Transcribe는 `COHERE_API_KEY` 또는 `CO_API_KEY`가 있을 때 Cohere Audio Transcriptions API를 사용합니다. API는 명시적인 language가 필요하며 FLAC, MP3, MPEG, MPGA, OGG, WAV를 받습니다. WakeNote는 그 밖의 로컬 청크를 업로드 전에 WAV로 변환합니다.
+- Cohere 모델 id로 `.command` 파일을 만들면 API 대신 external command adapter가 실행되므로, 로컬 Cohere runner도 같은 방식으로 붙일 수 있습니다.
 
 ## 시스템 요구사항
 

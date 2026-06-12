@@ -52,8 +52,8 @@ use wakenote::source_watcher::{
 use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
-    TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
-    TranscriptionWorkerOptions, WhisperTranscriber,
+    RuntimeTranscriber, TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
+    TranscriptionWorkerOptions, model_supports_live_partials,
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
@@ -1605,6 +1605,7 @@ fn wire_live_transcription(
     }
 
     let app_for_handler = app_handle.clone();
+    let model_directory_for_handler = model_directory.clone();
     let service_for_handler = service.clone();
     let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
         LiveTranscriptEvent::Started {
@@ -1639,6 +1640,10 @@ fn wire_live_transcription(
             sample_rate,
             samples,
         } => {
+            if !model_supports_live_partials(&model_directory_for_handler, &model_id) {
+                eprintln!("[wakenote] handler: skip live partial for non-whisper model={model_id}");
+                return;
+            }
             eprintln!(
                 "[wakenote] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
                 samples.len()
@@ -1764,7 +1769,7 @@ fn spawn_transcription_job(
         );
 
         let worker = TranscriptionWorker::with_options(
-            WhisperTranscriber::new(started.model_directory),
+            RuntimeTranscriber::new(started.model_directory),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,

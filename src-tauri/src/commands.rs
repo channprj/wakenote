@@ -28,8 +28,8 @@ use crate::recorder::{
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
-    Transcriber, TranscriptionJobOutcome, TranscriptionWorker, TranscriptionWorkerOptions,
-    WhisperTranscriber, apply_outcome,
+    RuntimeTranscriber, Transcriber, TranscriptionJobOutcome, TranscriptionWorker,
+    TranscriptionWorkerOptions, apply_outcome,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -1293,7 +1293,7 @@ impl AppBackend {
     }
 
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        let transcriber = WhisperTranscriber::new(&self.settings.model_directory);
+        let transcriber = RuntimeTranscriber::new(&self.settings.model_directory);
         self.process_next_transcription_with(transcriber)
     }
 
@@ -2125,7 +2125,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
     models
         .filter(|model| {
-            store.model_path(&model.id).exists()
+            model_has_selectable_runtime(&store, model)
                 && !download_state
                     .downloads
                     .get(&model.id)
@@ -2133,6 +2133,15 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
         })
         .map(|model| model.id)
         .collect()
+}
+
+fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
+    match model.provider_runtime.as_str() {
+        "external-command" | "cohere-api" => store
+            .verify_model(model)
+            .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
+        _ => store.model_path(&model.id).exists(),
+    }
 }
 
 fn download_record_blocks_model_selection(record: &crate::models::ModelDownloadRecord) -> bool {
@@ -2225,6 +2234,37 @@ mod tests {
         let models = selectable_model_ids(&tmp.path().to_string_lossy());
 
         assert!(!models.contains("local-downloading"));
+    }
+
+    #[test]
+    fn selectable_model_ids_includes_external_command_models_with_command_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(tmp.path()).expect("model dir");
+        std::fs::write(
+            tmp.path().join("model-registry.json"),
+            r#"[
+              {
+                "id": "sensevoice-small",
+                "display_name": "SenseVoice Small",
+                "engine": "SenseVoice",
+                "provider_runtime": "external-command",
+                "download_url": null,
+                "checksum_sha256": null,
+                "size_mb": 1000,
+                "languages": ["ko", "en", "multi"],
+                "speed_score": 9,
+                "accuracy_score": 8,
+                "offline": true
+              }
+            ]"#,
+        )
+        .expect("registry");
+        std::fs::write(tmp.path().join("sensevoice-small.command"), "printf ok")
+            .expect("command file");
+
+        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+
+        assert!(models.contains("sensevoice-small"));
     }
 
     #[test]

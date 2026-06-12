@@ -1,5 +1,5 @@
 use wakenote::text_input::{
-    auto_transcript_input_text, auto_transcript_input_should_type, macos_auto_type_script,
+    auto_transcript_input_should_type, auto_transcript_input_text, macos_auto_type_script,
     should_type_transcript_text,
 };
 

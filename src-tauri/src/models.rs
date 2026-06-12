@@ -114,6 +114,10 @@ impl ModelStore {
         self.model_directory.join(format!("{model_id}.bin"))
     }
 
+    pub fn command_path(&self, model_id: &str) -> PathBuf {
+        self.model_directory.join(format!("{model_id}.command"))
+    }
+
     fn temp_download_path(&self, model_id: &str) -> PathBuf {
         self.model_directory.join(format!("{model_id}.download"))
     }
@@ -200,6 +204,24 @@ impl ModelStore {
     }
 
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
+        if model.provider_runtime == "external-command" {
+            return Ok(if self.command_path(&model.id).exists() {
+                ModelStatus::Ready
+            } else {
+                ModelStatus::Missing
+            });
+        }
+
+        if model.provider_runtime == "cohere-api" {
+            return Ok(
+                if self.command_path(&model.id).exists() || cohere_api_key_is_available() {
+                    ModelStatus::Ready
+                } else {
+                    ModelStatus::Missing
+                },
+            );
+        }
+
         let path = self.model_path(&model.id);
         if !path.exists() {
             return Ok(ModelStatus::Missing);
@@ -239,6 +261,7 @@ impl ModelStore {
 
     pub fn delete_model(&self, model_id: &str) -> Result<(), ModelStoreError> {
         let path = self.model_path(model_id);
+        let command_path = self.command_path(model_id);
         let temp_path = self.temp_download_path(model_id);
         let had_download_record = self.clear_download_record(model_id)?;
         let mut removed_anything = had_download_record;
@@ -249,6 +272,10 @@ impl ModelStore {
         }
         if temp_path.exists() {
             std::fs::remove_file(temp_path)?;
+            removed_anything = true;
+        }
+        if command_path.exists() {
+            std::fs::remove_file(command_path)?;
             removed_anything = true;
         }
 
@@ -653,6 +680,12 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
     )
 }
 
+fn cohere_api_key_is_available() -> bool {
+    std::env::var_os("COHERE_API_KEY")
+        .or_else(|| std::env::var_os("CO_API_KEY"))
+        .is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+}
+
 pub fn parse_model_registry_json(
     json: &str,
 ) -> Result<BTreeMap<String, ModelDescriptor>, ModelStoreError> {
@@ -859,6 +892,81 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    registry.insert(
+        "parakeet-tdt-0.6b-v3".to_string(),
+        ModelDescriptor {
+            id: "parakeet-tdt-0.6b-v3".to_string(),
+            display_name: "Parakeet TDT 0.6B V3".to_string(),
+            engine: "NVIDIA Parakeet".to_string(),
+            provider_runtime: "external-command".to_string(),
+            download_url: None,
+            checksum_sha256: None,
+            size_mb: 1_200,
+            languages: vec!["en".to_string(), "multi".to_string()],
+            speed_score: 8,
+            accuracy_score: 8,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
+    registry.insert(
+        "sensevoice-small".to_string(),
+        ModelDescriptor {
+            id: "sensevoice-small".to_string(),
+            display_name: "SenseVoice Small".to_string(),
+            engine: "SenseVoice".to_string(),
+            provider_runtime: "external-command".to_string(),
+            download_url: None,
+            checksum_sha256: None,
+            size_mb: 1_000,
+            languages: vec![
+                "ko".to_string(),
+                "en".to_string(),
+                "ja".to_string(),
+                "zh".to_string(),
+                "multi".to_string(),
+            ],
+            speed_score: 9,
+            accuracy_score: 8,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
+    registry.insert(
+        "cohere-transcribe-03-2026".to_string(),
+        ModelDescriptor {
+            id: "cohere-transcribe-03-2026".to_string(),
+            display_name: "Cohere Transcribe".to_string(),
+            engine: "Cohere Transcribe".to_string(),
+            provider_runtime: "cohere-api".to_string(),
+            download_url: None,
+            checksum_sha256: None,
+            size_mb: 0,
+            languages: vec![
+                "ko".to_string(),
+                "en".to_string(),
+                "ja".to_string(),
+                "zh".to_string(),
+                "es".to_string(),
+                "fr".to_string(),
+                "de".to_string(),
+                "multi".to_string(),
+            ],
+            speed_score: 8,
+            accuracy_score: 8,
+            offline: false,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
     registry
 }
 
@@ -912,7 +1020,14 @@ mod tests {
     #[test]
     fn default_registry_uses_pinned_remote_sha256() {
         let registry = default_model_registry();
-        assert_eq!(registry.len(), 5, "registry should ship five models");
+        let whisper_models = registry
+            .values()
+            .filter(|model| model.provider_runtime == "whisper-rs")
+            .count();
+        assert_eq!(
+            whisper_models, 5,
+            "registry should ship five pinned Whisper models",
+        );
 
         let tiny = registry.get("whisper-tiny").expect("whisper-tiny entry");
         let tiny_hash = tiny

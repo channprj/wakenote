@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Deserialize;
 use thiserror::Error;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
 };
 
+use crate::models::{ModelStore, default_model_registry};
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
@@ -358,6 +360,264 @@ impl Transcriber for WhisperTranscriber {
         }
         run_whisper(&model_path, &samples, request.language)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeTranscriber {
+    model_directory: PathBuf,
+    cohere_api_key: Option<String>,
+}
+
+impl RuntimeTranscriber {
+    pub fn new(model_directory: impl AsRef<Path>) -> Self {
+        Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            cohere_api_key: cohere_api_key_from_env(),
+        }
+    }
+
+    pub fn with_cohere_api_key(
+        model_directory: impl AsRef<Path>,
+        cohere_api_key: Option<String>,
+    ) -> Self {
+        Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            cohere_api_key,
+        }
+    }
+
+    fn model_runtime(&self, model_id: &str) -> String {
+        model_runtime_for_id(&self.model_directory, model_id)
+    }
+}
+
+pub fn model_runtime_for_id(model_directory: impl AsRef<Path>, model_id: &str) -> String {
+    let store = ModelStore::new(expand_user_path(model_directory.as_ref().to_string_lossy()));
+    store
+        .load_model_registry()
+        .unwrap_or_else(|_| default_model_registry())
+        .get(model_id)
+        .map(|model| model.provider_runtime.clone())
+        .unwrap_or_else(|| "whisper-rs".to_string())
+}
+
+pub fn model_supports_live_partials(model_directory: impl AsRef<Path>, model_id: &str) -> bool {
+    model_runtime_for_id(model_directory, model_id) == "whisper-rs"
+}
+
+impl Transcriber for RuntimeTranscriber {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        let store = ModelStore::new(&self.model_directory);
+        let command_path = store.command_path(request.model_id);
+        if command_path.exists() {
+            return ExternalCommandTranscriber::new(&self.model_directory).transcribe(request);
+        }
+
+        match self.model_runtime(request.model_id).as_str() {
+            "external-command" => {
+                ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
+            }
+            "cohere-api" => CohereTranscriber::new(self.cohere_api_key.clone()).transcribe(request),
+            _ => WhisperTranscriber::new(&self.model_directory).transcribe(request),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalCommandTranscriber {
+    model_directory: PathBuf,
+}
+
+impl ExternalCommandTranscriber {
+    pub fn new(model_directory: impl AsRef<Path>) -> Self {
+        Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+        }
+    }
+
+    fn command_path(&self, model_id: &str) -> PathBuf {
+        ModelStore::new(&self.model_directory).command_path(model_id)
+    }
+}
+
+impl Transcriber for ExternalCommandTranscriber {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        let command_path = self.command_path(request.model_id);
+        let command = std::fs::read_to_string(&command_path).map_err(|error| {
+            TranscriptionError::Engine(format!(
+                "external ASR command not found at {}: {error}",
+                command_path.display()
+            ))
+        })?;
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(TranscriptionError::Engine(format!(
+                "external ASR command is empty at {}",
+                command_path.display()
+            )));
+        }
+
+        let output = Command::new("/bin/sh")
+            .arg("-lc")
+            .arg(command)
+            .env("WAKENOTE_AUDIO_PATH", request.audio_path)
+            .env("WAKENOTE_MODEL_ID", request.model_id)
+            .env("WAKENOTE_MODEL_DIRECTORY", &self.model_directory)
+            .env(
+                "WAKENOTE_LANGUAGE",
+                request.language.whisper_code().unwrap_or("auto"),
+            )
+            .output()
+            .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(TranscriptionError::Engine(if stderr.is_empty() {
+            format!("external ASR command exited with {}", output.status)
+        } else {
+            stderr
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CohereTranscriber {
+    api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CohereTranscriptionResponse {
+    text: String,
+}
+
+impl CohereTranscriber {
+    pub fn new(api_key: Option<String>) -> Self {
+        Self { api_key }
+    }
+}
+
+impl Transcriber for CohereTranscriber {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                TranscriptionError::Engine(
+                    "COHERE_API_KEY is required for Cohere Transcribe".to_string(),
+                )
+            })?;
+        let language = request.language.whisper_code().ok_or_else(|| {
+            TranscriptionError::Engine(
+                "Cohere Transcribe requires an explicit transcription language".to_string(),
+            )
+        })?;
+        let (audio_path, cleanup_path) = cohere_supported_audio_path(request.audio_path)?;
+        let result = post_cohere_transcription(api_key, request.model_id, language, &audio_path);
+        if let Some(path) = cleanup_path {
+            let _ = std::fs::remove_file(path);
+        }
+        result
+    }
+}
+
+fn cohere_api_key_from_env() -> Option<String> {
+    std::env::var("COHERE_API_KEY")
+        .or_else(|_| std::env::var("CO_API_KEY"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn cohere_supported_audio_path(
+    path: &Path,
+) -> Result<(PathBuf, Option<PathBuf>), TranscriptionError> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
+    if matches_ignore_ascii_case(extension, &["flac", "mp3", "mpeg", "mpga", "ogg", "wav"]) {
+        return Ok((path.to_path_buf(), None));
+    }
+
+    let wav_path = path.with_extension("cohere.wav");
+    let output = Command::new("/usr/bin/afconvert")
+        .arg("-f")
+        .arg("WAVE")
+        .arg("-d")
+        .arg("LEI16@16000")
+        .arg(path)
+        .arg(&wav_path)
+        .output()
+        .map_err(|error| TranscriptionError::M4a(error.to_string()))?;
+
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(TranscriptionError::M4a(if message.is_empty() {
+            format!("afconvert exited with status {}", output.status)
+        } else {
+            message
+        }));
+    }
+
+    Ok((wav_path.clone(), Some(wav_path)))
+}
+
+fn post_cohere_transcription(
+    api_key: &str,
+    model_id: &str,
+    language: &str,
+    audio_path: &Path,
+) -> Result<String, TranscriptionError> {
+    let file_bytes =
+        std::fs::read(audio_path).map_err(|error| TranscriptionError::M4a(error.to_string()))?;
+    let file_name = audio_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("audio.wav");
+    let boundary = "----wakenote-cohere-transcribe-boundary";
+    let body = cohere_multipart_body(boundary, model_id, language, file_name, &file_bytes);
+    let response = ureq::post("https://api.cohere.com/v2/audio/transcriptions")
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
+        .send_bytes(&body)
+        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    let response_text = response
+        .into_string()
+        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    let value: CohereTranscriptionResponse = serde_json::from_str(&response_text)
+        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    Ok(value.text.trim().to_string())
+}
+
+fn cohere_multipart_body(
+    boundary: &str,
+    model_id: &str,
+    language: &str,
+    file_name: &str,
+    file_bytes: &[u8],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"model\"\r\n\r\n");
+    body.extend_from_slice(model_id.as_bytes());
+    body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(b"Content-Disposition: form-data; name=\"language\"\r\n\r\n");
+    body.extend_from_slice(language.as_bytes());
+    body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n")
+            .as_bytes(),
+    );
+    body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
+    body.extend_from_slice(file_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
 }
 
 pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
