@@ -144,11 +144,13 @@ impl ModelStore {
         &self,
     ) -> Result<BTreeMap<String, ModelDescriptor>, ModelStoreError> {
         let path = self.registry_path();
-        if !path.exists() {
-            return Ok(default_model_registry());
-        }
-
-        parse_model_registry_json(&std::fs::read_to_string(path)?)
+        let mut registry = if path.exists() {
+            parse_model_registry_json(&std::fs::read_to_string(path)?)?
+        } else {
+            default_model_registry()
+        };
+        self.merge_local_whisper_cpp_models(&mut registry)?;
+        Ok(registry)
     }
 
     pub fn load_download_state(&self) -> Result<ModelDownloadState, ModelStoreError> {
@@ -214,6 +216,25 @@ impl ModelStore {
         } else {
             Ok(ModelStatus::Error)
         }
+    }
+
+    fn merge_local_whisper_cpp_models(
+        &self,
+        registry: &mut BTreeMap<String, ModelDescriptor>,
+    ) -> Result<(), ModelStoreError> {
+        if !self.model_directory.exists() {
+            return Ok(());
+        }
+
+        for entry in std::fs::read_dir(&self.model_directory)? {
+            let entry = entry?;
+            let Some(model) = infer_local_whisper_cpp_model(&entry.path())? else {
+                continue;
+            };
+            registry.entry(model.id.clone()).or_insert(model);
+        }
+
+        Ok(())
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<(), ModelStoreError> {
@@ -661,6 +682,59 @@ fn descriptor_from_registry_entry(entry: ModelRegistryEntry) -> ModelDescriptor 
         download_progress: None,
         download_error: None,
     }
+}
+
+fn infer_local_whisper_cpp_model(path: &Path) -> Result<Option<ModelDescriptor>, ModelStoreError> {
+    if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("bin") {
+        return Ok(None);
+    }
+
+    let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+        return Ok(None);
+    };
+    if stem.is_empty() || stem.starts_with("._") {
+        return Ok(None);
+    }
+
+    let size_mb = std::fs::metadata(path)?
+        .len()
+        .saturating_add(1024 * 1024 - 1)
+        / (1024 * 1024);
+    Ok(Some(ModelDescriptor {
+        id: stem.to_string(),
+        display_name: humanize_local_model_id(stem),
+        engine: "whisper.cpp".to_string(),
+        provider_runtime: "whisper-rs".to_string(),
+        download_url: None,
+        checksum_sha256: None,
+        size_mb,
+        languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
+        speed_score: 6,
+        accuracy_score: 7,
+        offline: true,
+        status: ModelStatus::Missing,
+        download_progress: None,
+        download_error: None,
+    }))
+}
+
+fn humanize_local_model_id(model_id: &str) -> String {
+    model_id
+        .split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!(
+                    "{}{}",
+                    first.to_uppercase().collect::<String>(),
+                    chars.collect::<String>()
+                ),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {

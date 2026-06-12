@@ -100,6 +100,36 @@ fn model_store_marks_missing_ready_and_error_states_from_local_files() {
 }
 
 #[test]
+fn model_store_discovers_handy_whisper_cpp_bins_without_json_registry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = ModelStore::new(tmp.path());
+    std::fs::write(tmp.path().join("ggml-large-v3-turbo.bin"), b"turbo").expect("turbo model");
+    std::fs::write(tmp.path().join("whisper-medium-q4_1.bin"), b"medium q4").expect("q4 model");
+    std::fs::create_dir_all(tmp.path().join("sense-voice-int8")).expect("onnx dir");
+    std::fs::write(
+        tmp.path().join("sense-voice-int8").join("model.int8.onnx"),
+        b"onnx",
+    )
+    .expect("onnx model");
+
+    let registry = store.load_model_registry().expect("load registry");
+    let turbo = registry
+        .get("ggml-large-v3-turbo")
+        .expect("handy turbo is discovered");
+    let medium = registry
+        .get("whisper-medium-q4_1")
+        .expect("handy medium q4 is discovered");
+
+    assert_eq!(turbo.provider_runtime, "whisper-rs");
+    assert_eq!(turbo.engine, "whisper.cpp");
+    assert_eq!(medium.provider_runtime, "whisper-rs");
+    assert!(
+        !registry.contains_key("sense-voice-int8"),
+        "onnx model families are not advertised as selectable whisper-rs models",
+    );
+}
+
+#[test]
 fn model_store_delete_removes_model_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());
