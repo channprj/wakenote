@@ -94,9 +94,14 @@ describe("transcript archive density", () => {
   it("keeps transcript rows compact for dense transcript lists", () => {
     const entryRule = cssRule(".transcript-entry");
     const textRule = cssRule(".transcript-entry__text");
+    const selectedRule = cssRule(".transcript-entry[data-selected=\"true\"]");
 
     expect(entryRule).toContain("gap: 6px;");
-    expect(entryRule).toContain("padding: 2px 6px;");
+    expect(entryRule).toContain("border-left: 2px solid transparent;");
+    expect(entryRule).toContain("padding: 2px 6px 2px 4px;");
+    expect(entryRule).toContain("border-radius: 0;");
+    expect(selectedRule).toContain("border-left-color: var(--primary);");
+    expect(selectedRule).not.toContain("box-shadow");
     expect(textRule).toContain("line-height: 1.28;");
   });
 });

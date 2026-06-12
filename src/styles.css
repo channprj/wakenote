@@ -2221,9 +2221,10 @@ tr:last-child td {
   align-items: flex-start;
   gap: 6px;
   min-width: 0;
+  border-left: 2px solid transparent;
   background: transparent;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px 6px 2px 4px;
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -2234,12 +2235,11 @@ tr:last-child td {
 }
 
 .transcript-entry[data-selected="true"] {
-  background: var(--primary-soft-bg);
-  box-shadow: inset 3px 0 0 var(--primary);
+  border-left-color: var(--primary);
 }
 
 .transcript-entry[data-selected="true"]:hover {
-  background: var(--primary-soft-border);
+  background: var(--surface-alt);
 }
 
 .transcript-day__actions {
@@ -2262,8 +2262,7 @@ tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
-.transcript-source-filter,
-.transcript-regenerate-model {
+.transcript-source-filter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2273,8 +2272,7 @@ tr:last-child td {
   font-weight: 700;
 }
 
-.transcript-source-filter .ui-select,
-.transcript-regenerate-model .ui-select {
+.transcript-source-filter .ui-select {
   width: auto;
   min-width: 118px;
   min-height: 28px;
@@ -2363,13 +2361,12 @@ tr:last-child td {
   display: flex;
   align-items: center;
   gap: 3px;
-  min-width: 76px;
+  min-width: 50px;
   justify-content: flex-end;
 }
 
 .transcript-entry__play,
-.transcript-entry__folder,
-.transcript-entry__regenerate {
+.transcript-entry__folder {
   width: 22px;
   height: 22px;
   min-width: 22px;
@@ -2379,18 +2376,15 @@ tr:last-child td {
 }
 
 .transcript-entry__play svg,
-.transcript-entry__folder svg,
-.transcript-entry__regenerate svg {
+.transcript-entry__folder svg {
   width: 12px;
   height: 12px;
 }
 
 .transcript-entry:hover .transcript-entry__play,
 .transcript-entry:hover .transcript-entry__folder,
-.transcript-entry:hover .transcript-entry__regenerate,
 .transcript-entry__play:focus-visible,
 .transcript-entry__folder:focus-visible,
-.transcript-entry__regenerate:focus-visible,
 .transcript-entry__play[aria-pressed="true"] {
   opacity: 1;
 }
@@ -2398,15 +2392,18 @@ tr:last-child td {
 .transcript-context-menu {
   position: fixed;
   z-index: 20;
-  min-width: 152px;
+  min-width: 204px;
   padding: 4px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  overflow: visible;
 }
 
+.transcript-context-menu__item,
 .transcript-context-menu button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2424,6 +2421,38 @@ tr:last-child td {
   text-align: left;
 }
 
+.transcript-context-menu__item {
+  cursor: default;
+}
+
+.transcript-context-menu__label {
+  flex: 1 1 auto;
+}
+
+.transcript-context-menu__chevron {
+  margin-left: auto;
+}
+
+.transcript-context-menu__submenu {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: -5px;
+  display: none;
+  min-width: 188px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.transcript-context-menu__item--has-submenu:hover .transcript-context-menu__submenu,
+.transcript-context-menu__item--has-submenu:focus-within .transcript-context-menu__submenu {
+  display: block;
+}
+
+.transcript-context-menu__item:hover,
+.transcript-context-menu__item:focus-visible,
 .transcript-context-menu button:hover,
 .transcript-context-menu button:focus-visible {
   background: var(--surface-alt);

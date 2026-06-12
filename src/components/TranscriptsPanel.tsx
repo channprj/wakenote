@@ -83,16 +83,23 @@ export function TranscriptsPanel({
     [loadDay, refreshDays],
   );
 
-  const regenerateEntry = useCallback(
-    async (entry: RecentTranscript, modelId?: string) => {
-      if (!entry.audio_path) {
-        return;
+  const regenerateEntries = useCallback(
+    async (entries: readonly RecentTranscript[], modelId?: string) => {
+      const daysToReload = new Set<string>();
+      for (const entry of entries) {
+        if (!entry.audio_path) {
+          continue;
+        }
+        await regenerateTranscript(entry.audio_path, modelId);
+        daysToReload.add(formatLocalDay(new Date(entry.recorded_at)));
       }
-      await regenerateTranscript(entry.audio_path, modelId);
-      const day = formatLocalDay(new Date(entry.recorded_at));
-      requestedRef.current.add(day);
-      await loadDay(day, true);
-      void refreshDays();
+      for (const day of daysToReload) {
+        requestedRef.current.add(day);
+        await loadDay(day, true);
+      }
+      if (daysToReload.size > 0) {
+        void refreshDays();
+      }
     },
     [loadDay, refreshDays],
   );
@@ -147,7 +154,7 @@ export function TranscriptsPanel({
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
-      onRegenerate={regenerateEntry}
+      onRegenerate={regenerateEntries}
       onReload={reloadDay}
     />
   );

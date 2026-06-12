@@ -7,7 +7,11 @@ import {
   filterTranscriptsBySource,
   nextWeekDisabledReason,
   previousWeekDisabledReason,
+  selectTranscriptPathsAfterShiftClick,
   selectTranscriptPathsForEntries,
+  shouldCopySelectedTranscriptsOnKeydown,
+  transcriptPlaybackStateAfterToggle,
+  transcriptRegenerationTargetsForContextMenu,
   transcriptSourceFilterOptions,
   weekStartFor,
 } from "./TranscriptsView";
@@ -32,7 +36,7 @@ function view(props: {
   sourceLabels?: Record<string, string>;
   models?: Array<{ id: string; display_name: string; status: "ready" | "missing" }>;
   selectedModelId?: string;
-  onRegenerate?: (entry: RecentTranscript) => void;
+  onRegenerate?: (entries: readonly RecentTranscript[], modelId?: string) => void;
   onOpenFolder?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
@@ -150,6 +154,7 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
       entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
+      models: [{ id: "whisper-medium", display_name: "Whisper Medium", status: "ready" }],
       onRegenerate: () => undefined,
     });
 
@@ -290,6 +295,111 @@ describe("TranscriptsView", () => {
     ]);
   });
 
+  it("selects every visible transcript between the anchor and shift-clicked row", () => {
+    const entries = [
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010205.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010206.txt" }),
+    ];
+
+    const selected = selectTranscriptPathsAfterShiftClick(
+      entries,
+      new Set(["/tmp/WakeNote/20260510/010203.txt"]),
+      "/tmp/WakeNote/20260510/010203.txt",
+      "/tmp/WakeNote/20260510/010206.txt",
+    );
+
+    expect([...selected]).toEqual([
+      "/tmp/WakeNote/20260510/010203.txt",
+      "/tmp/WakeNote/20260510/010204.txt",
+      "/tmp/WakeNote/20260510/010205.txt",
+      "/tmp/WakeNote/20260510/010206.txt",
+    ]);
+  });
+
+  it("falls back to the clicked row when shift-click has no visible anchor", () => {
+    const entries = [
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
+    ];
+
+    expect([
+      ...selectTranscriptPathsAfterShiftClick(
+        entries,
+        new Set(),
+        "/tmp/WakeNote/20260510/missing.txt",
+        "/tmp/WakeNote/20260510/010204.txt",
+      ),
+    ]).toEqual(["/tmp/WakeNote/20260510/010204.txt"]);
+  });
+
+  it("uses the selected rows as regeneration context targets when right-clicking selection", () => {
+    const entries = [
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010205.txt" }),
+    ];
+
+    const targets = transcriptRegenerationTargetsForContextMenu(
+      entries[1],
+      entries,
+      new Set([
+        "/tmp/WakeNote/20260510/010203.txt",
+        "/tmp/WakeNote/20260510/010204.txt",
+      ]),
+    );
+
+    expect(targets.map((entry) => entry.transcript_path)).toEqual([
+      "/tmp/WakeNote/20260510/010203.txt",
+      "/tmp/WakeNote/20260510/010204.txt",
+    ]);
+  });
+
+  it("uses only the right-clicked row as regeneration target outside the selection", () => {
+    const entries = [
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
+    ];
+
+    const targets = transcriptRegenerationTargetsForContextMenu(
+      entries[1],
+      entries,
+      new Set(["/tmp/WakeNote/20260510/010203.txt"]),
+    );
+
+    expect(targets.map((entry) => entry.transcript_path)).toEqual([
+      "/tmp/WakeNote/20260510/010204.txt",
+    ]);
+  });
+
+  it("handles command-copy only while transcript rows are selected", () => {
+    expect(
+      shouldCopySelectedTranscriptsOnKeydown(
+        { key: "c", metaKey: true, ctrlKey: false, altKey: false },
+        2,
+      ),
+    ).toBe(true);
+    expect(
+      shouldCopySelectedTranscriptsOnKeydown(
+        { key: "C", metaKey: false, ctrlKey: true, altKey: false },
+        1,
+      ),
+    ).toBe(true);
+    expect(
+      shouldCopySelectedTranscriptsOnKeydown(
+        { key: "c", metaKey: true, ctrlKey: false, altKey: false },
+        0,
+      ),
+    ).toBe(false);
+    expect(
+      shouldCopySelectedTranscriptsOnKeydown(
+        { key: "v", metaKey: true, ctrlKey: false, altKey: false },
+        1,
+      ),
+    ).toBe(false);
+  });
+
   it("builds source filter options from microphone, built-in, and custom sources", () => {
     const options = transcriptSourceFilterOptions(
       [
@@ -329,7 +439,23 @@ describe("TranscriptsView", () => {
     expect(markup).toContain('aria-label="Open recording folder for 2026-05-10 01:02:03"');
   });
 
-  it("renders a regeneration model selector for usable models", () => {
+  it("starts a different playable transcript immediately instead of pausing current playback", () => {
+    expect(
+      transcriptPlaybackStateAfterToggle(
+        { playingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt", playbackPaused: false },
+        transcript({
+          transcript_path: "/tmp/WakeNote/20260510/020304.txt",
+          audio_path: "/tmp/WakeNote/20260510/020304.m4a",
+        }),
+      ),
+    ).toEqual({
+      playingTranscriptPath: "/tmp/WakeNote/20260510/020304.txt",
+      playbackPaused: false,
+      shouldChangeActiveTranscript: true,
+    });
+  });
+
+  it("keeps regeneration controls out of the inline transcript list", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
@@ -343,9 +469,10 @@ describe("TranscriptsView", () => {
       onRegenerate: () => undefined,
     });
 
-    expect(markup).toContain("Regenerate with");
-    expect(markup).toContain("Whisper Medium");
-    expect(markup).toContain("Whisper Tiny");
+    expect(markup).not.toContain("transcript-regenerate-model");
+    expect(markup).not.toContain("transcript-entry__regenerate");
+    expect(markup).not.toContain("Regenerate with");
+    expect(markup).not.toContain("Whisper Medium");
     expect(markup).not.toContain("Whisper Large");
   });
 

@@ -47,9 +47,35 @@ interface DragState {
 }
 
 interface TranscriptContextMenu {
-  entry: RecentTranscript;
+  targets: RecentTranscript[];
   x: number;
   y: number;
+}
+
+export interface TranscriptPlaybackState {
+  playingTranscriptPath: string | null;
+  playbackPaused: boolean;
+}
+
+export function transcriptPlaybackStateAfterToggle(
+  state: TranscriptPlaybackState,
+  entry: RecentTranscript,
+): TranscriptPlaybackState & { shouldChangeActiveTranscript: boolean } {
+  if (!entry.audio_path) {
+    return { ...state, shouldChangeActiveTranscript: false };
+  }
+  if (state.playingTranscriptPath === entry.transcript_path) {
+    return {
+      playingTranscriptPath: state.playingTranscriptPath,
+      playbackPaused: !state.playbackPaused,
+      shouldChangeActiveTranscript: false,
+    };
+  }
+  return {
+    playingTranscriptPath: entry.transcript_path,
+    playbackPaused: false,
+    shouldChangeActiveTranscript: true,
+  };
 }
 
 const KOREAN_DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
@@ -76,7 +102,10 @@ export function TranscriptsView({
   models?: readonly RegenerationModel[];
   selectedModelId?: string;
   onActiveDayChange?: (day: string) => void;
-  onRegenerate?: (entry: RecentTranscript, modelId?: string) => void | Promise<void>;
+  onRegenerate?: (
+    entries: readonly RecentTranscript[],
+    modelId?: string,
+  ) => void | Promise<void>;
   onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
   onReload?: (day: string) => void;
   initialPlayingTranscriptPath?: string | null;
@@ -107,11 +136,11 @@ export function TranscriptsView({
   );
   const [playbackPaused, setPlaybackPaused] = useState(false);
   const [sourceFilter, setSourceFilter] = useState(initialSourceFilter);
-  const [regenerationModelId, setRegenerationModelId] = useState(selectedModelId);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const [copyToast, setCopyToast] = useState<CopyToastKind | null>(null);
   const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const lastSelectionAnchorRef = useRef<string | null>(null);
 
   const effectiveActiveDay = activeDay ?? todayDay;
 
@@ -141,18 +170,8 @@ export function TranscriptsView({
   );
 
   const usableRegenerationModels = useMemo(
-    () => regenerationModelOptions(models),
-    [models],
-  );
-
-  const selectedRegenerationModelId = usableRegenerationModels.some(
-    (model) => model.id === regenerationModelId,
-  )
-    ? regenerationModelId
-    : selectedModelId;
-
-  const selectedRegenerationModel = usableRegenerationModels.find(
-    (model) => model.id === selectedRegenerationModelId,
+    () => orderRegenerationModelOptions(regenerationModelOptions(models), selectedModelId),
+    [models, selectedModelId],
   );
 
   const playingTranscript = useMemo(() => {
@@ -177,6 +196,7 @@ export function TranscriptsView({
 
   useEffect(() => {
     setSelectedPaths(new Set());
+    lastSelectionAnchorRef.current = null;
     setCopyToast(null);
   }, [effectiveActiveDay]);
 
@@ -188,6 +208,12 @@ export function TranscriptsView({
 
   useEffect(() => {
     const visiblePaths = new Set(filteredEntries.map((entry) => entry.transcript_path));
+    if (
+      lastSelectionAnchorRef.current &&
+      !visiblePaths.has(lastSelectionAnchorRef.current)
+    ) {
+      lastSelectionAnchorRef.current = null;
+    }
     setSelectedPaths((prev) => {
       let changed = false;
       const next = new Set<string>();
@@ -201,22 +227,6 @@ export function TranscriptsView({
       return changed ? next : prev;
     });
   }, [filteredEntries]);
-
-  useEffect(() => {
-    if (usableRegenerationModels.length === 0) {
-      if (regenerationModelId !== "") {
-        setRegenerationModelId("");
-      }
-      return;
-    }
-    if (usableRegenerationModels.some((model) => model.id === regenerationModelId)) {
-      return;
-    }
-    const fallback =
-      usableRegenerationModels.find((model) => model.id === selectedModelId)?.id ??
-      usableRegenerationModels[0].id;
-    setRegenerationModelId(fallback);
-  }, [regenerationModelId, selectedModelId, usableRegenerationModels]);
 
   useEffect(() => {
     const endDrag = () => {
@@ -250,7 +260,19 @@ export function TranscriptsView({
     };
   }, [contextMenu]);
 
-  const beginDragSelection = useCallback((path: string) => {
+  const beginDragSelection = useCallback((path: string, extendRange = false) => {
+    if (extendRange) {
+      dragStateRef.current = null;
+      const anchorPath = lastSelectionAnchorRef.current;
+      if (!anchorPath) {
+        lastSelectionAnchorRef.current = path;
+      }
+      setSelectedPaths((prev) =>
+        selectTranscriptPathsAfterShiftClick(filteredEntries, prev, anchorPath, path),
+      );
+      return;
+    }
+    lastSelectionAnchorRef.current = path;
     setSelectedPaths((prev) => {
       const next = new Set(prev);
       const mode: DragMode = prev.has(path) ? "deselect" : "select";
@@ -262,7 +284,7 @@ export function TranscriptsView({
       dragStateRef.current = { mode, visited: new Set([path]) };
       return next;
     });
-  }, []);
+  }, [filteredEntries]);
 
   const continueDragSelection = useCallback((path: string) => {
     const drag = dragStateRef.current;
@@ -291,6 +313,7 @@ export function TranscriptsView({
       await navigator.clipboard.writeText(text);
       setCopyToast(kind);
       setSelectedPaths(new Set());
+      lastSelectionAnchorRef.current = null;
       window.setTimeout(() => setCopyToast(null), 1500);
     } catch {
       // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
@@ -310,47 +333,70 @@ export function TranscriptsView({
 
   const handleClearSelection = useCallback(() => {
     setSelectedPaths(new Set());
+    lastSelectionAnchorRef.current = null;
   }, []);
 
   const handleSelectAllVisible = useCallback(() => {
     setSelectedPaths(selectTranscriptPathsForEntries(filteredEntries));
+    lastSelectionAnchorRef.current = filteredEntries[0]?.transcript_path ?? null;
   }, [filteredEntries]);
 
   const handleTogglePlayback = useCallback(
     (entry: RecentTranscript) => {
-      if (!entry.audio_path) {
+      const next = transcriptPlaybackStateAfterToggle(
+        { playingTranscriptPath, playbackPaused },
+        entry,
+      );
+      if (
+        next.playingTranscriptPath === playingTranscriptPath &&
+        next.playbackPaused === playbackPaused
+      ) {
         return;
       }
-      if (playingTranscriptPath === entry.transcript_path) {
-        setPlaybackPaused((paused) => !paused);
-        return;
-      }
-      setPlayingTranscriptPath(entry.transcript_path);
-      setPlaybackPaused(false);
+      setPlayingTranscriptPath(next.playingTranscriptPath);
+      setPlaybackPaused(next.playbackPaused);
     },
-    [playingTranscriptPath],
+    [playingTranscriptPath, playbackPaused],
   );
 
-  const openContextMenu = useCallback((entry: RecentTranscript, x: number, y: number) => {
-    const menuWidth = 220;
-    const menuHeight = 44;
-    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
-    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
-    setContextMenu({
-      entry,
-      x: Math.min(Math.max(8, x), maxX),
-      y: Math.min(Math.max(8, y), maxY),
-    });
-  }, []);
+  const openContextMenu = useCallback(
+    (entry: RecentTranscript, x: number, y: number) => {
+      if (!onRegenerate || usableRegenerationModels.length === 0) {
+        return;
+      }
+      const targets = transcriptRegenerationTargetsForContextMenu(
+        entry,
+        filteredEntries,
+        selectedPaths,
+      );
+      if (targets.length === 0) {
+        return;
+      }
+      if (!selectedPaths.has(entry.transcript_path)) {
+        setSelectedPaths(new Set([entry.transcript_path]));
+        lastSelectionAnchorRef.current = entry.transcript_path;
+      }
+      const menuWidth = 424;
+      const menuHeight = 44;
+      const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+      const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+      setContextMenu({
+        targets,
+        x: Math.min(Math.max(8, x), maxX),
+        y: Math.min(Math.max(8, y), maxY),
+      });
+    },
+    [filteredEntries, onRegenerate, selectedPaths, usableRegenerationModels.length],
+  );
 
-  const handleRegenerateFromMenu = useCallback(() => {
+  const handleRegenerateFromMenu = useCallback((modelId: string) => {
     if (!contextMenu) {
       return;
     }
-    const entry = contextMenu.entry;
+    const targets = contextMenu.targets;
     setContextMenu(null);
-    void onRegenerate?.(entry, selectedRegenerationModel?.id);
-  }, [contextMenu, onRegenerate, selectedRegenerationModel?.id]);
+    void onRegenerate?.(targets, modelId);
+  }, [contextMenu, onRegenerate]);
 
   const selectionCount = filteredEntries.filter((entry) =>
     selectedPaths.has(entry.transcript_path),
@@ -361,6 +407,26 @@ export function TranscriptsView({
   const hasEntries = filteredEntries.length > 0;
   const hasAnyEntries = activeEntries.length > 0;
   const isLoadingActive = loadingDay === effectiveActiveDay;
+  const canRegenerateFromContext =
+    Boolean(onRegenerate) && usableRegenerationModels.length > 0;
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!shouldCopySelectedTranscriptsOnKeydown(event, selectionCount)) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (isKeyboardCopyIgnoredTarget(target)) {
+        return;
+      }
+      event.preventDefault();
+      handleCopySelected();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleCopySelected, selectionCount]);
 
   // The calendar count (size-based) can exceed the entries we managed to load
   // when some of the day's sidecars are iCloud-evicted (skipped on the
@@ -376,9 +442,6 @@ export function TranscriptsView({
       ? `${activeEntries.length} transcript${activeEntries.length === 1 ? "" : "s"}`
       : `${filteredEntries.length} / ${activeEntries.length} transcripts`;
   const showSourceFilter = sourceFilterOptions.length > 2;
-  const showRegenerationModelSelect =
-    Boolean(onRegenerate) && usableRegenerationModels.length > 1;
-
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const handlePrevWeek = () => setViewWeekStart(addDays(effectiveWeekStart, -7));
   const handleNextWeek = () => setViewWeekStart(addDays(effectiveWeekStart, 7));
@@ -413,22 +476,6 @@ export function TranscriptsView({
                   {sourceFilterOptions.map((option) => (
                     <option key={option.id} value={option.id}>
                       {option.label} ({option.count})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {showRegenerationModelSelect ? (
-              <label className="transcript-regenerate-model">
-                <span>Regenerate with</span>
-                <select
-                  className="ui-select"
-                  value={selectedRegenerationModel?.id ?? usableRegenerationModels[0]?.id}
-                  onChange={(event) => setRegenerationModelId(event.currentTarget.value)}
-                >
-                  {usableRegenerationModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {formatModelLabel(model.id, usableRegenerationModels)}
                     </option>
                   ))}
                 </select>
@@ -530,12 +577,7 @@ export function TranscriptsView({
                 onPlay={() => handleTogglePlayback(entry)}
                 onPointerDownSelect={beginDragSelection}
                 onPointerEnterSelect={continueDragSelection}
-                onRegenerate={
-                  onRegenerate
-                    ? (targetEntry) =>
-                        onRegenerate(targetEntry, selectedRegenerationModel?.id)
-                    : undefined
-                }
+                canOpenRegenerationMenu={canRegenerateFromContext}
               />
             ))}
           </div>
@@ -567,15 +609,28 @@ export function TranscriptsView({
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <button onClick={handleRegenerateFromMenu} role="menuitem" type="button">
+          <div
+            aria-haspopup="menu"
+            className="transcript-context-menu__item transcript-context-menu__item--has-submenu"
+            role="menuitem"
+            tabIndex={0}
+          >
             <RotateCw aria-hidden="true" />
-            {selectedRegenerationModel
-              ? `Regenerate with ${formatModelLabel(
-                  selectedRegenerationModel.id,
-                  usableRegenerationModels,
-                )}`
-              : "Regenerate"}
-          </button>
+            <span className="transcript-context-menu__label">Regenerate with...</span>
+            <ChevronRight aria-hidden="true" className="transcript-context-menu__chevron" />
+            <div className="transcript-context-menu__submenu" role="menu">
+              {usableRegenerationModels.map((model) => (
+                <button
+                  key={model.id}
+                  onClick={() => handleRegenerateFromMenu(model.id)}
+                  role="menuitem"
+                  type="button"
+                >
+                  {formatModelLabel(model.id, usableRegenerationModels)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -583,6 +638,7 @@ export function TranscriptsView({
 }
 
 function TranscriptEntryRow({
+  canOpenRegenerationMenu,
   entry,
   isPlaybackActive,
   isPlaying,
@@ -593,8 +649,8 @@ function TranscriptEntryRow({
   onPlay,
   onPointerDownSelect,
   onPointerEnterSelect,
-  onRegenerate,
 }: {
+  canOpenRegenerationMenu: boolean;
   entry: RecentTranscript;
   isPlaybackActive: boolean;
   isPlaying: boolean;
@@ -603,12 +659,11 @@ function TranscriptEntryRow({
   onOpenContextMenu: (entry: RecentTranscript, x: number, y: number) => void;
   onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
   onPlay: () => void;
-  onPointerDownSelect: (path: string) => void;
+  onPointerDownSelect: (path: string, extendRange?: boolean) => void;
   onPointerEnterSelect: (path: string) => void;
-  onRegenerate?: (entry: RecentTranscript) => void | Promise<void>;
 }) {
   const timestamp = formatLocalTimestamp(entry.recorded_at);
-  const regenerateAvailable = Boolean(entry.audio_path && onRegenerate);
+  const regenerateAvailable = Boolean(entry.audio_path && canOpenRegenerationMenu);
   const folderAvailable = Boolean(onOpenFolder);
   const playLabel = isPlaying
     ? timestamp
@@ -626,7 +681,7 @@ function TranscriptEntryRow({
     const target = event.target as HTMLElement | null;
     if (target?.closest("a, button")) return;
     event.preventDefault();
-    onPointerDownSelect(entry.transcript_path);
+    onPointerDownSelect(entry.transcript_path, event.shiftKey);
   };
 
   const handlePointerEnter = () => {
@@ -696,23 +751,6 @@ function TranscriptEntryRow({
             variant="ghost"
           >
             <FolderOpen />
-          </Button>
-        ) : null}
-        {regenerateAvailable ? (
-          <Button
-            aria-label={
-              timestamp
-                ? `Regenerate transcript from ${timestamp}`
-                : "Regenerate transcript"
-            }
-            className="transcript-entry__regenerate"
-            onClick={() => void onRegenerate?.(entry)}
-            size="icon"
-            title="Regenerate transcript"
-            type="button"
-            variant="ghost"
-          >
-            <RotateCw />
           </Button>
         ) : null}
       </div>
@@ -791,6 +829,69 @@ export function selectTranscriptPathsForEntries(
   return new Set(entries.map((entry) => entry.transcript_path));
 }
 
+export function selectTranscriptPathsAfterShiftClick(
+  entries: readonly RecentTranscript[],
+  selectedPaths: ReadonlySet<string>,
+  anchorPath: string | null,
+  targetPath: string,
+): Set<string> {
+  const next = new Set(selectedPaths);
+  const targetIndex = entries.findIndex((entry) => entry.transcript_path === targetPath);
+  if (targetIndex < 0) {
+    return next;
+  }
+
+  const anchorIndex = anchorPath
+    ? entries.findIndex((entry) => entry.transcript_path === anchorPath)
+    : -1;
+  if (anchorIndex < 0) {
+    next.add(targetPath);
+    return next;
+  }
+
+  const start = Math.min(anchorIndex, targetIndex);
+  const end = Math.max(anchorIndex, targetIndex);
+  for (let index = start; index <= end; index += 1) {
+    next.add(entries[index].transcript_path);
+  }
+  return next;
+}
+
+export function transcriptRegenerationTargetsForContextMenu(
+  clickedEntry: RecentTranscript,
+  entries: readonly RecentTranscript[],
+  selectedPaths: ReadonlySet<string>,
+): RecentTranscript[] {
+  if (selectedPaths.has(clickedEntry.transcript_path)) {
+    const selectedEntries = entries.filter(
+      (entry) => selectedPaths.has(entry.transcript_path) && entry.audio_path,
+    );
+    if (selectedEntries.length > 0) {
+      return selectedEntries;
+    }
+  }
+  return clickedEntry.audio_path ? [clickedEntry] : [];
+}
+
+export function shouldCopySelectedTranscriptsOnKeydown(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey">,
+  selectedCount: number,
+): boolean {
+  return (
+    selectedCount > 0 &&
+    !event.altKey &&
+    (event.metaKey || event.ctrlKey) &&
+    event.key.toLowerCase() === "c"
+  );
+}
+
+function isKeyboardCopyIgnoredTarget(target: HTMLElement | null): boolean {
+  if (!target) {
+    return false;
+  }
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
 function transcriptSourceFilterKey(entry: RecentTranscript): string {
   if ((entry.source ?? "microphone") !== "system") {
     return "microphone";
@@ -804,6 +905,21 @@ function regenerationModelOptions(
   return models.filter((model) =>
     ["ready", "installed", "unloaded"].includes(model.status),
   );
+}
+
+function orderRegenerationModelOptions(
+  models: RegenerationModel[],
+  selectedModelId: string,
+): RegenerationModel[] {
+  if (!selectedModelId) {
+    return models;
+  }
+  const selectedIndex = models.findIndex((model) => model.id === selectedModelId);
+  if (selectedIndex <= 0) {
+    return models;
+  }
+  const selected = models[selectedIndex];
+  return [selected, ...models.slice(0, selectedIndex), ...models.slice(selectedIndex + 1)];
 }
 
 function transcriptSourcePresentation(
