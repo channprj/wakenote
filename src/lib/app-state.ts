@@ -158,6 +158,7 @@ export function defaultSettings(): AppSettings {
     launch_at_login: false,
     start_live_input_on_launch: true,
     auto_transcript_input_enabled: false,
+    auto_transcript_input_trailing_space: false,
     show_dock_icon: true,
     show_tray_icon: true,
     tray_left_click_action: "toggle_pause",

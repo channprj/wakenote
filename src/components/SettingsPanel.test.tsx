@@ -323,6 +323,26 @@ describe("settings panel", () => {
     expect(autoInputSwitch).toContain('aria-checked="true"');
   });
 
+  it("enables trailing-space auto-type option only when auto-type is on", () => {
+    const disabledSnapshot = mockSnapshot();
+    disabledSnapshot.settings.auto_transcript_input_enabled = false;
+    disabledSnapshot.settings.auto_transcript_input_trailing_space = true;
+
+    const disabledMarkup = renderSettingsPanel(disabledSnapshot);
+    const disabledSwitch = switchTag(disabledMarkup, "Add trailing space after auto-type");
+
+    expect(disabledSwitch).toContain('aria-checked="true"');
+    expect(isDisabled(disabledSwitch)).toBe(true);
+
+    const enabledSnapshot = mockSnapshot();
+    enabledSnapshot.settings.auto_transcript_input_enabled = true;
+
+    const enabledMarkup = renderSettingsPanel(enabledSnapshot);
+    const enabledSwitch = switchTag(enabledMarkup, "Add trailing space after auto-type");
+
+    expect(isDisabled(enabledSwitch)).toBe(false);
+  });
+
   it("shows VAD gate as unavailable and forced off until VAD is implemented", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.vad_enabled = true;

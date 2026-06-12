@@ -576,6 +576,19 @@ export function SettingsPanel({
           title="When a live transcript finishes, paste it into the currently focused text cursor."
         />
         <ToggleRow
+          label="Add trailing space after auto-type"
+          checked={settings.auto_transcript_input_trailing_space}
+          disabled={!settings.auto_transcript_input_enabled}
+          onChange={(auto_transcript_input_trailing_space) =>
+            onPatch({ auto_transcript_input_trailing_space })
+          }
+          title={
+            settings.auto_transcript_input_enabled
+              ? "Append one space after each auto-typed transcript."
+              : "Enable auto-type before adding a trailing space."
+          }
+        />
+        <ToggleRow
           label="Hide low-confidence transcripts"
           checked={settings.suppress_low_confidence_transcripts}
           onChange={(suppress_low_confidence_transcripts) =>

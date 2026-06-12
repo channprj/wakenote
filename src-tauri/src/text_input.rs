@@ -4,6 +4,18 @@ pub fn should_type_transcript_text(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+pub fn auto_transcript_input_text(text: &str, trailing_space: bool) -> Option<String> {
+    if !should_type_transcript_text(text) {
+        return None;
+    }
+
+    let mut text = text.trim_end().to_string();
+    if trailing_space {
+        text.push(' ');
+    }
+    Some(text)
+}
+
 pub fn auto_transcript_input_should_type(
     enabled: bool,
     live_chunk_id: Option<u64>,
@@ -51,11 +63,11 @@ pub fn macos_auto_type_script() -> &'static str {
 set typedText to item 1 of argv
 set previousClipboard to the clipboard
 set the clipboard to typedText
-delay 0.05
+delay 0.01
 tell application "System Events"
   keystroke "v" using command down
 end tell
-delay 0.05
+delay 0.01
 set the clipboard to previousClipboard
 end run"#
 }

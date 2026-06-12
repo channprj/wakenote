@@ -78,6 +78,7 @@ export interface AppSettings {
   launch_at_login: boolean;
   start_live_input_on_launch: boolean;
   auto_transcript_input_enabled: boolean;
+  auto_transcript_input_trailing_space: boolean;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;

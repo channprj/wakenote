@@ -1832,15 +1832,20 @@ fn emit_outcome_to_frontend(
                 chunk_id,
                 &text,
             ) {
-                let text_for_input = text.clone();
+                let text_for_input = wakenote::text_input::auto_transcript_input_text(
+                    &text,
+                    settings_for_log.auto_transcript_input_trailing_space,
+                );
                 thread::spawn(move || {
-                    if let Err(error) =
-                        wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
-                    {
-                        append_runtime_debug_log(
-                            &settings_for_log,
-                            format!("[auto-input] failed to type transcript: {error}"),
-                        );
+                    if let Some(text_for_input) = text_for_input {
+                        if let Err(error) =
+                            wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
+                        {
+                            append_runtime_debug_log(
+                                &settings_for_log,
+                                format!("[auto-input] failed to type transcript: {error}"),
+                            );
+                        }
                     }
                 });
             }

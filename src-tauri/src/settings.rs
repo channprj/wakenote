@@ -133,6 +133,8 @@ pub struct AppSettings {
     pub start_live_input_on_launch: bool,
     #[serde(default)]
     pub auto_transcript_input_enabled: bool,
+    #[serde(default)]
+    pub auto_transcript_input_trailing_space: bool,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     #[serde(default = "default_tray_left_click_action")]
@@ -180,6 +182,7 @@ pub struct SettingsPatch {
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
     pub auto_transcript_input_enabled: Option<bool>,
+    pub auto_transcript_input_trailing_space: Option<bool>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
@@ -575,6 +578,9 @@ impl AppSettings {
         if let Some(value) = patch.auto_transcript_input_enabled {
             self.auto_transcript_input_enabled = value;
         }
+        if let Some(value) = patch.auto_transcript_input_trailing_space {
+            self.auto_transcript_input_trailing_space = value;
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
@@ -642,6 +648,7 @@ impl Default for AppSettings {
             launch_at_login: false,
             start_live_input_on_launch: true,
             auto_transcript_input_enabled: false,
+            auto_transcript_input_trailing_space: false,
             show_dock_icon: true,
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
@@ -713,13 +720,16 @@ mod tests {
     fn patch_sets_automatic_transcript_input_mode() {
         let mut settings = AppSettings::default();
         assert!(!settings.auto_transcript_input_enabled);
+        assert!(!settings.auto_transcript_input_trailing_space);
 
         settings.apply_patch(SettingsPatch {
             auto_transcript_input_enabled: Some(true),
+            auto_transcript_input_trailing_space: Some(true),
             ..Default::default()
         });
 
         assert!(settings.auto_transcript_input_enabled);
+        assert!(settings.auto_transcript_input_trailing_space);
     }
 
     #[test]
@@ -856,6 +866,7 @@ mod tests {
         assert_eq!(settings.audio_bitrate_kbps, 96);
         assert_eq!(settings.lead_in_padding_ms, 300);
         assert!(!settings.system_audio_enabled);
+        assert!(!settings.auto_transcript_input_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
     }
