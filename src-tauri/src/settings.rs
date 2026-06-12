@@ -705,12 +705,17 @@ mod tests {
                     source_id: "zoom".into(),
                     auto_prompt: true,
                 },
+                SourceAutoPromptEntry {
+                    source_id: "unknown".into(),
+                    auto_prompt: true,
+                },
             ]),
             ..Default::default()
         });
-        assert_eq!(settings.source_auto_prompt.len(), 1);
+        assert_eq!(settings.source_auto_prompt.len(), 2);
         assert!(resolve_auto_prompt(&settings, "youtube"));
-        assert!(!resolve_auto_prompt(&settings, "zoom"));
+        assert!(resolve_auto_prompt(&settings, "zoom"));
+        assert!(!resolve_auto_prompt(&settings, "unknown"));
     }
 
     #[test]
@@ -737,7 +742,7 @@ mod tests {
         assert_eq!(
             settings.custom_sources,
             vec![CustomSourceEntry {
-                id: "zoom".into(),
+                id: "custom-zoom".into(),
                 label: "Zoom".into(),
                 title_patterns: vec!["Zoom Meeting".into()],
                 auto_prompt: true,

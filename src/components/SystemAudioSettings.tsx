@@ -18,13 +18,23 @@ const BUILTIN_SOURCES: ReadonlyArray<RecognizedSourceInfo> = [
   {
     id: "meet",
     label: "Google Meet",
+    description: "Google Meet or browser tabs with Meet in the title",
     auto_prompt: true,
     title_patterns: ["google meet", "meet - "],
     custom: false,
   },
   {
+    id: "zoom",
+    label: "Zoom",
+    description: "Zoom desktop app or windows titled Zoom Meeting",
+    auto_prompt: true,
+    title_patterns: ["zoom", "zoom meeting"],
+    custom: false,
+  },
+  {
     id: "youtube",
     label: "YouTube",
+    description: "YouTube tabs, videos, and YouTube Music windows",
     auto_prompt: true,
     title_patterns: ["- youtube", "youtube"],
     custom: false,
@@ -206,7 +216,7 @@ export function SystemAudioSettings({
           <div className="system-audio-source" key={source.id}>
             <div className="system-audio-source__main">
               <strong>{source.label}</strong>
-              <span>{source.title_patterns.join(", ")}</span>
+              <span>{source.description}</span>
             </div>
             <Switch
               label={`Auto capture ${source.label}`}
@@ -225,12 +235,11 @@ export function SystemAudioSettings({
             <input
               aria-label="Custom source"
               className="ui-input"
-              placeholder="Spotify or Zoom Meeting"
+              placeholder="Google Meet, Meet, Zoom Meeting"
               value={customSourceText(source)}
               onChange={(event) =>
                 setCustomSource(source.id, {
-                  label: event.currentTarget.value,
-                  title_patterns: [event.currentTarget.value],
+                  ...parseCustomSourceInput(event.currentTarget.value),
                 })
               }
               onBlur={commitCustomSources}
@@ -275,6 +284,7 @@ function recognizedSourcesFromSettings(settings: AppSettings): RecognizedSourceI
       return {
         id: source.id,
         label: source.label,
+        description: source.title_patterns.join(", "),
         title_patterns: source.title_patterns,
         auto_prompt: override ? override.auto_prompt : source.auto_prompt,
         custom: true,
@@ -283,8 +293,21 @@ function recognizedSourcesFromSettings(settings: AppSettings): RecognizedSourceI
   ];
 }
 
-function customSourceText(source: CustomSourceEntry): string {
-  return source.title_patterns[0] ?? source.label;
+export function customSourceText(source: CustomSourceEntry): string {
+  return source.title_patterns.length > 0 ? source.title_patterns.join(", ") : source.label;
+}
+
+export function parseCustomSourceInput(
+  value: string,
+): Pick<CustomSourceEntry, "label" | "title_patterns"> {
+  const titlePatterns = value
+    .split(",")
+    .map((pattern) => pattern.trim())
+    .filter((pattern) => pattern.length > 0);
+  return {
+    label: titlePatterns[0] ?? value.trim(),
+    title_patterns: titlePatterns,
+  };
 }
 
 function nextCustomSourceId(sources: CustomSourceEntry[]): string {

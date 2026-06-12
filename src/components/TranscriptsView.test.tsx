@@ -4,8 +4,11 @@ import type { RecentTranscript, TranscriptDay } from "../lib/types";
 import {
   TranscriptsView,
   addDays,
+  filterTranscriptsBySource,
   nextWeekDisabledReason,
   previousWeekDisabledReason,
+  selectTranscriptPathsForEntries,
+  transcriptSourceFilterOptions,
   weekStartFor,
 } from "./TranscriptsView";
 
@@ -25,8 +28,12 @@ function view(props: {
   entriesByDay?: Map<string, RecentTranscript[]>;
   loadingDay?: string | null;
   initialPlayingTranscriptPath?: string | null;
+  initialSourceFilter?: string;
   sourceLabels?: Record<string, string>;
+  models?: Array<{ id: string; display_name: string; status: "ready" | "missing" }>;
+  selectedModelId?: string;
   onRegenerate?: (entry: RecentTranscript) => void;
+  onOpenFolder?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
     <TranscriptsView
@@ -34,8 +41,12 @@ function view(props: {
       entriesByDay={props.entriesByDay ?? new Map()}
       loadingDay={props.loadingDay ?? null}
       initialPlayingTranscriptPath={props.initialPlayingTranscriptPath}
+      initialSourceFilter={props.initialSourceFilter}
       sourceLabels={props.sourceLabels}
+      models={props.models}
+      selectedModelId={props.selectedModelId}
       onRegenerate={props.onRegenerate}
+      onOpenFolder={props.onOpenFolder}
       today={props.today}
     />,
   );
@@ -211,6 +222,131 @@ describe("TranscriptsView", () => {
 
     expect(markup).toContain("Spotify");
     expect(markup).not.toContain("Custom Source 2");
+  });
+
+  it("filters the visible transcript rows by source", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 3 }],
+      initialSourceFilter: "system:youtube",
+      entriesByDay: new Map([
+        ["2026-05-10", [
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+            source: "microphone",
+            source_label: null,
+            text: "mic transcript",
+          }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+            recorded_at: "2026-05-10T01:02:04+09:00",
+            source: "system",
+            source_label: "youtube",
+            text: "youtube transcript",
+          }),
+          transcript({
+            transcript_path: "/tmp/WakeNote/20260510/010205-meet.txt",
+            recorded_at: "2026-05-10T01:02:05+09:00",
+            source: "system",
+            source_label: "meet",
+            text: "meet transcript",
+          }),
+        ]],
+      ]),
+    });
+
+    expect(markup).toContain("Source");
+    expect(markup).toContain("YouTube (1)");
+    expect(markup).toContain("1 / 3 transcripts");
+    expect(markup).toContain("youtube transcript");
+    expect(markup).not.toContain("mic transcript");
+    expect(markup).not.toContain("meet transcript");
+  });
+
+  it("uses the filtered rows when selecting every visible transcript", () => {
+    const entries = [
+      transcript({
+        transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+        source: "microphone",
+      }),
+      transcript({
+        transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+        source: "system",
+        source_label: "youtube",
+      }),
+      transcript({
+        transcript_path: "/tmp/WakeNote/20260510/010205-youtube.txt",
+        source: "system",
+        source_label: "youtube",
+      }),
+    ];
+
+    const visible = filterTranscriptsBySource(entries, "system:youtube");
+    const selected = selectTranscriptPathsForEntries(visible);
+
+    expect([...selected]).toEqual([
+      "/tmp/WakeNote/20260510/010204-youtube.txt",
+      "/tmp/WakeNote/20260510/010205-youtube.txt",
+    ]);
+  });
+
+  it("builds source filter options from microphone, built-in, and custom sources", () => {
+    const options = transcriptSourceFilterOptions(
+      [
+        transcript({ source: "microphone", source_label: null }),
+        transcript({
+          transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+          source: "system",
+          source_label: "youtube",
+        }),
+        transcript({
+          transcript_path: "/tmp/WakeNote/20260510/010205-custom-source-2.txt",
+          source: "system",
+          source_label: "custom-source-2",
+        }),
+      ],
+      { "custom-source-2": "Spotify" },
+    );
+
+    expect(options).toEqual([
+      { id: "all", label: "All sources", count: 3 },
+      { id: "microphone", label: "Mic", count: 1 },
+      { id: "system:youtube", label: "YouTube", count: 1 },
+      { id: "system:custom-source-2", label: "Spotify", count: 1 },
+    ]);
+  });
+
+  it("shows pause and folder controls for the active playable row", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [transcript({ text: "playable transcript" })]]]),
+      initialPlayingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
+      onOpenFolder: () => undefined,
+    });
+
+    expect(markup).toContain('aria-label="Pause recording from 2026-05-10 01:02:03"');
+    expect(markup).toContain('aria-label="Open recording folder for 2026-05-10 01:02:03"');
+  });
+
+  it("renders a regeneration model selector for usable models", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
+      models: [
+        { id: "whisper-medium", display_name: "Whisper Medium", status: "ready" },
+        { id: "whisper-tiny", display_name: "Whisper Tiny", status: "ready" },
+        { id: "whisper-large", display_name: "Whisper Large", status: "missing" },
+      ],
+      selectedModelId: "whisper-medium",
+      onRegenerate: () => undefined,
+    });
+
+    expect(markup).toContain("Regenerate with");
+    expect(markup).toContain("Whisper Medium");
+    expect(markup).toContain("Whisper Tiny");
+    expect(markup).not.toContain("Whisper Large");
   });
 
   it("always renders a reload button and shows copy actions only when the day has entries", () => {

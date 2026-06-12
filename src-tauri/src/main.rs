@@ -22,10 +22,10 @@ use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
     MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState, UploadedAudio,
-    main_window_close_action, microphone_devices_from_input_devices, pinned_device_mismatch,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
-    with_live_runtime_warning,
+    main_window_close_action, microphone_devices_from_input_devices,
+    open_containing_folder_request, pinned_device_mismatch, reveal_save_folder_request,
+    tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::debug_log::append_debug_log;
 use wakenote::live_capture::{
@@ -202,6 +202,7 @@ struct SourceCaptureErrorPayload {
 struct RecognizedSourceInfo {
     id: String,
     label: String,
+    description: String,
     auto_prompt: bool,
     title_patterns: Vec<String>,
     custom: bool,
@@ -224,6 +225,7 @@ fn recognized_source_infos(settings: &AppSettings) -> Vec<RecognizedSourceInfo> 
             auto_prompt: resolve_auto_prompt(settings, &source.id),
             id: source.id,
             label: source.label,
+            description: source.description,
             title_patterns: source.title_patterns,
             custom: source.custom,
         })
@@ -778,10 +780,11 @@ fn regenerate_transcript(
     state: State<'_, BackendState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     audio_path: String,
+    model_id: Option<String>,
 ) -> Result<QueueSnapshot, String> {
     let snapshot = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
-        backend.regenerate_transcript(audio_path)?
+        backend.regenerate_transcript(audio_path, model_id)?
     };
     kick_transcription_worker_if_needed(
         app,
@@ -789,6 +792,16 @@ fn regenerate_transcript(
         transcription_state.inner().clone(),
     );
     Ok(snapshot)
+}
+
+#[tauri::command]
+fn open_transcript_folder(path: String) -> Result<(), String> {
+    let request = open_containing_folder_request(PathBuf::from(path))?;
+    Command::new(request.program)
+        .arg(request.path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2461,6 +2474,7 @@ fn main() {
             enqueue_backlog,
             retry_job,
             regenerate_transcript,
+            open_transcript_folder,
             skip_job,
             cancel_current_transcription,
             cancel_current_operation,
@@ -2755,14 +2769,22 @@ mod tests {
     fn recognized_source_infos_use_default_auto_prompt() {
         let settings = AppSettings::default();
         let infos = recognized_source_infos(&settings);
-        assert_eq!(infos.len(), 2);
+        assert_eq!(infos.len(), 3);
         let meet = infos.iter().find(|i| i.id == "meet").expect("meet listed");
+        let zoom = infos.iter().find(|i| i.id == "zoom").expect("zoom listed");
         let youtube = infos
             .iter()
             .find(|i| i.id == "youtube")
             .expect("youtube listed");
         assert_eq!(meet.label, "Google Meet");
+        assert_eq!(
+            meet.description,
+            "Google Meet or browser tabs with Meet in the title"
+        );
         assert!(meet.auto_prompt);
+        assert_eq!(zoom.label, "Zoom");
+        assert!(zoom.auto_prompt);
+        assert_eq!(zoom.title_patterns, vec!["zoom", "zoom meeting"]);
         assert!(youtube.auto_prompt);
         assert_eq!(youtube.title_patterns, vec!["- youtube", "youtube"]);
         assert!(!youtube.custom);
@@ -2787,19 +2809,22 @@ mod tests {
     fn recognized_source_infos_include_custom_sources() {
         let mut settings = AppSettings::default();
         settings.custom_sources = vec![wakenote::settings::CustomSourceEntry {
-            id: "zoom".into(),
-            label: "Zoom".into(),
-            title_patterns: vec!["Zoom Meeting".into()],
+            id: "spotify".into(),
+            label: "Spotify".into(),
+            title_patterns: vec!["Spotify".into()],
             auto_prompt: true,
         }];
 
         let infos = recognized_source_infos(&settings);
-        let zoom = infos.iter().find(|i| i.id == "zoom").expect("zoom listed");
+        let spotify = infos
+            .iter()
+            .find(|i| i.id == "spotify")
+            .expect("spotify listed");
 
-        assert_eq!(zoom.label, "Zoom");
-        assert!(zoom.custom);
-        assert_eq!(zoom.title_patterns, vec!["Zoom Meeting"]);
-        assert!(zoom.auto_prompt);
+        assert_eq!(spotify.label, "Spotify");
+        assert!(spotify.custom);
+        assert_eq!(spotify.title_patterns, vec!["Spotify"]);
+        assert!(spotify.auto_prompt);
     }
 
     #[test]
@@ -2835,6 +2860,12 @@ mod tests {
             app_name: "Google Chrome".into(),
             pid: 43,
         };
+        let zoom = DetectedSource {
+            source_id: "zoom".into(),
+            label: "Zoom".into(),
+            app_name: "zoom.us".into(),
+            pid: 45,
+        };
         let spotify = DetectedSource {
             source_id: "custom-source-2".into(),
             label: "Spotify".into(),
@@ -2844,6 +2875,7 @@ mod tests {
 
         assert_eq!(source_capture_scope(&youtube), "target-app");
         assert_eq!(source_capture_scope(&meet), "target-app");
+        assert_eq!(source_capture_scope(&zoom), "target-app");
         assert_eq!(source_capture_scope(&spotify), "target-app");
     }
 

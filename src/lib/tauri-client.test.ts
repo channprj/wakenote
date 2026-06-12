@@ -15,6 +15,7 @@ import {
   loadTranscriptsForDay,
   processNextTranscription,
   regenerateTranscript,
+  openTranscriptFolder,
   retryJob,
   saveSettingsPatch,
   skipJob,
@@ -392,6 +393,28 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("requeues browser fallback regeneration with an explicit model", async () => {
+    await downloadModel("whisper-tiny");
+    await loadSnapshot();
+    await saveSettingsPatch({ selected_model: "whisper-medium" });
+    const audioPath = "/tmp/imported/regenerate-with-tiny.wav";
+    await enqueueAudioFiles([audioPath]);
+
+    const snapshot = await regenerateTranscript(audioPath, "whisper-tiny");
+
+    expect(snapshot.queue.jobs.find((job) => job.audio_path === audioPath)).toMatchObject({
+      model_id: "whisper-tiny",
+      status: "pending",
+      error: null,
+    });
+  });
+
+  it("no-ops browser fallback transcript folder opening", async () => {
+    const snapshot = await openTranscriptFolder("/tmp/imported/regenerate-with-tiny.wav");
+
+    expect(snapshot).toEqual(await loadSnapshot());
+  });
+
   it("ignores non-audio browser fallback imports", async () => {
     const before = await loadSnapshot();
     const snapshot = await enqueueAudioFiles([
@@ -740,9 +763,9 @@ describe("tauri source capture client (browser fallback)", () => {
     await saveSettingsPatch({
       custom_sources: [
         {
-          id: "zoom",
-          label: "Zoom",
-          title_patterns: ["Zoom Meeting"],
+          id: "spotify",
+          label: "Spotify",
+          title_patterns: ["Spotify"],
           auto_prompt: true,
         },
       ],
@@ -750,7 +773,7 @@ describe("tauri source capture client (browser fallback)", () => {
 
     const sources = await loadRecognizedSources();
 
-    expect(sources.some((source) => source.id === "zoom" && source.custom)).toBe(true);
+    expect(sources.some((source) => source.id === "spotify" && source.custom)).toBe(true);
   });
 
   it("flips simulated source capture state on start and stop (locked-behaviors §10)", async () => {

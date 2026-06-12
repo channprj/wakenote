@@ -12,6 +12,7 @@ import {
   stopLiveCaptureDisabledReason,
   vadGateDisabledReason,
 } from "./SettingsPanel";
+import { customSourceText, parseCustomSourceInput } from "./SystemAudioSettings";
 import type {
   AppSnapshot,
   AppSettings,
@@ -90,6 +91,8 @@ describe("settings panel", () => {
     });
     expect(on).toContain("Screen Recording Permission");
     expect(on).toContain("Add Source");
+    expect(on).toContain("Zoom");
+    expect(on).toContain("Google Meet or browser tabs with Meet in the title");
   });
 
   it("renders custom system-audio sources from settings", () => {
@@ -108,8 +111,31 @@ describe("settings panel", () => {
 
     expect(markup).toContain("Zoom");
     expect(markup).toContain("Zoom Meeting");
+    expect(markup).toContain("Google Meet, Meet, Zoom Meeting");
     expect(markup.match(/aria-label="Custom source"/g) ?? []).toHaveLength(1);
     expect(markup).not.toContain("Window title patterns");
+  });
+
+  it("parses comma-separated custom source input into title patterns", () => {
+    expect(parseCustomSourceInput("Google Meet, Meet, Zoom Meeting")).toEqual({
+      label: "Google Meet",
+      title_patterns: ["Google Meet", "Meet", "Zoom Meeting"],
+    });
+    expect(parseCustomSourceInput(" Zoom Meeting , zoom.us , ")).toEqual({
+      label: "Zoom Meeting",
+      title_patterns: ["Zoom Meeting", "zoom.us"],
+    });
+  });
+
+  it("renders comma-separated custom source patterns back into the input", () => {
+    expect(
+      customSourceText({
+        id: "custom-source-1",
+        label: "Google Meet",
+        title_patterns: ["Google Meet", "Meet"],
+        auto_prompt: true,
+      }),
+    ).toBe("Google Meet, Meet");
   });
 
   it("allows start input when a pinned microphone is missing but default fallback is available", () => {

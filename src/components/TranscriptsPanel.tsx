@@ -2,15 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   loadTranscriptDays,
   loadTranscriptsForDay,
+  openTranscriptFolder,
   regenerateTranscript,
 } from "../lib/tauri-client";
-import type { CustomSourceEntry, RecentTranscript, TranscriptDay } from "../lib/types";
+import type {
+  CustomSourceEntry,
+  ModelDescriptor,
+  RecentTranscript,
+  TranscriptDay,
+} from "../lib/types";
 import { TranscriptsView, formatLocalDay } from "./TranscriptsView";
 
 export function TranscriptsPanel({
   customSources = [],
+  models = [],
+  selectedModelId = "",
 }: {
   customSources?: readonly CustomSourceEntry[];
+  models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
+  selectedModelId?: string;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
@@ -74,11 +84,11 @@ export function TranscriptsPanel({
   );
 
   const regenerateEntry = useCallback(
-    async (entry: RecentTranscript) => {
+    async (entry: RecentTranscript, modelId?: string) => {
       if (!entry.audio_path) {
         return;
       }
-      await regenerateTranscript(entry.audio_path);
+      await regenerateTranscript(entry.audio_path, modelId);
       const day = formatLocalDay(new Date(entry.recorded_at));
       requestedRef.current.add(day);
       await loadDay(day, true);
@@ -86,6 +96,10 @@ export function TranscriptsPanel({
     },
     [loadDay, refreshDays],
   );
+
+  const openEntryFolder = useCallback(async (entry: RecentTranscript) => {
+    await openTranscriptFolder(entry.audio_path ?? entry.transcript_path);
+  }, []);
 
   useEffect(() => {
     void refreshDays();
@@ -128,8 +142,11 @@ export function TranscriptsPanel({
       days={days}
       entriesByDay={entriesByDay}
       loadingDay={loadingDay}
+      models={models}
+      selectedModelId={selectedModelId}
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
       onActiveDayChange={ensureDayLoaded}
+      onOpenFolder={openEntryFolder}
       onRegenerate={regenerateEntry}
       onReload={reloadDay}
     />

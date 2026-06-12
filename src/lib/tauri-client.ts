@@ -472,7 +472,7 @@ export async function requestScreenRecordingPermission(): Promise<AppSnapshot> {
         screen_recording: {
           status: "granted",
           label: "Allowed",
-          detail: "WakeNote can capture system audio (Google Meet, YouTube).",
+          detail: "WakeNote can capture system audio (Google Meet, Zoom, YouTube).",
           can_request: false,
           can_open_settings: true,
         },
@@ -499,6 +499,7 @@ export async function openScreenRecordingSettings(): Promise<AppSnapshot> {
 const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
   id: string;
   label: string;
+  description: string;
   titlePatterns: string[];
   defaultAutoPrompt: boolean;
   custom: boolean;
@@ -506,13 +507,23 @@ const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
   {
     id: "meet",
     label: "Google Meet",
+    description: "Google Meet or browser tabs with Meet in the title",
     titlePatterns: ["google meet", "meet - "],
+    defaultAutoPrompt: true,
+    custom: false,
+  },
+  {
+    id: "zoom",
+    label: "Zoom",
+    description: "Zoom desktop app or windows titled Zoom Meeting",
+    titlePatterns: ["zoom", "zoom meeting"],
     defaultAutoPrompt: true,
     custom: false,
   },
   {
     id: "youtube",
     label: "YouTube",
+    description: "YouTube tabs, videos, and YouTube Music windows",
     titlePatterns: ["- youtube", "youtube"],
     defaultAutoPrompt: true,
     custom: false,
@@ -525,6 +536,7 @@ function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceIn
     return {
       id: source.id,
       label: source.label,
+      description: source.description,
       auto_prompt: override ? override.auto_prompt : source.defaultAutoPrompt,
       title_patterns: source.titlePatterns,
       custom: source.custom,
@@ -537,6 +549,7 @@ function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceIn
       return {
         id: source.id,
         label: source.label,
+        description: source.title_patterns.join(", "),
         auto_prompt: override ? override.auto_prompt : source.auto_prompt,
         title_patterns: source.title_patterns,
         custom: true,
@@ -782,12 +795,20 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
-export async function regenerateTranscript(audioPath: string): Promise<AppSnapshot> {
+export async function regenerateTranscript(
+  audioPath: string,
+  modelId?: string,
+): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     if (!isBrowserImportableAudioPath(audioPath)) {
       return browserSnapshot;
     }
     const settings = browserSnapshot.settings ?? defaultSettings();
+    const models = browserSnapshot.models ?? mockModels();
+    const regenerationModelId =
+      modelId && isUsableBrowserModel(modelId, models)
+        ? modelId
+        : settings.selected_model;
     let matched = false;
     let blocked = false;
     let changed = false;
@@ -803,7 +824,7 @@ export async function regenerateTranscript(audioPath: string): Promise<AppSnapsh
       changed = true;
       return {
         ...job,
-        model_id: settings.selected_model,
+        model_id: regenerationModelId,
         status: "pending" as const,
         error: null,
       };
@@ -816,7 +837,7 @@ export async function regenerateTranscript(audioPath: string): Promise<AppSnapsh
       jobs.push({
         id: nextId,
         audio_path: audioPath,
-        model_id: settings.selected_model,
+        model_id: regenerationModelId,
         status: "pending",
         error: null,
       });
@@ -838,7 +859,20 @@ export async function regenerateTranscript(audioPath: string): Promise<AppSnapsh
     return browserSnapshot;
   }
 
-  await invoke<QueueSnapshot>("regenerate_transcript", { audioPath });
+  const payload: { audioPath: string; modelId?: string } = { audioPath };
+  if (modelId) {
+    payload.modelId = modelId;
+  }
+  await invoke<QueueSnapshot>("regenerate_transcript", payload);
+  return loadSnapshot();
+}
+
+export async function openTranscriptFolder(path: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+
+  await invoke("open_transcript_folder", { path });
   return loadSnapshot();
 }
 

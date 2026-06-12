@@ -302,6 +302,27 @@ pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderReq
     }
 }
 
+pub fn open_containing_folder_request(
+    path: impl AsRef<Path>,
+) -> Result<RevealSaveFolderRequest, String> {
+    let expanded = expand_user_path(path.as_ref().to_string_lossy());
+    let folder = if expanded.is_dir() {
+        expanded
+    } else {
+        expanded
+            .parent()
+            .ok_or_else(|| "path has no containing folder".to_string())?
+            .to_path_buf()
+    };
+    if !folder.is_dir() {
+        return Err("containing folder does not exist".to_string());
+    }
+    Ok(RevealSaveFolderRequest {
+        program: PathBuf::from("/usr/bin/open"),
+        path: folder,
+    })
+}
+
 pub fn audio_playback_content_type(path: &Path) -> Option<&'static str> {
     match path
         .extension()
@@ -1214,15 +1235,24 @@ impl AppBackend {
     pub fn regenerate_transcript(
         &mut self,
         audio_path: impl Into<std::path::PathBuf>,
+        model_id: Option<String>,
     ) -> Result<QueueSnapshot, String> {
         let audio_path = audio_path.into();
         if !is_importable_audio_path(&audio_path) {
             return Err("only existing m4a and wav audio files can be regenerated".to_string());
         }
+        let model_id = match model_id {
+            Some(model_id) => {
+                if !model_is_selectable(&model_id, &self.settings.model_directory) {
+                    return Err(format!("model {model_id} is not ready"));
+                }
+                model_id
+            }
+            None => self.settings.selected_model.clone(),
+        };
         let chunk = RecordedChunk::from_audio_path(audio_path.clone());
         TranscriptionSidecar::reset_for_regenerate(&chunk).map_err(|error| error.to_string())?;
-        self.queue
-            .requeue_file(audio_path, self.settings.selected_model.clone())?;
+        self.queue.requeue_file(audio_path, model_id)?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }

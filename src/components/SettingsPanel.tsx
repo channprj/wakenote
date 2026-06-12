@@ -426,7 +426,11 @@ export function SettingsPanel({
   if (activeSection === "transcripts") {
     return (
       <Section title="Transcripts" eyebrow="Daily archive">
-        <TranscriptsPanel customSources={settings.custom_sources} />
+        <TranscriptsPanel
+          customSources={settings.custom_sources}
+          models={models}
+          selectedModelId={settings.selected_model}
+        />
       </Section>
     );
   }
@@ -512,7 +516,7 @@ export function SettingsPanel({
           label="Capture system audio"
           checked={settings.system_audio_enabled}
           onChange={(system_audio_enabled) => onPatch({ system_audio_enabled })}
-          title="Capture Google Meet, YouTube, and custom app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
+          title="Capture Google Meet, Zoom, YouTube, and custom app audio via ScreenCaptureKit (macOS 13+). Requires Screen Recording permission."
         />
         {settings.system_audio_enabled ? (
           <>

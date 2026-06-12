@@ -110,6 +110,7 @@ export interface CustomSourceEntry {
 export interface RecognizedSourceInfo {
   id: string;
   label: string;
+  description: string;
   auto_prompt: boolean;
   title_patterns: string[];
   custom: boolean;

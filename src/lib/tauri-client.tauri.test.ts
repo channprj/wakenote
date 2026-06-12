@@ -48,6 +48,8 @@ function mockInvoke(command: string) {
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
+    case "open_transcript_folder":
+      return Promise.resolve(null);
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
@@ -101,11 +103,24 @@ describe("tauri runtime client snapshots", () => {
     mocks.invoke.mockImplementation(mockInvoke);
     const { regenerateTranscript } = await import("./tauri-client");
 
-    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a");
+    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a", "whisper-tiny");
 
     expect(mocks.invoke).toHaveBeenCalledWith("regenerate_transcript", {
       audioPath: "/tmp/WakeNote/20260611/024304-spotify.m4a",
+      modelId: "whisper-tiny",
     });
     expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
+  });
+
+  it("invokes open_transcript_folder for a transcript row path", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { openTranscriptFolder } = await import("./tauri-client");
+
+    await openTranscriptFolder("/tmp/WakeNote/20260611/024304-spotify.m4a");
+
+    expect(mocks.invoke).toHaveBeenCalledWith("open_transcript_folder", {
+      path: "/tmp/WakeNote/20260611/024304-spotify.m4a",
+    });
   });
 });

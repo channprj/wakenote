@@ -3,8 +3,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  FolderOpen,
   Mic,
   MonitorSpeaker,
+  Pause,
   Play,
   RotateCw,
   Video,
@@ -23,11 +25,21 @@ import {
   formatTranscriptsForCopy,
   transcriptSourceLabel,
 } from "../lib/transcript-history";
-import type { RecentTranscript, TranscriptDay } from "../lib/types";
+import { formatModelLabel } from "../lib/models";
+import type { ModelDescriptor, RecentTranscript, TranscriptDay } from "../lib/types";
 import { Button } from "./ui/primitives";
 
 type CopyToastKind = "all" | "selected";
 type DragMode = "select" | "deselect";
+type RegenerationModel = Pick<ModelDescriptor, "id" | "display_name" | "status">;
+
+const ALL_SOURCE_FILTER = "all";
+
+export interface TranscriptSourceFilterOption {
+  id: string;
+  label: string;
+  count: number;
+}
 
 interface DragState {
   mode: DragMode;
@@ -47,20 +59,28 @@ export function TranscriptsView({
   entriesByDay,
   loadingDay = null,
   sourceLabels = {},
+  models = [],
+  selectedModelId = "",
   onActiveDayChange,
   onRegenerate,
+  onOpenFolder,
   onReload,
   initialPlayingTranscriptPath = null,
+  initialSourceFilter = ALL_SOURCE_FILTER,
   today = new Date(),
 }: {
   days: TranscriptDay[];
   entriesByDay: ReadonlyMap<string, RecentTranscript[]>;
   loadingDay?: string | null;
   sourceLabels?: Readonly<Record<string, string>>;
+  models?: readonly RegenerationModel[];
+  selectedModelId?: string;
   onActiveDayChange?: (day: string) => void;
-  onRegenerate?: (entry: RecentTranscript) => void | Promise<void>;
+  onRegenerate?: (entry: RecentTranscript, modelId?: string) => void | Promise<void>;
+  onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
   onReload?: (day: string) => void;
   initialPlayingTranscriptPath?: string | null;
+  initialSourceFilter?: string;
   today?: Date;
 }) {
   const todayDay = formatLocalDay(today);
@@ -85,6 +105,9 @@ export function TranscriptsView({
   const [playingTranscriptPath, setPlayingTranscriptPath] = useState<string | null>(
     initialPlayingTranscriptPath,
   );
+  const [playbackPaused, setPlaybackPaused] = useState(false);
+  const [sourceFilter, setSourceFilter] = useState(initialSourceFilter);
+  const [regenerationModelId, setRegenerationModelId] = useState(selectedModelId);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const [copyToast, setCopyToast] = useState<CopyToastKind | null>(null);
   const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
@@ -100,6 +123,37 @@ export function TranscriptsView({
         left.transcript_path.localeCompare(right.transcript_path),
     );
   }, [entriesByDay, effectiveActiveDay]);
+
+  const sourceFilterOptions = useMemo(
+    () => transcriptSourceFilterOptions(activeEntries, sourceLabels),
+    [activeEntries, sourceLabels],
+  );
+
+  const effectiveSourceFilter = sourceFilterOptions.some(
+    (option) => option.id === sourceFilter,
+  )
+    ? sourceFilter
+    : ALL_SOURCE_FILTER;
+
+  const filteredEntries = useMemo(
+    () => filterTranscriptsBySource(activeEntries, effectiveSourceFilter),
+    [activeEntries, effectiveSourceFilter],
+  );
+
+  const usableRegenerationModels = useMemo(
+    () => regenerationModelOptions(models),
+    [models],
+  );
+
+  const selectedRegenerationModelId = usableRegenerationModels.some(
+    (model) => model.id === regenerationModelId,
+  )
+    ? regenerationModelId
+    : selectedModelId;
+
+  const selectedRegenerationModel = usableRegenerationModels.find(
+    (model) => model.id === selectedRegenerationModelId,
+  );
 
   const playingTranscript = useMemo(() => {
     for (const list of entriesByDay.values()) {
@@ -125,6 +179,44 @@ export function TranscriptsView({
     setSelectedPaths(new Set());
     setCopyToast(null);
   }, [effectiveActiveDay]);
+
+  useEffect(() => {
+    if (!sourceFilterOptions.some((option) => option.id === sourceFilter)) {
+      setSourceFilter(ALL_SOURCE_FILTER);
+    }
+  }, [sourceFilter, sourceFilterOptions]);
+
+  useEffect(() => {
+    const visiblePaths = new Set(filteredEntries.map((entry) => entry.transcript_path));
+    setSelectedPaths((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const path of prev) {
+        if (visiblePaths.has(path)) {
+          next.add(path);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [filteredEntries]);
+
+  useEffect(() => {
+    if (usableRegenerationModels.length === 0) {
+      if (regenerationModelId !== "") {
+        setRegenerationModelId("");
+      }
+      return;
+    }
+    if (usableRegenerationModels.some((model) => model.id === regenerationModelId)) {
+      return;
+    }
+    const fallback =
+      usableRegenerationModels.find((model) => model.id === selectedModelId)?.id ??
+      usableRegenerationModels[0].id;
+    setRegenerationModelId(fallback);
+  }, [regenerationModelId, selectedModelId, usableRegenerationModels]);
 
   useEffect(() => {
     const endDrag = () => {
@@ -206,22 +298,41 @@ export function TranscriptsView({
   }, []);
 
   const handleCopyAll = useCallback(() => {
-    void writeToClipboard(formatTranscriptsForCopy(activeEntries, sourceLabels), "all");
-  }, [writeToClipboard, activeEntries, sourceLabels]);
+    void writeToClipboard(formatTranscriptsForCopy(filteredEntries, sourceLabels), "all");
+  }, [writeToClipboard, filteredEntries, sourceLabels]);
 
   const handleCopySelected = useCallback(() => {
-    const selected = activeEntries.filter((entry) =>
+    const selected = filteredEntries.filter((entry) =>
       selectedPaths.has(entry.transcript_path),
     );
     void writeToClipboard(formatTranscriptsForCopy(selected, sourceLabels), "selected");
-  }, [writeToClipboard, activeEntries, selectedPaths, sourceLabels]);
+  }, [writeToClipboard, filteredEntries, selectedPaths, sourceLabels]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedPaths(new Set());
   }, []);
 
+  const handleSelectAllVisible = useCallback(() => {
+    setSelectedPaths(selectTranscriptPathsForEntries(filteredEntries));
+  }, [filteredEntries]);
+
+  const handleTogglePlayback = useCallback(
+    (entry: RecentTranscript) => {
+      if (!entry.audio_path) {
+        return;
+      }
+      if (playingTranscriptPath === entry.transcript_path) {
+        setPlaybackPaused((paused) => !paused);
+        return;
+      }
+      setPlayingTranscriptPath(entry.transcript_path);
+      setPlaybackPaused(false);
+    },
+    [playingTranscriptPath],
+  );
+
   const openContextMenu = useCallback((entry: RecentTranscript, x: number, y: number) => {
-    const menuWidth = 168;
+    const menuWidth = 220;
     const menuHeight = 44;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
@@ -238,11 +349,17 @@ export function TranscriptsView({
     }
     const entry = contextMenu.entry;
     setContextMenu(null);
-    void onRegenerate?.(entry);
-  }, [contextMenu, onRegenerate]);
+    void onRegenerate?.(entry, selectedRegenerationModel?.id);
+  }, [contextMenu, onRegenerate, selectedRegenerationModel?.id]);
 
-  const selectionCount = selectedPaths.size;
-  const hasEntries = activeEntries.length > 0;
+  const selectionCount = filteredEntries.filter((entry) =>
+    selectedPaths.has(entry.transcript_path),
+  ).length;
+  const allFilteredSelected =
+    filteredEntries.length > 0 &&
+    filteredEntries.every((entry) => selectedPaths.has(entry.transcript_path));
+  const hasEntries = filteredEntries.length > 0;
+  const hasAnyEntries = activeEntries.length > 0;
   const isLoadingActive = loadingDay === effectiveActiveDay;
 
   // The calendar count (size-based) can exceed the entries we managed to load
@@ -254,6 +371,13 @@ export function TranscriptsView({
   );
   const pendingCount = Math.max(0, availableCount - activeEntries.length);
   const hasPending = pendingCount > 0 && !isLoadingActive;
+  const transcriptCountText =
+    effectiveSourceFilter === ALL_SOURCE_FILTER
+      ? `${activeEntries.length} transcript${activeEntries.length === 1 ? "" : "s"}`
+      : `${filteredEntries.length} / ${activeEntries.length} transcripts`;
+  const showSourceFilter = sourceFilterOptions.length > 2;
+  const showRegenerationModelSelect =
+    Boolean(onRegenerate) && usableRegenerationModels.length > 1;
 
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const handlePrevWeek = () => setViewWeekStart(addDays(effectiveWeekStart, -7));
@@ -275,12 +399,41 @@ export function TranscriptsView({
         <header>
           <div>
             <span>{effectiveActiveDay}</span>
-            <strong>
-              {activeEntries.length} transcript
-              {activeEntries.length === 1 ? "" : "s"}
-            </strong>
+            <strong>{transcriptCountText}</strong>
           </div>
           <div className="transcript-day__actions">
+            {showSourceFilter ? (
+              <label className="transcript-source-filter">
+                <span>Source</span>
+                <select
+                  className="ui-select"
+                  value={effectiveSourceFilter}
+                  onChange={(event) => setSourceFilter(event.currentTarget.value)}
+                >
+                  {sourceFilterOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label} ({option.count})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {showRegenerationModelSelect ? (
+              <label className="transcript-regenerate-model">
+                <span>Regenerate with</span>
+                <select
+                  className="ui-select"
+                  value={selectedRegenerationModel?.id ?? usableRegenerationModels[0]?.id}
+                  onChange={(event) => setRegenerationModelId(event.currentTarget.value)}
+                >
+                  {usableRegenerationModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {formatModelLabel(model.id, usableRegenerationModels)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {hasEntries && selectionCount > 0 ? (
               <>
                 <span aria-live="polite" className="transcript-day__selection-count">
@@ -310,7 +463,23 @@ export function TranscriptsView({
             ) : null}
             {hasEntries ? (
               <Button
-                aria-label="해당 일자의 모든 트랜스크립트 복사"
+                aria-label="현재 필터의 모든 트랜스크립트 선택"
+                disabled={allFilteredSelected}
+                onClick={handleSelectAllVisible}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <Check /> 전체 선택
+              </Button>
+            ) : null}
+            {hasEntries ? (
+              <Button
+                aria-label={
+                  effectiveSourceFilter === ALL_SOURCE_FILTER
+                    ? "해당 일자의 모든 트랜스크립트 복사"
+                    : "현재 필터의 모든 트랜스크립트 복사"
+                }
                 onClick={handleCopyAll}
                 size="sm"
                 type="button"
@@ -327,7 +496,7 @@ export function TranscriptsView({
                 )}
               </Button>
             ) : null}
-            {hasPending && hasEntries ? (
+            {hasPending && hasAnyEntries ? (
               <span className="transcript-day__icloud-hint">
                 iCloud에 {pendingCount}개 더 있음
               </span>
@@ -346,18 +515,27 @@ export function TranscriptsView({
         </header>
         {hasEntries ? (
           <div className="transcript-entry-list transcript-entry-list--condensed">
-            {activeEntries.map((entry) => (
+            {filteredEntries.map((entry) => (
               <TranscriptEntryRow
                 entry={entry}
-                isPlaying={entry.transcript_path === playingTranscriptPath}
+                isPlaybackActive={entry.transcript_path === playingTranscriptPath}
+                isPlaying={
+                  entry.transcript_path === playingTranscriptPath && !playbackPaused
+                }
                 isSelected={selectedPaths.has(entry.transcript_path)}
                 key={entry.transcript_path}
                 sourceLabels={sourceLabels}
                 onOpenContextMenu={openContextMenu}
-                onPlay={() => setPlayingTranscriptPath(entry.transcript_path)}
+                onOpenFolder={onOpenFolder}
+                onPlay={() => handleTogglePlayback(entry)}
                 onPointerDownSelect={beginDragSelection}
                 onPointerEnterSelect={continueDragSelection}
-                onRegenerate={onRegenerate}
+                onRegenerate={
+                  onRegenerate
+                    ? (targetEntry) =>
+                        onRegenerate(targetEntry, selectedRegenerationModel?.id)
+                    : undefined
+                }
               />
             ))}
           </div>
@@ -374,7 +552,12 @@ export function TranscriptsView({
       {playingTranscript?.audio_path ? (
         <TranscriptPlayerSheet
           entry={playingTranscript}
-          onClose={() => setPlayingTranscriptPath(null)}
+          paused={playbackPaused}
+          onClose={() => {
+            setPlayingTranscriptPath(null);
+            setPlaybackPaused(false);
+          }}
+          onPausedChange={setPlaybackPaused}
         />
       ) : null}
       {contextMenu ? (
@@ -386,7 +569,12 @@ export function TranscriptsView({
         >
           <button onClick={handleRegenerateFromMenu} role="menuitem" type="button">
             <RotateCw aria-hidden="true" />
-            Regenerate
+            {selectedRegenerationModel
+              ? `Regenerate with ${formatModelLabel(
+                  selectedRegenerationModel.id,
+                  usableRegenerationModels,
+                )}`
+              : "Regenerate"}
           </button>
         </div>
       ) : null}
@@ -396,20 +584,24 @@ export function TranscriptsView({
 
 function TranscriptEntryRow({
   entry,
+  isPlaybackActive,
   isPlaying,
   isSelected,
   sourceLabels,
   onOpenContextMenu,
+  onOpenFolder,
   onPlay,
   onPointerDownSelect,
   onPointerEnterSelect,
   onRegenerate,
 }: {
   entry: RecentTranscript;
+  isPlaybackActive: boolean;
   isPlaying: boolean;
   isSelected: boolean;
   sourceLabels: Readonly<Record<string, string>>;
   onOpenContextMenu: (entry: RecentTranscript, x: number, y: number) => void;
+  onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
   onPlay: () => void;
   onPointerDownSelect: (path: string) => void;
   onPointerEnterSelect: (path: string) => void;
@@ -417,6 +609,17 @@ function TranscriptEntryRow({
 }) {
   const timestamp = formatLocalTimestamp(entry.recorded_at);
   const regenerateAvailable = Boolean(entry.audio_path && onRegenerate);
+  const folderAvailable = Boolean(onOpenFolder);
+  const playLabel = isPlaying
+    ? timestamp
+      ? `Pause recording from ${timestamp}`
+      : "Pause recording"
+    : timestamp
+      ? `Play recording from ${timestamp}`
+      : "Play recording";
+  const folderLabel = timestamp
+    ? `Open recording folder for ${timestamp}`
+    : "Open recording folder";
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -462,19 +665,57 @@ function TranscriptEntryRow({
       </a>
       <TranscriptSourceBadge entry={entry} sourceLabels={sourceLabels} />
       <p className="transcript-entry__text">{entry.text}</p>
-      <Button
-        aria-label={timestamp ? `Play recording from ${timestamp}` : "Play recording"}
-        aria-pressed={isPlaying}
-        className="transcript-entry__play"
-        disabled={!entry.audio_path}
-        onClick={onPlay}
-        size="icon"
-        title={entry.audio_path ? "Play recording" : "No recording file"}
-        type="button"
-        variant={isPlaying ? "primary" : "secondary"}
-      >
-        <Play />
-      </Button>
+      <div className="transcript-entry__actions">
+        <Button
+          aria-label={playLabel}
+          aria-pressed={isPlaybackActive}
+          className="transcript-entry__play"
+          disabled={!entry.audio_path}
+          onClick={onPlay}
+          size="icon"
+          title={
+            entry.audio_path
+              ? isPlaying
+                ? "Pause recording"
+                : "Play recording"
+              : "No recording file"
+          }
+          type="button"
+          variant={isPlaybackActive ? "primary" : "secondary"}
+        >
+          {isPlaying ? <Pause /> : <Play />}
+        </Button>
+        {folderAvailable ? (
+          <Button
+            aria-label={folderLabel}
+            className="transcript-entry__folder"
+            onClick={() => void onOpenFolder?.(entry)}
+            size="icon"
+            title={entry.audio_path ?? entry.transcript_path}
+            type="button"
+            variant="ghost"
+          >
+            <FolderOpen />
+          </Button>
+        ) : null}
+        {regenerateAvailable ? (
+          <Button
+            aria-label={
+              timestamp
+                ? `Regenerate transcript from ${timestamp}`
+                : "Regenerate transcript"
+            }
+            className="transcript-entry__regenerate"
+            onClick={() => void onRegenerate?.(entry)}
+            size="icon"
+            title="Regenerate transcript"
+            type="button"
+            variant="ghost"
+          >
+            <RotateCw />
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -496,6 +737,72 @@ function TranscriptSourceBadge({
       <Icon aria-hidden="true" />
       {presentation.label}
     </span>
+  );
+}
+
+export function transcriptSourceFilterOptions(
+  entries: readonly RecentTranscript[],
+  sourceLabels: Readonly<Record<string, string>> = {},
+): TranscriptSourceFilterOption[] {
+  const byId = new Map<string, TranscriptSourceFilterOption>();
+  for (const entry of entries) {
+    const id = transcriptSourceFilterKey(entry);
+    const existing = byId.get(id);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    byId.set(id, {
+      id,
+      label: transcriptSourceLabel(entry, sourceLabels),
+      count: 1,
+    });
+  }
+
+  const microphone = byId.get("microphone");
+  const ordered = [
+    ...(microphone ? [microphone] : []),
+    ...[...byId.values()].filter((option) => option.id !== "microphone"),
+  ];
+
+  return [
+    {
+      id: ALL_SOURCE_FILTER,
+      label: "All sources",
+      count: entries.length,
+    },
+    ...ordered,
+  ];
+}
+
+export function filterTranscriptsBySource(
+  entries: readonly RecentTranscript[],
+  sourceFilter: string,
+): RecentTranscript[] {
+  if (sourceFilter === ALL_SOURCE_FILTER) {
+    return [...entries];
+  }
+  return entries.filter((entry) => transcriptSourceFilterKey(entry) === sourceFilter);
+}
+
+export function selectTranscriptPathsForEntries(
+  entries: readonly RecentTranscript[],
+): Set<string> {
+  return new Set(entries.map((entry) => entry.transcript_path));
+}
+
+function transcriptSourceFilterKey(entry: RecentTranscript): string {
+  if ((entry.source ?? "microphone") !== "system") {
+    return "microphone";
+  }
+  return `system:${entry.source_label ?? ""}`;
+}
+
+function regenerationModelOptions(
+  models: readonly RegenerationModel[],
+): RegenerationModel[] {
+  return models.filter((model) =>
+    ["ready", "installed", "unloaded"].includes(model.status),
   );
 }
 
@@ -690,10 +997,14 @@ function TranscriptPagination({
 
 function TranscriptPlayerSheet({
   entry,
+  paused,
   onClose,
+  onPausedChange,
 }: {
   entry: RecentTranscript;
+  paused: boolean;
   onClose: () => void;
+  onPausedChange: (paused: boolean) => void;
 }) {
   const audioPath = entry.audio_path;
 
@@ -705,6 +1016,7 @@ function TranscriptPlayerSheet({
   const fallbackAudioSource = fileUrlFromPath(audioPath);
   const [audioSource, setAudioSource] = useState(fallbackAudioSource);
   const [audioError, setAudioError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -729,6 +1041,36 @@ function TranscriptPlayerSheet({
     };
   }, [audioPath]);
 
+  useEffect(() => {
+    const element = audioRef.current;
+    if (!element) {
+      return;
+    }
+    const handlePlay = () => onPausedChange(false);
+    const handlePause = () => onPausedChange(true);
+    const handleEnded = () => onPausedChange(true);
+    element.addEventListener("play", handlePlay);
+    element.addEventListener("pause", handlePause);
+    element.addEventListener("ended", handleEnded);
+    return () => {
+      element.removeEventListener("play", handlePlay);
+      element.removeEventListener("pause", handlePause);
+      element.removeEventListener("ended", handleEnded);
+    };
+  }, [audioSource, onPausedChange]);
+
+  useEffect(() => {
+    const element = audioRef.current;
+    if (!element) {
+      return;
+    }
+    if (paused) {
+      element.pause();
+      return;
+    }
+    void element.play().catch(() => undefined);
+  }, [paused, audioSource]);
+
   return (
     <aside className="transcript-player-sheet" aria-label="Transcript player">
       <div className="transcript-player-sheet__header">
@@ -748,7 +1090,14 @@ function TranscriptPlayerSheet({
           <X />
         </Button>
       </div>
-      <audio autoPlay controls key={audioSource} preload="metadata" src={audioSource} />
+      <audio
+        autoPlay={!paused}
+        controls
+        key={audioSource}
+        preload="metadata"
+        ref={audioRef}
+        src={audioSource}
+      />
       {audioError ? (
         <span className="transcript-player-sheet__error">{audioError}</span>
       ) : null}

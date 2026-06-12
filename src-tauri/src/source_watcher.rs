@@ -234,6 +234,7 @@ mod tests {
         let sources = vec![crate::sources::SourceDefinition {
             id: "zoom".into(),
             label: "Zoom".into(),
+            description: "Zoom desktop app or windows titled Zoom Meeting".into(),
             title_patterns: vec!["zoom meeting".into()],
             default_auto_prompt: true,
             custom: true,
@@ -255,6 +256,7 @@ mod tests {
         let sources = vec![crate::sources::SourceDefinition {
             id: "spotify".into(),
             label: "Spotify".into(),
+            description: "Spotify".into(),
             title_patterns: vec!["spotify".into()],
             default_auto_prompt: true,
             custom: true,

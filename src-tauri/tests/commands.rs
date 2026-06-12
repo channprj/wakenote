@@ -5,9 +5,9 @@ use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
     audio_playback_content_type, main_window_close_action, microphone_devices_from_input_devices,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, with_live_runtime_warning,
-    with_runtime_warning,
+    open_containing_folder_request, reveal_save_folder_request, tray_icon_image_for_presentation,
+    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
+    with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
@@ -113,6 +113,43 @@ fn write_ready_local_model(model_directory: &std::path::Path, model_id: &str) {
         b"ready model",
     )
     .expect("ready model");
+}
+
+fn write_ready_local_models(model_directory: &std::path::Path, model_ids: &[&str]) {
+    std::fs::create_dir_all(model_directory).expect("model dir");
+    let registry = model_ids
+        .iter()
+        .map(|model_id| {
+            format!(
+                r#"{{
+            "id": "{model_id}",
+            "display_name": "Ready Local {model_id}",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
+          }}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    std::fs::write(
+        model_directory.join("model-registry.json"),
+        format!("[{registry}]"),
+    )
+    .expect("registry json");
+    for model_id in model_ids {
+        std::fs::write(
+            model_directory.join(format!("{model_id}.bin")),
+            b"ready model",
+        )
+        .expect("ready model");
+    }
 }
 
 fn write_transcript_sidecar(save_root: &std::path::Path, relative_path: &str, text: &str) {
@@ -661,7 +698,7 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
     std::fs::write(audio_path.with_extension("error.txt"), b"old error\n").expect("old error");
 
     let snapshot = backend
-        .regenerate_transcript(&audio_path)
+        .regenerate_transcript(&audio_path, None)
         .expect("regenerate transcript");
 
     assert_eq!(snapshot.pending_count, 1);
@@ -679,6 +716,35 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
     )
     .expect("metadata json");
     assert_eq!(updated.transcription_status, TranscriptionStatus::Queued);
+}
+
+#[test]
+fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_models(&model_dir, &["whisper-medium", "whisper-tiny"]);
+    let audio_path = tmp.path().join("20260611").join("024305-youtube.wav");
+    std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .regenerate_transcript(&audio_path, Some("whisper-tiny".to_string()))
+        .expect("regenerate transcript with tiny");
+
+    let job = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == audio_path)
+        .expect("requeued job");
+    assert_eq!(job.status, QueueJobStatus::Pending);
+    assert_eq!(job.model_id, "whisper-tiny");
 }
 
 #[test]
@@ -2253,6 +2319,20 @@ fn reveal_save_folder_request_uses_current_save_root() {
     let request = reveal_save_folder_request(&backend.settings());
 
     assert_eq!(request.path, PathBuf::from(home).join("Documents/WakeNote"));
+}
+
+#[test]
+fn open_containing_folder_request_uses_the_transcript_parent_folder() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let day_dir = tmp.path().join("20260611");
+    std::fs::create_dir_all(&day_dir).expect("day dir");
+    let transcript_path = day_dir.join("024304-youtube.txt");
+    std::fs::write(&transcript_path, b"transcript").expect("transcript");
+
+    let request = open_containing_folder_request(&transcript_path).expect("folder request");
+
+    assert_eq!(request.program, PathBuf::from("/usr/bin/open"));
+    assert_eq!(request.path, day_dir);
 }
 
 #[test]

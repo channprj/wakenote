@@ -8,6 +8,8 @@ pub struct RecognizedSource {
     pub id: &'static str,
     /// Human-facing label shown in settings / notifications.
     pub label: &'static str,
+    /// Human-facing explanation of which windows/apps this source recognizes.
+    pub description: &'static str,
     /// Lower-cased substrings; a window whose (lower-cased) title or owning app
     /// name contains any of these is attributed to this source.
     pub title_patterns: &'static [&'static str],
@@ -21,6 +23,7 @@ pub struct RecognizedSource {
 pub struct SourceDefinition {
     pub id: String,
     pub label: String,
+    pub description: String,
     pub title_patterns: Vec<String>,
     pub default_auto_prompt: bool,
     pub custom: bool,
@@ -30,12 +33,21 @@ const RECOGNIZED_SOURCES: &[RecognizedSource] = &[
     RecognizedSource {
         id: "meet",
         label: "Google Meet",
+        description: "Google Meet or browser tabs with Meet in the title",
         title_patterns: &["google meet", "meet - "],
+        default_auto_prompt: true,
+    },
+    RecognizedSource {
+        id: "zoom",
+        label: "Zoom",
+        description: "Zoom desktop app or windows titled Zoom Meeting",
+        title_patterns: &["zoom", "zoom meeting"],
         default_auto_prompt: true,
     },
     RecognizedSource {
         id: "youtube",
         label: "YouTube",
+        description: "YouTube tabs, videos, and YouTube Music windows",
         title_patterns: &["- youtube", "youtube"],
         default_auto_prompt: true,
     },
@@ -55,6 +67,7 @@ pub fn source_definitions(settings: &AppSettings) -> Vec<SourceDefinition> {
         .map(|source| SourceDefinition {
             id: source.id.to_string(),
             label: source.label.to_string(),
+            description: source.description.to_string(),
             title_patterns: source
                 .title_patterns
                 .iter()
@@ -72,6 +85,7 @@ pub fn source_definitions(settings: &AppSettings) -> Vec<SourceDefinition> {
             .map(|source| SourceDefinition {
                 id: source.id.clone(),
                 label: source.label.clone(),
+                description: source.title_patterns.join(", "),
                 title_patterns: source.title_patterns.clone(),
                 default_auto_prompt: source.auto_prompt,
                 custom: true,
@@ -163,30 +177,43 @@ mod tests {
     fn lookup_by_id_and_list_shape() {
         assert!(recognized_source("meet").is_some());
         assert!(recognized_source("youtube").is_some());
-        assert!(recognized_source("zoom").is_none());
-        assert_eq!(recognized_sources().len(), 2);
+        assert!(recognized_source("zoom").is_some());
+        assert_eq!(recognized_sources().len(), 3);
     }
 
     #[test]
-    fn default_auto_prompt_meet_and_youtube_on() {
+    fn default_auto_prompt_builtin_sources_on() {
         assert!(recognized_source("meet").unwrap().default_auto_prompt);
         assert!(recognized_source("youtube").unwrap().default_auto_prompt);
+        assert!(recognized_source("zoom").unwrap().default_auto_prompt);
+    }
+
+    #[test]
+    fn matches_zoom_titles_case_insensitively() {
+        assert_eq!(
+            match_recognized_source("Daily sync - Zoom Meeting").map(|s| s.id),
+            Some("zoom")
+        );
+        assert_eq!(
+            match_recognized_source("Zoom Workplace").map(|s| s.id),
+            Some("zoom")
+        );
     }
 
     #[test]
     fn matches_custom_source_titles_from_settings() {
         let mut settings = crate::settings::AppSettings::default();
         settings.custom_sources = vec![crate::settings::CustomSourceEntry {
-            id: "zoom".into(),
-            label: "Zoom".into(),
-            title_patterns: vec!["Zoom Meeting".into()],
+            id: "spotify".into(),
+            label: "Spotify".into(),
+            title_patterns: vec!["Spotify".into()],
             auto_prompt: true,
         }];
         let sources = source_definitions(&settings);
 
         assert_eq!(
-            match_source("Daily sync - Zoom Meeting", &sources).map(|source| source.id.as_str()),
-            Some("zoom")
+            match_source("Lo-fi mix - Spotify", &sources).map(|source| source.id.as_str()),
+            Some("spotify")
         );
     }
 }
