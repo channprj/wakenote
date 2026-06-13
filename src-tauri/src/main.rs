@@ -965,6 +965,16 @@ fn import_and_start_meeting(
     meeting_state: State<'_, MeetingState>,
     source_path: String,
 ) -> Result<MeetingSummary, String> {
+    // Refuse before copying the file if another meeting is already running, so
+    // we never leave an orphaned record that can't start (one GPU context).
+    {
+        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        if let Some(current) = runtime.current.as_ref() {
+            return Err(format!(
+                "다른 회의({current})를 처리 중입니다. 완료 후 다시 시도하세요."
+            ));
+        }
+    }
     let (save_root, model_id, language) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();

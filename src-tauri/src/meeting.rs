@@ -617,7 +617,7 @@ pub fn reconcile_interrupted(save_root: &Path) {
         }
         let path = record_path(&entry.path());
         if let Ok(mut record) = MeetingRecord::load(&path) {
-            if record.status == MeetingStatus::Processing {
+            if matches!(record.status, MeetingStatus::Processing | MeetingStatus::Pending) {
                 record.status = MeetingStatus::Failed;
                 record.error = Some("앱이 종료되어 중단되었습니다 (재개 가능)".to_string());
                 record.touch();
