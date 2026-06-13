@@ -35,6 +35,7 @@ use wakenote::live_capture::{
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
+use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore};
 use wakenote::overlay::{self, OverlayState};
 use wakenote::permissions::{self, AppPermissions};
@@ -69,6 +70,17 @@ type SystemCaptureState = Arc<Mutex<Option<Box<dyn AudioStreamHandle>>>>;
 type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
 /// Source ids the user paused manually while the source remains detected.
 type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
+/// Tracks the single in-flight long-form meeting job and its cancel flag.
+/// Only one meeting transcribes at a time (one shared GPU context).
+type MeetingState = Arc<Mutex<MeetingRuntime>>;
+
+#[derive(Default)]
+struct MeetingRuntime {
+    /// Id of the meeting currently being processed, if any.
+    current: Option<String>,
+    /// Cancel flag for the current job, checked between segments.
+    cancel: Option<Arc<AtomicBool>>,
+}
 
 #[derive(Debug, Clone)]
 struct TrayPresentationUpdate {
@@ -86,6 +98,9 @@ const EVENT_SOURCE_ENDED: &str = "source-ended";
 const EVENT_SOURCE_CAPTURE_STARTED: &str = "source-capture-started";
 const EVENT_SOURCE_CAPTURE_STOPPED: &str = "source-capture-stopped";
 const EVENT_SOURCE_CAPTURE_ERROR: &str = "source-capture-error";
+const EVENT_MEETING_PROGRESS: &str = "meeting-progress";
+const EVENT_MEETING_SEGMENT: &str = "meeting-segment-committed";
+const EVENT_MEETING_FINISHED: &str = "meeting-finished";
 /// How often the watcher re-enumerates windows while the feature is enabled.
 const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -861,6 +876,168 @@ fn reveal_save_folder(state: State<'_, BackendState>) -> Result<(), String> {
 fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.process_next_transcription()
+}
+
+// --- Long-form meeting transcription -------------------------------------
+
+/// Build the sink that forwards meeting-pipeline events to the frontend.
+fn meeting_event_emitter(app: AppHandle) -> wakenote::meeting::MeetingEventCallback {
+    Arc::new(move |event: MeetingEvent| match event {
+        MeetingEvent::Progress(payload) => {
+            let _ = app.emit(EVENT_MEETING_PROGRESS, payload);
+        }
+        MeetingEvent::SegmentCommitted(payload) => {
+            let _ = app.emit(EVENT_MEETING_SEGMENT, payload);
+        }
+        MeetingEvent::Finished(payload) => {
+            let _ = app.emit(EVENT_MEETING_FINISHED, payload);
+        }
+    })
+}
+
+fn meeting_save_root(state: &State<'_, BackendState>) -> Result<PathBuf, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(expand_user_path(backend.settings().save_root))
+}
+
+/// Spawn the worker thread for one meeting, registering its cancel flag. Errors
+/// if another meeting is already processing (single shared GPU context).
+fn spawn_meeting_job(
+    app: AppHandle,
+    backend_state: BackendState,
+    meeting_state: MeetingState,
+    id: String,
+) -> Result<(), String> {
+    let (save_root, model_directory, suppress_low_confidence) = {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
+        (
+            expand_user_path(&settings.save_root),
+            expand_user_path(&settings.model_directory),
+            settings.suppress_low_confidence_transcripts,
+        )
+    };
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        if let Some(current) = runtime.current.as_ref() {
+            return Err(format!(
+                "다른 회의({current})를 처리 중입니다. 완료 후 다시 시도하세요."
+            ));
+        }
+        runtime.current = Some(id.clone());
+        runtime.cancel = Some(cancel.clone());
+    }
+
+    let emit = meeting_event_emitter(app);
+    let meeting_state_for_thread = meeting_state.clone();
+    thread::spawn(move || {
+        if let Err(error) = wakenote::meeting::run_meeting_job(
+            &save_root,
+            &model_directory,
+            &id,
+            suppress_low_confidence,
+            cancel,
+            emit,
+        ) {
+            eprintln!("[wakenote] meeting job {id} error: {error}");
+        }
+        if let Ok(mut runtime) = meeting_state_for_thread.lock() {
+            if runtime.current.as_deref() == Some(id.as_str()) {
+                runtime.current = None;
+                runtime.cancel = None;
+            }
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn list_meetings(state: State<'_, BackendState>) -> Result<Vec<MeetingSummary>, String> {
+    Ok(wakenote::meeting::list_meetings(&meeting_save_root(&state)?))
+}
+
+#[tauri::command]
+fn import_and_start_meeting(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    meeting_state: State<'_, MeetingState>,
+    source_path: String,
+) -> Result<MeetingSummary, String> {
+    let (save_root, model_id, language) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
+        (
+            expand_user_path(&settings.save_root),
+            settings.selected_model.clone(),
+            settings.transcription_language,
+        )
+    };
+    let record = wakenote::meeting::import_meeting(
+        &save_root,
+        Path::new(&source_path),
+        &model_id,
+        language,
+        env!("CARGO_PKG_VERSION"),
+        chrono::Local::now(),
+    )?;
+    spawn_meeting_job(
+        app,
+        state.inner().clone(),
+        meeting_state.inner().clone(),
+        record.id.clone(),
+    )?;
+    Ok(record.summary())
+}
+
+#[tauri::command]
+fn meeting_detail(state: State<'_, BackendState>, id: String) -> Result<MeetingDetail, String> {
+    wakenote::meeting::meeting_detail(&meeting_save_root(&state)?, &id)
+}
+
+#[tauri::command]
+fn cancel_meeting(meeting_state: State<'_, MeetingState>, id: String) -> Result<(), String> {
+    let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+    if runtime.current.as_deref() == Some(id.as_str()) {
+        if let Some(cancel) = runtime.cancel.as_ref() {
+            cancel.store(true, Ordering::Release);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn resume_meeting(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    meeting_state: State<'_, MeetingState>,
+    id: String,
+) -> Result<MeetingSummary, String> {
+    let save_root = meeting_save_root(&state)?;
+    spawn_meeting_job(
+        app,
+        state.inner().clone(),
+        meeting_state.inner().clone(),
+        id.clone(),
+    )?;
+    let detail = wakenote::meeting::meeting_detail(&save_root, &id)?;
+    Ok(detail.record.summary())
+}
+
+#[tauri::command]
+fn delete_meeting(
+    state: State<'_, BackendState>,
+    meeting_state: State<'_, MeetingState>,
+    id: String,
+) -> Result<(), String> {
+    {
+        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        if runtime.current.as_deref() == Some(id.as_str()) {
+            return Err("처리 중인 회의는 삭제할 수 없습니다. 먼저 취소하세요.".to_string());
+        }
+    }
+    wakenote::meeting::delete_meeting(&meeting_save_root(&state)?, &id)
 }
 
 #[tauri::command]
@@ -2368,6 +2545,11 @@ fn main() {
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
             let initial_settings_for_runtime = backend.settings();
+            // Reconcile any meeting left "processing" by a previous run (its
+            // worker thread died with the app) so the UI can offer Resume.
+            wakenote::meeting::reconcile_interrupted(&expand_user_path(
+                &initial_settings_for_runtime.save_root,
+            ));
             let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
             let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
             ensure_main_window_visible(app.handle(), show_dock_icon)?;
@@ -2378,6 +2560,7 @@ fn main() {
             let detected_source_state: DetectedSourceState = Arc::new(Mutex::new(None));
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
+            let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
@@ -2385,6 +2568,7 @@ fn main() {
             app.manage(system_capture_state.clone());
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
+            app.manage(meeting_state);
 
             spawn_source_watcher(
                 app.handle().clone(),
@@ -2543,7 +2727,13 @@ fn main() {
             list_recognized_sources,
             source_capture_status,
             start_source_capture,
-            stop_source_capture
+            stop_source_capture,
+            list_meetings,
+            import_and_start_meeting,
+            meeting_detail,
+            cancel_meeting,
+            resume_meeting,
+            delete_meeting
         ])
         .build(tauri::generate_context!())
         .expect("failed to build WakeNote")
