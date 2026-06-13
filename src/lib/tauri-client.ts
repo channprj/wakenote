@@ -28,6 +28,8 @@ import type {
   RecognizedSourceInfo,
   SourceCaptureStatus,
   SourcePayload,
+  MeetingSummary,
+  MeetingDetail,
 } from "./types";
 
 declare global {
@@ -52,7 +54,7 @@ function permissionSnapshotFromBrowser(): AppPermissions {
   return browserSnapshot.permissions ?? defaultPermissions();
 }
 
-function isTauriRuntime() {
+export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
 
@@ -1161,4 +1163,51 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
 
   await invoke<QueueSnapshot>("skip_job", { id });
   return loadSnapshot();
+}
+
+// --- Long-form meeting transcription -------------------------------------
+
+export async function listMeetings(): Promise<MeetingSummary[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+  return invoke<MeetingSummary[]>("list_meetings");
+}
+
+/** Open a file picker for a long recording and start batch transcription. */
+export async function importAndStartMeeting(): Promise<MeetingSummary | null> {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  const selected = await open({
+    multiple: false,
+    title: "Choose meeting recording",
+    filters: [{ name: "Audio", extensions: ["mp3", "m4a", "wav"] }],
+  });
+  if (typeof selected !== "string") {
+    return null;
+  }
+  return invoke<MeetingSummary>("import_and_start_meeting", { sourcePath: selected });
+}
+
+export async function meetingDetail(id: string): Promise<MeetingDetail> {
+  return invoke<MeetingDetail>("meeting_detail", { id });
+}
+
+export async function cancelMeeting(id: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  await invoke("cancel_meeting", { id });
+}
+
+export async function resumeMeeting(id: string): Promise<MeetingSummary> {
+  return invoke<MeetingSummary>("resume_meeting", { id });
+}
+
+export async function deleteMeeting(id: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  await invoke("delete_meeting", { id });
 }

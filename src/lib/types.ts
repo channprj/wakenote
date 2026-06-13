@@ -192,6 +192,85 @@ export interface UploadedAudio {
   stored_at: string;
 }
 
+// --- Long-form meeting transcription -------------------------------------
+
+export type MeetingStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export type MeetingSegmentStatus = "pending" | "completed" | "failed";
+
+export interface MeetingProgress {
+  segments_total: number;
+  segments_done: number;
+  processed_ms: number;
+  elapsed_ms: number;
+}
+
+export interface MeetingSegment {
+  index: number;
+  start_ms: number;
+  end_ms: number;
+  status: MeetingSegmentStatus;
+  text: string;
+  no_speech: boolean;
+}
+
+export interface MeetingSummary {
+  id: string;
+  title: string;
+  source_filename: string;
+  status: MeetingStatus;
+  duration_ms: number;
+  created_at: string;
+  updated_at: string;
+  progress: MeetingProgress;
+  model_id: string;
+  language: TranscriptionLanguage;
+  error: string | null;
+}
+
+export interface MeetingRecord extends MeetingSummary {
+  audio_file: string;
+  audio_format: string;
+  app_version: string;
+  segments: MeetingSegment[];
+}
+
+export interface MeetingDetail {
+  record: MeetingRecord;
+  transcript: string;
+  audio_path: string;
+}
+
+export interface MeetingProgressPayload {
+  id: string;
+  status: MeetingStatus;
+  segments_total: number;
+  segments_done: number;
+  processed_ms: number;
+  duration_ms: number;
+  elapsed_ms: number;
+  eta_ms: number;
+}
+
+export interface MeetingSegmentPayload {
+  id: string;
+  index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface MeetingFinishedPayload {
+  id: string;
+  status: MeetingStatus;
+  error: string | null;
+}
+
 export interface AudioRange {
   start: number;
   end: number;
