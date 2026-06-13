@@ -736,6 +736,61 @@ fn run_whisper(
     }
 }
 
+/// Text decoded from a single audio window using a pre-loaded context.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DecodedWindow {
+    pub text: String,
+    pub no_speech: bool,
+}
+
+/// Transcribe a slice of 16 kHz mono samples with an already-loaded context.
+///
+/// Unlike [`run_whisper`], the caller owns the [`WhisperContext`] so it can be
+/// reused across the many segments of one long recording — loading the medium
+/// model per segment would dominate the runtime. `progress` receives whisper's
+/// 0-100 progress for this window so callers can surface near-realtime status.
+pub fn transcribe_samples_with_context(
+    context: &WhisperContext,
+    samples: &[f32],
+    language: TranscriptionLanguage,
+    suppress_low_confidence: bool,
+    progress: impl FnMut(i32) + 'static,
+) -> Result<DecodedWindow, TranscriptionError> {
+    let mut state = context
+        .create_state()
+        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_no_context(true);
+    params.set_progress_callback_safe(progress);
+    configure_whisper_language(&mut params, language);
+
+    state
+        .full(params, samples)
+        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+
+    let mut text = String::new();
+    let mut qualities = Vec::new();
+    let mut max_no_speech = 0.0_f32;
+    for segment in state.as_iter() {
+        text.push_str(&segment.to_string());
+        let quality = decoded_segment_quality(&segment);
+        max_no_speech = max_no_speech.max(quality.no_speech_probability);
+        qualities.push(quality);
+    }
+    let text = text.trim().to_string();
+    let suppressed = suppress_low_confidence
+        && (should_suppress_transcript_artifact(&text)
+            || should_suppress_low_confidence_decode(&text, &qualities));
+    Ok(DecodedWindow {
+        text: if suppressed { String::new() } else { text },
+        no_speech: max_no_speech >= MAX_NO_SPEECH_PROBABILITY,
+    })
+}
+
 pub fn decode_audio_for_whisper(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
     let extension = path
         .extension()
