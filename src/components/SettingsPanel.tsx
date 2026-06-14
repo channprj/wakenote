@@ -3,7 +3,7 @@ import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
-import { AudioWorkspace } from "./AudioWorkspace";
+import { MeetingTranscriptionPanel } from "./MeetingTranscriptionPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
 import { SystemAudioSettings } from "./SystemAudioSettings";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
@@ -415,10 +415,10 @@ export function SettingsPanel({
     );
   }
 
-  if (activeSection === "audio") {
+  if (activeSection === "meetings") {
     return (
-      <Section title="Audio" eyebrow="Upload & meeting transcription">
-        <AudioWorkspace />
+      <Section title="Meetings" eyebrow="Long-form meeting transcription">
+        <MeetingTranscriptionPanel />
       </Section>
     );
   }

@@ -72,7 +72,7 @@ const sections = [
   { id: "models", label: "Models", icon: Brain },
   { id: "recording", label: "Recording", icon: Mic },
   { id: "storage", label: "Storage", icon: Folder },
-  { id: "audio", label: "Audio", icon: FileAudio },
+  { id: "meetings", label: "Meetings", icon: FileAudio },
   { id: "transcripts", label: "Transcripts", icon: Files },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
