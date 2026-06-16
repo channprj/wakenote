@@ -531,6 +531,16 @@ fn cohere_api_key_from_env() -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
+/// Resolve the Cohere key to use for transcription: the configured (settings)
+/// value when non-empty, otherwise the environment.
+pub fn effective_cohere_api_key(configured: Option<&str>) -> Option<String> {
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(cohere_api_key_from_env)
+}
+
 fn cohere_supported_audio_path(
     path: &Path,
 ) -> Result<(PathBuf, Option<PathBuf>), TranscriptionError> {

@@ -225,6 +225,47 @@ impl ModelStore {
         Ok(())
     }
 
+    /// Install an external-command model from its recipe: run the optional
+    /// weights-download `setup_command`, write the `.command` adapter, and
+    /// record the resulting status. Mirrors the download flow's bookkeeping so
+    /// the UI shows the same progress/error states.
+    pub fn install_external_model(
+        &self,
+        model_id: &str,
+        recipe: &AdapterRecipe,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        std::fs::create_dir_all(&self.model_directory)?;
+
+        if let Some(setup) = recipe.setup_command.as_deref() {
+            let output = Command::new("/bin/sh")
+                .arg("-lc")
+                .arg(setup)
+                .env("WAKENOTE_MODEL_DIRECTORY", &self.model_directory)
+                .env("WAKENOTE_MODEL_ID", model_id)
+                .output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let message = if stderr.is_empty() {
+                    format!("model setup command exited with {}", output.status)
+                } else {
+                    stderr
+                };
+                let _ = self.record_download_status(
+                    model_id,
+                    ModelStatus::Error,
+                    0,
+                    None,
+                    Some(message.clone()),
+                );
+                return Err(ModelStoreError::Download(message));
+            }
+        }
+
+        self.write_adapter_command(model_id, &recipe.command_template)?;
+        self.record_download_status(model_id, ModelStatus::Ready, 0, None, None)?;
+        Ok(ModelStatus::Ready)
+    }
+
     pub fn model_path(&self, model_id: &str) -> PathBuf {
         self.model_directory.join(format!("{model_id}.bin"))
     }
@@ -1342,6 +1383,55 @@ mod tests {
         assert_eq!(
             with_key.verify_model(&model).expect("verify with key"),
             ModelStatus::Ready
+        );
+    }
+
+    fn test_recipe(setup_command: Option<&str>, template: &str) -> AdapterRecipe {
+        AdapterRecipe {
+            runtime_command: "true".to_string(),
+            install_hint: "install the test runtime".to_string(),
+            setup_command: setup_command.map(str::to_string),
+            command_template: template.to_string(),
+        }
+    }
+
+    #[test]
+    fn install_external_model_runs_setup_and_writes_adapter() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let recipe = test_recipe(Some("true"), "printf transcript");
+
+        let status = store
+            .install_external_model("nemotron-3.5-asr", &recipe)
+            .expect("install succeeds");
+
+        assert_eq!(status, ModelStatus::Ready);
+        let command = std::fs::read_to_string(store.command_path("nemotron-3.5-asr"))
+            .expect("adapter written");
+        assert_eq!(command, "printf transcript");
+        let state = store.load_download_state().expect("download state");
+        assert_eq!(
+            state.downloads.get("nemotron-3.5-asr").map(|r| r.status),
+            Some(ModelStatus::Ready)
+        );
+    }
+
+    #[test]
+    fn install_external_model_records_error_when_setup_fails() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let recipe = test_recipe(Some("echo boom 1>&2; exit 3"), "printf transcript");
+
+        let error = store
+            .install_external_model("nemotron-3.5-asr", &recipe)
+            .expect_err("install fails");
+
+        assert!(matches!(error, ModelStoreError::Download(_)));
+        assert!(!store.command_path("nemotron-3.5-asr").exists());
+        let state = store.load_download_state().expect("download state");
+        assert_eq!(
+            state.downloads.get("nemotron-3.5-asr").map(|r| r.status),
+            Some(ModelStatus::Error)
         );
     }
 }

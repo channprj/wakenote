@@ -609,6 +609,26 @@ fn download_model(
 }
 
 #[tauri::command]
+fn install_external_model(
+    state: State<'_, BackendState>,
+    model_id: String,
+) -> Result<Vec<ModelDescriptor>, String> {
+    let prepared = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.prepare_external_model_install(&model_id)?
+    };
+    let model_directory = prepared.model_directory.clone();
+    let recipe = prepared.recipe.clone();
+    let install_model_id = prepared.model_id.clone();
+    thread::spawn(move || {
+        let store = ModelStore::new(model_directory);
+        let _ = store.install_external_model(&install_model_id, &recipe);
+    });
+
+    Ok(prepared.registry)
+}
+
+#[tauri::command]
 fn cancel_model_download(
     state: State<'_, BackendState>,
     model_id: String,
@@ -1956,7 +1976,7 @@ fn spawn_transcription_job(
         );
 
         let worker = TranscriptionWorker::with_options(
-            RuntimeTranscriber::new(started.model_directory),
+            RuntimeTranscriber::with_cohere_api_key(started.model_directory, started.cohere_api_key),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
@@ -2708,6 +2728,7 @@ fn main() {
             list_models,
             verify_model,
             download_model,
+            install_external_model,
             cancel_model_download,
             delete_model,
             queue_snapshot,
