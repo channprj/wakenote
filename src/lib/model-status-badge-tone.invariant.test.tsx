@@ -27,7 +27,6 @@ function renderModelManagerSelectedRowBadgeClass(status: ModelStatus): string {
       onPatch={() => {}}
       onVerify={() => {}}
       onDownload={() => {}}
-      onInstall={() => {}}
       onCancelDownload={() => {}}
       onDelete={() => {}}
     />,
@@ -71,7 +70,6 @@ function renderSettingsPanelSectionBadgeClass(status: ModelStatus): string {
       onSkip={() => {}}
       onVerifyModel={() => {}}
       onDownloadModel={() => {}}
-      onInstallModel={() => {}}
       onCancelModelDownload={() => {}}
       onDeleteModel={() => {}}
     />,

@@ -58,7 +58,6 @@ describe("app state derivation", () => {
       "parakeet-tdt-0.6b-v3",
       "sensevoice-small",
       "cohere-transcribe-03-2026",
-      "nemotron-3.5-asr",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");

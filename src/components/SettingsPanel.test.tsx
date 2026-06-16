@@ -43,7 +43,6 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onSkip={() => {}}
       onVerifyModel={() => {}}
       onDownloadModel={() => {}}
-      onInstallModel={() => {}}
       onCancelModelDownload={() => {}}
       onDeleteModel={() => {}}
     />,

@@ -72,29 +72,14 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
   };
 }
 
-export type ModelAcquireKind = "download" | "install" | "none";
+export type ModelAcquireKind = "download" | "none";
 
-/// The primary "acquire" action for a model's runtime: download a `.bin`
-/// (whisper-rs), install via an external CLI adapter (external-command), or
-/// nothing to download (cohere-api needs a key in Settings).
+/// The primary "acquire" action for a model's runtime: download an artifact
+/// (whisper-rs `.bin` or sherpa-onnx archive, both carry a `download_url`), or
+/// nothing to download (cohere-api is a cloud model that needs a key in Settings).
 export function modelAcquireAction(
   model: Pick<ModelDescriptor, "provider_runtime" | "download_url" | "status">,
 ): { kind: ModelAcquireKind; enabled: boolean; label: string; reason: string | null } {
-  if (model.provider_runtime === "external-command") {
-    if (isActiveDownload(model.status)) {
-      return { kind: "install", enabled: false, label: "Install", reason: "Install already in progress" };
-    }
-    if (isUsable(model.status)) {
-      return { kind: "install", enabled: false, label: "Install", reason: "Model is already installed" };
-    }
-    return {
-      kind: "install",
-      enabled: true,
-      label: model.status === "error" ? "Reinstall" : "Install",
-      reason: null,
-    };
-  }
-
   if (model.provider_runtime === "cohere-api") {
     return {
       kind: "none",
@@ -180,7 +165,6 @@ export function ModelManager({
   onPatch,
   onVerify,
   onDownload,
-  onInstall,
   onCancelDownload,
   onDelete,
 }: {
@@ -189,7 +173,6 @@ export function ModelManager({
   onPatch: (patch: Partial<AppSettings>) => void;
   onVerify: (modelId: string) => void;
   onDownload: (modelId: string) => void;
-  onInstall: (modelId: string) => void;
   onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
@@ -246,9 +229,7 @@ export function ModelManager({
                 size="icon"
                 title={acquire.reason ?? acquire.label}
                 onClick={() => {
-                  if (acquire.kind === "install") {
-                    onInstall(model.id);
-                  } else if (acquire.kind === "download") {
+                  if (acquire.kind === "download") {
                     onDownload(model.id);
                   }
                 }}

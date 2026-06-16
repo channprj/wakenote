@@ -33,7 +33,6 @@ import {
   chooseAudioFiles,
   deleteModel,
   downloadModel,
-  installExternalModel,
   enqueueBacklog,
   loadRecentTranscripts,
   loadSnapshot,
@@ -475,7 +474,6 @@ export default function App() {
           onSkip={(id) => void runAction(() => skipJob(id))}
           onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}
           onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
-          onInstallModel={(modelId) => void runAction(() => installExternalModel(modelId))}
           onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
         />

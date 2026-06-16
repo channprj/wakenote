@@ -34,7 +34,6 @@ function renderModel(
       onPatch={() => {}}
       onVerify={() => {}}
       onDownload={() => {}}
-      onInstall={() => {}}
       onCancelDownload={() => {}}
       onDelete={() => {}}
     />,
@@ -143,33 +142,27 @@ describe("model manager actions", () => {
 });
 
 describe("model acquire action", () => {
-  it("installs external-command models that are missing or errored", () => {
-    const missing = modelAcquireAction({
-      provider_runtime: "external-command",
-      download_url: null,
-      status: "missing",
-    });
-    expect(missing).toMatchObject({ kind: "install", enabled: true, label: "Install" });
-
-    const errored = modelAcquireAction({
-      provider_runtime: "external-command",
-      download_url: null,
-      status: "error",
-    });
-    expect(errored).toMatchObject({ kind: "install", enabled: true, label: "Reinstall" });
-  });
-
-  it("blocks installing external-command models that are already ready or active", () => {
-    expect(
-      modelAcquireAction({ provider_runtime: "external-command", download_url: null, status: "ready" }),
-    ).toMatchObject({ kind: "install", enabled: false });
+  it("downloads sherpa-onnx and whisper-rs models that carry a URL", () => {
     expect(
       modelAcquireAction({
-        provider_runtime: "external-command",
-        download_url: null,
-        status: "downloading",
+        provider_runtime: "sherpa-onnx",
+        download_url: "https://example.invalid/model.tar.bz2",
+        status: "missing",
       }),
-    ).toMatchObject({ kind: "install", enabled: false });
+    ).toMatchObject({ kind: "download", enabled: true });
+    expect(
+      modelAcquireAction({
+        provider_runtime: "whisper-rs",
+        download_url: "https://example.invalid/m.bin",
+        status: "missing",
+      }),
+    ).toMatchObject({ kind: "download", enabled: true });
+  });
+
+  it("blocks download for models without a URL", () => {
+    expect(
+      modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
+    ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
   });
 
   it("directs cohere-api models to the API key setting instead of a download", () => {
@@ -181,19 +174,6 @@ describe("model acquire action", () => {
       label: "Download",
       reason: "Set a Cohere API key in Settings",
     });
-  });
-
-  it("downloads whisper-rs models with a URL and blocks those without", () => {
-    expect(
-      modelAcquireAction({
-        provider_runtime: "whisper-rs",
-        download_url: "https://example.invalid/m.bin",
-        status: "missing",
-      }),
-    ).toMatchObject({ kind: "download", enabled: true });
-    expect(
-      modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
-    ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
   });
 });
 

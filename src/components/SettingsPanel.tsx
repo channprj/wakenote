@@ -115,7 +115,6 @@ export function SettingsPanel({
   onSkip,
   onVerifyModel,
   onDownloadModel,
-  onInstallModel,
   onCancelModelDownload,
   onDeleteModel,
 }: {
@@ -138,7 +137,6 @@ export function SettingsPanel({
   onSkip: (id: number) => void;
   onVerifyModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
-  onInstallModel: (modelId: string) => void;
   onCancelModelDownload: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
 }) {
@@ -205,7 +203,6 @@ export function SettingsPanel({
           onPatch={onPatch}
           onVerify={onVerifyModel}
           onDownload={onDownloadModel}
-          onInstall={onInstallModel}
           onCancelDownload={onCancelModelDownload}
           onDelete={onDeleteModel}
         />
@@ -221,8 +218,7 @@ export function SettingsPanel({
           />
           <p className="settings-hint">
             Cohere Transcribe is a cloud model and needs an API key — stored locally, used only
-            for transcription requests. Parakeet, Nemotron, and SenseVoice install on-device via
-            their runtime CLI.
+            for transcription requests. Parakeet and SenseVoice download and run fully on-device.
           </p>
         </div>
       </Section>
