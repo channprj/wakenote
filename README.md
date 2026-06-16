@@ -13,7 +13,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
-- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; provider entries are also available for Parakeet V3, SenseVoice, and Cohere Transcribe when their runtime is configured.
+- **Model manager** — download, verify (SHA-256), install, cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; provider entries for Parakeet V3, Nemotron 3.5 ASR, and SenseVoice install on-device via their runtime CLI, and Cohere Transcribe runs in the cloud with an API key.
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
 - **macOS tray + floating overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay only appears when recording or transcribing.
@@ -83,11 +83,22 @@ Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ran
 
 ## Additional ASR providers
 
-WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small`, and `cohere-transcribe-03-2026`.
+WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `nemotron-3.5-asr`, `sensevoice-small`, and `cohere-transcribe-03-2026`.
 
-- Parakeet V3 and SenseVoice use an external command adapter. Place a shell command file at `<model_directory>/<model-id>.command`; WakeNote marks the model ready when that file exists. The command reads `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, and `WAKENOTE_LANGUAGE`, then writes the transcript to stdout.
-- Cohere Transcribe uses the Cohere Audio Transcriptions API when `COHERE_API_KEY` or `CO_API_KEY` is present. The API requires an explicit language and accepts FLAC, MP3, MPEG, MPGA, OGG, or WAV; WakeNote converts other local chunks to WAV before upload.
-- A `.command` file with the Cohere model id overrides the API path, so local Cohere runners can use the same external-command adapter.
+### Install from the model manager
+
+For the neural offline models, click **Install** in the model list. WakeNote detects the runtime CLI on your PATH, runs the model's weights download, and writes the `<model_id>.command` adapter for you — then the model shows as Ready. Install the runtime CLI once beforehand:
+
+- **Parakeet V3** and **Nemotron 3.5 ASR** run on-device via FluidAudio CoreML (Apple Neural Engine), driven by [`macparakeet-cli`](https://github.com/moona3k/macparakeet): `brew install moona3k/tap/macparakeet-cli`. Nemotron 3.5 ships NeMo-only (no ONNX export), so this CoreML path is its offline route.
+- **SenseVoice** runs via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx): `pip install sherpa-onnx`. The install downloads the verified ONNX tarball; the generated adapter is a starting template — adjust its flags/stdout parsing to match your installed sherpa-onnx version.
+
+### How the adapter works
+
+External-command models execute `<model_directory>/<model-id>.command`; WakeNote marks the model ready when that file exists, so you can also write or edit it by hand. The command reads `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, and `WAKENOTE_LANGUAGE`, then writes the transcript to stdout.
+
+### Cohere Transcribe (cloud)
+
+Cohere Transcribe is a cloud model — there is nothing to download. Paste a key into the **Cohere API key** field in Settings → Models (stored locally) and the model becomes Ready; `COHERE_API_KEY`/`CO_API_KEY` in the environment still work as a fallback. The API requires an explicit language and accepts FLAC, MP3, MPEG, MPGA, OGG, or WAV; WakeNote converts other local chunks to WAV before upload. A `.command` file with the Cohere model id overrides the API path, so local Cohere runners can use the same external-command adapter.
 
 ## Requirements
 
