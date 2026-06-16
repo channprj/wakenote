@@ -115,6 +115,7 @@ export function SettingsPanel({
   onSkip,
   onVerifyModel,
   onDownloadModel,
+  onInstallModel,
   onCancelModelDownload,
   onDeleteModel,
 }: {
@@ -137,6 +138,7 @@ export function SettingsPanel({
   onSkip: (id: number) => void;
   onVerifyModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
+  onInstallModel: (modelId: string) => void;
   onCancelModelDownload: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
 }) {
@@ -203,9 +205,26 @@ export function SettingsPanel({
           onPatch={onPatch}
           onVerify={onVerifyModel}
           onDownload={onDownloadModel}
+          onInstall={onInstallModel}
           onCancelDownload={onCancelModelDownload}
           onDelete={onDeleteModel}
         />
+        <div className="model-credentials">
+          <TextInput
+            label="Cohere API key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Paste a Cohere API key to enable Cohere Transcribe"
+            value={settings.cohere_api_key}
+            onChange={(event) => onPatch({ cohere_api_key: event.currentTarget.value })}
+          />
+          <p className="settings-hint">
+            Cohere Transcribe is a cloud model and needs an API key — stored locally, used only
+            for transcription requests. Parakeet, Nemotron, and SenseVoice install on-device via
+            their runtime CLI.
+          </p>
+        </div>
       </Section>
     );
   }

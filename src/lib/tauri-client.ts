@@ -1047,6 +1047,37 @@ export async function downloadModel(modelId: string): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function installExternalModel(modelId: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const target = browserSnapshot.models.find((model) => model.id === modelId);
+    if (
+      target?.provider_runtime !== "external-command" ||
+      !["missing", "error"].includes(target.status)
+    ) {
+      return browserSnapshot;
+    }
+
+    browserVerificationPreviousStatuses.delete(modelId);
+    browserSnapshot = {
+      ...browserSnapshot,
+      models: browserSnapshot.models.map((model) =>
+        model.id === modelId
+          ? {
+              ...model,
+              status: "downloading",
+              download_progress: 0,
+              download_error: null,
+            }
+          : model,
+      ),
+    };
+    return browserSnapshot;
+  }
+
+  await invoke("install_external_model", { modelId });
+  return loadSnapshot();
+}
+
 export async function cancelModelDownload(modelId: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const target = browserSnapshot.models.find((model) => model.id === modelId);

@@ -72,6 +72,44 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
   };
 }
 
+export type ModelAcquireKind = "download" | "install" | "none";
+
+/// The primary "acquire" action for a model's runtime: download a `.bin`
+/// (whisper-rs), install via an external CLI adapter (external-command), or
+/// nothing to download (cohere-api needs a key in Settings).
+export function modelAcquireAction(
+  model: Pick<ModelDescriptor, "provider_runtime" | "download_url" | "status">,
+): { kind: ModelAcquireKind; enabled: boolean; label: string; reason: string | null } {
+  if (model.provider_runtime === "external-command") {
+    if (isActiveDownload(model.status)) {
+      return { kind: "install", enabled: false, label: "Install", reason: "Install already in progress" };
+    }
+    if (isUsable(model.status)) {
+      return { kind: "install", enabled: false, label: "Install", reason: "Model is already installed" };
+    }
+    return {
+      kind: "install",
+      enabled: true,
+      label: model.status === "error" ? "Reinstall" : "Install",
+      reason: null,
+    };
+  }
+
+  if (model.provider_runtime === "cohere-api") {
+    return {
+      kind: "none",
+      enabled: false,
+      label: "Download",
+      reason: isUsable(model.status)
+        ? "Model is already installed"
+        : "Set a Cohere API key in Settings",
+    };
+  }
+
+  const reason = modelDownloadDisabledReason(model);
+  return { kind: "download", enabled: reason === null, label: "Download", reason };
+}
+
 function isActiveDownload(status: ModelStatus): boolean {
   return status === "downloading" || status === "verifying" || status === "extracting";
 }
@@ -142,6 +180,7 @@ export function ModelManager({
   onPatch,
   onVerify,
   onDownload,
+  onInstall,
   onCancelDownload,
   onDelete,
 }: {
@@ -150,6 +189,7 @@ export function ModelManager({
   onPatch: (patch: Partial<AppSettings>) => void;
   onVerify: (modelId: string) => void;
   onDownload: (modelId: string) => void;
+  onInstall: (modelId: string) => void;
   onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
@@ -160,7 +200,7 @@ export function ModelManager({
         const progress = statusProgress(model);
         const actions = modelActionState(model);
         const switchReason = modelSwitchDisabledReason(model, selected);
-        const downloadReason = modelDownloadDisabledReason(model);
+        const acquire = modelAcquireAction(model);
         const verifyReason = modelVerifyDisabledReason(model);
         const retryReason = modelRetryDisabledReason(model);
         const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
@@ -204,9 +244,15 @@ export function ModelManager({
                 type="button"
                 variant="secondary"
                 size="icon"
-                title={downloadReason ?? "Download"}
-                onClick={() => onDownload(model.id)}
-                disabled={!actions.canDownload}
+                title={acquire.reason ?? acquire.label}
+                onClick={() => {
+                  if (acquire.kind === "install") {
+                    onInstall(model.id);
+                  } else if (acquire.kind === "download") {
+                    onDownload(model.id);
+                  }
+                }}
+                disabled={!acquire.enabled}
               >
                 <Download />
               </Button>

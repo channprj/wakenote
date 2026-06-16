@@ -74,6 +74,7 @@ export interface AppSettings {
   max_chunk_ms: number;
   selected_model: string;
   model_directory: string;
+  cohere_api_key: string;
   vad_enabled: boolean;
   launch_at_login: boolean;
   start_live_input_on_launch: boolean;
