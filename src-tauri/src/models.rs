@@ -82,79 +82,60 @@ pub struct ModelStore {
     cohere_api_key: Option<String>,
 }
 
-/// How to install and run an `external-command` model end to end. The install
-/// flow detects [`runtime_command`](Self::runtime_command), runs the optional
-/// [`setup_command`](Self::setup_command) to fetch the weights, and writes
-/// [`command_template`](Self::command_template) to `<model_id>.command`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AdapterRecipe {
-    /// CLI that must be on `PATH` for this model to run (detected via `command -v`).
-    pub runtime_command: String,
-    /// Human-readable hint shown when the runtime command is missing.
-    pub install_hint: String,
-    /// Optional shell command that downloads/prepares the model weights. Runs
-    /// with `WAKENOTE_MODEL_DIRECTORY` set. `None` means the runtime fetches its
-    /// own weights on first use.
-    pub setup_command: Option<String>,
-    /// Contents written to `<model_id>.command`, executed once per transcription.
-    pub command_template: String,
+/// Which in-process sherpa-onnx recognizer a model uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SherpaModelKind {
+    /// NeMo/Parakeet offline transducer (encoder/decoder/joiner + tokens).
+    Transducer,
+    /// SenseVoice offline model (single model file + tokens).
+    SenseVoice,
 }
 
-/// Built-in install recipe for a known `external-command` model, or `None` for
-/// models that must be configured by hand.
-pub fn adapter_recipe(model_id: &str) -> Option<AdapterRecipe> {
+/// Layout of a downloadable sherpa-onnx model: its `.tar.bz2` extracts to
+/// [`dir`](Self::dir) under the model directory and contains [`files`](Self::files).
+/// The model's `download_url` points at that archive; the bundled sherpa-onnx
+/// engine runs it in-process (no external CLI).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SherpaModelSpec {
+    pub kind: SherpaModelKind,
+    /// Top-level directory created when the archive is extracted.
+    pub dir: String,
+    /// Files (relative to `dir`) that must exist for the model to be ready and
+    /// that the recognizer loads. Transducer: `[encoder, decoder, joiner, tokens]`;
+    /// SenseVoice: `[model, tokens]`.
+    pub files: Vec<String>,
+}
+
+impl SherpaModelSpec {
+    fn new(kind: SherpaModelKind, dir: &str, files: &[&str]) -> Self {
+        Self {
+            kind,
+            dir: dir.to_string(),
+            files: files.iter().map(|file| file.to_string()).collect(),
+        }
+    }
+}
+
+/// The sherpa-onnx model layout for a known model id, or `None` for models that
+/// don't run on the bundled sherpa-onnx engine.
+pub fn sherpa_model_spec(model_id: &str) -> Option<SherpaModelSpec> {
     match model_id {
-        "parakeet-tdt-0.6b-v3" => Some(macparakeet_recipe("parakeet", "parakeet-v3")),
-        "nemotron-3.5-asr" => Some(macparakeet_recipe("nemotron", "nemotron-multilingual-1120ms")),
-        "sensevoice-small" => Some(sensevoice_recipe()),
-        _ => None,
-    }
-}
-
-/// FluidAudio / macparakeet CoreML adapter (Apple Neural Engine, on-device).
-/// `engine` selects the macparakeet engine, `model_name` the weights to prefetch.
-fn macparakeet_recipe(engine: &str, model_name: &str) -> AdapterRecipe {
-    AdapterRecipe {
-        runtime_command: "macparakeet-cli".to_string(),
-        install_hint: "Install the FluidAudio CLI first: brew install moona3k/tap/macparakeet-cli"
-            .to_string(),
-        setup_command: Some(format!("macparakeet-cli models download {model_name}")),
-        command_template: format!(
-            "#!/bin/sh\n\
-             # WakeNote external ASR adapter (auto-generated). Edit to match your CLI.\n\
-             exec macparakeet-cli transcribe \"$WAKENOTE_AUDIO_PATH\" \\\n\
-             \x20 --engine {engine} --language \"$WAKENOTE_LANGUAGE\" \\\n\
-             \x20 --format transcript --no-history\n"
-        ),
-    }
-}
-
-/// sherpa-onnx adapter for SenseVoice. The transcribe template is a documented
-/// starting point; flags and stdout parsing may need tuning per sherpa version.
-fn sensevoice_recipe() -> AdapterRecipe {
-    let archive = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17";
-    AdapterRecipe {
-        runtime_command: "sherpa-onnx-offline".to_string(),
-        install_hint: "Install sherpa-onnx first: pip install sherpa-onnx".to_string(),
-        setup_command: Some(format!(
-            "set -e\n\
-             cd \"$WAKENOTE_MODEL_DIRECTORY\"\n\
-             curl -fL -o \"{archive}.tar.bz2\" \"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{archive}.tar.bz2\"\n\
-             tar xjf \"{archive}.tar.bz2\"\n\
-             rm -f \"{archive}.tar.bz2\"\n"
+        "parakeet-tdt-0.6b-v3" => Some(SherpaModelSpec::new(
+            SherpaModelKind::Transducer,
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+            &[
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+                "tokens.txt",
+            ],
         )),
-        command_template: format!(
-            "#!/bin/sh\n\
-             # WakeNote external ASR adapter (auto-generated, sherpa-onnx template).\n\
-             # Adjust flags/parsing to match your installed sherpa-onnx version.\n\
-             MODEL_DIR=\"$WAKENOTE_MODEL_DIRECTORY/{archive}\"\n\
-             sherpa-onnx-offline \\\n\
-             \x20 --sense-voice-model=\"$MODEL_DIR/model.int8.onnx\" \\\n\
-             \x20 --tokens=\"$MODEL_DIR/tokens.txt\" \\\n\
-             \x20 --num-threads=2 \\\n\
-             \x20 \"$WAKENOTE_AUDIO_PATH\" 2>/dev/null \\\n\
-             \x20 | sed -n 's/.*text:[[:space:]]*//p' | tail -n 1\n"
-        ),
+        "sensevoice-small" => Some(SherpaModelSpec::new(
+            SherpaModelKind::SenseVoice,
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
+            &["model.int8.onnx", "tokens.txt"],
+        )),
+        _ => None,
     }
 }
 
@@ -213,56 +194,150 @@ impl ModelStore {
         self.cohere_api_key.is_some()
     }
 
-    /// Write `contents` to `<model_id>.command`, marking an external-command
-    /// model ready. Creates the model directory if needed.
-    pub fn write_adapter_command(
-        &self,
-        model_id: &str,
-        contents: &str,
-    ) -> Result<(), ModelStoreError> {
-        std::fs::create_dir_all(&self.model_directory)?;
-        std::fs::write(self.command_path(model_id), contents)?;
-        Ok(())
+    /// Directory the sherpa-onnx archive for `model_id` extracts to, or `None`
+    /// if the model isn't a sherpa-onnx model.
+    pub fn sherpa_model_dir(&self, model_id: &str) -> Option<PathBuf> {
+        sherpa_model_spec(model_id).map(|spec| self.model_directory.join(spec.dir))
     }
 
-    /// Install an external-command model from its recipe: run the optional
-    /// weights-download `setup_command`, write the `.command` adapter, and
-    /// record the resulting status. Mirrors the download flow's bookkeeping so
-    /// the UI shows the same progress/error states.
-    pub fn install_external_model(
+    /// Whether every file the sherpa-onnx model needs is present on disk.
+    fn sherpa_model_ready(&self, model_id: &str) -> bool {
+        let Some(spec) = sherpa_model_spec(model_id) else {
+            return false;
+        };
+        let dir = self.model_directory.join(&spec.dir);
+        spec.files.iter().all(|file| dir.join(file).exists())
+    }
+
+    /// Download a sherpa-onnx model `.tar.bz2` and extract it in place so the
+    /// bundled engine can run it. Records Downloading/Extracting/Ready/Error so
+    /// the UI shows the same progress as a normal download. Extraction uses the
+    /// system `tar` (handles bzip2) — no extra Rust dependency.
+    pub fn download_and_extract_sherpa_model(
         &self,
-        model_id: &str,
-        recipe: &AdapterRecipe,
+        model: &ModelDescriptor,
     ) -> Result<ModelStatus, ModelStoreError> {
+        let url = model
+            .download_url
+            .as_ref()
+            .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
+        if sherpa_model_spec(&model.id).is_none() {
+            return Err(ModelStoreError::Registry(format!(
+                "no sherpa-onnx layout for {}",
+                model.id
+            )));
+        }
         std::fs::create_dir_all(&self.model_directory)?;
 
-        if let Some(setup) = recipe.setup_command.as_deref() {
-            let output = Command::new("/bin/sh")
-                .arg("-lc")
-                .arg(setup)
-                .env("WAKENOTE_MODEL_DIRECTORY", &self.model_directory)
-                .env("WAKENOTE_MODEL_ID", model_id)
-                .output()?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let message = if stderr.is_empty() {
-                    format!("model setup command exited with {}", output.status)
-                } else {
-                    stderr
-                };
-                let _ = self.record_download_status(
-                    model_id,
-                    ModelStatus::Error,
-                    0,
-                    None,
-                    Some(message.clone()),
-                );
-                return Err(ModelStoreError::Download(message));
-            }
+        let agent = ureq::AgentBuilder::new().redirects(10).build();
+        let response = agent
+            .get(url)
+            .set(
+                "User-Agent",
+                &format!("wakenote/{}", env!("CARGO_PKG_VERSION")),
+            )
+            .call()
+            .map_err(|error| ModelStoreError::Download(error.to_string()))
+            .inspect_err(|error| self.record_download_error(&model.id, 0, None, error))?;
+
+        let total_bytes = response
+            .header("Content-Length")
+            .and_then(|value| value.parse::<u64>().ok());
+        let required_bytes =
+            total_bytes.unwrap_or_else(|| model.size_mb.saturating_mul(1024 * 1024));
+        let available_bytes = self.available_disk_space()?;
+        if let Err(error) = Self::validate_download_space(required_bytes, available_bytes) {
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                0,
+                total_bytes,
+                Some(error.to_string()),
+            );
+            return Err(error);
         }
 
-        self.write_adapter_command(model_id, &recipe.command_template)?;
-        self.record_download_status(model_id, ModelStatus::Ready, 0, None, None)?;
+        let archive_path = self.temp_download_path(&model.id);
+        let mut reader = response.into_reader();
+        let mut file = std::fs::File::create(&archive_path)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut downloaded_bytes = 0_u64;
+        let mut last_recorded = 0_u64;
+        self.record_download_progress(&model.id, 0, total_bytes)?;
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut file, &buffer[..read])?;
+            downloaded_bytes += read as u64;
+            if self.is_download_cancelled(&model.id)? {
+                let _ = std::fs::remove_file(&archive_path);
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model.id.clone(),
+                });
+            }
+            if downloaded_bytes.saturating_sub(last_recorded) >= 5_242_880 {
+                self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
+                last_recorded = downloaded_bytes;
+            }
+        }
+        std::io::Write::flush(&mut file)?;
+        drop(file);
+
+        let final_total = total_bytes.or(Some(downloaded_bytes));
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Extracting,
+            downloaded_bytes,
+            final_total,
+            None,
+        )?;
+
+        let extract = Command::new("/usr/bin/tar")
+            .arg("xjf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&self.model_directory)
+            .output();
+        let _ = std::fs::remove_file(&archive_path);
+        let extract = extract?;
+        if !extract.status.success() {
+            let stderr = String::from_utf8_lossy(&extract.stderr).trim().to_string();
+            let message = if stderr.is_empty() {
+                format!("tar exited with {}", extract.status)
+            } else {
+                stderr
+            };
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                downloaded_bytes,
+                final_total,
+                Some(message.clone()),
+            );
+            return Err(ModelStoreError::Download(message));
+        }
+
+        if !self.sherpa_model_ready(&model.id) {
+            let message = "extracted archive is missing expected model files".to_string();
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                downloaded_bytes,
+                final_total,
+                Some(message.clone()),
+            );
+            return Err(ModelStoreError::Download(message));
+        }
+
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Ready,
+            downloaded_bytes,
+            final_total,
+            None,
+        )?;
         Ok(ModelStatus::Ready)
     }
 
@@ -360,6 +435,14 @@ impl ModelStore {
     }
 
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
+        if model.provider_runtime == "sherpa-onnx" {
+            return Ok(if self.sherpa_model_ready(&model.id) {
+                ModelStatus::Ready
+            } else {
+                ModelStatus::Missing
+            });
+        }
+
         if model.provider_runtime == "external-command" {
             return Ok(if self.command_path(&model.id).exists() {
                 ModelStatus::Ready
@@ -433,6 +516,13 @@ impl ModelStore {
         if command_path.exists() {
             std::fs::remove_file(command_path)?;
             removed_anything = true;
+        }
+        // sherpa-onnx models extract to a directory rather than a single file.
+        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
+            if sherpa_dir.is_dir() {
+                std::fs::remove_dir_all(sherpa_dir)?;
+                removed_anything = true;
+            }
         }
 
         if removed_anything {
@@ -1058,10 +1148,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             id: "parakeet-tdt-0.6b-v3".to_string(),
             display_name: "Parakeet TDT 0.6B V3".to_string(),
             engine: "NVIDIA Parakeet".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+                    .to_string(),
+            ),
             checksum_sha256: None,
-            size_mb: 1_200,
+            size_mb: 660,
             languages: vec!["en".to_string(), "multi".to_string()],
             speed_score: 8,
             accuracy_score: 8,
@@ -1078,10 +1171,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             id: "sensevoice-small".to_string(),
             display_name: "SenseVoice Small".to_string(),
             engine: "SenseVoice".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
+                    .to_string(),
+            ),
             checksum_sha256: None,
-            size_mb: 1_000,
+            size_mb: 250,
             languages: vec![
                 "ko".to_string(),
                 "en".to_string(),
@@ -1127,34 +1223,9 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
-    registry.insert(
-        "nemotron-3.5-asr".to_string(),
-        ModelDescriptor {
-            id: "nemotron-3.5-asr".to_string(),
-            display_name: "Nemotron 3.5 ASR".to_string(),
-            engine: "NVIDIA Nemotron".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
-            checksum_sha256: None,
-            size_mb: 1_200,
-            languages: vec![
-                "ko".to_string(),
-                "en".to_string(),
-                "ja".to_string(),
-                "zh".to_string(),
-                "es".to_string(),
-                "fr".to_string(),
-                "de".to_string(),
-                "multi".to_string(),
-            ],
-            speed_score: 9,
-            accuracy_score: 9,
-            offline: true,
-            status: ModelStatus::Missing,
-            download_progress: None,
-            download_error: None,
-        },
-    );
+    // Nemotron 3.5 ASR is intentionally omitted: NVIDIA ships it as a NeMo
+    // checkpoint only (no ONNX export), so it can't run on the bundled
+    // sherpa-onnx engine yet. Revisit when an ONNX export is published.
 
     registry
 }
@@ -1313,46 +1384,50 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_includes_nemotron_35_asr() {
+    fn default_registry_uses_sherpa_onnx_for_parakeet_and_sensevoice() {
         let registry = default_model_registry();
-        let nemotron = registry
-            .get("nemotron-3.5-asr")
-            .expect("nemotron-3.5-asr entry");
-        assert_eq!(nemotron.provider_runtime, "external-command");
-        assert!(nemotron.download_url.is_none());
-        assert!(nemotron.offline);
-        assert!(nemotron.languages.iter().any(|lang| lang == "ko"));
-    }
 
-    #[test]
-    fn adapter_recipe_known_models_use_expected_runtime() {
-        let parakeet = adapter_recipe("parakeet-tdt-0.6b-v3").expect("parakeet recipe");
-        assert_eq!(parakeet.runtime_command, "macparakeet-cli");
-        assert!(parakeet.command_template.contains("--engine parakeet"));
-
-        let nemotron = adapter_recipe("nemotron-3.5-asr").expect("nemotron recipe");
-        assert_eq!(nemotron.runtime_command, "macparakeet-cli");
-        assert!(nemotron.command_template.contains("--engine nemotron"));
+        let parakeet = registry
+            .get("parakeet-tdt-0.6b-v3")
+            .expect("parakeet entry");
+        assert_eq!(parakeet.provider_runtime, "sherpa-onnx");
         assert!(
-            nemotron
-                .setup_command
+            parakeet
+                .download_url
                 .as_deref()
-                .is_some_and(|cmd| cmd.contains("models download nemotron"))
+                .is_some_and(|url| url.ends_with(".tar.bz2")),
+            "parakeet should download a sherpa-onnx archive",
         );
 
-        let sensevoice = adapter_recipe("sensevoice-small").expect("sensevoice recipe");
-        assert_eq!(sensevoice.runtime_command, "sherpa-onnx-offline");
+        let sensevoice = registry.get("sensevoice-small").expect("sensevoice entry");
+        assert_eq!(sensevoice.provider_runtime, "sherpa-onnx");
+        assert!(sensevoice.download_url.is_some());
 
-        assert!(adapter_recipe("whisper-small").is_none());
+        // Nemotron 3.5 has no ONNX export yet, so it is intentionally absent.
+        assert!(!registry.contains_key("nemotron-3.5-asr"));
     }
 
     #[test]
-    fn write_adapter_command_marks_external_command_model_ready() {
+    fn sherpa_model_spec_describes_known_models() {
+        let parakeet = sherpa_model_spec("parakeet-tdt-0.6b-v3").expect("parakeet spec");
+        assert_eq!(parakeet.kind, SherpaModelKind::Transducer);
+        assert!(parakeet.files.iter().any(|f| f == "encoder.int8.onnx"));
+        assert!(parakeet.files.iter().any(|f| f == "tokens.txt"));
+
+        let sensevoice = sherpa_model_spec("sensevoice-small").expect("sensevoice spec");
+        assert_eq!(sensevoice.kind, SherpaModelKind::SenseVoice);
+        assert!(sensevoice.files.iter().any(|f| f == "model.int8.onnx"));
+
+        assert!(sherpa_model_spec("whisper-small").is_none());
+    }
+
+    #[test]
+    fn sherpa_model_ready_only_when_extracted_files_exist() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let store = ModelStore::new(tmp.path());
         let model = ModelDescriptor {
-            provider_runtime: "external-command".to_string(),
-            ..descriptor("nemotron-3.5-asr", None)
+            provider_runtime: "sherpa-onnx".to_string(),
+            ..descriptor("parakeet-tdt-0.6b-v3", None)
         };
 
         assert_eq!(
@@ -1360,14 +1435,33 @@ mod tests {
             ModelStatus::Missing
         );
 
-        store
-            .write_adapter_command("nemotron-3.5-asr", "printf transcript")
-            .expect("write adapter");
+        let spec = sherpa_model_spec("parakeet-tdt-0.6b-v3").expect("spec");
+        let dir = store
+            .sherpa_model_dir("parakeet-tdt-0.6b-v3")
+            .expect("sherpa dir");
+        std::fs::create_dir_all(&dir).expect("model dir");
+        for file in &spec.files {
+            std::fs::write(dir.join(file), b"x").expect("model file");
+        }
 
         assert_eq!(
             store.verify_model(&model).expect("verify after"),
             ModelStatus::Ready
         );
+    }
+
+    #[test]
+    fn delete_model_removes_extracted_sherpa_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let dir = store
+            .sherpa_model_dir("sensevoice-small")
+            .expect("sherpa dir");
+        std::fs::create_dir_all(&dir).expect("model dir");
+        std::fs::write(dir.join("model.int8.onnx"), b"x").expect("model file");
+
+        store.delete_model("sensevoice-small").expect("delete");
+        assert!(!dir.exists());
     }
 
     #[test]
@@ -1383,55 +1477,6 @@ mod tests {
         assert_eq!(
             with_key.verify_model(&model).expect("verify with key"),
             ModelStatus::Ready
-        );
-    }
-
-    fn test_recipe(setup_command: Option<&str>, template: &str) -> AdapterRecipe {
-        AdapterRecipe {
-            runtime_command: "true".to_string(),
-            install_hint: "install the test runtime".to_string(),
-            setup_command: setup_command.map(str::to_string),
-            command_template: template.to_string(),
-        }
-    }
-
-    #[test]
-    fn install_external_model_runs_setup_and_writes_adapter() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let store = ModelStore::new(tmp.path());
-        let recipe = test_recipe(Some("true"), "printf transcript");
-
-        let status = store
-            .install_external_model("nemotron-3.5-asr", &recipe)
-            .expect("install succeeds");
-
-        assert_eq!(status, ModelStatus::Ready);
-        let command = std::fs::read_to_string(store.command_path("nemotron-3.5-asr"))
-            .expect("adapter written");
-        assert_eq!(command, "printf transcript");
-        let state = store.load_download_state().expect("download state");
-        assert_eq!(
-            state.downloads.get("nemotron-3.5-asr").map(|r| r.status),
-            Some(ModelStatus::Ready)
-        );
-    }
-
-    #[test]
-    fn install_external_model_records_error_when_setup_fails() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let store = ModelStore::new(tmp.path());
-        let recipe = test_recipe(Some("echo boom 1>&2; exit 3"), "printf transcript");
-
-        let error = store
-            .install_external_model("nemotron-3.5-asr", &recipe)
-            .expect_err("install fails");
-
-        assert!(matches!(error, ModelStoreError::Download(_)));
-        assert!(!store.command_path("nemotron-3.5-asr").exists());
-        let state = store.load_download_state().expect("download state");
-        assert_eq!(
-            state.downloads.get("nemotron-3.5-asr").map(|r| r.status),
-            Some(ModelStatus::Error)
         );
     }
 }

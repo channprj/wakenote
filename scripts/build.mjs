@@ -149,13 +149,17 @@ function buildTauri(mode, bundle, env = process.env) {
   ensureDependencies();
 
   const bundleArgs = bundle ? ['--bundles', bundle] : [];
+  // Bundle the in-process sherpa-onnx engine (Parakeet / SenseVoice) in shipped
+  // builds. Kept out of the crate's default features so plain `cargo` builds and
+  // CI stay light.
+  const featureArgs = ['--features', 'asr-sherpa'];
 
   if (mode === 'debug') {
     console.log('==> Building Tauri app (debug)');
-    run('pnpm', ['tauri', 'build', '--debug', ...bundleArgs], { env });
+    run('pnpm', ['tauri', 'build', '--debug', ...featureArgs, ...bundleArgs], { env });
   } else {
     console.log('==> Building Tauri app (release)');
-    run('pnpm', ['tauri', 'build', ...bundleArgs], { env });
+    run('pnpm', ['tauri', 'build', ...featureArgs, ...bundleArgs], { env });
   }
 
   // Seal the freshly built bundle. See `sealBundleSignature` for why this

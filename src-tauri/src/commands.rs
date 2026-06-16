@@ -17,7 +17,7 @@ use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControll
 use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
 use crate::models::{
-    AdapterRecipe, ModelDescriptor, ModelStatus, ModelStore, adapter_recipe, default_model_registry,
+    ModelDescriptor, ModelStatus, ModelStore, default_model_registry,
 };
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{
@@ -420,13 +420,6 @@ pub struct PreparedModelDownload {
     pub registry: Vec<ModelDescriptor>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PreparedExternalInstall {
-    pub model_directory: std::path::PathBuf,
-    pub model_id: String,
-    pub recipe: AdapterRecipe,
-    pub registry: Vec<ModelDescriptor>,
-}
 
 /// One-shot device override staged by the recovery watchdog. Carries the
 /// stable device id plus the persisted label, so the resolver can still
@@ -652,62 +645,6 @@ impl AppBackend {
         Ok(PreparedModelDownload {
             model_directory: self.model_directory_path(),
             model,
-            registry: self.model_registry(),
-        })
-    }
-
-    /// Validate that an external-command model can be installed and stage it as
-    /// `Downloading`. Returns the recipe so the caller can run the (possibly
-    /// long) install on a background thread, mirroring `prepare_model_download`.
-    pub fn prepare_external_model_install(
-        &self,
-        model_id: &str,
-    ) -> Result<PreparedExternalInstall, String> {
-        let store = self.model_store();
-        let registry = store
-            .load_model_registry()
-            .map_err(|error| error.to_string())?;
-        let model = registry
-            .get(model_id)
-            .ok_or_else(|| format!("unknown model {model_id}"))?
-            .clone();
-        if model.provider_runtime != "external-command" {
-            return Err(format!("model {model_id} is not an external-command model"));
-        }
-        let recipe = adapter_recipe(model_id)
-            .ok_or_else(|| format!("model {model_id} has no built-in installer"))?;
-
-        let mut refreshed_models: Vec<ModelDescriptor> = registry.values().cloned().collect();
-        store
-            .refresh_statuses(&mut refreshed_models)
-            .map_err(|error| error.to_string())?;
-        let current_status = refreshed_models
-            .iter()
-            .find(|candidate| candidate.id == model_id)
-            .map(|candidate| candidate.status)
-            .unwrap_or(model.status);
-        match current_status {
-            ModelStatus::Downloading | ModelStatus::Verifying | ModelStatus::Extracting => {
-                return Err(format!("model {model_id} install is already active"));
-            }
-            ModelStatus::Installed | ModelStatus::Ready | ModelStatus::Unloaded => {
-                return Err(format!("model {model_id} is already installed"));
-            }
-            ModelStatus::Missing | ModelStatus::Error => {}
-        }
-
-        if !runtime_command_available(&recipe.runtime_command) {
-            return Err(recipe.install_hint.clone());
-        }
-
-        store
-            .record_download_progress(&model.id, 0, None)
-            .map_err(|error| error.to_string())?;
-
-        Ok(PreparedExternalInstall {
-            model_directory: self.model_directory_path(),
-            model_id: model_id.to_string(),
-            recipe,
             registry: self.model_registry(),
         })
     }
@@ -2231,23 +2168,11 @@ fn selectable_model_ids(model_directory: &str, cohere_api_key: Option<&str>) -> 
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "external-command" | "cohere-api" => store
+        "sherpa-onnx" | "external-command" | "cohere-api" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
         _ => store.model_path(&model.id).exists(),
     }
-}
-
-/// Whether `command` resolves on the user's login-shell PATH (so Homebrew
-/// installs are found). Used to fail external-command installs early with an
-/// actionable hint when the runtime CLI is missing.
-fn runtime_command_available(command: &str) -> bool {
-    std::process::Command::new("/bin/sh")
-        .arg("-lc")
-        .arg(format!("command -v {command}"))
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
 }
 
 fn download_record_blocks_model_selection(record: &crate::models::ModelDownloadRecord) -> bool {
@@ -2340,14 +2265,6 @@ mod tests {
         let models = selectable_model_ids(&tmp.path().to_string_lossy(), None);
 
         assert!(!models.contains("local-downloading"));
-    }
-
-    #[test]
-    fn runtime_command_available_detects_present_and_missing_commands() {
-        assert!(runtime_command_available("true"));
-        assert!(!runtime_command_available(
-            "wakenote-definitely-missing-binary-xyz"
-        ));
     }
 
     #[test]

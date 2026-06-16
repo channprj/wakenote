@@ -602,27 +602,13 @@ fn download_model(
     let model = prepared.model.clone();
     thread::spawn(move || {
         let store = ModelStore::new(model_directory);
-        let _ = store.download_model(&model);
-    });
-
-    Ok(prepared.registry)
-}
-
-#[tauri::command]
-fn install_external_model(
-    state: State<'_, BackendState>,
-    model_id: String,
-) -> Result<Vec<ModelDescriptor>, String> {
-    let prepared = {
-        let backend = state.lock().map_err(|error| error.to_string())?;
-        backend.prepare_external_model_install(&model_id)?
-    };
-    let model_directory = prepared.model_directory.clone();
-    let recipe = prepared.recipe.clone();
-    let install_model_id = prepared.model_id.clone();
-    thread::spawn(move || {
-        let store = ModelStore::new(model_directory);
-        let _ = store.install_external_model(&install_model_id, &recipe);
+        // sherpa-onnx models download a .tar.bz2 and extract in place; whisper
+        // models download a single .bin.
+        let _ = if model.provider_runtime == "sherpa-onnx" {
+            store.download_and_extract_sherpa_model(&model)
+        } else {
+            store.download_model(&model)
+        };
     });
 
     Ok(prepared.registry)
@@ -2728,7 +2714,6 @@ fn main() {
             list_models,
             verify_model,
             download_model,
-            install_external_model,
             cancel_model_download,
             delete_model,
             queue_snapshot,

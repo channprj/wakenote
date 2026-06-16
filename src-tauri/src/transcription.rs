@@ -414,6 +414,7 @@ impl Transcriber for RuntimeTranscriber {
         }
 
         match self.model_runtime(request.model_id).as_str() {
+            "sherpa-onnx" => transcribe_with_sherpa(&self.model_directory, request),
             "external-command" => {
                 ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
             }
@@ -421,6 +422,71 @@ impl Transcriber for RuntimeTranscriber {
             _ => WhisperTranscriber::new(&self.model_directory).transcribe(request),
         }
     }
+}
+
+/// Run a sherpa-onnx model (Parakeet transducer / SenseVoice) in-process. Built
+/// only with the `asr-sherpa` feature; otherwise returns an actionable error.
+#[cfg(feature = "asr-sherpa")]
+fn transcribe_with_sherpa(
+    model_directory: &Path,
+    request: TranscriptionRequest<'_>,
+) -> Result<String, TranscriptionError> {
+    use crate::models::{SherpaModelKind, sherpa_model_spec};
+
+    let spec = sherpa_model_spec(request.model_id).ok_or_else(|| {
+        TranscriptionError::Engine(format!("no sherpa-onnx layout for {}", request.model_id))
+    })?;
+    let dir = ModelStore::new(model_directory)
+        .sherpa_model_dir(request.model_id)
+        .ok_or_else(|| TranscriptionError::Engine("sherpa-onnx model directory missing".into()))?;
+    let samples = decode_audio_for_whisper(request.audio_path)?;
+    if should_skip_low_signal_audio(&samples) {
+        return Ok(String::new());
+    }
+    let file = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+    match spec.kind {
+        SherpaModelKind::Transducer => {
+            let config = sherpa_rs::transducer::TransducerConfig {
+                encoder: file("encoder.int8.onnx"),
+                decoder: file("decoder.int8.onnx"),
+                joiner: file("joiner.int8.onnx"),
+                tokens: file("tokens.txt"),
+                num_threads: 2,
+                sample_rate: 16_000,
+                feature_dim: 80,
+                model_type: "nemo_transducer".to_string(),
+                provider: Some("cpu".to_string()),
+                ..Default::default()
+            };
+            let mut recognizer = sherpa_rs::transducer::TransducerRecognizer::new(config)
+                .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+            Ok(recognizer.transcribe(16_000, &samples).trim().to_string())
+        }
+        SherpaModelKind::SenseVoice => {
+            let config = sherpa_rs::sense_voice::SenseVoiceConfig {
+                model: file("model.int8.onnx"),
+                tokens: file("tokens.txt"),
+                num_threads: Some(2),
+                provider: Some("cpu".to_string()),
+                ..Default::default()
+            };
+            let mut recognizer = sherpa_rs::sense_voice::SenseVoiceRecognizer::new(config)
+                .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+            Ok(recognizer.transcribe(16_000, &samples).text.trim().to_string())
+        }
+    }
+}
+
+#[cfg(not(feature = "asr-sherpa"))]
+fn transcribe_with_sherpa(
+    _model_directory: &Path,
+    _request: TranscriptionRequest<'_>,
+) -> Result<String, TranscriptionError> {
+    Err(TranscriptionError::Engine(
+        "sherpa-onnx runtime is not built into this binary (rebuild with the asr-sherpa feature)"
+            .to_string(),
+    ))
 }
 
 #[derive(Debug, Clone)]
