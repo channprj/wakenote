@@ -76,6 +76,86 @@ impl ModelDownloadRecord {
 #[derive(Debug, Clone)]
 pub struct ModelStore {
     model_directory: PathBuf,
+    /// Resolved Cohere API key (settings value or environment fallback). Used
+    /// only to decide whether a `cohere-api` model is `Ready`; the transcriber
+    /// carries its own copy of the key.
+    cohere_api_key: Option<String>,
+}
+
+/// How to install and run an `external-command` model end to end. The install
+/// flow detects [`runtime_command`](Self::runtime_command), runs the optional
+/// [`setup_command`](Self::setup_command) to fetch the weights, and writes
+/// [`command_template`](Self::command_template) to `<model_id>.command`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdapterRecipe {
+    /// CLI that must be on `PATH` for this model to run (detected via `command -v`).
+    pub runtime_command: String,
+    /// Human-readable hint shown when the runtime command is missing.
+    pub install_hint: String,
+    /// Optional shell command that downloads/prepares the model weights. Runs
+    /// with `WAKENOTE_MODEL_DIRECTORY` set. `None` means the runtime fetches its
+    /// own weights on first use.
+    pub setup_command: Option<String>,
+    /// Contents written to `<model_id>.command`, executed once per transcription.
+    pub command_template: String,
+}
+
+/// Built-in install recipe for a known `external-command` model, or `None` for
+/// models that must be configured by hand.
+pub fn adapter_recipe(model_id: &str) -> Option<AdapterRecipe> {
+    match model_id {
+        "parakeet-tdt-0.6b-v3" => Some(macparakeet_recipe("parakeet", "parakeet-v3")),
+        "nemotron-3.5-asr" => Some(macparakeet_recipe("nemotron", "nemotron-multilingual-1120ms")),
+        "sensevoice-small" => Some(sensevoice_recipe()),
+        _ => None,
+    }
+}
+
+/// FluidAudio / macparakeet CoreML adapter (Apple Neural Engine, on-device).
+/// `engine` selects the macparakeet engine, `model_name` the weights to prefetch.
+fn macparakeet_recipe(engine: &str, model_name: &str) -> AdapterRecipe {
+    AdapterRecipe {
+        runtime_command: "macparakeet-cli".to_string(),
+        install_hint: "Install the FluidAudio CLI first: brew install moona3k/tap/macparakeet-cli"
+            .to_string(),
+        setup_command: Some(format!("macparakeet-cli models download {model_name}")),
+        command_template: format!(
+            "#!/bin/sh\n\
+             # WakeNote external ASR adapter (auto-generated). Edit to match your CLI.\n\
+             exec macparakeet-cli transcribe \"$WAKENOTE_AUDIO_PATH\" \\\n\
+             \x20 --engine {engine} --language \"$WAKENOTE_LANGUAGE\" \\\n\
+             \x20 --format transcript --no-history\n"
+        ),
+    }
+}
+
+/// sherpa-onnx adapter for SenseVoice. The transcribe template is a documented
+/// starting point; flags and stdout parsing may need tuning per sherpa version.
+fn sensevoice_recipe() -> AdapterRecipe {
+    let archive = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17";
+    AdapterRecipe {
+        runtime_command: "sherpa-onnx-offline".to_string(),
+        install_hint: "Install sherpa-onnx first: pip install sherpa-onnx".to_string(),
+        setup_command: Some(format!(
+            "set -e\n\
+             cd \"$WAKENOTE_MODEL_DIRECTORY\"\n\
+             curl -fL -o \"{archive}.tar.bz2\" \"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{archive}.tar.bz2\"\n\
+             tar xjf \"{archive}.tar.bz2\"\n\
+             rm -f \"{archive}.tar.bz2\"\n"
+        )),
+        command_template: format!(
+            "#!/bin/sh\n\
+             # WakeNote external ASR adapter (auto-generated, sherpa-onnx template).\n\
+             # Adjust flags/parsing to match your installed sherpa-onnx version.\n\
+             MODEL_DIR=\"$WAKENOTE_MODEL_DIRECTORY/{archive}\"\n\
+             sherpa-onnx-offline \\\n\
+             \x20 --sense-voice-model=\"$MODEL_DIR/model.int8.onnx\" \\\n\
+             \x20 --tokens=\"$MODEL_DIR/tokens.txt\" \\\n\
+             \x20 --num-threads=2 \\\n\
+             \x20 \"$WAKENOTE_AUDIO_PATH\" 2>/dev/null \\\n\
+             \x20 | sed -n 's/.*text:[[:space:]]*//p' | tail -n 1\n"
+        ),
+    }
 }
 
 #[derive(Debug, Error)]
@@ -107,7 +187,42 @@ impl ModelStore {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: model_directory.as_ref().to_path_buf(),
+            cohere_api_key: cohere_api_key_from_env(),
         }
+    }
+
+    /// Like [`Self::new`] but with an explicit Cohere API key (e.g. from
+    /// settings). A blank/`None` key falls back to the environment so the
+    /// configured key wins but env credentials still work.
+    pub fn with_cohere_api_key(
+        model_directory: impl AsRef<Path>,
+        cohere_api_key: Option<String>,
+    ) -> Self {
+        let cohere_api_key = cohere_api_key
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(cohere_api_key_from_env);
+        Self {
+            model_directory: model_directory.as_ref().to_path_buf(),
+            cohere_api_key,
+        }
+    }
+
+    /// Whether a usable Cohere API key is configured (settings or environment).
+    pub fn cohere_key_available(&self) -> bool {
+        self.cohere_api_key.is_some()
+    }
+
+    /// Write `contents` to `<model_id>.command`, marking an external-command
+    /// model ready. Creates the model directory if needed.
+    pub fn write_adapter_command(
+        &self,
+        model_id: &str,
+        contents: &str,
+    ) -> Result<(), ModelStoreError> {
+        std::fs::create_dir_all(&self.model_directory)?;
+        std::fs::write(self.command_path(model_id), contents)?;
+        Ok(())
     }
 
     pub fn model_path(&self, model_id: &str) -> PathBuf {
@@ -214,7 +329,7 @@ impl ModelStore {
 
         if model.provider_runtime == "cohere-api" {
             return Ok(
-                if self.command_path(&model.id).exists() || cohere_api_key_is_available() {
+                if self.command_path(&model.id).exists() || self.cohere_key_available() {
                     ModelStatus::Ready
                 } else {
                     ModelStatus::Missing
@@ -680,10 +795,14 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
     )
 }
 
-fn cohere_api_key_is_available() -> bool {
-    std::env::var_os("COHERE_API_KEY")
-        .or_else(|| std::env::var_os("CO_API_KEY"))
-        .is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+/// The Cohere API key from the environment (`COHERE_API_KEY`, then
+/// `CO_API_KEY`), trimmed and only if non-empty.
+fn cohere_api_key_from_env() -> Option<String> {
+    std::env::var("COHERE_API_KEY")
+        .or_else(|_| std::env::var("CO_API_KEY"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn parse_model_registry_json(
@@ -967,6 +1086,35 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    registry.insert(
+        "nemotron-3.5-asr".to_string(),
+        ModelDescriptor {
+            id: "nemotron-3.5-asr".to_string(),
+            display_name: "Nemotron 3.5 ASR".to_string(),
+            engine: "NVIDIA Nemotron".to_string(),
+            provider_runtime: "external-command".to_string(),
+            download_url: None,
+            checksum_sha256: None,
+            size_mb: 1_200,
+            languages: vec![
+                "ko".to_string(),
+                "en".to_string(),
+                "ja".to_string(),
+                "zh".to_string(),
+                "es".to_string(),
+                "fr".to_string(),
+                "de".to_string(),
+                "multi".to_string(),
+            ],
+            speed_score: 9,
+            accuracy_score: 9,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
     registry
 }
 
@@ -1121,5 +1269,79 @@ mod tests {
         let installed = std::fs::read(store.model_path("whisper-test")).expect("installed model");
         assert_eq!(installed, fresh_payload);
         assert!(!store.temp_download_path("whisper-test").exists());
+    }
+
+    #[test]
+    fn default_registry_includes_nemotron_35_asr() {
+        let registry = default_model_registry();
+        let nemotron = registry
+            .get("nemotron-3.5-asr")
+            .expect("nemotron-3.5-asr entry");
+        assert_eq!(nemotron.provider_runtime, "external-command");
+        assert!(nemotron.download_url.is_none());
+        assert!(nemotron.offline);
+        assert!(nemotron.languages.iter().any(|lang| lang == "ko"));
+    }
+
+    #[test]
+    fn adapter_recipe_known_models_use_expected_runtime() {
+        let parakeet = adapter_recipe("parakeet-tdt-0.6b-v3").expect("parakeet recipe");
+        assert_eq!(parakeet.runtime_command, "macparakeet-cli");
+        assert!(parakeet.command_template.contains("--engine parakeet"));
+
+        let nemotron = adapter_recipe("nemotron-3.5-asr").expect("nemotron recipe");
+        assert_eq!(nemotron.runtime_command, "macparakeet-cli");
+        assert!(nemotron.command_template.contains("--engine nemotron"));
+        assert!(
+            nemotron
+                .setup_command
+                .as_deref()
+                .is_some_and(|cmd| cmd.contains("models download nemotron"))
+        );
+
+        let sensevoice = adapter_recipe("sensevoice-small").expect("sensevoice recipe");
+        assert_eq!(sensevoice.runtime_command, "sherpa-onnx-offline");
+
+        assert!(adapter_recipe("whisper-small").is_none());
+    }
+
+    #[test]
+    fn write_adapter_command_marks_external_command_model_ready() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let model = ModelDescriptor {
+            provider_runtime: "external-command".to_string(),
+            ..descriptor("nemotron-3.5-asr", None)
+        };
+
+        assert_eq!(
+            store.verify_model(&model).expect("verify before"),
+            ModelStatus::Missing
+        );
+
+        store
+            .write_adapter_command("nemotron-3.5-asr", "printf transcript")
+            .expect("write adapter");
+
+        assert_eq!(
+            store.verify_model(&model).expect("verify after"),
+            ModelStatus::Ready
+        );
+    }
+
+    #[test]
+    fn cohere_model_ready_when_api_key_configured() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = ModelDescriptor {
+            provider_runtime: "cohere-api".to_string(),
+            ..descriptor("cohere-transcribe-03-2026", None)
+        };
+
+        let with_key = ModelStore::with_cohere_api_key(tmp.path(), Some("secret-key".to_string()));
+        assert!(with_key.cohere_key_available());
+        assert_eq!(
+            with_key.verify_model(&model).expect("verify with key"),
+            ModelStatus::Ready
+        );
     }
 }
