@@ -541,9 +541,10 @@ fn resolve_capture_device_with_timeout(
 
     match receiver.recv_timeout(AUDIO_DEVICE_RESOLVE_TIMEOUT) {
         Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(LiveCaptureError::Cpal(
-            "audio device lookup did not finish within 2 seconds".to_string(),
-        )),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(LiveCaptureError::Cpal(format!(
+            "audio device lookup did not finish within {} seconds",
+            AUDIO_DEVICE_RESOLVE_TIMEOUT.as_secs()
+        ))),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(LiveCaptureError::Cpal(
             "audio device lookup disconnected".to_string(),
         )),
@@ -614,12 +615,17 @@ fn download_model(
     thread::spawn(move || {
         let store = ModelStore::new(model_directory);
         // sherpa-onnx models download a .tar.bz2 and extract in place; whisper
-        // models download a single .bin.
-        let _ = if model.provider_runtime == "sherpa-onnx" {
+        // models download a single .bin. Both paths record an Error status into
+        // the store on failure (surfaced via the registry snapshot); log here so
+        // a failed background download is observable in the app log too.
+        let result = if model.provider_runtime == "sherpa-onnx" {
             store.download_and_extract_sherpa_model(&model)
         } else {
             store.download_model(&model)
         };
+        if let Err(error) = result {
+            eprintln!("[models] download {} failed: {error}", model.id);
+        }
     });
 
     Ok(prepared.registry)
@@ -3142,6 +3148,43 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
     }
 }
 
+fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> SettingsPatch) {
+    let state = app.state::<BackendState>();
+    let live_state = app.state::<LiveCaptureState>();
+    let transcription_state = app.state::<AutoTranscriptionState>();
+    let (live_capture_action, handler, events) = if let Ok(mut backend) = state.lock() {
+        let current = backend.settings();
+        let patch = patch(current.clone());
+        let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
+        backend.update_settings(patch);
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (live_capture_action, handler, events)
+    } else {
+        return;
+    };
+    dispatch_live_events(handler, events);
+
+    let _ = apply_live_capture_runtime_action(
+        app,
+        state.inner(),
+        live_state.inner(),
+        transcription_state.inner().clone(),
+        live_capture_action,
+    );
+    let presentation = state
+        .lock()
+        .map(|backend| (backend.settings(), backend.app_status()))
+        .ok();
+    if let Some((settings, status)) = presentation {
+        update_tray_presentation(app, &settings, &status);
+    }
+    kick_transcription_worker_if_needed(
+        app.clone(),
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3545,41 +3588,4 @@ mod tests {
         assert_eq!(devices[0].id, "default");
         assert!(devices[0].fallback);
     }
-}
-
-fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> SettingsPatch) {
-    let state = app.state::<BackendState>();
-    let live_state = app.state::<LiveCaptureState>();
-    let transcription_state = app.state::<AutoTranscriptionState>();
-    let (live_capture_action, handler, events) = if let Ok(mut backend) = state.lock() {
-        let current = backend.settings();
-        let patch = patch(current.clone());
-        let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
-        backend.update_settings(patch);
-        let (handler, events) = live_events_for_dispatch(&mut backend);
-        (live_capture_action, handler, events)
-    } else {
-        return;
-    };
-    dispatch_live_events(handler, events);
-
-    let _ = apply_live_capture_runtime_action(
-        app,
-        state.inner(),
-        live_state.inner(),
-        transcription_state.inner().clone(),
-        live_capture_action,
-    );
-    let presentation = state
-        .lock()
-        .map(|backend| (backend.settings(), backend.app_status()))
-        .ok();
-    if let Some((settings, status)) = presentation {
-        update_tray_presentation(app, &settings, &status);
-    }
-    kick_transcription_worker_if_needed(
-        app.clone(),
-        state.inner().clone(),
-        transcription_state.inner().clone(),
-    );
 }
