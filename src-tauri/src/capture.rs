@@ -483,6 +483,21 @@ fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> 
         .unwrap_or(0)
 }
 
+fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
+    CaptureProcessorConfig {
+        save_root: config.save_root.clone(),
+        settings: config.settings.clone(),
+        sample_rate: config.sample_rate,
+        device_id: config.device_id.clone(),
+        device_name: config.device_name.clone(),
+        used_fallback_device: config.used_fallback_device,
+        base_time: config.base_time,
+        app_version: config.app_version.clone(),
+        source: config.source,
+        source_label: config.source_label.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,20 +560,5 @@ mod tests {
         assert_eq!(metadata.source, ChunkSource::System);
         assert_eq!(metadata.source_label.as_deref(), Some("meet"));
         assert_eq!(metadata.device_name, "Google Meet");
-    }
-}
-
-fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
-    CaptureProcessorConfig {
-        save_root: config.save_root.clone(),
-        settings: config.settings.clone(),
-        sample_rate: config.sample_rate,
-        device_id: config.device_id.clone(),
-        device_name: config.device_name.clone(),
-        used_fallback_device: config.used_fallback_device,
-        base_time: config.base_time,
-        app_version: config.app_version.clone(),
-        source: config.source,
-        source_label: config.source_label.clone(),
     }
 }

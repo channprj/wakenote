@@ -55,7 +55,7 @@ pub struct SpeechGate {
     recording: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LevelMonitor {
     recent_dbfs: VecDeque<f32>,
     snapshot: LevelSnapshot,
@@ -68,15 +68,6 @@ impl Default for LevelSnapshot {
             peak_dbfs: -120.0,
             noise_floor_dbfs: -120.0,
             suggested_threshold_dbfs: -90.0,
-        }
-    }
-}
-
-impl Default for LevelMonitor {
-    fn default() -> Self {
-        Self {
-            recent_dbfs: VecDeque::new(),
-            snapshot: LevelSnapshot::default(),
         }
     }
 }
@@ -127,7 +118,7 @@ where
     for (index, label) in labels.into_iter().enumerate() {
         let label = label.as_ref();
         devices.push(InputDevice {
-            id: format!("input-{index}-{}", slugify_device_label(&label)),
+            id: format!("input-{index}-{}", slugify_device_label(label)),
             label: label.to_string(),
             available: true,
         });

@@ -378,7 +378,7 @@ mod macos {
                 Some(WindowSnapshot {
                     title,
                     app_name: unsafe { app.applicationName() }.to_string(),
-                    pid: unsafe { app.processID() } as i32,
+                    pid: unsafe { app.processID() },
                 })
             })
             .collect()

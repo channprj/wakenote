@@ -117,7 +117,7 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         })
         .build()?;
 
-    let _ = panel.hide();
+    panel.hide();
 
     Ok(())
 }

@@ -355,9 +355,7 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
 
     assert_eq!(
         error,
-        TranscriptionError::ModelMissing(PathBuf::from(
-            tmp.path().join("models/whisper-medium.bin")
-        ))
+        TranscriptionError::ModelMissing(tmp.path().join("models/whisper-medium.bin"))
     );
 }
 

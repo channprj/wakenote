@@ -113,7 +113,7 @@ impl MeetingRecord {
     fn save_atomic(&self, path: &Path) -> std::io::Result<()> {
         let tmp = path.with_extension("json.tmp");
         let bytes = serde_json::to_vec_pretty(self)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            .map_err(std::io::Error::other)?;
         fs::write(&tmp, bytes)?;
         fs::rename(&tmp, path)
     }
@@ -413,7 +413,7 @@ pub fn compute_eta_ms(elapsed_ms: u64, processed_ms: u64, remaining_ms: u64) -> 
 // ---------------------------------------------------------------------------
 
 fn hound_io(error: hound::Error) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
+    std::io::Error::other(error.to_string())
 }
 
 /// Convert any supported input to a temp 16 kHz signed-16 WAV. Channels are
