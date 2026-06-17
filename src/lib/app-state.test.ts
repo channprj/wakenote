@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultSettings,
   deriveProductMode,
   deriveTrayState,
   mockModels,
@@ -64,6 +65,10 @@ describe("app state derivation", () => {
     }
     expect(models.find((model) => model.id === "sensevoice-small")?.languages).toContain("ko");
     expect(models.find((model) => model.id === "cohere-transcribe-03-2026")?.offline).toBe(false);
+  });
+
+  it("defaults the Cohere API key to an empty string", () => {
+    expect(defaultSettings().cohere_api_key).toBe("");
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {

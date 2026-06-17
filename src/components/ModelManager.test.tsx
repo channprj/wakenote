@@ -282,9 +282,17 @@ describe("model switch disabled reason", () => {
   ] satisfies Array<[ModelStatus, boolean, string | null]>)(
     "describes switch availability for %s (selected=%s)",
     (status, isSelected, reason) => {
-      expect(modelSwitchDisabledReason({ status }, isSelected)).toBe(reason);
+      expect(
+        modelSwitchDisabledReason({ status, provider_runtime: "whisper-rs" }, isSelected),
+      ).toBe(reason);
     },
   );
+
+  it("points a missing Cohere model at the API key setting instead of a download", () => {
+    expect(
+      modelSwitchDisabledReason({ status: "missing", provider_runtime: "cohere-api" }, false),
+    ).toBe("Set a Cohere API key in Settings");
+  });
 });
 
 describe("model download disabled reason", () => {

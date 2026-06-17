@@ -104,12 +104,16 @@ function isUsable(status: ModelStatus): boolean {
 }
 
 export function modelSwitchDisabledReason(
-  model: Pick<ModelDescriptor, "status">,
+  model: Pick<ModelDescriptor, "status" | "provider_runtime">,
   isSelected: boolean,
 ): string | null {
   if (isSelected) return null;
   if (isUsable(model.status)) return null;
   if (isActiveDownload(model.status)) return "Model is still downloading";
+  // Cohere is a cloud model — it's acquired by setting an API key, not a download.
+  if (model.provider_runtime === "cohere-api" && model.status === "missing") {
+    return "Set a Cohere API key in Settings";
+  }
   if (model.status === "missing") return "Download the model before switching";
   if (model.status === "error") return "Model has a download error";
   return null;

@@ -1479,4 +1479,22 @@ mod tests {
             ModelStatus::Ready
         );
     }
+
+    #[test]
+    fn with_cohere_api_key_trims_configured_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = ModelDescriptor {
+            provider_runtime: "cohere-api".to_string(),
+            ..descriptor("cohere-transcribe-03-2026", None)
+        };
+
+        // A surrounding-whitespace key is trimmed to a usable value (the
+        // configured key takes precedence over the environment).
+        let store = ModelStore::with_cohere_api_key(tmp.path(), Some("  spaced-key  ".to_string()));
+        assert!(store.cohere_key_available());
+        assert_eq!(
+            store.verify_model(&model).expect("verify trimmed key"),
+            ModelStatus::Ready
+        );
+    }
 }

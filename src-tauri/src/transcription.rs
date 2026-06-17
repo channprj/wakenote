@@ -424,6 +424,17 @@ impl Transcriber for RuntimeTranscriber {
     }
 }
 
+/// Map the requested transcription language to a SenseVoice language code.
+/// SenseVoice recognizes zh/en/ja/ko/yue; anything else (including `Auto` and
+/// languages the model doesn't cover) falls back to "auto" detection.
+#[cfg(feature = "asr-sherpa")]
+fn sense_voice_language(language: TranscriptionLanguage) -> String {
+    match language.whisper_code() {
+        Some(code @ ("zh" | "en" | "ja" | "ko")) => code.to_string(),
+        _ => "auto".to_string(),
+    }
+}
+
 /// Run a sherpa-onnx model (Parakeet transducer / SenseVoice) in-process. Built
 /// only with the `asr-sherpa` feature; otherwise returns an actionable error.
 #[cfg(feature = "asr-sherpa")]
@@ -447,6 +458,9 @@ fn transcribe_with_sherpa(
 
     match spec.kind {
         SherpaModelKind::Transducer => {
+            // A NeMo/Parakeet transducer has no language parameter — the decoded
+            // language is fixed by the trained model, so `request.language` does
+            // not apply here (unlike Whisper/SenseVoice/Cohere).
             let config = sherpa_rs::transducer::TransducerConfig {
                 encoder: file("encoder.int8.onnx"),
                 decoder: file("decoder.int8.onnx"),
@@ -467,6 +481,7 @@ fn transcribe_with_sherpa(
             let config = sherpa_rs::sense_voice::SenseVoiceConfig {
                 model: file("model.int8.onnx"),
                 tokens: file("tokens.txt"),
+                language: sense_voice_language(request.language),
                 num_threads: Some(2),
                 provider: Some("cpu".to_string()),
                 ..Default::default()
@@ -970,4 +985,42 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
         output.push(sample);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_cohere_api_key_uses_configured_value_and_ignores_blanks() {
+        // A configured, non-empty key is returned as-is and short-circuits the
+        // environment fallback — the settings key takes precedence over env.
+        assert_eq!(
+            effective_cohere_api_key(Some("configured")),
+            Some("configured".to_string())
+        );
+        assert_eq!(
+            effective_cohere_api_key(Some("  trimmed  ")),
+            Some("trimmed".to_string())
+        );
+        // A blank configured key never counts as a key; it falls through to the
+        // environment (whose value we don't assert, to stay independent of it).
+        let blank = effective_cohere_api_key(Some("   "));
+        assert_ne!(blank, Some("   ".to_string()));
+        assert_ne!(blank, Some(String::new()));
+    }
+
+    #[cfg(feature = "asr-sherpa")]
+    #[test]
+    fn sense_voice_language_maps_supported_codes_and_defaults_to_auto() {
+        use crate::settings::TranscriptionLanguage;
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Ko), "ko");
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Zh), "zh");
+        assert_eq!(sense_voice_language(TranscriptionLanguage::En), "en");
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Ja), "ja");
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Auto), "auto");
+        // SenseVoice doesn't cover these languages — fall back to auto-detection.
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Es), "auto");
+        assert_eq!(sense_voice_language(TranscriptionLanguage::Fr), "auto");
+    }
 }
