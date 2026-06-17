@@ -1124,17 +1124,16 @@ function TranscriptPlayerSheet({
 }) {
   const audioPath = entry.audio_path;
 
-  if (!audioPath) {
-    return null;
-  }
-
-  const timestamp = formatLocalTimestamp(entry.recorded_at);
-  const fallbackAudioSource = fileUrlFromPath(audioPath);
-  const [audioSource, setAudioSource] = useState(fallbackAudioSource);
+  const [audioSource, setAudioSource] = useState(() =>
+    audioPath ? fileUrlFromPath(audioPath) : "",
+  );
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
+    if (!audioPath) {
+      return;
+    }
     let cancelled = false;
     const fallback = fileUrlFromPath(audioPath);
     setAudioSource(fallback);
@@ -1186,6 +1185,12 @@ function TranscriptPlayerSheet({
     }
     void element.play().catch(() => undefined);
   }, [paused, audioSource]);
+
+  if (!audioPath) {
+    return null;
+  }
+
+  const timestamp = formatLocalTimestamp(entry.recorded_at);
 
   return (
     <aside className="transcript-player-sheet" aria-label="Transcript player">
