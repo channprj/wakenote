@@ -87,9 +87,9 @@ WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`
 
 ### Parakeet V3 / SenseVoice (온디바이스, 외부 도구 불필요)
 
-두 모델은 **앱에 내장된 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)(onnxruntime) 엔진으로 in-process 실행**됩니다 — 내장 whisper.cpp 엔진처럼 외부 CLI나 Python 설치가 전혀 필요 없습니다. 모델 목록에서 **Download**를 누르면 WakeNote가 sherpa-onnx 릴리스의 검증된 ONNX 아카이브를 받아 모델 디렉터리에 압축 해제하고, 모델이 Ready가 되어 선택할 수 있습니다. `Delete`는 압축 해제된 모델을 제거합니다.
+두 모델은 **앱에 내장된 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)(onnxruntime) 엔진으로 in-process 실행**됩니다 — 내장 whisper.cpp 엔진처럼 외부 CLI나 Python 설치가 전혀 필요 없습니다. 모델 목록에서 **Download**를 누르면 WakeNote가 sherpa-onnx 릴리스의 공식 ONNX 아카이브를 받아 모델 디렉터리에 압축 해제하고, 모델이 Ready가 되어 선택할 수 있습니다. `Delete`는 압축 해제된 모델을 제거합니다.
 
-엔진은 `asr-sherpa` Cargo feature로 컴파일됩니다. 배포 빌드(`pnpm build`)는 이를 자동으로 켜며, 일반 `cargo build`/`cargo test`는 가볍게 유지하려고 이를 제외합니다(이 경우 해당 모델 선택 시 "asr-sherpa feature" 오류를 반환). 빌드 시 prebuilt onnxruntime을 내려받으며, 정적 링크를 원하면 sherpa-rs의 `static` feature로 바꾸면 됩니다.
+엔진은 `asr-sherpa` Cargo feature로 빌드됩니다. 배포 빌드(`pnpm build`)는 이를 자동으로 켜며, 일반 `cargo build`/`cargo test`는 가볍게 유지하려고 이를 제외합니다(이 경우 해당 모델 선택 시 "asr-sherpa feature" 오류를 반환). prebuilt onnxruntime + sherpa-onnx dylib은 빌드 시 내려받아 앱의 `Contents/Frameworks`에 번들로 포함되며(바이너리에 `@executable_path/../Frameworks` rpath 추가), 따라서 배포된 `.app`은 자체 완결적입니다. 정적 링크를 원하면 sherpa-rs의 `static` feature로 바꾸면 됩니다.
 
 > **Nemotron 3.5 ASR**는 포함되지 않았습니다: NVIDIA가 NeMo 체크포인트만 배포하고 ONNX export가 없어 아직 sherpa-onnx 엔진으로 돌릴 수 없습니다. ONNX export가 나오면 추가할 예정입니다.
 

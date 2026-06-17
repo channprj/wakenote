@@ -87,9 +87,9 @@ WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small
 
 ### Parakeet V3 and SenseVoice (on-device, no external tools)
 
-Both run **in-process via a bundled [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (onnxruntime) engine** — like the bundled whisper.cpp engine, there is no external CLI or Python to install. Click **Download** in the model list: WakeNote fetches the verified ONNX archive from the sherpa-onnx releases, extracts it under the model directory, and the model is then Ready to select. `Delete` removes the extracted model.
+Both run **in-process via a bundled [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (onnxruntime) engine** — like the bundled whisper.cpp engine, there is no external CLI or Python to install. Click **Download** in the model list: WakeNote fetches the official ONNX archive from the sherpa-onnx releases, extracts it under the model directory, and the model is then Ready to select. `Delete` removes the extracted model.
 
-The engine is compiled in behind the `asr-sherpa` Cargo feature. The shipped app (`pnpm build`) enables it automatically; a plain `cargo build`/`cargo test` stays light and omits it (selecting one of these models without it returns an "asr-sherpa feature" error). Prebuilt onnxruntime is downloaded at build time — switch sherpa-rs to its `static` feature to link statically instead.
+The engine is built behind the `asr-sherpa` Cargo feature. The shipped app (`pnpm build`) enables it automatically; a plain `cargo build`/`cargo test` stays light and omits it (selecting one of these models without it returns an "asr-sherpa feature" error). The prebuilt onnxruntime + sherpa-onnx dylibs are downloaded at build time and bundled into the app's `Contents/Frameworks` (with an `@executable_path/../Frameworks` rpath) so the shipped `.app` is self-contained — switch sherpa-rs to its `static` feature to link statically instead.
 
 > **Nemotron 3.5 ASR** is not included: NVIDIA ships it as a NeMo checkpoint only (no ONNX export), so it can't run on the sherpa-onnx engine yet. It will be added once an ONNX export is available.
 
