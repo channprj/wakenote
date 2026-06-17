@@ -6,6 +6,7 @@ import {
   ModelManager,
   formatLanguageList,
   formatModelSize,
+  modelAcquireAction,
   modelCancelDownloadDisabledReason,
   modelDeleteDisabledReason,
   modelDownloadDisabledReason,
@@ -140,6 +141,42 @@ describe("model manager actions", () => {
   );
 });
 
+describe("model acquire action", () => {
+  it("downloads sherpa-onnx and whisper-rs models that carry a URL", () => {
+    expect(
+      modelAcquireAction({
+        provider_runtime: "sherpa-onnx",
+        download_url: "https://example.invalid/model.tar.bz2",
+        status: "missing",
+      }),
+    ).toMatchObject({ kind: "download", enabled: true });
+    expect(
+      modelAcquireAction({
+        provider_runtime: "whisper-rs",
+        download_url: "https://example.invalid/m.bin",
+        status: "missing",
+      }),
+    ).toMatchObject({ kind: "download", enabled: true });
+  });
+
+  it("blocks download for models without a URL", () => {
+    expect(
+      modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
+    ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
+  });
+
+  it("directs cohere-api models to the API key setting instead of a download", () => {
+    expect(
+      modelAcquireAction({ provider_runtime: "cohere-api", download_url: null, status: "missing" }),
+    ).toEqual({
+      kind: "none",
+      enabled: false,
+      label: "Download",
+      reason: "Set a Cohere API key in Settings",
+    });
+  });
+});
+
 describe("formatModelSize", () => {
   it("renders sizes below 1 GiB as MB", () => {
     expect(formatModelSize(75)).toBe("75 MB");
@@ -245,9 +282,17 @@ describe("model switch disabled reason", () => {
   ] satisfies Array<[ModelStatus, boolean, string | null]>)(
     "describes switch availability for %s (selected=%s)",
     (status, isSelected, reason) => {
-      expect(modelSwitchDisabledReason({ status }, isSelected)).toBe(reason);
+      expect(
+        modelSwitchDisabledReason({ status, provider_runtime: "whisper-rs" }, isSelected),
+      ).toBe(reason);
     },
   );
+
+  it("points a missing Cohere model at the API key setting instead of a download", () => {
+    expect(
+      modelSwitchDisabledReason({ status: "missing", provider_runtime: "cohere-api" }, false),
+    ).toBe("Set a Cohere API key in Settings");
+  });
 });
 
 describe("model download disabled reason", () => {

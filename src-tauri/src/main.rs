@@ -613,7 +613,13 @@ fn download_model(
     let model = prepared.model.clone();
     thread::spawn(move || {
         let store = ModelStore::new(model_directory);
-        let _ = store.download_model(&model);
+        // sherpa-onnx models download a .tar.bz2 and extract in place; whisper
+        // models download a single .bin.
+        let _ = if model.provider_runtime == "sherpa-onnx" {
+            store.download_and_extract_sherpa_model(&model)
+        } else {
+            store.download_model(&model)
+        };
     });
 
     Ok(prepared.registry)
@@ -1969,7 +1975,7 @@ fn spawn_transcription_job(
         );
 
         let worker = TranscriptionWorker::with_options(
-            RuntimeTranscriber::new(started.model_directory),
+            RuntimeTranscriber::with_cohere_api_key(started.model_directory, started.cohere_api_key),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,

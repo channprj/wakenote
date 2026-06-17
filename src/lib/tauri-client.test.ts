@@ -90,6 +90,19 @@ describe("tauri live capture client", () => {
     expect(dark.settings.theme_mode).toBe("dark");
   });
 
+  it("persists browser fallback Cohere API key patches and toggles the Cohere model status", async () => {
+    const cohereStatus = (models: { id: string; status: string }[]) =>
+      models.find((model) => model.id === "cohere-transcribe-03-2026")?.status;
+
+    const withKey = await saveSettingsPatch({ cohere_api_key: "co-test-key" });
+    expect(withKey.settings.cohere_api_key).toBe("co-test-key");
+    expect(cohereStatus(withKey.models)).toBe("ready");
+
+    const cleared = await saveSettingsPatch({ cohere_api_key: "" });
+    expect(cleared.settings.cohere_api_key).toBe("");
+    expect(cohereStatus(cleared.models)).toBe("missing");
+  });
+
   it("simulates live browser fallback level snapshots while input is active", async () => {
     await startLiveCapture();
 

@@ -7,7 +7,17 @@ edition = "2024"
 name = "wakenote"
 path = "src/lib.rs"
 
+[features]
+default = []
+# Bundles sherpa-onnx (onnxruntime) so Parakeet/SenseVoice run in-process with
+# no external CLI. Off by default to keep plain `cargo` builds light; the
+# shipped app enables it (see scripts/build.mjs). Prebuilt onnxruntime is
+# downloaded at build time; switch sherpa-rs to its `static` feature to link
+# statically instead.
+asr-sherpa = ["dep:sherpa-rs"]
+
 [dependencies]
+sherpa-rs = { version = "0.6", optional = true, features = ["download-binaries"] }
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "0.16"
 hound = "3"

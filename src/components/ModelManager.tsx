@@ -72,6 +72,29 @@ export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "
   };
 }
 
+export type ModelAcquireKind = "download" | "none";
+
+/// The primary "acquire" action for a model's runtime: download an artifact
+/// (whisper-rs `.bin` or sherpa-onnx archive, both carry a `download_url`), or
+/// nothing to download (cohere-api is a cloud model that needs a key in Settings).
+export function modelAcquireAction(
+  model: Pick<ModelDescriptor, "provider_runtime" | "download_url" | "status">,
+): { kind: ModelAcquireKind; enabled: boolean; label: string; reason: string | null } {
+  if (model.provider_runtime === "cohere-api") {
+    return {
+      kind: "none",
+      enabled: false,
+      label: "Download",
+      reason: isUsable(model.status)
+        ? "Model is already installed"
+        : "Set a Cohere API key in Settings",
+    };
+  }
+
+  const reason = modelDownloadDisabledReason(model);
+  return { kind: "download", enabled: reason === null, label: "Download", reason };
+}
+
 function isActiveDownload(status: ModelStatus): boolean {
   return status === "downloading" || status === "verifying" || status === "extracting";
 }
@@ -81,12 +104,16 @@ function isUsable(status: ModelStatus): boolean {
 }
 
 export function modelSwitchDisabledReason(
-  model: Pick<ModelDescriptor, "status">,
+  model: Pick<ModelDescriptor, "status" | "provider_runtime">,
   isSelected: boolean,
 ): string | null {
   if (isSelected) return null;
   if (isUsable(model.status)) return null;
   if (isActiveDownload(model.status)) return "Model is still downloading";
+  // Cohere is a cloud model — it's acquired by setting an API key, not a download.
+  if (model.provider_runtime === "cohere-api" && model.status === "missing") {
+    return "Set a Cohere API key in Settings";
+  }
   if (model.status === "missing") return "Download the model before switching";
   if (model.status === "error") return "Model has a download error";
   return null;
@@ -160,7 +187,7 @@ export function ModelManager({
         const progress = statusProgress(model);
         const actions = modelActionState(model);
         const switchReason = modelSwitchDisabledReason(model, selected);
-        const downloadReason = modelDownloadDisabledReason(model);
+        const acquire = modelAcquireAction(model);
         const verifyReason = modelVerifyDisabledReason(model);
         const retryReason = modelRetryDisabledReason(model);
         const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
@@ -204,9 +231,13 @@ export function ModelManager({
                 type="button"
                 variant="secondary"
                 size="icon"
-                title={downloadReason ?? "Download"}
-                onClick={() => onDownload(model.id)}
-                disabled={!actions.canDownload}
+                title={acquire.reason ?? acquire.label}
+                onClick={() => {
+                  if (acquire.kind === "download") {
+                    onDownload(model.id);
+                  }
+                }}
+                disabled={!acquire.enabled}
               >
                 <Download />
               </Button>

@@ -13,7 +13,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - **음성 활성화 캡처** — RMS dBFS가 임계값 위로 *attack* 시간 이상 유지되어야 녹음이 시작되고, 임계값 아래로 *release* 시간 이상 유지되어야 종료됩니다. pre-roll / post-roll 버퍼로 발화의 시작과 끝이 잘리지 않게 보존합니다.
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
-- **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공하며, 런타임을 설정하면 Parakeet V3, SenseVoice, Nemotron 3.5 ASR, Cohere Transcribe 항목도 사용할 수 있습니다.
+- **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Cohere Transcribe는 API 키로 클라우드에서 동작하며, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
 - **macOS 트레이 + Floating overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 녹음 또는 transcription 중일 때만 나타납니다.
@@ -85,10 +85,23 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 
 WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b`, `cohere-transcribe-03-2026` 항목이 포함됩니다.
 
-- Parakeet V3, SenseVoice, Nemotron 3.5 ASR은 external command adapter로 실행합니다. `<model_directory>/<model-id>.command` 파일에 실행할 shell command를 넣어두면 WakeNote가 해당 모델을 ready로 표시합니다. command는 `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, `WAKENOTE_LANGUAGE` 환경변수를 읽고, transcript를 stdout으로 출력해야 합니다.
-- Nemotron 공식 NeMo 런타임은 Python 기반이고 단일 WakeNote `.bin` 파일이 아니라 모델 artifact 형태로 배포되므로, 원하는 runner를 설치한 뒤 `nemotron-3.5-asr-streaming-0.6b`용 `.command` 파일로 연결하세요.
-- Cohere Transcribe는 `COHERE_API_KEY` 또는 `CO_API_KEY`가 있을 때 Cohere Audio Transcriptions API를 사용합니다. API는 명시적인 language가 필요하며 FLAC, MP3, MPEG, MPGA, OGG, WAV를 받습니다. WakeNote는 그 밖의 로컬 청크를 업로드 전에 WAV로 변환합니다.
-- Cohere 모델 id로 `.command` 파일을 만들면 API 대신 external command adapter가 실행되므로, 로컬 Cohere runner도 같은 방식으로 붙일 수 있습니다.
+### Parakeet V3 / SenseVoice (온디바이스, 외부 도구 불필요)
+
+두 모델은 **앱에 내장된 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)(onnxruntime) 엔진으로 in-process 실행**됩니다 — 내장 whisper.cpp 엔진처럼 외부 CLI나 Python 설치가 전혀 필요 없습니다. 모델 목록에서 **Download**를 누르면 WakeNote가 sherpa-onnx 릴리스의 공식 ONNX 아카이브를 받아 모델 디렉터리에 압축 해제하고, 모델이 Ready가 되어 선택할 수 있습니다. `Delete`는 압축 해제된 모델을 제거합니다.
+
+엔진은 `asr-sherpa` Cargo feature로 빌드됩니다. 배포 빌드(`pnpm build`)는 이를 자동으로 켜며, 일반 `cargo build`/`cargo test`는 가볍게 유지하려고 이를 제외합니다(이 경우 해당 모델 선택 시 "asr-sherpa feature" 오류를 반환). prebuilt onnxruntime + sherpa-onnx dylib은 빌드 시 내려받아 앱의 `Contents/Frameworks`에 번들로 포함되며(바이너리에 `@executable_path/../Frameworks` rpath 추가), 따라서 배포된 `.app`은 자체 완결적입니다. 정적 링크를 원하면 sherpa-rs의 `static` feature로 바꾸면 됩니다.
+
+### Nemotron 3.5 ASR (external command)
+
+NVIDIA는 Nemotron 3.5 ASR을 NeMo 체크포인트로만 배포하고 ONNX export가 없어 내장 sherpa-onnx 엔진으로는 돌릴 수 없습니다. 대신 external-command adapter로 실행합니다: 원하는 NeMo runner를 설치한 뒤 `<model_directory>/nemotron-3.5-asr-streaming-0.6b.command` 파일로 연결하세요. 파일이 존재하면 WakeNote가 모델을 Ready로 표시하며, command는 `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, `WAKENOTE_LANGUAGE` 환경변수를 읽고 transcript를 stdout으로 출력합니다.
+
+### Cohere Transcribe (클라우드)
+
+Cohere Transcribe는 클라우드 모델이라 다운로드할 것이 없습니다. 설정 → Models의 **Cohere API key** 필드에 키를 입력하면(로컬 저장) 모델이 Ready가 됩니다. 환경변수 `COHERE_API_KEY`/`CO_API_KEY`도 fallback으로 동작합니다. API는 명시적인 language가 필요하며 FLAC, MP3, MPEG, MPGA, OGG, WAV를 받고, 그 밖의 로컬 청크는 업로드 전에 WAV로 변환합니다.
+
+### 커스텀 external-command 모델 (고급)
+
+다른 엔진을 붙이려면 `<model_directory>/<model-id>.command` 파일에 실행할 shell command를 넣어두면 됩니다. 파일이 존재하면 WakeNote가 해당 모델을 ready로 표시합니다. command는 `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, `WAKENOTE_LANGUAGE` 환경변수를 읽고 transcript를 stdout으로 출력해야 합니다. Cohere 모델 id로 `.command` 파일을 만들면 클라우드 API 대신 이 방식이 실행됩니다.
 
 ## 시스템 요구사항
 

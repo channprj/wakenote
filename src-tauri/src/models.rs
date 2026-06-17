@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -76,6 +76,67 @@ impl ModelDownloadRecord {
 #[derive(Debug, Clone)]
 pub struct ModelStore {
     model_directory: PathBuf,
+    /// Resolved Cohere API key (settings value or environment fallback). Used
+    /// only to decide whether a `cohere-api` model is `Ready`; the transcriber
+    /// carries its own copy of the key.
+    cohere_api_key: Option<String>,
+}
+
+/// Which in-process sherpa-onnx recognizer a model uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SherpaModelKind {
+    /// NeMo/Parakeet offline transducer (encoder/decoder/joiner + tokens).
+    Transducer,
+    /// SenseVoice offline model (single model file + tokens).
+    SenseVoice,
+}
+
+/// Layout of a downloadable sherpa-onnx model: its `.tar.bz2` extracts to
+/// [`dir`](Self::dir) under the model directory and contains [`files`](Self::files).
+/// The model's `download_url` points at that archive; the bundled sherpa-onnx
+/// engine runs it in-process (no external CLI).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SherpaModelSpec {
+    pub kind: SherpaModelKind,
+    /// Top-level directory created when the archive is extracted.
+    pub dir: String,
+    /// Files (relative to `dir`) that must exist for the model to be ready and
+    /// that the recognizer loads. Transducer: `[encoder, decoder, joiner, tokens]`;
+    /// SenseVoice: `[model, tokens]`.
+    pub files: Vec<String>,
+}
+
+impl SherpaModelSpec {
+    fn new(kind: SherpaModelKind, dir: &str, files: &[&str]) -> Self {
+        Self {
+            kind,
+            dir: dir.to_string(),
+            files: files.iter().map(|file| file.to_string()).collect(),
+        }
+    }
+}
+
+/// The sherpa-onnx model layout for a known model id, or `None` for models that
+/// don't run on the bundled sherpa-onnx engine.
+pub fn sherpa_model_spec(model_id: &str) -> Option<SherpaModelSpec> {
+    match model_id {
+        "parakeet-tdt-0.6b-v3" => Some(SherpaModelSpec::new(
+            SherpaModelKind::Transducer,
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+            &[
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+                "tokens.txt",
+            ],
+        )),
+        "sensevoice-small" => Some(SherpaModelSpec::new(
+            SherpaModelKind::SenseVoice,
+            "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
+            &["model.int8.onnx", "tokens.txt"],
+        )),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Error)]
@@ -107,6 +168,235 @@ impl ModelStore {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: model_directory.as_ref().to_path_buf(),
+            cohere_api_key: cohere_api_key_from_env(),
+        }
+    }
+
+    /// Like [`Self::new`] but with an explicit Cohere API key (e.g. from
+    /// settings). A blank/`None` key falls back to the environment so the
+    /// configured key wins but env credentials still work.
+    pub fn with_cohere_api_key(
+        model_directory: impl AsRef<Path>,
+        cohere_api_key: Option<String>,
+    ) -> Self {
+        let cohere_api_key = cohere_api_key
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(cohere_api_key_from_env);
+        Self {
+            model_directory: model_directory.as_ref().to_path_buf(),
+            cohere_api_key,
+        }
+    }
+
+    /// Whether a usable Cohere API key is configured (settings or environment).
+    pub fn cohere_key_available(&self) -> bool {
+        self.cohere_api_key.is_some()
+    }
+
+    /// Directory the sherpa-onnx archive for `model_id` extracts to, or `None`
+    /// if the model isn't a sherpa-onnx model.
+    pub fn sherpa_model_dir(&self, model_id: &str) -> Option<PathBuf> {
+        sherpa_model_spec(model_id).map(|spec| self.model_directory.join(spec.dir))
+    }
+
+    /// Whether every file the sherpa-onnx model needs is present on disk.
+    fn sherpa_model_ready(&self, model_id: &str) -> bool {
+        let Some(spec) = sherpa_model_spec(model_id) else {
+            return false;
+        };
+        let dir = self.model_directory.join(&spec.dir);
+        spec.files.iter().all(|file| dir.join(file).exists())
+    }
+
+    /// Download a sherpa-onnx model `.tar.bz2` and extract it in place so the
+    /// bundled engine can run it. Records Downloading/Extracting/Ready/Error so
+    /// the UI shows the same progress as a normal download. Extraction uses the
+    /// system `tar` (handles bzip2) — no extra Rust dependency.
+    pub fn download_and_extract_sherpa_model(
+        &self,
+        model: &ModelDescriptor,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        let url = model
+            .download_url
+            .as_ref()
+            .ok_or_else(|| ModelStoreError::MissingDownloadUrl(model.id.clone()))?;
+        if sherpa_model_spec(&model.id).is_none() {
+            return Err(ModelStoreError::Registry(format!(
+                "no sherpa-onnx layout for {}",
+                model.id
+            )));
+        }
+        std::fs::create_dir_all(&self.model_directory)?;
+
+        let agent = ureq::AgentBuilder::new().redirects(10).build();
+        let response = agent
+            .get(url)
+            .set(
+                "User-Agent",
+                &format!("wakenote/{}", env!("CARGO_PKG_VERSION")),
+            )
+            .call()
+            .map_err(|error| ModelStoreError::Download(error.to_string()))
+            .inspect_err(|error| self.record_download_error(&model.id, 0, None, error))?;
+
+        let total_bytes = response
+            .header("Content-Length")
+            .and_then(|value| value.parse::<u64>().ok());
+        let required_bytes =
+            total_bytes.unwrap_or_else(|| model.size_mb.saturating_mul(1024 * 1024));
+        let available_bytes = self.available_disk_space()?;
+        if let Err(error) = Self::validate_download_space(required_bytes, available_bytes) {
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                0,
+                total_bytes,
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+
+        let archive_path = self.temp_download_path(&model.id);
+        let mut reader = response.into_reader();
+        let mut file = std::fs::File::create(&archive_path)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut downloaded_bytes = 0_u64;
+        let mut last_recorded = 0_u64;
+        self.record_download_progress(&model.id, 0, total_bytes)?;
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut file, &buffer[..read])?;
+            downloaded_bytes += read as u64;
+            if self.is_download_cancelled(&model.id)? {
+                let _ = std::fs::remove_file(&archive_path);
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model.id.clone(),
+                });
+            }
+            if downloaded_bytes.saturating_sub(last_recorded) >= 5_242_880 {
+                self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
+                last_recorded = downloaded_bytes;
+            }
+        }
+        std::io::Write::flush(&mut file)?;
+        drop(file);
+
+        let final_total = total_bytes.or(Some(downloaded_bytes));
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Extracting,
+            downloaded_bytes,
+            final_total,
+            None,
+        )?;
+
+        self.extract_sherpa_archive_with_tar(
+            &model.id,
+            &archive_path,
+            downloaded_bytes,
+            final_total,
+            Path::new("/usr/bin/tar"),
+        )?;
+
+        if !self.sherpa_model_ready(&model.id) {
+            let message = "extracted archive is missing expected model files".to_string();
+            let _ = self.record_download_status(
+                &model.id,
+                ModelStatus::Error,
+                downloaded_bytes,
+                final_total,
+                Some(message.clone()),
+            );
+            return Err(ModelStoreError::Download(message));
+        }
+
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Ready,
+            downloaded_bytes,
+            final_total,
+            None,
+        )?;
+        Ok(ModelStatus::Ready)
+    }
+
+    fn extract_sherpa_archive_with_tar(
+        &self,
+        model_id: &str,
+        archive_path: &Path,
+        downloaded_bytes: u64,
+        final_total: Option<u64>,
+        tar_path: &Path,
+    ) -> Result<(), ModelStoreError> {
+        if self.is_download_cancelled(model_id)? {
+            self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+            return Err(ModelStoreError::Cancelled {
+                model_id: model_id.to_string(),
+            });
+        }
+
+        let mut child = Command::new(tar_path)
+            .arg("xjf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(&self.model_directory)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        loop {
+            if child.try_wait()?.is_some() {
+                break;
+            }
+            if self.is_download_cancelled(model_id)? {
+                let _ = child.kill();
+                let _ = child.wait();
+                self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model_id.to_string(),
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let output = child.wait_with_output()?;
+        let _ = std::fs::remove_file(archive_path);
+
+        if self.is_download_cancelled(model_id)? {
+            self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+            return Err(ModelStoreError::Cancelled {
+                model_id: model_id.to_string(),
+            });
+        }
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let message = if stderr.is_empty() {
+                format!("tar exited with {}", output.status)
+            } else {
+                stderr
+            };
+            let _ = self.record_download_status(
+                model_id,
+                ModelStatus::Error,
+                downloaded_bytes,
+                final_total,
+                Some(message.clone()),
+            );
+            return Err(ModelStoreError::Download(message));
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_cancelled_sherpa_extract(&self, model_id: &str, archive_path: &Path) {
+        let _ = std::fs::remove_file(archive_path);
+        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
+            let _ = std::fs::remove_dir_all(sherpa_dir);
         }
     }
 
@@ -204,6 +494,14 @@ impl ModelStore {
     }
 
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
+        if model.provider_runtime == "sherpa-onnx" {
+            return Ok(if self.sherpa_model_ready(&model.id) {
+                ModelStatus::Ready
+            } else {
+                ModelStatus::Missing
+            });
+        }
+
         if model.provider_runtime == "external-command" {
             return Ok(if self.command_path(&model.id).exists() {
                 ModelStatus::Ready
@@ -214,7 +512,7 @@ impl ModelStore {
 
         if model.provider_runtime == "cohere-api" {
             return Ok(
-                if self.command_path(&model.id).exists() || cohere_api_key_is_available() {
+                if self.command_path(&model.id).exists() || self.cohere_key_available() {
                     ModelStatus::Ready
                 } else {
                     ModelStatus::Missing
@@ -277,6 +575,13 @@ impl ModelStore {
         if command_path.exists() {
             std::fs::remove_file(command_path)?;
             removed_anything = true;
+        }
+        // sherpa-onnx models extract to a directory rather than a single file.
+        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
+            if sherpa_dir.is_dir() {
+                std::fs::remove_dir_all(sherpa_dir)?;
+                removed_anything = true;
+            }
         }
 
         if removed_anything {
@@ -680,10 +985,14 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
     )
 }
 
-fn cohere_api_key_is_available() -> bool {
-    std::env::var_os("COHERE_API_KEY")
-        .or_else(|| std::env::var_os("CO_API_KEY"))
-        .is_some_and(|value| !value.to_string_lossy().trim().is_empty())
+/// The Cohere API key from the environment (`COHERE_API_KEY`, then
+/// `CO_API_KEY`), trimmed and only if non-empty.
+fn cohere_api_key_from_env() -> Option<String> {
+    std::env::var("COHERE_API_KEY")
+        .or_else(|_| std::env::var("CO_API_KEY"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn parse_model_registry_json(
@@ -898,10 +1207,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             id: "parakeet-tdt-0.6b-v3".to_string(),
             display_name: "Parakeet TDT 0.6B V3".to_string(),
             engine: "NVIDIA Parakeet".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+                    .to_string(),
+            ),
             checksum_sha256: None,
-            size_mb: 1_200,
+            size_mb: 660,
             languages: vec!["en".to_string(), "multi".to_string()],
             speed_score: 8,
             accuracy_score: 8,
@@ -918,10 +1230,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             id: "sensevoice-small".to_string(),
             display_name: "SenseVoice Small".to_string(),
             engine: "SenseVoice".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
+                    .to_string(),
+            ),
             checksum_sha256: None,
-            size_mb: 1_000,
+            size_mb: 250,
             languages: vec![
                 "ko".to_string(),
                 "en".to_string(),
@@ -938,6 +1253,10 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    // Nemotron 3.5 ASR ships via the external-command adapter: NVIDIA
+    // distributes it as a NeMo checkpoint (no ONNX export), so it can't run on
+    // the bundled sherpa-onnx engine. Connect a NeMo runner with a `.command`
+    // file (see ModelStore::verify_model) to make it Ready.
     registry.insert(
         "nemotron-3.5-asr-streaming-0.6b".to_string(),
         ModelDescriptor {
@@ -1002,7 +1321,9 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{Cursor, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
 
     const WHISPER_TINY_SHA256: &str =
         "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
@@ -1037,6 +1358,71 @@ mod tests {
             download_progress: None,
             download_error: None,
         }
+    }
+
+    fn sherpa_descriptor(id: &str, download_url: String) -> ModelDescriptor {
+        ModelDescriptor {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            engine: "sherpa-onnx".to_string(),
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(download_url),
+            checksum_sha256: None,
+            size_mb: 1,
+            languages: vec!["ko".to_string(), "en".to_string()],
+            speed_score: 7,
+            accuracy_score: 7,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn build_sherpa_archive(model_id: &str) -> Vec<u8> {
+        let tmp = tempfile::tempdir().expect("archive tempdir");
+        let spec = sherpa_model_spec(model_id).expect("sherpa model spec");
+        let model_root = tmp.path().join(&spec.dir);
+        std::fs::create_dir_all(&model_root).expect("model root");
+        for file in &spec.files {
+            let path = model_root.join(file);
+            std::fs::create_dir_all(path.parent().expect("file parent")).expect("file parent dir");
+            std::fs::write(path, b"fixture").expect("model fixture file");
+        }
+
+        let archive = tmp.path().join("model.tar.bz2");
+        let output = Command::new("/usr/bin/tar")
+            .arg("cjf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(tmp.path())
+            .arg(&spec.dir)
+            .output()
+            .expect("create tar archive");
+        assert!(
+            output.status.success(),
+            "tar failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read(archive).expect("archive bytes")
+    }
+
+    fn serve_once(body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+        let addr = listener.local_addr().expect("fixture server address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/x-bzip2\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("write headers");
+            stream.write_all(&body).expect("write body");
+        });
+        format!("http://{addr}/model.tar.bz2")
     }
 
     fn is_lowercase_hex_64(value: &str) -> bool {
@@ -1150,5 +1536,218 @@ mod tests {
         let installed = std::fs::read(store.model_path("whisper-test")).expect("installed model");
         assert_eq!(installed, fresh_payload);
         assert!(!store.temp_download_path("whisper-test").exists());
+    }
+
+    #[test]
+    fn default_registry_uses_sherpa_onnx_for_parakeet_and_sensevoice() {
+        let registry = default_model_registry();
+
+        let parakeet = registry
+            .get("parakeet-tdt-0.6b-v3")
+            .expect("parakeet entry");
+        assert_eq!(parakeet.provider_runtime, "sherpa-onnx");
+        assert!(
+            parakeet
+                .download_url
+                .as_deref()
+                .is_some_and(|url| url.ends_with(".tar.bz2")),
+            "parakeet should download a sherpa-onnx archive",
+        );
+
+        let sensevoice = registry.get("sensevoice-small").expect("sensevoice entry");
+        assert_eq!(sensevoice.provider_runtime, "sherpa-onnx");
+        assert!(sensevoice.download_url.is_some());
+
+        // Nemotron 3.5 has no ONNX export, so it stays on the external-command
+        // adapter rather than the sherpa-onnx engine.
+        let nemotron = registry
+            .get("nemotron-3.5-asr-streaming-0.6b")
+            .expect("nemotron entry");
+        assert_eq!(nemotron.provider_runtime, "external-command");
+    }
+
+    #[test]
+    fn sherpa_model_spec_describes_known_models() {
+        let parakeet = sherpa_model_spec("parakeet-tdt-0.6b-v3").expect("parakeet spec");
+        assert_eq!(parakeet.kind, SherpaModelKind::Transducer);
+        assert!(parakeet.files.iter().any(|f| f == "encoder.int8.onnx"));
+        assert!(parakeet.files.iter().any(|f| f == "tokens.txt"));
+
+        let sensevoice = sherpa_model_spec("sensevoice-small").expect("sensevoice spec");
+        assert_eq!(sensevoice.kind, SherpaModelKind::SenseVoice);
+        assert!(sensevoice.files.iter().any(|f| f == "model.int8.onnx"));
+
+        assert!(sherpa_model_spec("whisper-small").is_none());
+    }
+
+    #[test]
+    fn sherpa_model_ready_only_when_extracted_files_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let model = ModelDescriptor {
+            provider_runtime: "sherpa-onnx".to_string(),
+            ..descriptor("parakeet-tdt-0.6b-v3", None)
+        };
+
+        assert_eq!(
+            store.verify_model(&model).expect("verify before"),
+            ModelStatus::Missing
+        );
+
+        let spec = sherpa_model_spec("parakeet-tdt-0.6b-v3").expect("spec");
+        let dir = store
+            .sherpa_model_dir("parakeet-tdt-0.6b-v3")
+            .expect("sherpa dir");
+        std::fs::create_dir_all(&dir).expect("model dir");
+        for file in &spec.files {
+            std::fs::write(dir.join(file), b"x").expect("model file");
+        }
+
+        assert_eq!(
+            store.verify_model(&model).expect("verify after"),
+            ModelStatus::Ready
+        );
+    }
+
+    #[test]
+    fn delete_model_removes_extracted_sherpa_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let dir = store
+            .sherpa_model_dir("sensevoice-small")
+            .expect("sherpa dir");
+        std::fs::create_dir_all(&dir).expect("model dir");
+        std::fs::write(dir.join("model.int8.onnx"), b"x").expect("model file");
+
+        store.delete_model("sensevoice-small").expect("delete");
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_and_extract_sherpa_model_accepts_http_archive_fixture() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path().join("models"));
+        let model_id = "sensevoice-small";
+        let url = serve_once(build_sherpa_archive(model_id));
+        let model = sherpa_descriptor(model_id, url);
+
+        let status = store
+            .download_and_extract_sherpa_model(&model)
+            .expect("download and extract sherpa model");
+
+        assert_eq!(status, ModelStatus::Ready);
+        assert_eq!(
+            store.verify_model(&model).expect("verify extracted model"),
+            ModelStatus::Ready
+        );
+        assert!(!store.temp_download_path(model_id).exists());
+        let state = store.load_download_state().expect("download state");
+        let record = state
+            .downloads
+            .get(model_id)
+            .expect("ready download record");
+        assert_eq!(record.status, ModelStatus::Ready);
+        assert_eq!(record.download_progress_percent(), Some(100));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sherpa_extraction_stops_when_cancelled_after_tar_starts() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let model_id = "sensevoice-small";
+        let archive_path = store.temp_download_path(model_id);
+        std::fs::write(&archive_path, b"fake archive").expect("archive");
+
+        let spec = sherpa_model_spec(model_id).expect("sherpa spec");
+        let tar_path = tmp.path().join("fake-tar.sh");
+        std::fs::write(
+            &tar_path,
+            format!(
+                "#!/bin/sh\nmkdir -p \"$4/{dir}\"\ntouch \"$4/{dir}/partial\"\nexec /bin/sleep 5\n",
+                dir = spec.dir
+            ),
+        )
+        .expect("fake tar");
+        let mut permissions = std::fs::metadata(&tar_path)
+            .expect("fake tar metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tar_path, permissions).expect("fake tar executable");
+
+        store
+            .record_download_status(model_id, ModelStatus::Extracting, 12, Some(12), None)
+            .expect("extracting status");
+        let cancelling_store = store.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            cancelling_store
+                .cancel_download(model_id)
+                .expect("cancel download");
+        });
+
+        let started = Instant::now();
+        let error = store
+            .extract_sherpa_archive_with_tar(model_id, &archive_path, 12, Some(12), &tar_path)
+            .expect_err("cancelled extraction should fail");
+
+        canceller.join().expect("canceller");
+        assert!(matches!(
+            error,
+            ModelStoreError::Cancelled { model_id: id } if id == "sensevoice-small"
+        ));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cancelled extraction should not wait for the fake tar sleep"
+        );
+        assert!(!archive_path.exists());
+        assert!(
+            !store
+                .sherpa_model_dir(model_id)
+                .expect("sherpa dir")
+                .exists()
+        );
+        let state = store.load_download_state().expect("download state");
+        let record = state.downloads.get(model_id).expect("cancelled record");
+        assert_eq!(record.status, ModelStatus::Error);
+        assert_eq!(record.error.as_deref(), Some("cancelled by user"));
+    }
+
+    #[test]
+    fn cohere_model_ready_when_api_key_configured() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = ModelDescriptor {
+            provider_runtime: "cohere-api".to_string(),
+            ..descriptor("cohere-transcribe-03-2026", None)
+        };
+
+        let with_key = ModelStore::with_cohere_api_key(tmp.path(), Some("secret-key".to_string()));
+        assert!(with_key.cohere_key_available());
+        assert_eq!(
+            with_key.verify_model(&model).expect("verify with key"),
+            ModelStatus::Ready
+        );
+    }
+
+    #[test]
+    fn with_cohere_api_key_trims_configured_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model = ModelDescriptor {
+            provider_runtime: "cohere-api".to_string(),
+            ..descriptor("cohere-transcribe-03-2026", None)
+        };
+
+        // A surrounding-whitespace key is trimmed to a usable value (the
+        // configured key takes precedence over the environment).
+        let store = ModelStore::with_cohere_api_key(tmp.path(), Some("  spaced-key  ".to_string()));
+        assert!(store.cohere_key_available());
+        assert_eq!(
+            store.verify_model(&model).expect("verify trimmed key"),
+            ModelStatus::Ready
+        );
     }
 }

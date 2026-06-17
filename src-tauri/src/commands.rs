@@ -16,7 +16,9 @@ use crate::audio::{
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
-use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
+use crate::models::{
+    ModelDescriptor, ModelStatus, ModelStore, default_model_registry,
+};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{
     BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
@@ -29,7 +31,7 @@ use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
     RuntimeTranscriber, Transcriber, TranscriptionJobOutcome, TranscriptionWorker,
-    TranscriptionWorkerOptions, apply_outcome,
+    TranscriptionWorkerOptions, apply_outcome, effective_cohere_api_key,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -407,6 +409,8 @@ pub struct StartedTranscriptionJob {
     pub model_directory: std::path::PathBuf,
     pub language: TranscriptionLanguage,
     pub suppress_low_confidence_transcripts: bool,
+    /// Resolved Cohere API key (settings or environment) for the worker thread.
+    pub cohere_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -415,6 +419,7 @@ pub struct PreparedModelDownload {
     pub model: ModelDescriptor,
     pub registry: Vec<ModelDescriptor>,
 }
+
 
 /// One-shot device override staged by the recovery watchdog. Carries the
 /// stable device id plus the persisted label, so the resolver can still
@@ -542,7 +547,13 @@ impl AppBackend {
                 .model_directory
                 .as_deref()
                 .unwrap_or(&self.settings.model_directory);
-            if !model_is_selectable(model_id, model_directory) {
+            // Honor a Cohere key set in the same patch so the user can enter the
+            // key and switch to Cohere in one action.
+            let cohere_api_key = patch
+                .cohere_api_key
+                .as_deref()
+                .unwrap_or(&self.settings.cohere_api_key);
+            if !model_is_selectable(model_id, model_directory, Some(cohere_api_key)) {
                 patch.selected_model = None;
             }
         }
@@ -565,7 +576,10 @@ impl AppBackend {
     }
 
     pub fn model_registry(&self) -> Vec<ModelDescriptor> {
-        model_registry_snapshot(self.model_directory_path())
+        model_registry_snapshot(
+            self.model_directory_path(),
+            Some(self.settings.cohere_api_key.clone()),
+        )
     }
 
     pub fn verify_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
@@ -1243,7 +1257,11 @@ impl AppBackend {
         }
         let model_id = match model_id {
             Some(model_id) => {
-                if !model_is_selectable(&model_id, &self.settings.model_directory) {
+                if !model_is_selectable(
+                    &model_id,
+                    &self.settings.model_directory,
+                    Some(&self.settings.cohere_api_key),
+                ) {
                     return Err(format!("model {model_id} is not ready"));
                 }
                 model_id
@@ -1293,7 +1311,10 @@ impl AppBackend {
     }
 
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        let transcriber = RuntimeTranscriber::new(&self.settings.model_directory);
+        let transcriber = RuntimeTranscriber::with_cohere_api_key(
+            &self.settings.model_directory,
+            effective_cohere_api_key(Some(&self.settings.cohere_api_key)),
+        );
         self.process_next_transcription_with(transcriber)
     }
 
@@ -1305,7 +1326,7 @@ impl AppBackend {
             return Ok(self.queue.snapshot());
         }
 
-        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory, Some(&self.settings.cohere_api_key));
         let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
             return Ok(self.queue.snapshot());
         };
@@ -1349,7 +1370,7 @@ impl AppBackend {
     }
 
     pub fn should_process_transcriptions(&self) -> bool {
-        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory, Some(&self.settings.cohere_api_key));
         !self.settings.pause_all
             && self.settings.transcription_enabled
             && self.queue.has_pending_for_model_ids(&selectable_model_ids)
@@ -1367,10 +1388,11 @@ impl AppBackend {
             return Vec::new();
         }
 
-        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory, Some(&self.settings.cohere_api_key));
         let model_directory = self.model_directory_path();
         let language = self.settings.transcription_language;
         let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
+        let cohere_api_key = effective_cohere_api_key(Some(&self.settings.cohere_api_key));
         let mut started_jobs = Vec::new();
 
         while let Some(job) = self
@@ -1382,6 +1404,7 @@ impl AppBackend {
                 model_directory: model_directory.clone(),
                 language,
                 suppress_low_confidence_transcripts,
+                cohere_api_key: cohere_api_key.clone(),
             });
         }
 
@@ -1459,7 +1482,7 @@ impl AppBackend {
         if !self.settings.transcription_enabled || self.settings.pause_all {
             return None;
         }
-        let installed = selectable_model_ids(&self.settings.model_directory);
+        let installed = selectable_model_ids(&self.settings.model_directory, Some(&self.settings.cohere_api_key));
         let stuck_models: HashSet<String> = queue
             .jobs
             .iter()
@@ -2062,8 +2085,9 @@ pub fn microphone_devices_from_input_devices(
 
 pub fn model_registry_snapshot(
     model_directory: impl AsRef<std::path::Path>,
+    cohere_api_key: Option<String>,
 ) -> Vec<ModelDescriptor> {
-    let store = ModelStore::new(model_directory);
+    let store = ModelStore::with_cohere_api_key(model_directory, cohere_api_key);
     let download_state = store.load_download_state().unwrap_or_default();
     let mut models: Vec<ModelDescriptor> = store
         .load_model_registry()
@@ -2073,7 +2097,7 @@ pub fn model_registry_snapshot(
             model.download_progress = None;
             model.download_error = None;
 
-            if store.model_path(&model.id).exists() {
+            if model_has_selectable_runtime(&store, &model) {
                 model.status = ModelStatus::Ready;
                 model.download_progress = Some(100);
                 return model;
@@ -2136,12 +2160,19 @@ fn derive_tray_state(
     }
 }
 
-fn model_is_selectable(model_id: &str, model_directory: &str) -> bool {
-    selectable_model_ids(model_directory).contains(model_id)
+fn model_is_selectable(
+    model_id: &str,
+    model_directory: &str,
+    cohere_api_key: Option<&str>,
+) -> bool {
+    selectable_model_ids(model_directory, cohere_api_key).contains(model_id)
 }
 
-fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
-    let store = ModelStore::new(expand_user_path(model_directory));
+fn selectable_model_ids(model_directory: &str, cohere_api_key: Option<&str>) -> HashSet<String> {
+    let store = ModelStore::with_cohere_api_key(
+        expand_user_path(model_directory),
+        cohere_api_key.map(str::to_string),
+    );
     let models = store
         .load_model_registry()
         .unwrap_or_else(|_| default_model_registry())
@@ -2162,7 +2193,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "external-command" | "cohere-api" => store
+        "sherpa-onnx" | "external-command" | "cohere-api" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
         _ => store.model_path(&model.id).exists(),
@@ -2241,7 +2272,7 @@ mod tests {
         )
         .expect("model file");
 
-        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+        let models = selectable_model_ids(&tmp.path().to_string_lossy(), None);
 
         assert!(models.contains("local-ready"));
     }
@@ -2256,7 +2287,7 @@ mod tests {
             .record_download_progress("local-downloading", 1, Some(2))
             .expect("download state");
 
-        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+        let models = selectable_model_ids(&tmp.path().to_string_lossy(), None);
 
         assert!(!models.contains("local-downloading"));
     }
@@ -2287,7 +2318,7 @@ mod tests {
         std::fs::write(tmp.path().join("sensevoice-small.command"), "printf ok")
             .expect("command file");
 
-        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+        let models = selectable_model_ids(&tmp.path().to_string_lossy(), None);
 
         assert!(models.contains("sensevoice-small"));
     }

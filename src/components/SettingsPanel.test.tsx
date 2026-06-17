@@ -95,6 +95,19 @@ describe("settings panel", () => {
     expect(on).toContain("Google Meet or browser tabs with Meet in the title");
   });
 
+  it("renders the Cohere API key field in the Models section and reflects the saved key", () => {
+    const base = mockSnapshot();
+    const markup = renderSettingsPanel(
+      { ...base, settings: { ...base.settings, cohere_api_key: "configured-cohere-key" } },
+      "models",
+    );
+
+    expect(markup).toContain("Cohere API key");
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain('value="configured-cohere-key"');
+    expect(markup).toContain("needs an API key");
+  });
+
   it("renders custom system-audio sources from settings", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.system_audio_enabled = true;

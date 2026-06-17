@@ -85,7 +85,14 @@ fn default_registry_includes_requested_asr_provider_models() {
         .get("parakeet-tdt-0.6b-v3")
         .expect("Parakeet V3 model");
     assert_eq!(parakeet.display_name, "Parakeet TDT 0.6B V3");
-    assert_eq!(parakeet.provider_runtime, "external-command");
+    assert_eq!(parakeet.provider_runtime, "sherpa-onnx");
+    assert!(
+        parakeet
+            .download_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(".tar.bz2")),
+        "Parakeet should acquire a sherpa-onnx archive via Download",
+    );
     assert!(
         parakeet
             .languages
@@ -95,7 +102,14 @@ fn default_registry_includes_requested_asr_provider_models() {
 
     let sensevoice = registry.get("sensevoice-small").expect("SenseVoice model");
     assert_eq!(sensevoice.display_name, "SenseVoice Small");
-    assert_eq!(sensevoice.provider_runtime, "external-command");
+    assert_eq!(sensevoice.provider_runtime, "sherpa-onnx");
+    assert!(
+        sensevoice
+            .download_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(".tar.bz2")),
+        "SenseVoice should acquire a sherpa-onnx archive via Download",
+    );
     assert!(sensevoice.languages.iter().any(|language| language == "ko"));
 
     let nemotron = registry

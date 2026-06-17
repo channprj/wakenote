@@ -206,6 +206,21 @@ export function SettingsPanel({
           onCancelDownload={onCancelModelDownload}
           onDelete={onDeleteModel}
         />
+        <div className="model-credentials">
+          <TextInput
+            label="Cohere API key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Paste a Cohere API key to enable Cohere Transcribe"
+            value={settings.cohere_api_key}
+            onChange={(event) => onPatch({ cohere_api_key: event.currentTarget.value })}
+          />
+          <p className="settings-hint">
+            Cohere Transcribe is a cloud model and needs an API key — stored locally, used only
+            for transcription requests. Parakeet and SenseVoice download and run fully on-device.
+          </p>
+        </div>
       </Section>
     );
   }
