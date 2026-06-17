@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -294,30 +294,13 @@ impl ModelStore {
             None,
         )?;
 
-        let extract = Command::new("/usr/bin/tar")
-            .arg("xjf")
-            .arg(&archive_path)
-            .arg("-C")
-            .arg(&self.model_directory)
-            .output();
-        let _ = std::fs::remove_file(&archive_path);
-        let extract = extract?;
-        if !extract.status.success() {
-            let stderr = String::from_utf8_lossy(&extract.stderr).trim().to_string();
-            let message = if stderr.is_empty() {
-                format!("tar exited with {}", extract.status)
-            } else {
-                stderr
-            };
-            let _ = self.record_download_status(
-                &model.id,
-                ModelStatus::Error,
-                downloaded_bytes,
-                final_total,
-                Some(message.clone()),
-            );
-            return Err(ModelStoreError::Download(message));
-        }
+        self.extract_sherpa_archive_with_tar(
+            &model.id,
+            &archive_path,
+            downloaded_bytes,
+            final_total,
+            Path::new("/usr/bin/tar"),
+        )?;
 
         if !self.sherpa_model_ready(&model.id) {
             let message = "extracted archive is missing expected model files".to_string();
@@ -339,6 +322,82 @@ impl ModelStore {
             None,
         )?;
         Ok(ModelStatus::Ready)
+    }
+
+    fn extract_sherpa_archive_with_tar(
+        &self,
+        model_id: &str,
+        archive_path: &Path,
+        downloaded_bytes: u64,
+        final_total: Option<u64>,
+        tar_path: &Path,
+    ) -> Result<(), ModelStoreError> {
+        if self.is_download_cancelled(model_id)? {
+            self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+            return Err(ModelStoreError::Cancelled {
+                model_id: model_id.to_string(),
+            });
+        }
+
+        let mut child = Command::new(tar_path)
+            .arg("xjf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(&self.model_directory)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        loop {
+            if child.try_wait()?.is_some() {
+                break;
+            }
+            if self.is_download_cancelled(model_id)? {
+                let _ = child.kill();
+                let _ = child.wait();
+                self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model_id.to_string(),
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let output = child.wait_with_output()?;
+        let _ = std::fs::remove_file(archive_path);
+
+        if self.is_download_cancelled(model_id)? {
+            self.cleanup_cancelled_sherpa_extract(model_id, archive_path);
+            return Err(ModelStoreError::Cancelled {
+                model_id: model_id.to_string(),
+            });
+        }
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let message = if stderr.is_empty() {
+                format!("tar exited with {}", output.status)
+            } else {
+                stderr
+            };
+            let _ = self.record_download_status(
+                model_id,
+                ModelStatus::Error,
+                downloaded_bytes,
+                final_total,
+                Some(message.clone()),
+            );
+            return Err(ModelStoreError::Download(message));
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_cancelled_sherpa_extract(&self, model_id: &str, archive_path: &Path) {
+        let _ = std::fs::remove_file(archive_path);
+        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
+            let _ = std::fs::remove_dir_all(sherpa_dir);
+        }
     }
 
     pub fn model_path(&self, model_id: &str) -> PathBuf {
@@ -1233,7 +1292,9 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{Cursor, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
 
     const WHISPER_TINY_SHA256: &str =
         "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
@@ -1268,6 +1329,71 @@ mod tests {
             download_progress: None,
             download_error: None,
         }
+    }
+
+    fn sherpa_descriptor(id: &str, download_url: String) -> ModelDescriptor {
+        ModelDescriptor {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            engine: "sherpa-onnx".to_string(),
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(download_url),
+            checksum_sha256: None,
+            size_mb: 1,
+            languages: vec!["ko".to_string(), "en".to_string()],
+            speed_score: 7,
+            accuracy_score: 7,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn build_sherpa_archive(model_id: &str) -> Vec<u8> {
+        let tmp = tempfile::tempdir().expect("archive tempdir");
+        let spec = sherpa_model_spec(model_id).expect("sherpa model spec");
+        let model_root = tmp.path().join(&spec.dir);
+        std::fs::create_dir_all(&model_root).expect("model root");
+        for file in &spec.files {
+            let path = model_root.join(file);
+            std::fs::create_dir_all(path.parent().expect("file parent")).expect("file parent dir");
+            std::fs::write(path, b"fixture").expect("model fixture file");
+        }
+
+        let archive = tmp.path().join("model.tar.bz2");
+        let output = Command::new("/usr/bin/tar")
+            .arg("cjf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(tmp.path())
+            .arg(&spec.dir)
+            .output()
+            .expect("create tar archive");
+        assert!(
+            output.status.success(),
+            "tar failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read(archive).expect("archive bytes")
+    }
+
+    fn serve_once(body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+        let addr = listener.local_addr().expect("fixture server address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/x-bzip2\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("write headers");
+            stream.write_all(&body).expect("write body");
+        });
+        format!("http://{addr}/model.tar.bz2")
     }
 
     fn is_lowercase_hex_64(value: &str) -> bool {
@@ -1462,6 +1588,100 @@ mod tests {
 
         store.delete_model("sensevoice-small").expect("delete");
         assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_and_extract_sherpa_model_accepts_http_archive_fixture() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path().join("models"));
+        let model_id = "sensevoice-small";
+        let url = serve_once(build_sherpa_archive(model_id));
+        let model = sherpa_descriptor(model_id, url);
+
+        let status = store
+            .download_and_extract_sherpa_model(&model)
+            .expect("download and extract sherpa model");
+
+        assert_eq!(status, ModelStatus::Ready);
+        assert_eq!(
+            store.verify_model(&model).expect("verify extracted model"),
+            ModelStatus::Ready
+        );
+        assert!(!store.temp_download_path(model_id).exists());
+        let state = store.load_download_state().expect("download state");
+        let record = state
+            .downloads
+            .get(model_id)
+            .expect("ready download record");
+        assert_eq!(record.status, ModelStatus::Ready);
+        assert_eq!(record.download_progress_percent(), Some(100));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sherpa_extraction_stops_when_cancelled_after_tar_starts() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let model_id = "sensevoice-small";
+        let archive_path = store.temp_download_path(model_id);
+        std::fs::write(&archive_path, b"fake archive").expect("archive");
+
+        let spec = sherpa_model_spec(model_id).expect("sherpa spec");
+        let tar_path = tmp.path().join("fake-tar.sh");
+        std::fs::write(
+            &tar_path,
+            format!(
+                "#!/bin/sh\nmkdir -p \"$4/{dir}\"\ntouch \"$4/{dir}/partial\"\nexec /bin/sleep 5\n",
+                dir = spec.dir
+            ),
+        )
+        .expect("fake tar");
+        let mut permissions = std::fs::metadata(&tar_path)
+            .expect("fake tar metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&tar_path, permissions).expect("fake tar executable");
+
+        store
+            .record_download_status(model_id, ModelStatus::Extracting, 12, Some(12), None)
+            .expect("extracting status");
+        let cancelling_store = store.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            cancelling_store
+                .cancel_download(model_id)
+                .expect("cancel download");
+        });
+
+        let started = Instant::now();
+        let error = store
+            .extract_sherpa_archive_with_tar(model_id, &archive_path, 12, Some(12), &tar_path)
+            .expect_err("cancelled extraction should fail");
+
+        canceller.join().expect("canceller");
+        assert!(matches!(
+            error,
+            ModelStoreError::Cancelled { model_id: id } if id == "sensevoice-small"
+        ));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "cancelled extraction should not wait for the fake tar sleep"
+        );
+        assert!(!archive_path.exists());
+        assert!(
+            !store
+                .sherpa_model_dir(model_id)
+                .expect("sherpa dir")
+                .exists()
+        );
+        let state = store.load_download_state().expect("download state");
+        let record = state.downloads.get(model_id).expect("cancelled record");
+        assert_eq!(record.status, ModelStatus::Error);
+        assert_eq!(record.error.as_deref(), Some("cancelled by user"));
     }
 
     #[test]
