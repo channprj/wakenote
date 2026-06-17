@@ -259,31 +259,20 @@ impl ModelStore {
 
         let archive_path = self.temp_download_path(&model.id);
         let mut reader = response.into_reader();
-        let mut file = std::fs::File::create(&archive_path)?;
-        let mut buffer = [0_u8; 64 * 1024];
-        let mut downloaded_bytes = 0_u64;
-        let mut last_recorded = 0_u64;
-        self.record_download_progress(&model.id, 0, total_bytes)?;
-        loop {
-            let read = reader.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            std::io::Write::write_all(&mut file, &buffer[..read])?;
-            downloaded_bytes += read as u64;
-            if self.is_download_cancelled(&model.id)? {
-                let _ = std::fs::remove_file(&archive_path);
-                return Err(ModelStoreError::Cancelled {
-                    model_id: model.id.clone(),
-                });
-            }
-            if downloaded_bytes.saturating_sub(last_recorded) >= 5_242_880 {
-                self.record_download_progress(&model.id, downloaded_bytes, total_bytes)?;
-                last_recorded = downloaded_bytes;
-            }
-        }
-        std::io::Write::flush(&mut file)?;
-        drop(file);
+        // Stream to disk. On any failure mid-download, clean up the partial
+        // archive and record an Error status — otherwise the UI stays stuck on
+        // "Downloading" and `prepare_model_download` rejects the retry as active.
+        let downloaded_bytes =
+            match self.stream_sherpa_archive(&model.id, &mut reader, &archive_path, total_bytes) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&archive_path);
+                    if !matches!(error, ModelStoreError::Cancelled { .. }) {
+                        self.record_download_error(&model.id, 0, total_bytes, &error);
+                    }
+                    return Err(error);
+                }
+            };
 
         let final_total = total_bytes.or(Some(downloaded_bytes));
         self.record_download_status(
@@ -322,6 +311,42 @@ impl ModelStore {
             None,
         )?;
         Ok(ModelStatus::Ready)
+    }
+
+    /// Stream a sherpa archive response body to `archive_path`, recording
+    /// progress and honoring cancellation. Returns the byte count on success.
+    /// The caller is responsible for cleaning up `archive_path` on error.
+    fn stream_sherpa_archive(
+        &self,
+        model_id: &str,
+        reader: &mut impl Read,
+        archive_path: &Path,
+        total_bytes: Option<u64>,
+    ) -> Result<u64, ModelStoreError> {
+        let mut file = std::fs::File::create(archive_path)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut downloaded_bytes = 0_u64;
+        let mut last_recorded = 0_u64;
+        self.record_download_progress(model_id, 0, total_bytes)?;
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut file, &buffer[..read])?;
+            downloaded_bytes += read as u64;
+            if self.is_download_cancelled(model_id)? {
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model_id.to_string(),
+                });
+            }
+            if downloaded_bytes.saturating_sub(last_recorded) >= 5_242_880 {
+                self.record_download_progress(model_id, downloaded_bytes, total_bytes)?;
+                last_recorded = downloaded_bytes;
+            }
+        }
+        std::io::Write::flush(&mut file)?;
+        Ok(downloaded_bytes)
     }
 
     fn extract_sherpa_archive_with_tar(
@@ -1425,6 +1450,24 @@ mod tests {
         format!("http://{addr}/model.tar.bz2")
     }
 
+    /// Serve a response that advertises `declared_len` bytes but sends only
+    /// `body`, then closes the connection — the client's body read fails partway.
+    fn serve_truncated(declared_len: usize, body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+        let addr = listener.local_addr().expect("fixture server address");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fixture request");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\nContent-Type: application/x-bzip2\r\nConnection: close\r\n\r\n",
+            );
+            stream.write_all(headers.as_bytes()).expect("write headers");
+            let _ = stream.write_all(&body);
+        });
+        format!("http://{addr}/model.tar.bz2")
+    }
+
     fn is_lowercase_hex_64(value: &str) -> bool {
         value.len() == 64
             && value
@@ -1649,6 +1692,35 @@ mod tests {
             .expect("ready download record");
         assert_eq!(record.status, ModelStatus::Ready);
         assert_eq!(record.download_progress_percent(), Some(100));
+    }
+
+    #[test]
+    fn sherpa_download_failure_cleans_up_partial_and_records_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path().join("models"));
+        let model_id = "sensevoice-small";
+        // Advertise 8 MiB but send only 4 KiB, then close — the download fails
+        // partway through instead of completing.
+        let url = serve_truncated(8 * 1024 * 1024, vec![0_u8; 4096]);
+        let model = sherpa_descriptor(model_id, url);
+
+        let error = store
+            .download_and_extract_sherpa_model(&model)
+            .expect_err("truncated download should fail");
+        assert!(
+            !matches!(error, ModelStoreError::Cancelled { .. }),
+            "a network failure must not be reported as a cancellation",
+        );
+
+        // No orphaned partial archive, and the status is Error (not stuck on
+        // Downloading) so the UI surfaces the failure and a retry is accepted.
+        assert!(!store.temp_download_path(model_id).exists());
+        let state = store.load_download_state().expect("download state");
+        let record = state
+            .downloads
+            .get(model_id)
+            .expect("failed download record");
+        assert_eq!(record.status, ModelStatus::Error);
     }
 
     #[cfg(unix)]
