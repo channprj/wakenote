@@ -105,7 +105,7 @@ For any other engine, place a shell command file at `<model_directory>/<model-id
 
 ## Requirements
 
-- macOS 10.15+ (Catalina or newer).
+- macOS 11.0+ (Big Sur or newer) — the shipped app is an arm64 build and bundles onnxruntime, both of which require 11.0.
 - Node.js 20+ and `pnpm` 10 (the repo pins `pnpm@10.33.4` via `packageManager`).
 - Rust toolchain (stable, `edition = "2024"`).
 - Xcode Command Line Tools — needed for `afconvert` (M4A encoding) and the Tauri build chain.

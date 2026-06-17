@@ -105,7 +105,7 @@ Cohere Transcribe는 클라우드 모델이라 다운로드할 것이 없습니�
 
 ## 시스템 요구사항
 
-- macOS 10.15 (Catalina) 이상.
+- macOS 11.0 (Big Sur) 이상 — 배포 앱은 arm64 빌드이고 onnxruntime를 번들하므로 둘 다 11.0을 요구합니다.
 - Node.js 20+ 와 `pnpm` 10 (`packageManager` 필드로 `pnpm@10.33.4` 고정).
 - Rust toolchain (stable, `edition = "2024"`).
 - Xcode Command Line Tools — `afconvert` (M4A 인코딩) 및 Tauri 빌드 체인에 필요.
