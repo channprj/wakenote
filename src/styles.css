@@ -1475,6 +1475,12 @@ svg {
   font-size: 12px;
 }
 
+/* Provider/runtime subtitle sits inline after the bold model name — nudge it
+   right so it isn't jammed against the name. */
+.model-row__main header strong + span {
+  margin-left: 8px;
+}
+
 .model-row__scores {
   display: flex;
   flex-wrap: wrap;
