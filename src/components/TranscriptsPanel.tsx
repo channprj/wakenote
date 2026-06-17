@@ -5,6 +5,7 @@ import {
   openTranscriptFolder,
   regenerateTranscript,
 } from "../lib/tauri-client";
+import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
 import type {
   CustomSourceEntry,
   ModelDescriptor,
@@ -112,11 +113,9 @@ export function TranscriptsPanel({
     void refreshDays();
   }, [refreshDays]);
 
-  // Auto-refresh today's bucket as new transcripts are finalized (live or queue).
-  // Only today is reloaded (locally — today's files are freshly written, never
-  // evicted); the full day list is NOT re-scanned per final, since today is
-  // always selectable in the calendar regardless of its count. Re-scanning the
-  // whole archive on every transcription would stat thousands of files.
+  // Auto-refresh the recorded day as new transcripts are finalized (live or queue).
+  // Queued jobs can finish long after recording, so the event's recorded_at
+  // value, not wall-clock "today", chooses the bucket to reload.
   useEffect(() => {
     if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
       return;
@@ -126,10 +125,21 @@ export function TranscriptsPanel({
 
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const stop = await listen("live-transcript-final", () => {
+      const stop = await listen("live-transcript-final", (event) => {
+        const payload = event.payload as {
+          recorded_at?: string | null;
+          audio_path?: string | null;
+        };
         const todayDay = formatLocalDay(new Date());
-        requestedRef.current.add(todayDay);
-        void loadDay(todayDay, false);
+        const day = transcriptDayFromRecordingReference(
+          payload.recorded_at,
+          payload.audio_path,
+        );
+        requestedRef.current.add(day);
+        void loadDay(day, false);
+        if (day !== todayDay) {
+          void refreshDays();
+        }
       });
       if (cancelled) {
         stop();
@@ -142,7 +152,7 @@ export function TranscriptsPanel({
       cancelled = true;
       unlisten?.();
     };
-  }, [loadDay]);
+  }, [loadDay, refreshDays]);
 
   return (
     <TranscriptsView

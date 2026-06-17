@@ -25,6 +25,7 @@ import {
   queueStatsBanner,
   summarizeQueueJobsByDay,
   transcriptDayFromAudioPath,
+  transcriptDayFromRecordingReference,
 } from "./transcript-history";
 
 describe("transcript history helpers", () => {
@@ -85,6 +86,30 @@ describe("transcript history helpers", () => {
     expect(fileUrlFromPath("/tmp/WakeNote/20260510/010203 voice.m4a")).toBe(
       "file:///tmp/WakeNote/20260510/010203%20voice.m4a",
     );
+  });
+
+  it("derives refresh days from recording timestamps before completion-time fallbacks", () => {
+    expect(
+      transcriptDayFromRecordingReference(
+        "2026-05-09T08:00:00+09:00",
+        "/tmp/WakeNote/20260615/235959.m4a",
+        new Date("2026-06-15T12:00:00+09:00"),
+      ),
+    ).toBe("2026-05-09");
+    expect(
+      transcriptDayFromRecordingReference(
+        undefined,
+        "/tmp/WakeNote/20260509/080000.m4a",
+        new Date("2026-06-15T12:00:00+09:00"),
+      ),
+    ).toBe("2026-05-09");
+    expect(
+      transcriptDayFromRecordingReference(
+        "not-a-date",
+        "/tmp/imported/meeting.wav",
+        new Date("2026-06-15T12:00:00+09:00"),
+      ),
+    ).toBe("2026-06-15");
   });
 
   it("shortens save-root audio paths to a YYYY-MM-DD/HH:MM:SS pair with humanized date + time", () => {

@@ -82,6 +82,28 @@ describe("reduceTranscriptLog", () => {
     expect(entries[0].text).toBe("from backlog");
   });
 
+  it("uses the recording timestamp from delayed final events when no live entry remains", () => {
+    const recordedAt = "2026-05-09T08:00:00Z";
+    const entries = apply([
+      {
+        type: "final",
+        chunk_id: 42,
+        audio_path: "/tmp/WakeNote/20260509/080000.m4a",
+        text: "delayed queue result",
+        recorded_at: recordedAt,
+      },
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      chunk_id: 42,
+      status: "final",
+      started_at: recordedAt,
+      recorded_at: recordedAt,
+      text: "delayed queue result",
+    });
+  });
+
   it("records failed status with error message", () => {
     const entries = apply([
       { type: "started", chunk_id: 2, started_at: "2026-05-09T08:00:00Z" },

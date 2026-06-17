@@ -34,12 +34,14 @@ export type TranscriptEvent =
       chunk_id: number | null;
       audio_path: string;
       text: string;
+      recorded_at?: string;
     }
   | {
       type: "failed";
       chunk_id: number | null;
       audio_path: string;
       error: string;
+      recorded_at?: string;
     };
 
 export const TRANSCRIPT_LOG_LIMIT = 12;
@@ -62,12 +64,13 @@ export function reduceTranscriptLog(
 
     case "partial":
       if (!entries.some((entry) => entry.chunk_id === event.chunk_id)) {
+        const timestamp = new Date().toISOString();
         return appendOrReplace(entries, event.chunk_id, () => ({
           chunk_id: event.chunk_id,
           status: "partial",
           text: event.text,
-          started_at: new Date().toISOString(),
-          recorded_at: new Date().toISOString(),
+          started_at: timestamp,
+          recorded_at: timestamp,
           audio_path: null,
           error: null,
         }));
@@ -87,38 +90,55 @@ export function reduceTranscriptLog(
       }));
 
     case "final":
-      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => ({
-        ...(entry ?? defaultEntry(event.chunk_id, event.audio_path)),
-        chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
-        status: "final",
-        text: event.text,
-        recorded_at:
-          entry?.recorded_at || entry?.started_at || new Date().toISOString(),
-        audio_path: event.audio_path,
-        error: null,
-      }));
+      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => {
+        const recordedAt =
+          entry?.recorded_at ||
+          entry?.started_at ||
+          event.recorded_at ||
+          new Date().toISOString();
+        return {
+          ...(entry ?? defaultEntry(event.chunk_id, event.audio_path, event.recorded_at)),
+          chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
+          status: "final",
+          text: event.text,
+          recorded_at: recordedAt,
+          audio_path: event.audio_path,
+          error: null,
+        };
+      });
 
     case "failed":
-      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => ({
-        ...(entry ?? defaultEntry(event.chunk_id, event.audio_path)),
-        chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
-        status: "failed",
-        text: entry?.text ?? "",
-        recorded_at:
-          entry?.recorded_at || entry?.started_at || new Date().toISOString(),
-        audio_path: event.audio_path,
-        error: event.error,
-      }));
+      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => {
+        const recordedAt =
+          entry?.recorded_at ||
+          entry?.started_at ||
+          event.recorded_at ||
+          new Date().toISOString();
+        return {
+          ...(entry ?? defaultEntry(event.chunk_id, event.audio_path, event.recorded_at)),
+          chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
+          status: "failed",
+          text: entry?.text ?? "",
+          recorded_at: recordedAt,
+          audio_path: event.audio_path,
+          error: event.error,
+        };
+      });
   }
 }
 
-function defaultEntry(chunk_id: number | null, audio_path: string): TranscriptEntry {
+function defaultEntry(
+  chunk_id: number | null,
+  audio_path: string,
+  recordedAt?: string,
+): TranscriptEntry {
+  const timestamp = recordedAt || new Date().toISOString();
   return {
     chunk_id: chunk_id ?? -1,
     status: "queued",
     text: "",
-    started_at: new Date().toISOString(),
-    recorded_at: new Date().toISOString(),
+    started_at: timestamp,
+    recorded_at: timestamp,
     audio_path,
     error: null,
   };

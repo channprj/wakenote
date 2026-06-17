@@ -1957,6 +1957,10 @@ fn audio_path_for_transcript(path: &Path) -> Option<PathBuf> {
 }
 
 fn metadata_for_transcript(path: &Path) -> Option<ChunkMetadata> {
+    metadata_for_recording_path(path)
+}
+
+fn metadata_for_recording_path(path: &Path) -> Option<ChunkMetadata> {
     path.with_extension("json")
         .try_exists()
         .ok()
@@ -1965,17 +1969,38 @@ fn metadata_for_transcript(path: &Path) -> Option<ChunkMetadata> {
         .and_then(|bytes| serde_json::from_slice::<ChunkMetadata>(&bytes).ok())
 }
 
+pub fn recorded_at_for_audio_path(path: &Path) -> String {
+    let metadata = metadata_for_recording_path(path);
+    recorded_at_for_path(path, metadata.as_ref())
+}
+
 fn recorded_at_for_transcript(path: &Path, metadata: Option<&ChunkMetadata>) -> String {
     metadata
         .map(|metadata| metadata.started_at.to_rfc3339())
-        .or_else(|| recorded_at_from_path(path))
-        .unwrap_or_else(|| {
-            fs::metadata(path)
-                .and_then(|metadata| metadata.modified())
-                .map(DateTime::<Utc>::from)
-                .map(|timestamp| timestamp.to_rfc3339())
-                .unwrap_or_default()
+        .or_else(|| {
+            audio_path_for_transcript(path)
+                .map(|audio_path| recorded_at_for_audio_path(&audio_path))
+                .filter(|recorded_at| !recorded_at.is_empty())
         })
+        .or_else(|| recorded_at_from_path(path))
+        .or_else(|| modified_at_rfc3339(path))
+        .unwrap_or_default()
+}
+
+fn recorded_at_for_path(path: &Path, metadata: Option<&ChunkMetadata>) -> String {
+    metadata
+        .map(|metadata| metadata.started_at.to_rfc3339())
+        .or_else(|| recorded_at_from_path(path))
+        .or_else(|| modified_at_rfc3339(path))
+        .unwrap_or_default()
+}
+
+fn modified_at_rfc3339(path: &Path) -> Option<String> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(DateTime::<Utc>::from)
+        .map(|timestamp| timestamp.to_rfc3339())
+        .ok()
 }
 
 fn recorded_at_from_path(path: &Path) -> Option<String> {
@@ -2482,6 +2507,48 @@ mod tests {
                 day: "2026-05-13".to_string(),
                 count: 1
             }]
+        );
+    }
+
+    #[test]
+    fn recorded_at_for_audio_path_prefers_recording_metadata_started_at() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let audio_path = tmp.path().join("20260615").join("235959.wav");
+        std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
+        std::fs::write(&audio_path, b"wav bytes").expect("audio");
+        let started_at = Utc.with_ymd_and_hms(2026, 5, 9, 8, 0, 0).unwrap();
+        let metadata = ChunkMetadata {
+            model_id: "whisper-medium".into(),
+            device_id: "default".into(),
+            device_name: "System Default".into(),
+            sample_rate: 16_000,
+            threshold_dbfs: -42.0,
+            attack_ms: 100,
+            release_ms: 1_000,
+            pre_roll_ms: 1_000,
+            lead_in_padding_ms: 300,
+            post_roll_ms: 300,
+            min_chunk_ms: 600,
+            max_chunk_ms: 120_000,
+            started_at,
+            ended_at: started_at + chrono::Duration::milliseconds(500),
+            duration_ms: 500,
+            transcription_status: TranscriptionStatus::Completed,
+            app_version: "0.0.0".into(),
+            used_fallback_device: false,
+            live_capture_chunk_id: Some(42),
+            source: ChunkSource::Microphone,
+            source_label: None,
+        };
+        std::fs::write(
+            audio_path.with_extension("json"),
+            serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+        )
+        .expect("metadata");
+
+        assert_eq!(
+            recorded_at_for_audio_path(&audio_path),
+            started_at.to_rfc3339()
         );
     }
 

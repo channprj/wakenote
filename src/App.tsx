@@ -199,12 +199,14 @@ export default function App() {
             chunk_id: number | null;
             audio_path: string;
             text: string;
+            recorded_at?: string;
           };
           return {
             type: "final",
             chunk_id: data.chunk_id,
             audio_path: data.audio_path,
             text: data.text,
+            recorded_at: data.recorded_at,
           };
         }],
         ["live-transcript-failed", (payload) => {
@@ -212,12 +214,14 @@ export default function App() {
             chunk_id: number | null;
             audio_path: string;
             error: string;
+            recorded_at?: string;
           };
           return {
             type: "failed",
             chunk_id: data.chunk_id,
             audio_path: data.audio_path,
             error: data.error,
+            recorded_at: data.recorded_at,
           };
         }],
         ["source-capture-started", () => null],

@@ -21,11 +21,12 @@ use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
     AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayState, UploadedAudio,
-    main_window_close_action, microphone_devices_from_input_devices,
-    open_containing_folder_request, pinned_device_mismatch, reveal_save_folder_request,
-    tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
+    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayMenuPresentation,
+    TrayRuntimePresentation, TrayState, UploadedAudio, main_window_close_action,
+    microphone_devices_from_input_devices, open_containing_folder_request, pinned_device_mismatch,
+    recorded_at_for_audio_path, reveal_save_folder_request, tray_icon_image_for_presentation,
+    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
+    validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::debug_log::append_debug_log;
 use wakenote::live_capture::{
@@ -73,6 +74,7 @@ type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 /// Tracks the single in-flight long-form meeting job and its cancel flag.
 /// Only one meeting transcribes at a time (one shared GPU context).
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
+type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 
 #[derive(Default)]
 struct MeetingRuntime {
@@ -86,6 +88,13 @@ struct MeetingRuntime {
 struct TrayPresentationUpdate {
     settings: AppSettings,
     status: AppStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrayPresentationSnapshot {
+    runtime: TrayRuntimePresentation,
+    menu: TrayMenuPresentation,
+    show_menu_on_left_click: bool,
 }
 
 const EVENT_LIVE_STARTED: &str = "live-transcript-started";
@@ -173,6 +182,7 @@ struct LiveCommittedPayload {
 struct LiveFinalPayload {
     chunk_id: Option<u64>,
     audio_path: String,
+    recorded_at: String,
     text: String,
 }
 
@@ -180,6 +190,7 @@ struct LiveFinalPayload {
 struct LiveFailedPayload {
     chunk_id: Option<u64>,
     audio_path: String,
+    recorded_at: String,
     error: String,
 }
 
@@ -1762,6 +1773,7 @@ fn wire_live_transcription(
                     LiveFailedPayload {
                         chunk_id: Some(chunk_id),
                         audio_path: String::new(),
+                        recorded_at: chrono::Utc::now().to_rfc3339(),
                         error,
                     },
                 ) {
@@ -1777,6 +1789,7 @@ fn wire_live_transcription(
                     LiveFailedPayload {
                         chunk_id: Some(chunk_id),
                         audio_path: String::new(),
+                        recorded_at: chrono::Utc::now().to_rfc3339(),
                         error: format!("Live partial decode failed: {message}"),
                     },
                 ) {
@@ -1999,6 +2012,7 @@ fn emit_outcome_to_frontend(
             )
         });
     let audio_path_str = audio_path.to_string_lossy().to_string();
+    let recorded_at = recorded_at_for_audio_path(audio_path);
 
     match &outcome.status {
         TranscriptionJobStatus::Completed => {
@@ -2046,6 +2060,7 @@ fn emit_outcome_to_frontend(
                 LiveFinalPayload {
                     chunk_id,
                     audio_path: audio_path_str,
+                    recorded_at,
                     text,
                 },
             ) {
@@ -2062,6 +2077,7 @@ fn emit_outcome_to_frontend(
                 LiveFailedPayload {
                     chunk_id,
                     audio_path: audio_path_str,
+                    recorded_at,
                     error: error.clone(),
                 },
             ) {
@@ -2610,6 +2626,12 @@ fn main() {
                 Some((settings, status)) => (Some(settings), Some(status)),
                 None => (None, None),
             };
+            app.manage(Mutex::new(
+                initial_settings
+                    .as_ref()
+                    .zip(initial_status.as_ref())
+                    .map(|(settings, status)| tray_presentation_snapshot(settings, status)),
+            ));
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
             if let Some(settings) = initial_settings.as_ref() {
@@ -2932,9 +2954,44 @@ fn tray_presentation_update_payload(
     }
 }
 
+fn tray_presentation_snapshot(
+    settings: &AppSettings,
+    status: &AppStatus,
+) -> TrayPresentationSnapshot {
+    TrayPresentationSnapshot {
+        runtime: tray_runtime_presentation(settings, status),
+        menu: tray_menu_presentation(settings, status),
+        show_menu_on_left_click: tray_show_menu_on_left_click(settings),
+    }
+}
+
+fn next_tray_presentation_update(
+    cache: &mut Option<TrayPresentationSnapshot>,
+    settings: &AppSettings,
+    status: &AppStatus,
+) -> Option<TrayPresentationUpdate> {
+    let snapshot = tray_presentation_snapshot(settings, status);
+    if cache.as_ref() == Some(&snapshot) {
+        return None;
+    }
+
+    *cache = Some(snapshot);
+    Some(tray_presentation_update_payload(settings, status))
+}
+
 fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
     let app_handle = app.clone();
-    let payload = tray_presentation_update_payload(settings, status);
+    let payload = if let Some(cache) = app.try_state::<TrayPresentationCache>() {
+        match cache.lock() {
+            Ok(mut cache) => next_tray_presentation_update(&mut cache, settings, status),
+            Err(_) => Some(tray_presentation_update_payload(settings, status)),
+        }
+    } else {
+        Some(tray_presentation_update_payload(settings, status))
+    };
+    let Some(payload) = payload else {
+        return;
+    };
     let log_settings = payload.settings.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         apply_tray_presentation(&app_handle, &payload.settings, &payload.status);
@@ -3284,6 +3341,18 @@ mod tests {
         assert_send_static(&payload);
         assert_eq!(payload.settings, settings);
         assert_eq!(payload.status, status);
+    }
+
+    #[test]
+    fn unchanged_tray_presentation_is_not_dispatched_again() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+        let settings = backend.settings();
+        let status = backend.app_status();
+        let mut cache = None;
+
+        assert!(next_tray_presentation_update(&mut cache, &settings, &status).is_some());
+        assert!(next_tray_presentation_update(&mut cache, &settings, &status).is_none());
     }
 
     #[test]

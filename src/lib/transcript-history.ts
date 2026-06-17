@@ -277,6 +277,24 @@ export function transcriptDayFromAudioPath(audioPath: string): string {
   return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
+export function transcriptDayFromRecordingReference(
+  recordedAt?: string | null,
+  audioPath?: string | null,
+  fallbackDate: Date = new Date(),
+): string {
+  const recordedDay = transcriptDayFromTimestamp(recordedAt ?? "");
+  if (isYearMonthDayLabel(recordedDay)) {
+    return recordedDay;
+  }
+
+  const audioDay = transcriptDayFromAudioPath(audioPath ?? "");
+  if (isYearMonthDayLabel(audioDay)) {
+    return audioDay;
+  }
+
+  return transcriptDayFromTimestamp(fallbackDate.toISOString());
+}
+
 export function formatAudioPathLabel(audioPath: string): string {
   if (!audioPath) {
     return audioPath;
