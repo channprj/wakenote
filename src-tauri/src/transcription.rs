@@ -978,7 +978,9 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
     let mut output = Vec::with_capacity(output_len);
     for index in 0..output_len {
         let source_position = index as f64 * source_rate as f64 / target_rate as f64;
-        let left_index = source_position.floor() as usize;
+        // Clamp both indices: f64 rounding at the final output sample can push
+        // `left_index` to `samples.len()`, which would panic on indexing.
+        let left_index = (source_position.floor() as usize).min(samples.len() - 1);
         let right_index = (left_index + 1).min(samples.len() - 1);
         let fraction = (source_position - left_index as f64) as f32;
         let sample = samples[left_index] * (1.0 - fraction) + samples[right_index] * fraction;
