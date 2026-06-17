@@ -98,6 +98,21 @@ fn default_registry_includes_requested_asr_provider_models() {
     assert_eq!(sensevoice.provider_runtime, "external-command");
     assert!(sensevoice.languages.iter().any(|language| language == "ko"));
 
+    let nemotron = registry
+        .get("nemotron-3.5-asr-streaming-0.6b")
+        .expect("Nemotron 3.5 ASR model");
+    assert_eq!(nemotron.display_name, "Nemotron 3.5 ASR Streaming 0.6B");
+    assert_eq!(nemotron.engine, "NVIDIA Nemotron 3.5 ASR");
+    assert_eq!(nemotron.provider_runtime, "external-command");
+    assert!(nemotron.languages.iter().any(|language| language == "ko"));
+    assert!(
+        nemotron
+            .languages
+            .iter()
+            .any(|language| language == "multi")
+    );
+    assert!(nemotron.offline);
+
     let cohere = registry
         .get("cohere-transcribe-03-2026")
         .expect("Cohere Transcribe model");

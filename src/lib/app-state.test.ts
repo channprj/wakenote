@@ -57,12 +57,16 @@ describe("app state derivation", () => {
       "whisper-turbo",
       "parakeet-tdt-0.6b-v3",
       "sensevoice-small",
+      "nemotron-3.5-asr-streaming-0.6b",
       "cohere-transcribe-03-2026",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
     }
     expect(models.find((model) => model.id === "sensevoice-small")?.languages).toContain("ko");
+    expect(
+      models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")?.languages,
+    ).toContain("ko");
     expect(models.find((model) => model.id === "cohere-transcribe-03-2026")?.offline).toBe(false);
   });
 

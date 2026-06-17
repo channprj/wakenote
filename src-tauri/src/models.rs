@@ -939,6 +939,35 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
     );
 
     registry.insert(
+        "nemotron-3.5-asr-streaming-0.6b".to_string(),
+        ModelDescriptor {
+            id: "nemotron-3.5-asr-streaming-0.6b".to_string(),
+            display_name: "Nemotron 3.5 ASR Streaming 0.6B".to_string(),
+            engine: "NVIDIA Nemotron 3.5 ASR".to_string(),
+            provider_runtime: "external-command".to_string(),
+            download_url: None,
+            checksum_sha256: None,
+            size_mb: 1_200,
+            languages: vec![
+                "ko".to_string(),
+                "en".to_string(),
+                "ja".to_string(),
+                "zh".to_string(),
+                "es".to_string(),
+                "fr".to_string(),
+                "de".to_string(),
+                "multi".to_string(),
+            ],
+            speed_score: 8,
+            accuracy_score: 8,
+            offline: true,
+            status: ModelStatus::Missing,
+            download_progress: None,
+            download_error: None,
+        },
+    );
+
+    registry.insert(
         "cohere-transcribe-03-2026".to_string(),
         ModelDescriptor {
             id: "cohere-transcribe-03-2026".to_string(),

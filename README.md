@@ -13,7 +13,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
-- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; provider entries are also available for Parakeet V3, SenseVoice, and Cohere Transcribe when their runtime is configured.
+- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-tiny`, `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; provider entries are also available for Parakeet V3, SenseVoice, Nemotron 3.5 ASR, and Cohere Transcribe when their runtime is configured.
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
 - **macOS tray + floating overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay only appears when recording or transcribing.
@@ -83,9 +83,10 @@ Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ran
 
 ## Additional ASR providers
 
-WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small`, and `cohere-transcribe-03-2026`.
+WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b`, and `cohere-transcribe-03-2026`.
 
-- Parakeet V3 and SenseVoice use an external command adapter. Place a shell command file at `<model_directory>/<model-id>.command`; WakeNote marks the model ready when that file exists. The command reads `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, and `WAKENOTE_LANGUAGE`, then writes the transcript to stdout.
+- Parakeet V3, SenseVoice, and Nemotron 3.5 ASR use an external command adapter. Place a shell command file at `<model_directory>/<model-id>.command`; WakeNote marks the model ready when that file exists. The command reads `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, and `WAKENOTE_LANGUAGE`, then writes the transcript to stdout.
+- Nemotron's official NeMo runtime is Python-based and distributed as model artifacts rather than a single WakeNote `.bin`, so install your preferred runner and connect it with the `.command` file for `nemotron-3.5-asr-streaming-0.6b`.
 - Cohere Transcribe uses the Cohere Audio Transcriptions API when `COHERE_API_KEY` or `CO_API_KEY` is present. The API requires an explicit language and accepts FLAC, MP3, MPEG, MPGA, OGG, or WAV; WakeNote converts other local chunks to WAV before upload.
 - A `.command` file with the Cohere model id overrides the API path, so local Cohere runners can use the same external-command adapter.
 
