@@ -116,8 +116,15 @@ fn default_registry_includes_requested_asr_provider_models() {
         .get("nemotron-3.5-asr-streaming-0.6b")
         .expect("Nemotron 3.5 ASR model");
     assert_eq!(nemotron.display_name, "Nemotron 3.5 ASR Streaming 0.6B");
-    assert_eq!(nemotron.engine, "NVIDIA Nemotron 3.5 ASR");
-    assert_eq!(nemotron.provider_runtime, "external-command");
+    assert_eq!(nemotron.engine, "NVIDIA");
+    assert_eq!(nemotron.provider_runtime, "sherpa-onnx");
+    assert!(
+        nemotron
+            .download_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(".tar.bz2")),
+        "Nemotron should acquire a sherpa-onnx archive via Download",
+    );
     assert!(nemotron.languages.iter().any(|language| language == "ko"));
     assert!(
         nemotron

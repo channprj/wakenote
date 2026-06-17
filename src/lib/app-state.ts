@@ -266,7 +266,7 @@ export function mockModels(): ModelDescriptor[] {
     {
       id: "parakeet-tdt-0.6b-v3",
       display_name: "Parakeet TDT 0.6B V3",
-      engine: "NVIDIA Parakeet",
+      engine: "NVIDIA",
       provider_runtime: "sherpa-onnx",
       download_url:
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
@@ -300,11 +300,12 @@ export function mockModels(): ModelDescriptor[] {
     {
       id: "nemotron-3.5-asr-streaming-0.6b",
       display_name: "Nemotron 3.5 ASR Streaming 0.6B",
-      engine: "NVIDIA Nemotron 3.5 ASR",
-      provider_runtime: "external-command",
-      download_url: null,
+      engine: "NVIDIA",
+      provider_runtime: "sherpa-onnx",
+      download_url:
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2",
       checksum_sha256: null,
-      size_mb: 1200,
+      size_mb: 650,
       languages: ["ko", "en", "ja", "zh", "es", "fr", "de", "multi"],
       speed_score: 8,
       accuracy_score: 8,

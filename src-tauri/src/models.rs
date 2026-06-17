@@ -87,6 +87,9 @@ pub struct ModelStore {
 pub enum SherpaModelKind {
     /// NeMo/Parakeet offline transducer (encoder/decoder/joiner + tokens).
     Transducer,
+    /// Cache-aware streaming transducer (Nemotron 3.5 ASR). Same four-file layout
+    /// as [`Transducer`](Self::Transducer) but loaded by the online recognizer.
+    OnlineTransducer,
     /// SenseVoice offline model (single model file + tokens).
     SenseVoice,
 }
@@ -134,6 +137,16 @@ pub fn sherpa_model_spec(model_id: &str) -> Option<SherpaModelSpec> {
             SherpaModelKind::SenseVoice,
             "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
             &["model.int8.onnx", "tokens.txt"],
+        )),
+        "nemotron-3.5-asr-streaming-0.6b" => Some(SherpaModelSpec::new(
+            SherpaModelKind::OnlineTransducer,
+            "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11",
+            &[
+                "encoder.int8.onnx",
+                "decoder.int8.onnx",
+                "joiner.int8.onnx",
+                "tokens.txt",
+            ],
         )),
         _ => None,
     }
@@ -1231,7 +1244,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         ModelDescriptor {
             id: "parakeet-tdt-0.6b-v3".to_string(),
             display_name: "Parakeet TDT 0.6B V3".to_string(),
-            engine: "NVIDIA Parakeet".to_string(),
+            engine: "NVIDIA".to_string(),
             provider_runtime: "sherpa-onnx".to_string(),
             download_url: Some(
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
@@ -1278,20 +1291,24 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
-    // Nemotron 3.5 ASR ships via the external-command adapter: NVIDIA
-    // distributes it as a NeMo checkpoint (no ONNX export), so it can't run on
-    // the bundled sherpa-onnx engine. Connect a NeMo runner with a `.command`
-    // file (see ModelStore::verify_model) to make it Ready.
+    // Nemotron 3.5 ASR runs in-process via the bundled sherpa-onnx engine, using
+    // the cache-aware streaming transducer export (the 1120ms-chunk int8 variant,
+    // favoring accuracy on recorded audio). It downloads/extracts like the other
+    // sherpa-onnx models but is decoded by the online recognizer (see
+    // `transcribe_with_online_transducer`).
     registry.insert(
         "nemotron-3.5-asr-streaming-0.6b".to_string(),
         ModelDescriptor {
             id: "nemotron-3.5-asr-streaming-0.6b".to_string(),
             display_name: "Nemotron 3.5 ASR Streaming 0.6B".to_string(),
-            engine: "NVIDIA Nemotron 3.5 ASR".to_string(),
-            provider_runtime: "external-command".to_string(),
-            download_url: None,
+            engine: "NVIDIA".to_string(),
+            provider_runtime: "sherpa-onnx".to_string(),
+            download_url: Some(
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2"
+                    .to_string(),
+            ),
             checksum_sha256: None,
-            size_mb: 1_200,
+            size_mb: 650,
             languages: vec![
                 "ko".to_string(),
                 "en".to_string(),
@@ -1601,12 +1618,19 @@ mod tests {
         assert_eq!(sensevoice.provider_runtime, "sherpa-onnx");
         assert!(sensevoice.download_url.is_some());
 
-        // Nemotron 3.5 has no ONNX export, so it stays on the external-command
-        // adapter rather than the sherpa-onnx engine.
+        // Nemotron 3.5 ASR now downloads a streaming sherpa-onnx export and runs
+        // in-process via the online recognizer.
         let nemotron = registry
             .get("nemotron-3.5-asr-streaming-0.6b")
             .expect("nemotron entry");
-        assert_eq!(nemotron.provider_runtime, "external-command");
+        assert_eq!(nemotron.provider_runtime, "sherpa-onnx");
+        assert!(
+            nemotron
+                .download_url
+                .as_deref()
+                .is_some_and(|url| url.ends_with(".tar.bz2")),
+            "nemotron should download a sherpa-onnx archive",
+        );
     }
 
     #[test]
@@ -1619,6 +1643,12 @@ mod tests {
         let sensevoice = sherpa_model_spec("sensevoice-small").expect("sensevoice spec");
         assert_eq!(sensevoice.kind, SherpaModelKind::SenseVoice);
         assert!(sensevoice.files.iter().any(|f| f == "model.int8.onnx"));
+
+        let nemotron =
+            sherpa_model_spec("nemotron-3.5-asr-streaming-0.6b").expect("nemotron spec");
+        assert_eq!(nemotron.kind, SherpaModelKind::OnlineTransducer);
+        assert!(nemotron.files.iter().any(|f| f == "encoder.int8.onnx"));
+        assert!(nemotron.files.iter().any(|f| f == "tokens.txt"));
 
         assert!(sherpa_model_spec("whisper-small").is_none());
     }

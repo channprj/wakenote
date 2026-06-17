@@ -477,6 +477,7 @@ fn transcribe_with_sherpa(
                 .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
             Ok(recognizer.transcribe(16_000, &samples).trim().to_string())
         }
+        SherpaModelKind::OnlineTransducer => transcribe_with_online_transducer(&dir, &samples),
         SherpaModelKind::SenseVoice => {
             let config = sherpa_rs::sense_voice::SenseVoiceConfig {
                 model: file("model.int8.onnx"),
@@ -490,6 +491,92 @@ fn transcribe_with_sherpa(
                 .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
             Ok(recognizer.transcribe(16_000, &samples).text.trim().to_string())
         }
+    }
+}
+
+/// Decode a full clip with a cache-aware streaming transducer (Nemotron 3.5 ASR)
+/// via sherpa-onnx's online recognizer. The whole clip is fed as one stream and the
+/// decoder drained — the streaming model is used for batch file transcription, not
+/// live partials. `sherpa-rs` only wraps the offline recognizer, so the online C API
+/// is called directly through the re-exported `sherpa_rs_sys`. Every `const char*`
+/// config field is null-guarded by the C layer (`SHERPA_ONNX_OR`), so a zeroed config
+/// is safe and only the model paths, thread count, provider, and feature config are set.
+#[cfg(feature = "asr-sherpa")]
+fn transcribe_with_online_transducer(
+    dir: &Path,
+    samples: &[f32],
+) -> Result<String, TranscriptionError> {
+    use sherpa_rs::sherpa_rs_sys as sys;
+    use std::ffi::{CStr, CString};
+    use std::mem;
+
+    let to_cstring = |name: &str| {
+        CString::new(dir.join(name).to_string_lossy().into_owned())
+            .map_err(|error| TranscriptionError::Engine(error.to_string()))
+    };
+    let encoder = to_cstring("encoder.int8.onnx")?;
+    let decoder = to_cstring("decoder.int8.onnx")?;
+    let joiner = to_cstring("joiner.int8.onnx")?;
+    let tokens = to_cstring("tokens.txt")?;
+    let provider = CString::new("cpu").expect("\"cpu\" has no interior NUL");
+
+    // SAFETY: `config` is a `#[repr(C)]` POD struct whose all-zero bit pattern is
+    // valid (null `const char*`, zero ints/floats). The C layer substitutes defaults
+    // for unset fields. The `CString`s outlive the `Create` call, which copies them
+    // into owned `std::string`s, and every raw pointer is freed before returning.
+    unsafe {
+        let mut config: sys::SherpaOnnxOnlineRecognizerConfig = mem::zeroed();
+        config.feat_config.sample_rate = 16_000;
+        config.feat_config.feature_dim = 80;
+        config.model_config.transducer.encoder = encoder.as_ptr();
+        config.model_config.transducer.decoder = decoder.as_ptr();
+        config.model_config.transducer.joiner = joiner.as_ptr();
+        config.model_config.tokens = tokens.as_ptr();
+        config.model_config.num_threads = 2;
+        config.model_config.provider = provider.as_ptr();
+
+        let recognizer = sys::SherpaOnnxCreateOnlineRecognizer(&config);
+        if recognizer.is_null() {
+            return Err(TranscriptionError::Engine(
+                "SherpaOnnxCreateOnlineRecognizer failed".to_string(),
+            ));
+        }
+        let stream = sys::SherpaOnnxCreateOnlineStream(recognizer);
+        if stream.is_null() {
+            sys::SherpaOnnxDestroyOnlineRecognizer(recognizer);
+            return Err(TranscriptionError::Engine(
+                "SherpaOnnxCreateOnlineStream failed".to_string(),
+            ));
+        }
+
+        sys::SherpaOnnxOnlineStreamAcceptWaveform(
+            stream,
+            16_000,
+            samples.as_ptr(),
+            samples.len().try_into().unwrap_or(i32::MAX),
+        );
+        sys::SherpaOnnxOnlineStreamInputFinished(stream);
+        while sys::SherpaOnnxIsOnlineStreamReady(recognizer, stream) != 0 {
+            sys::SherpaOnnxDecodeOnlineStream(recognizer, stream);
+        }
+
+        let result_ptr = sys::SherpaOnnxGetOnlineStreamResult(recognizer, stream);
+        let text = if result_ptr.is_null() {
+            String::new()
+        } else {
+            let raw = result_ptr.read();
+            let text = if raw.text.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(raw.text).to_string_lossy().into_owned()
+            };
+            sys::SherpaOnnxDestroyOnlineRecognizerResult(result_ptr);
+            text
+        };
+
+        sys::SherpaOnnxDestroyOnlineStream(stream);
+        sys::SherpaOnnxDestroyOnlineRecognizer(recognizer);
+        Ok(text.trim().to_string())
     }
 }
 

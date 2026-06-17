@@ -17,7 +17,10 @@ default = []
 asr-sherpa = ["dep:sherpa-rs"]
 
 [dependencies]
-sherpa-rs = { version = "0.6", optional = true, features = ["download-binaries"] }
+# `sys` re-exports the raw sherpa_rs_sys bindings so the streaming/online
+# recognizer (Nemotron 3.5 ASR) can be driven directly — sherpa-rs only wraps
+# the offline recognizer. See transcription.rs::transcribe_with_online_transducer.
+sherpa-rs = { version = "0.6", optional = true, features = ["download-binaries", "sys"] }
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "0.16"
 hound = "3"
