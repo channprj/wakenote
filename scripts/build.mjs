@@ -492,7 +492,9 @@ function installBundle(options) {
   }
 
   console.log(`==> Installing to ${dest}`);
-  runMaybeSudo(useSudo, 'ditto', [appBundle, dest]);
+  // Invoke macOS `ditto` by absolute path: a bare `ditto` resolves through
+  // PATH, where an unrelated tool of the same name may shadow the system one.
+  runMaybeSudo(useSudo, '/usr/bin/ditto', [appBundle, dest]);
   runMaybeSudo(useSudo, 'xattr', ['-dr', 'com.apple.quarantine', dest], {
     allowFailure: true,
     stdio: 'ignore',
