@@ -34,6 +34,16 @@ thiserror = "2"
 ureq = "2"
 whisper-rs = { version = "0.16", default-features = false }
 
+# Pin sherpa-onnx to v1.13.3, which adds multilingual Nemotron 3.5 streaming ASR
+# (PR #3671: the model needs a per-stream language `prompt_index` the bundled
+# 1.12.9 can't supply, so it crashes). crates.io sherpa-rs 0.6.8 still bundles
+# 1.12.9, so we vendor patched copies: the `-sys` crate only retags the download
+# + ships the 1.13.3 C API header; the high-level crate adds the new 1.13.3
+# struct fields so its exhaustive config literals still compile.
+[patch.crates-io]
+sherpa-rs-sys = { path = "vendor/sherpa-rs-sys" }
+sherpa-rs = { path = "vendor/sherpa-rs" }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

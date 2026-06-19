@@ -253,10 +253,22 @@ function bundleSherpaRuntime(appBundle, mode) {
     return null;
   };
 
-  // Referenced by the linked binary / C API (otool -L). The unversioned
+  // The onnxruntime dylib is versioned (libonnxruntime.<ver>.dylib) and the
+  // version tracks the bundled sherpa-onnx (e.g. 1.24.4 for sherpa-onnx 1.13.3).
+  // Derive it from the binary's own load commands so an engine bump needs no
+  // edit here and we never bundle a stale, mismatched copy. The unversioned
   // onnxruntime alias and the C++ wrapper are copied when present but are not
   // required by the current load chain.
-  const required = ['libonnxruntime.1.17.1.dylib', 'libsherpa-onnx-c-api.dylib'];
+  const otool = spawnSync('otool', ['-L', binary], { encoding: 'utf8' });
+  if (otool.status !== 0) {
+    fail(`error: failed to inspect ${binary} with 'otool -L'`);
+  }
+  const onnxName = (otool.stdout.match(/libonnxruntime\.[\d.]+\.dylib/) || [])[0];
+  if (!onnxName) {
+    fail(`error: ${SHERPA_FEATURE} build: binary does not link a versioned libonnxruntime
+       (otool -L ${binary}). The shipped bundle would crash at launch.`);
+  }
+  const required = [onnxName, 'libsherpa-onnx-c-api.dylib'];
   const optional = ['libonnxruntime.dylib', 'libsherpa-onnx-cxx-api.dylib'];
 
   const missing = required.filter((name) => !locate(name));
