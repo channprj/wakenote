@@ -447,6 +447,19 @@ describe("settings panel", () => {
     expect(markup).toContain("transcript-pagination--calendar");
   });
 
+  it("shows the auto-play-next toggle in the transcripts section header reflecting the setting", () => {
+    const off = mockSnapshot();
+    off.settings.autoplay_next_transcript = false;
+    const offMarkup = renderSettingsPanel(off, "transcripts");
+    expect(offMarkup).toContain("Autoplay next");
+    expect(switchTag(offMarkup, "Autoplay next")).toContain('aria-checked="false"');
+
+    const on = mockSnapshot();
+    on.settings.autoplay_next_transcript = true;
+    const onMarkup = renderSettingsPanel(on, "transcripts");
+    expect(switchTag(onMarkup, "Autoplay next")).toContain('aria-checked="true"');
+  });
+
   it("groups history jobs by recording day", () => {
     const snapshot = mockSnapshot();
     snapshot.queue = {

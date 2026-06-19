@@ -146,6 +146,9 @@ pub struct AppSettings {
     /// Master switch for system-audio (Google Meet / YouTube …) capture.
     #[serde(default)]
     pub system_audio_enabled: bool,
+    /// When on, the Transcripts player auto-advances to the next item on end.
+    #[serde(default)]
+    pub autoplay_next_transcript: bool,
     /// Per-source "auto-prompt on detection" overrides; see [`resolve_auto_prompt`].
     #[serde(default)]
     pub source_auto_prompt: Vec<SourceAutoPromptEntry>,
@@ -191,6 +194,7 @@ pub struct SettingsPatch {
     pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
+    pub autoplay_next_transcript: Option<bool>,
     pub source_auto_prompt: Option<Vec<SourceAutoPromptEntry>>,
     pub custom_sources: Option<Vec<CustomSourceEntry>>,
 }
@@ -605,6 +609,9 @@ impl AppSettings {
         if let Some(value) = patch.system_audio_enabled {
             self.system_audio_enabled = value;
         }
+        if let Some(value) = patch.autoplay_next_transcript {
+            self.autoplay_next_transcript = value;
+        }
         if let Some(list) = patch.custom_sources {
             self.custom_sources = normalize_custom_sources(list);
         }
@@ -657,6 +664,7 @@ impl Default for AppSettings {
             theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
+            autoplay_next_transcript: false,
             source_auto_prompt: Vec::new(),
             custom_sources: Vec::new(),
         }
@@ -685,6 +693,17 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.system_audio_enabled);
+    }
+
+    #[test]
+    fn patch_sets_autoplay_next_transcript() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.autoplay_next_transcript);
+        settings.apply_patch(SettingsPatch {
+            autoplay_next_transcript: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.autoplay_next_transcript);
     }
 
     #[test]

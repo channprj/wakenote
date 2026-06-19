@@ -167,6 +167,7 @@ export function defaultSettings(): AppSettings {
     theme_mode: "dark",
     theme_primary_color: "#000",
     system_audio_enabled: false,
+    autoplay_next_transcript: false,
     source_auto_prompt: [],
     custom_sources: [],
   };

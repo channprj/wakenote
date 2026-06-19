@@ -78,7 +78,33 @@ export function transcriptPlaybackStateAfterToggle(
   };
 }
 
-const KOREAN_DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+/**
+ * Returns the transcript path of the first playable entry (one with audio) after
+ * `currentPath` in `entries`, or null when the current item is last/absent. Used to
+ * auto-advance playback through the visible list.
+ */
+export function nextPlayableTranscriptPath(
+  entries: readonly RecentTranscript[],
+  currentPath: string | null,
+): string | null {
+  if (currentPath === null) {
+    return null;
+  }
+  const currentIndex = entries.findIndex(
+    (entry) => entry.transcript_path === currentPath,
+  );
+  if (currentIndex === -1) {
+    return null;
+  }
+  for (let index = currentIndex + 1; index < entries.length; index += 1) {
+    if (entries[index].audio_path) {
+      return entries[index].transcript_path;
+    }
+  }
+  return null;
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export function TranscriptsView({
   days,
@@ -91,6 +117,7 @@ export function TranscriptsView({
   onRegenerate,
   onOpenFolder,
   onReload,
+  autoPlayNext = false,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
   today = new Date(),
@@ -108,6 +135,7 @@ export function TranscriptsView({
   ) => void | Promise<void>;
   onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
   onReload?: (day: string) => void;
+  autoPlayNext?: boolean;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
   today?: Date;
@@ -359,6 +387,18 @@ export function TranscriptsView({
     [playingTranscriptPath, playbackPaused],
   );
 
+  const handlePlaybackEnded = useCallback(() => {
+    if (autoPlayNext) {
+      const nextPath = nextPlayableTranscriptPath(filteredEntries, playingTranscriptPath);
+      if (nextPath) {
+        setPlayingTranscriptPath(nextPath);
+        setPlaybackPaused(false);
+        return;
+      }
+    }
+    setPlaybackPaused(true);
+  }, [autoPlayNext, filteredEntries, playingTranscriptPath]);
+
   const openContextMenu = useCallback(
     (entry: RecentTranscript, x: number, y: number) => {
       if (!onRegenerate || usableRegenerationModels.length === 0) {
@@ -484,13 +524,13 @@ export function TranscriptsView({
             {hasEntries && selectionCount > 0 ? (
               <>
                 <span aria-live="polite" className="transcript-day__selection-count">
-                  {selectionCount} 선택됨
+                  {selectionCount} selected
                 </span>
                 <Button onClick={handleClearSelection} size="sm" type="button" variant="ghost">
-                  선택 해제
+                  Clear selection
                 </Button>
                 <Button
-                  aria-label="선택한 트랜스크립트 복사"
+                  aria-label="Copy selected transcripts"
                   onClick={handleCopySelected}
                   size="sm"
                   type="button"
@@ -498,11 +538,11 @@ export function TranscriptsView({
                 >
                   {copyToast === "selected" ? (
                     <>
-                      <Check /> 복사됨
+                      <Check /> Copied
                     </>
                   ) : (
                     <>
-                      <Copy /> 선택 복사
+                      <Copy /> Copy selection
                     </>
                   )}
                 </Button>
@@ -510,22 +550,22 @@ export function TranscriptsView({
             ) : null}
             {hasEntries ? (
               <Button
-                aria-label="현재 필터의 모든 트랜스크립트 선택"
+                aria-label="Select all transcripts in current filter"
                 disabled={allFilteredSelected}
                 onClick={handleSelectAllVisible}
                 size="sm"
                 type="button"
                 variant="ghost"
               >
-                <Check /> 전체 선택
+                <Check /> Select all
               </Button>
             ) : null}
             {hasEntries ? (
               <Button
                 aria-label={
                   effectiveSourceFilter === ALL_SOURCE_FILTER
-                    ? "해당 일자의 모든 트랜스크립트 복사"
-                    : "현재 필터의 모든 트랜스크립트 복사"
+                    ? "Copy all transcripts for this day"
+                    : "Copy all transcripts in current filter"
                 }
                 onClick={handleCopyAll}
                 size="sm"
@@ -534,29 +574,29 @@ export function TranscriptsView({
               >
                 {copyToast === "all" ? (
                   <>
-                    <Check /> 복사됨
+                    <Check /> Copied
                   </>
                 ) : (
                   <>
-                    <Copy /> 전체 복사
+                    <Copy /> Copy all
                   </>
                 )}
               </Button>
             ) : null}
             {hasPending && hasAnyEntries ? (
               <span className="transcript-day__icloud-hint">
-                iCloud에 {pendingCount}개 더 있음
+                {pendingCount} more in iCloud
               </span>
             ) : null}
             <Button
-              aria-label="해당 일자 다시 불러오기"
+              aria-label="Reload this day"
               disabled={isLoadingActive}
               onClick={() => onReload?.(effectiveActiveDay)}
               size="sm"
               type="button"
               variant="ghost"
             >
-              <RotateCw /> 다시 불러오기
+              <RotateCw /> Reload
             </Button>
           </div>
         </header>
@@ -586,7 +626,7 @@ export function TranscriptsView({
             {isLoadingActive
               ? "Loading…"
               : hasPending
-                ? `iCloud에 ${pendingCount}개 있습니다 — 다시 불러오기를 누르세요`
+                ? `${pendingCount} in iCloud — press Reload`
                 : "No transcripts for this day"}
           </div>
         )}
@@ -600,6 +640,7 @@ export function TranscriptsView({
             setPlaybackPaused(false);
           }}
           onPausedChange={setPlaybackPaused}
+          onEnded={handlePlaybackEnded}
         />
       ) : null}
       {contextMenu ? (
@@ -1087,7 +1128,7 @@ function TranscriptPagination({
               type="button"
             >
               <span className="transcript-pagination__day-label">
-                {KOREAN_DAY_LABELS[dayOfWeek]}
+                {DAY_LABELS[dayOfWeek]}
               </span>
               <span className="transcript-pagination__day-number">
                 {monthNumber}/{dayNumber}
@@ -1116,11 +1157,13 @@ function TranscriptPlayerSheet({
   paused,
   onClose,
   onPausedChange,
+  onEnded,
 }: {
   entry: RecentTranscript;
   paused: boolean;
   onClose: () => void;
   onPausedChange: (paused: boolean) => void;
+  onEnded: () => void;
 }) {
   const audioPath = entry.audio_path;
 
@@ -1163,7 +1206,7 @@ function TranscriptPlayerSheet({
     }
     const handlePlay = () => onPausedChange(false);
     const handlePause = () => onPausedChange(true);
-    const handleEnded = () => onPausedChange(true);
+    const handleEnded = () => onEnded();
     element.addEventListener("play", handlePlay);
     element.addEventListener("pause", handlePause);
     element.addEventListener("ended", handleEnded);
@@ -1172,7 +1215,7 @@ function TranscriptPlayerSheet({
       element.removeEventListener("pause", handlePause);
       element.removeEventListener("ended", handleEnded);
     };
-  }, [audioSource, onPausedChange]);
+  }, [audioSource, onPausedChange, onEnded]);
 
   useEffect(() => {
     const element = audioRef.current;

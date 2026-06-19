@@ -18,10 +18,12 @@ export function TranscriptsPanel({
   customSources = [],
   models = [],
   selectedModelId = "",
+  autoPlayNext = false,
 }: {
   customSources?: readonly CustomSourceEntry[];
   models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
   selectedModelId?: string;
+  autoPlayNext?: boolean;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
@@ -162,6 +164,7 @@ export function TranscriptsPanel({
       models={models}
       selectedModelId={selectedModelId}
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
+      autoPlayNext={autoPlayNext}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
       onRegenerate={regenerateEntries}

@@ -5,6 +5,7 @@ import {
   TranscriptsView,
   addDays,
   filterTranscriptsBySource,
+  nextPlayableTranscriptPath,
   nextWeekDisabledReason,
   previousWeekDisabledReason,
   selectTranscriptPathsAfterShiftClick,
@@ -83,9 +84,9 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("transcript-pagination--calendar");
   });
 
-  it("renders week-day cells in 일-월-화-수-목-금-토 order with weekend tone hooks", () => {
+  it("renders week-day cells in Sun-Mon-Tue-Wed-Thu-Fri-Sat order with weekend tone hooks", () => {
     const markup = view({ today: new Date("2026-05-14T12:00:00+09:00") });
-    const labels = ["일", "월", "화", "수", "목", "금", "토"];
+    const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     let cursor = -1;
     for (const label of labels) {
       const next = markup.indexOf(`>${label}<`, cursor + 1);
@@ -482,13 +483,13 @@ describe("TranscriptsView", () => {
       days: [{ day: "2026-05-19", count: 1 }],
       entriesByDay: new Map([["2026-05-19", [transcript({ recorded_at: "2026-05-19T15:53:23+09:00", text: "슬립~" })]]]),
     });
-    expect(withEntries).toContain('aria-label="해당 일자 다시 불러오기"');
-    expect(withEntries).toContain('aria-label="해당 일자의 모든 트랜스크립트 복사"');
-    expect(withEntries).toContain("전체 복사");
+    expect(withEntries).toContain('aria-label="Reload this day"');
+    expect(withEntries).toContain('aria-label="Copy all transcripts for this day"');
+    expect(withEntries).toContain("Copy all");
 
     const empty = view({ today: new Date("2026-05-19T18:00:00+09:00") });
-    expect(empty).toContain('aria-label="해당 일자 다시 불러오기"');
-    expect(empty).not.toContain("전체 복사");
+    expect(empty).toContain('aria-label="Reload this day"');
+    expect(empty).not.toContain("Copy all");
   });
 
   it("disables the reload button while the active day is loading", () => {
@@ -496,7 +497,7 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-19T18:00:00+09:00"),
       loadingDay: "2026-05-19",
     });
-    expect(markup).toMatch(/<button[^>]*aria-label="해당 일자 다시 불러오기"[^>]*disabled=""/);
+    expect(markup).toMatch(/<button[^>]*aria-label="Reload this day"[^>]*disabled=""/);
     expect(markup).toContain("Loading…");
   });
 
@@ -522,9 +523,9 @@ describe("TranscriptsView", () => {
       ]),
     });
     // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
-    expect(markup).toContain("iCloud에 2개 더 있음");
+    expect(markup).toContain("2 more in iCloud");
     expect(markup).toContain("local one");
-    expect(markup).toContain('aria-label="해당 일자 다시 불러오기"');
+    expect(markup).toContain('aria-label="Reload this day"');
   });
 
   it("prompts a reload in the empty state when a day is entirely iCloud-evicted", () => {
@@ -533,7 +534,7 @@ describe("TranscriptsView", () => {
       days: [{ day: "2026-05-14", count: 5 }],
       entriesByDay: new Map(),
     });
-    expect(markup).toContain("iCloud에 5개 있습니다 — 다시 불러오기를 누르세요");
+    expect(markup).toContain("5 in iCloud — press Reload");
     expect(markup).not.toContain("No transcripts for this day");
   });
 
@@ -545,7 +546,7 @@ describe("TranscriptsView", () => {
         ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "only one" })]],
       ]),
     });
-    expect(markup).not.toContain("iCloud에");
+    expect(markup).not.toContain("in iCloud");
     expect(markup).toContain("only one");
   });
 });
@@ -583,5 +584,39 @@ describe("nextWeekDisabledReason", () => {
   });
   it("returns null when there is a newer week", () => {
     expect(nextWeekDisabledReason("2026-05-03", "2026-05-14")).toBeNull();
+  });
+});
+
+describe("nextPlayableTranscriptPath", () => {
+  const entries: RecentTranscript[] = [
+    transcript({ transcript_path: "/a.txt", audio_path: "/a.m4a" }),
+    transcript({ transcript_path: "/b.txt", audio_path: null }),
+    transcript({ transcript_path: "/c.txt", audio_path: "/c.m4a" }),
+  ];
+
+  it("returns the next entry with audio after the current path", () => {
+    expect(nextPlayableTranscriptPath(entries, "/a.txt")).toBe("/c.txt");
+  });
+
+  it("skips entries that have no audio", () => {
+    // /b has no audio, so advancing from /a lands on /c, not /b.
+    expect(nextPlayableTranscriptPath(entries, "/a.txt")).toBe("/c.txt");
+  });
+
+  it("returns null at the end of the list", () => {
+    expect(nextPlayableTranscriptPath(entries, "/c.txt")).toBeNull();
+  });
+
+  it("returns null when no later entry has audio", () => {
+    const trailing: RecentTranscript[] = [
+      transcript({ transcript_path: "/a.txt", audio_path: "/a.m4a" }),
+      transcript({ transcript_path: "/b.txt", audio_path: null }),
+    ];
+    expect(nextPlayableTranscriptPath(trailing, "/a.txt")).toBeNull();
+  });
+
+  it("returns null when the current path is absent or null", () => {
+    expect(nextPlayableTranscriptPath(entries, "/missing.txt")).toBeNull();
+    expect(nextPlayableTranscriptPath(entries, null)).toBeNull();
   });
 });

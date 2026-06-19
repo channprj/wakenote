@@ -87,6 +87,7 @@ export interface AppSettings {
   theme_mode: ThemeMode;
   theme_primary_color: string;
   system_audio_enabled: boolean;
+  autoplay_next_transcript: boolean;
   source_auto_prompt: SourceAutoPromptEntry[];
   custom_sources: CustomSourceEntry[];
 }

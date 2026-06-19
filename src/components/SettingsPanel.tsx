@@ -425,11 +425,28 @@ export function SettingsPanel({
 
   if (activeSection === "transcripts") {
     return (
-      <Section title="Transcripts" eyebrow="Daily archive">
+      <Section
+        title="Transcripts"
+        eyebrow="Daily archive"
+        actions={
+          <label className="section__toggle">
+            <span>Autoplay next</span>
+            <Switch
+              label="Autoplay next"
+              checked={settings.autoplay_next_transcript}
+              onCheckedChange={(autoplay_next_transcript) =>
+                onPatch({ autoplay_next_transcript })
+              }
+              title="Plays the next item when the current one finishes"
+            />
+          </label>
+        }
+      >
         <TranscriptsPanel
           customSources={settings.custom_sources}
           models={models}
           selectedModelId={settings.selected_model}
+          autoPlayNext={settings.autoplay_next_transcript}
         />
       </Section>
     );
