@@ -521,7 +521,7 @@ describe("activeWarning with silence_warning", () => {
     });
     expect(presentation.warning).toEqual({
       key: "silence:Mic A:14",
-      message: "마이크 'Mic A'에서 14초간 입력이 감지되지 않습니다. 마이크 설정을 확인하세요.",
+      message: "No input detected from microphone 'Mic A' for 14s. Check your microphone settings.",
       tone: "warning",
     });
   });

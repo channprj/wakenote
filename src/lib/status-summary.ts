@@ -229,7 +229,7 @@ function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
   if (silenceWarning) {
     return {
       key: `silence:${silenceWarning.device_label}:${silenceWarning.seconds}`,
-      message: `마이크 '${silenceWarning.device_label}'에서 ${silenceWarning.seconds}초간 입력이 감지되지 않습니다. 마이크 설정을 확인하세요.`,
+      message: `No input detected from microphone '${silenceWarning.device_label}' for ${silenceWarning.seconds}s. Check your microphone settings.`,
       tone: "warning",
     };
   }

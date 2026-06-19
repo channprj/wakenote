@@ -33,7 +33,7 @@ export function formatClock(ms: number): string {
   return `${minutes}:${pad(seconds)}`;
 }
 
-/** Human ETA like `약 11분 20초` / `약 45초`, or `—` when unknown. */
+/** Human ETA like `about 11m 20s` / `about 45s`, or `—` when unknown. */
 export function formatEta(etaMs: number): string {
   if (!Number.isFinite(etaMs) || etaMs <= 0) {
     return "—";
@@ -43,20 +43,20 @@ export function formatEta(etaMs: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   if (hours > 0) {
-    return `약 ${hours}시간 ${minutes}분`;
+    return `about ${hours}h ${minutes}m`;
   }
   if (minutes > 0) {
-    return `약 ${minutes}분 ${seconds}초`;
+    return `about ${minutes}m ${seconds}s`;
   }
-  return `약 ${seconds}초`;
+  return `about ${seconds}s`;
 }
 
 const STATUS_LABELS: Record<MeetingStatus, string> = {
-  pending: "대기 중",
-  processing: "전사 중",
-  completed: "완료",
-  failed: "실패",
-  canceled: "취소됨",
+  pending: "Pending",
+  processing: "Transcribing",
+  completed: "Completed",
+  failed: "Failed",
+  canceled: "Canceled",
 };
 
 export function meetingStatusLabel(status: MeetingStatus): string {

@@ -216,9 +216,9 @@ export function MeetingTranscriptionPanel() {
       <div className="meeting-panel__toolbar">
         <Button onClick={onImport} disabled={busy}>
           {busy ? <Loader2 data-icon="inline-start" className="meeting-spin" /> : <Upload data-icon="inline-start" />}
-          회의 파일 선택 (1–2시간)
+          Select meeting file (1–2 hours)
         </Button>
-        <span className="meeting-panel__hint">긴 녹음을 구간별로 전사합니다 · 화자 분리 없음</span>
+        <span className="meeting-panel__hint">Transcribes long recordings segment by segment · No speaker separation</span>
       </div>
 
       {error ? (
@@ -239,11 +239,11 @@ export function MeetingTranscriptionPanel() {
       ))}
 
       <div className="meeting-list">
-        <p className="meeting-list__title">지난 회의</p>
+        <p className="meeting-list__title">Past meetings</p>
         {past.length === 0 ? (
           <div className="meeting-empty">
             <FileAudio aria-hidden />
-            <span>아직 전사한 회의가 없습니다.</span>
+            <span>No meetings transcribed yet.</span>
           </div>
         ) : (
           <ul>
@@ -296,25 +296,25 @@ function MeetingProgressCard({
           {meeting.title}
         </span>
         <Button variant="ghost" size="sm" onClick={onCancel}>
-          취소
+          Cancel
         </Button>
       </div>
       <Progress value={percent} />
       <div className="meeting-card__meta">
         <span>{percent}%</span>
         <span>
-          구간 {segDone}/{segTotal || "?"}
+          Segment {segDone}/{segTotal || "?"}
         </span>
-        <span>경과 {formatClock(elapsed)}</span>
-        <span>남은 시간 {formatEta(eta)}</span>
+        <span>Elapsed {formatClock(elapsed)}</span>
+        <span>Remaining {formatEta(eta)}</span>
       </div>
       {previewText ? (
-        <div className="meeting-card__preview" aria-label="실시간 전사 미리보기">
+        <div className="meeting-card__preview" aria-label="Live transcription preview">
           {previewText}
         </div>
       ) : (
         <div className="meeting-card__preview meeting-card__preview--empty">
-          첫 구간을 전사하는 중입니다…
+          Transcribing the first segment…
         </div>
       )}
     </div>
@@ -348,7 +348,7 @@ function MeetingDetailView({
       <div className="meeting-detail__head">
         <Button variant="ghost" size="sm" onClick={onBack}>
           <ChevronLeft data-icon="inline-start" />
-          목록
+          List
         </Button>
         <span className="meeting-detail__title">{record.title}</span>
         <Badge tone={meetingStatusTone(record.status)}>{meetingStatusLabel(record.status)}</Badge>
@@ -359,7 +359,7 @@ function MeetingDetailView({
         <span>{record.model_id}</span>
         <span>{formatDate(record.created_at)}</span>
         <span>
-          구간 {record.progress.segments_done}/{record.progress.segments_total}
+          Segment {record.progress.segments_done}/{record.progress.segments_total}
         </span>
       </div>
 
@@ -374,36 +374,36 @@ function MeetingDetailView({
         {canResumeMeeting(record.status) ? (
           <Button variant="secondary" size="sm" onClick={onResume}>
             <RotateCcw data-icon="inline-start" />
-            이어서 전사
+            Resume transcription
           </Button>
         ) : null}
         <Button variant="secondary" size="sm" onClick={onCopy} disabled={!transcript}>
           <Copy data-icon="inline-start" />
-          복사
+          Copy
         </Button>
         <Button variant="secondary" size="sm" onClick={onOpenFolder}>
           <FolderOpen data-icon="inline-start" />
-          폴더 열기
+          Open folder
         </Button>
         {confirmingDelete ? (
           <>
             <Button variant="danger" size="sm" onClick={onConfirmDelete}>
-              삭제 확인
+              Confirm delete
             </Button>
             <Button variant="ghost" size="sm" onClick={onCancelDelete}>
-              취소
+              Cancel
             </Button>
           </>
         ) : (
           <Button variant="ghost" size="sm" onClick={onRequestDelete}>
             <Trash2 data-icon="inline-start" />
-            삭제
+            Delete
           </Button>
         )}
       </div>
 
       <div className="meeting-detail__transcript">
-        {transcript ? transcript : <em>전사 내용이 없습니다.</em>}
+        {transcript ? transcript : <em>No transcript content.</em>}
       </div>
     </div>
   );

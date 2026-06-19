@@ -946,7 +946,7 @@ fn spawn_meeting_job(
         let mut runtime = meeting_state.lock().map_err(|error| error.to_string())?;
         if let Some(current) = runtime.current.as_ref() {
             return Err(format!(
-                "다른 회의({current})를 처리 중입니다. 완료 후 다시 시도하세요."
+                "Another meeting ({current}) is being processed. Try again after it finishes."
             ));
         }
         runtime.current = Some(id.clone());
@@ -994,7 +994,7 @@ fn import_and_start_meeting(
         let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
         if let Some(current) = runtime.current.as_ref() {
             return Err(format!(
-                "다른 회의({current})를 처리 중입니다. 완료 후 다시 시도하세요."
+                "Another meeting ({current}) is being processed. Try again after it finishes."
             ));
         }
     }
@@ -1067,7 +1067,7 @@ fn delete_meeting(
     {
         let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
         if runtime.current.as_deref() == Some(id.as_str()) {
-            return Err("처리 중인 회의는 삭제할 수 없습니다. 먼저 취소하세요.".to_string());
+            return Err("Cannot delete a meeting that is being processed. Cancel it first.".to_string());
         }
     }
     wakenote::meeting::delete_meeting(&meeting_save_root(&state)?, &id)

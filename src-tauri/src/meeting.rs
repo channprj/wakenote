@@ -619,7 +619,7 @@ pub fn reconcile_interrupted(save_root: &Path) {
         if let Ok(mut record) = MeetingRecord::load(&path) {
             if matches!(record.status, MeetingStatus::Processing | MeetingStatus::Pending) {
                 record.status = MeetingStatus::Failed;
-                record.error = Some("앱이 종료되어 중단되었습니다 (재개 가능)".to_string());
+                record.error = Some("Interrupted because the app was closed (resumable)".to_string());
                 record.touch();
                 let _ = record.save_atomic(&path);
             }
@@ -878,7 +878,7 @@ pub fn run_meeting_job(
         MeetingStatus::Completed
     };
     record.error = if any_failed {
-        Some("일부 구간 전사에 실패했습니다".to_string())
+        Some("Some segments failed to transcribe".to_string())
     } else {
         None
     };

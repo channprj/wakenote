@@ -42,15 +42,15 @@ describe("formatEta", () => {
   });
 
   it("renders coarse human durations", () => {
-    expect(formatEta(45_000)).toBe("약 45초");
-    expect(formatEta(680_000)).toBe("약 11분 20초");
-    expect(formatEta(3_660_000)).toBe("약 1시간 1분");
+    expect(formatEta(45_000)).toBe("about 45s");
+    expect(formatEta(680_000)).toBe("about 11m 20s");
+    expect(formatEta(3_660_000)).toBe("about 1h 1m");
   });
 });
 
 describe("status presentation", () => {
   it("maps labels and tones", () => {
-    expect(meetingStatusLabel("processing")).toBe("전사 중");
+    expect(meetingStatusLabel("processing")).toBe("Transcribing");
     expect(meetingStatusTone("completed")).toBe("success");
     expect(meetingStatusTone("failed")).toBe("danger");
   });
