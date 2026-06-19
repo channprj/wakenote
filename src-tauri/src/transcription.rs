@@ -477,7 +477,9 @@ fn transcribe_with_sherpa(
                 .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
             Ok(recognizer.transcribe(16_000, &samples).trim().to_string())
         }
-        SherpaModelKind::OnlineTransducer => transcribe_with_online_transducer(&dir, &samples),
+        SherpaModelKind::OnlineTransducer => {
+            transcribe_with_online_transducer(&dir, &samples, request.language)
+        }
         SherpaModelKind::SenseVoice => {
             let config = sherpa_rs::sense_voice::SenseVoiceConfig {
                 model: file("model.int8.onnx"),
@@ -498,13 +500,17 @@ fn transcribe_with_sherpa(
 /// via sherpa-onnx's online recognizer. The whole clip is fed as one stream and the
 /// decoder drained — the streaming model is used for batch file transcription, not
 /// live partials. `sherpa-rs` only wraps the offline recognizer, so the online C API
-/// is called directly through the re-exported `sherpa_rs_sys`. Every `const char*`
-/// config field is null-guarded by the C layer (`SHERPA_ONNX_OR`), so a zeroed config
-/// is safe and only the model paths, thread count, provider, and feature config are set.
+/// is called directly through the re-exported `sherpa_rs_sys`. Most `const char*`
+/// config fields are null-guarded by the C layer (`SHERPA_ONNX_OR`), but the feature
+/// dimension must match the model: Nemotron 3.5 exports 128-dim features (its encoder
+/// rejects the 80 the offline transducers use). Nemotron is a prompt-conditioned
+/// multilingual model, so the language is selected per stream via the `language`
+/// option (empty/`auto` lets the model auto-detect).
 #[cfg(feature = "asr-sherpa")]
 fn transcribe_with_online_transducer(
     dir: &Path,
     samples: &[f32],
+    language: TranscriptionLanguage,
 ) -> Result<String, TranscriptionError> {
     use sherpa_rs::sherpa_rs_sys as sys;
     use std::ffi::{CStr, CString};
@@ -527,7 +533,7 @@ fn transcribe_with_online_transducer(
     unsafe {
         let mut config: sys::SherpaOnnxOnlineRecognizerConfig = mem::zeroed();
         config.feat_config.sample_rate = 16_000;
-        config.feat_config.feature_dim = 80;
+        config.feat_config.feature_dim = 128;
         config.model_config.transducer.encoder = encoder.as_ptr();
         config.model_config.transducer.decoder = decoder.as_ptr();
         config.model_config.transducer.joiner = joiner.as_ptr();
@@ -548,6 +554,17 @@ fn transcribe_with_online_transducer(
                 "SherpaOnnxCreateOnlineStream failed".to_string(),
             ));
         }
+
+        // Select the prompt language for this stream. `None` (Auto) maps to the
+        // model's built-in auto-detect prompt.
+        let language_key = CString::new("language").expect("\"language\" has no interior NUL");
+        let language_value =
+            CString::new(language.whisper_code().unwrap_or("auto")).unwrap_or_default();
+        sys::SherpaOnnxOnlineStreamSetOption(
+            stream,
+            language_key.as_ptr(),
+            language_value.as_ptr(),
+        );
 
         sys::SherpaOnnxOnlineStreamAcceptWaveform(
             stream,
