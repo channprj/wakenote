@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 use crate::settings::{TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
-    configure_whisper_language, decoded_segment_quality, resample_linear,
-    should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
+    configure_whisper_language, decoded_segment_quality, default_whisper_context_parameters,
+    resample_linear, should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
 };
 
 /// Whisper requires roughly 1 second of audio for a meaningful pass; below
@@ -310,7 +310,7 @@ fn ensure_context(
     );
     let context = match WhisperContext::new_with_params(
         model_path.to_string_lossy().as_ref(),
-        WhisperContextParameters::default(),
+        default_whisper_context_parameters(),
     ) {
         Ok(ctx) => ctx,
         Err(error) => {

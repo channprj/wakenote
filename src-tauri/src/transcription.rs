@@ -1,5 +1,7 @@
+use std::ffi::{CStr, c_char, c_uint, c_void};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Once;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -889,8 +891,45 @@ pub(crate) fn configure_whisper_language(
     }
 }
 
+/// Forward whisper.cpp / GGML internal logs (system info, execution-backend
+/// selection, timings) into our `[wakenote]` stderr stream. whisper.cpp emits a
+/// line like `whisper_backend_init_gpu: using Metal backend` at load time;
+/// capturing it lets us confirm from a user's logs whether inference actually
+/// ran on the Metal GPU or silently fell back to CPU (e.g. on Intel Macs, or
+/// under memory pressure with large models such as Whisper Medium).
+unsafe extern "C" fn whisper_log_trampoline(
+    // `ggml_log_level` is a `c_uint` typedef; naming the sys type would require
+    // whisper-rs's `raw-api` feature, so we use the transparent alias directly.
+    _level: c_uint,
+    text: *const c_char,
+    _user_data: *mut c_void,
+) {
+    if text.is_null() {
+        return;
+    }
+    let message = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+    let message = message.trim_end();
+    if !message.is_empty() {
+        eprintln!("[wakenote] whisper: {message}");
+    }
+}
+
+/// Install the whisper.cpp log callback exactly once. Invoked lazily from
+/// [`default_whisper_context_parameters`] so every context-creation path routes
+/// whisper's backend logs through ours before the backend is initialized,
+/// regardless of which entry point loaded the model first.
+fn install_whisper_logging() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe {
+        whisper_rs::set_log_callback(Some(whisper_log_trampoline), std::ptr::null_mut());
+    });
+}
+
 pub fn default_whisper_context_parameters() -> WhisperContextParameters<'static> {
+    install_whisper_logging();
     let mut params = WhisperContextParameters::default();
+    // whisper.cpp uses the Metal GPU backend by default on macOS (the `metal`
+    // feature defaults `use_gpu` to true); device 0 selects the primary GPU.
     params.gpu_device(0);
     params
 }
