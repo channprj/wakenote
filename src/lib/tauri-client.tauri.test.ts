@@ -103,11 +103,11 @@ describe("tauri runtime client snapshots", () => {
     mocks.invoke.mockImplementation(mockInvoke);
     const { regenerateTranscript } = await import("./tauri-client");
 
-    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a", "whisper-tiny");
+    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a", "whisper-small");
 
     expect(mocks.invoke).toHaveBeenCalledWith("regenerate_transcript", {
       audioPath: "/tmp/WakeNote/20260611/024304-spotify.m4a",
-      modelId: "whisper-tiny",
+      modelId: "whisper-small",
     });
     expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
   });

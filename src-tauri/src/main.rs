@@ -1981,7 +1981,7 @@ fn spawn_transcription_job(
         );
 
         let worker = TranscriptionWorker::with_options(
-            RuntimeTranscriber::with_cohere_api_key(started.model_directory, started.cohere_api_key),
+            RuntimeTranscriber::new(started.model_directory),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,

@@ -6,7 +6,7 @@ use wakenote::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
 fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
     let mut queue = TranscriptionQueue::new();
     let first = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-medium");
-    let second = queue.enqueue_file("/recordings/20260506/230810.wav", "whisper-tiny");
+    let second = queue.enqueue_file("/recordings/20260506/230810.wav", "whisper-small");
 
     assert_eq!(queue.snapshot().pending_count, 2);
     assert_eq!(queue.snapshot().running_count, 0);
@@ -82,7 +82,7 @@ fn queue_does_not_enqueue_duplicate_audio_paths() {
     let mut queue = TranscriptionQueue::new();
 
     let first = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-medium");
-    let duplicate = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-tiny");
+    let duplicate = queue.enqueue_file("/recordings/20260506/230709.m4a", "whisper-small");
 
     assert_eq!(duplicate, first);
     assert_eq!(queue.snapshot().pending_count, 1);

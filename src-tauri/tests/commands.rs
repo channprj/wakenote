@@ -722,7 +722,7 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
 fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");
-    write_ready_local_models(&model_dir, &["whisper-medium", "whisper-tiny"]);
+    write_ready_local_models(&model_dir, &["whisper-medium", "whisper-small"]);
     let audio_path = tmp.path().join("20260611").join("024305-youtube.wav");
     std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
     std::fs::write(&audio_path, b"wav bytes").expect("audio");
@@ -735,7 +735,7 @@ fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     let snapshot = backend
-        .regenerate_transcript(&audio_path, Some("whisper-tiny".to_string()))
+        .regenerate_transcript(&audio_path, Some("whisper-small".to_string()))
         .expect("regenerate transcript with tiny");
 
     let job = snapshot
@@ -744,7 +744,7 @@ fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
         .find(|job| job.audio_path == audio_path)
         .expect("requeued job");
     assert_eq!(job.status, QueueJobStatus::Pending);
-    assert_eq!(job.model_id, "whisper-tiny");
+    assert_eq!(job.model_id, "whisper-small");
 }
 
 #[test]
@@ -2260,8 +2260,8 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
         model_directory.join("model-registry.json"),
         r#"[
           {
-            "id": "whisper-tiny",
-            "display_name": "Whisper Tiny",
+            "id": "whisper-small",
+            "display_name": "Whisper Small",
             "engine": "whisper.cpp",
             "provider_runtime": "whisper-rs",
             "download_url": null,
@@ -2275,11 +2275,11 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
         ]"#,
     )
     .expect("registry json");
-    std::fs::write(model_directory.join("whisper-tiny.bin"), b"ready model").expect("ready model");
+    std::fs::write(model_directory.join("whisper-small.bin"), b"ready model").expect("ready model");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_directory.to_string_lossy().to_string()),
-        selected_model: Some("whisper-tiny".to_string()),
+        selected_model: Some("whisper-small".to_string()),
         selected_microphone_label: Some("USB Mic".to_string()),
         threshold_dbfs: Some(-37.0),
         transcription_enabled: Some(false),
@@ -2292,7 +2292,7 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
     assert!(menu.recording_checked);
     assert!(!menu.transcription_checked);
     assert!(menu.pause_all_checked);
-    assert_eq!(menu.active_model_text, "Model: whisper-tiny");
+    assert_eq!(menu.active_model_text, "Model: whisper-small");
     assert_eq!(menu.active_microphone_text, "Microphone: USB Mic");
     assert_eq!(menu.threshold_text, "Threshold: -37 dBFS");
 }

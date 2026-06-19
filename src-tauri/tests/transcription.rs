@@ -431,27 +431,6 @@ fn runtime_transcriber_runs_external_command_models_with_audio_environment() {
 }
 
 #[test]
-fn runtime_transcriber_routes_cohere_models_to_api_runtime() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let transcriber = RuntimeTranscriber::with_cohere_api_key(tmp.path(), None);
-    let audio_path = tmp.path().join("sample.wav");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-
-    let error = transcriber
-        .transcribe(TranscriptionRequest {
-            audio_path: &audio_path,
-            model_id: "cohere-transcribe-03-2026",
-            language: TranscriptionLanguage::Ko,
-        })
-        .expect_err("missing API key should fail before whisper path");
-
-    assert_eq!(
-        error,
-        TranscriptionError::Engine("COHERE_API_KEY is required for Cohere Transcribe".to_string())
-    );
-}
-
-#[test]
 fn live_partial_support_is_limited_to_whisper_runtimes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::write(

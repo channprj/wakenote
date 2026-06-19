@@ -95,19 +95,6 @@ describe("settings panel", () => {
     expect(on).toContain("Google Meet or browser tabs with Meet in the title");
   });
 
-  it("renders the Cohere API key field in the Models section and reflects the saved key", () => {
-    const base = mockSnapshot();
-    const markup = renderSettingsPanel(
-      { ...base, settings: { ...base.settings, cohere_api_key: "configured-cohere-key" } },
-      "models",
-    );
-
-    expect(markup).toContain("Cohere API key");
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain('value="configured-cohere-key"');
-    expect(markup).toContain("needs an API key");
-  });
-
   it("renders custom system-audio sources from settings", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.system_audio_enabled = true;
@@ -669,7 +656,7 @@ describe("settings panel", () => {
         {
           id: 1,
           audio_path: "/tmp/WakeNote/20260510/010203.m4a",
-          model_id: "whisper-tiny",
+          model_id: "whisper-small",
           status: "pending",
           error: null,
         },
@@ -682,9 +669,9 @@ describe("settings panel", () => {
 
     const historyMarkup = renderSettingsPanel(snapshot, "history");
 
-    expect(historyMarkup).toContain("Whisper Tiny");
-    expect(historyMarkup).toContain('title="whisper-tiny"');
-    expect(historyMarkup).not.toMatch(/<td[^>]*>whisper-tiny</);
+    expect(historyMarkup).toContain("Whisper Small");
+    expect(historyMarkup).toContain('title="whisper-small"');
+    expect(historyMarkup).not.toMatch(/<td[^>]*>whisper-small</);
 
     const modelsMarkup = renderSettingsPanel(snapshot, "models");
 
@@ -701,7 +688,7 @@ describe("settings panel", () => {
           audio_path: "/tmp/WakeNote/20260510/010203.m4a",
           model_id: snapshot.settings.selected_model,
           status: "failed",
-          error: "model whisper-tiny is missing on disk",
+          error: "model whisper-small is missing on disk",
         },
         {
           id: 2,
@@ -720,7 +707,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<td title="model whisper-tiny is missing on disk"[^>]*>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>\s*<\/td>/,
+      /<td title="model whisper-small is missing on disk"[^>]*>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>\s*<\/td>/,
     );
     expect(markup).toMatch(
       /<td>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/a>\s*<\/td>/,
@@ -1912,7 +1899,7 @@ describe("settings panel", () => {
         {
           id: 1,
           audio_path: "/tmp/imported/pending-tiny.wav",
-          model_id: "whisper-tiny",
+          model_id: "whisper-small",
           status: "pending",
           error: null,
         },
@@ -1928,7 +1915,7 @@ describe("settings panel", () => {
     expect(isDisabled(buttonTag(missingJobModelMarkup, "Process Next"))).toBe(true);
 
     snapshot.models = snapshot.models.map((model) =>
-      model.id === "whisper-tiny" ? { ...model, status: "ready" } : model,
+      model.id === "whisper-small" ? { ...model, status: "ready" } : model,
     );
     const readyJobModelMarkup = renderSettingsPanel(snapshot, "history");
 

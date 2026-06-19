@@ -128,11 +128,6 @@ pub struct AppSettings {
     pub max_chunk_ms: u64,
     pub selected_model: String,
     pub model_directory: String,
-    /// Cohere Transcribe API key. When non-empty, the `cohere-api` model is
-    /// reported ready and transcription uses this key (overriding the
-    /// `COHERE_API_KEY` environment variable).
-    #[serde(default)]
-    pub cohere_api_key: String,
     pub vad_enabled: bool,
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
@@ -183,7 +178,6 @@ pub struct SettingsPatch {
     pub max_chunk_ms: Option<u64>,
     pub selected_model: Option<String>,
     pub model_directory: Option<String>,
-    pub cohere_api_key: Option<String>,
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
@@ -572,9 +566,6 @@ impl AppSettings {
         if let Some(value) = patch.model_directory {
             self.model_directory = value;
         }
-        if let Some(value) = patch.cohere_api_key {
-            self.cohere_api_key = value.trim().to_string();
-        }
         if let Some(value) = patch.vad_enabled {
             self.vad_enabled = value;
         }
@@ -653,7 +644,6 @@ impl Default for AppSettings {
             max_chunk_ms: 120_000,
             selected_model: "whisper-medium".to_string(),
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
-            cohere_api_key: String::new(),
             vad_enabled: false,
             launch_at_login: false,
             start_live_input_on_launch: true,
@@ -740,17 +730,6 @@ mod tests {
 
         assert!(settings.auto_transcript_input_enabled);
         assert!(settings.auto_transcript_input_trailing_space);
-    }
-
-    #[test]
-    fn patch_sets_and_trims_cohere_api_key() {
-        let mut settings = AppSettings::default();
-        assert!(settings.cohere_api_key.is_empty());
-        settings.apply_patch(SettingsPatch {
-            cohere_api_key: Some("  my-key  ".to_string()),
-            ..Default::default()
-        });
-        assert_eq!(settings.cohere_api_key, "my-key");
     }
 
     #[test]

@@ -133,12 +133,6 @@ fn default_registry_includes_requested_asr_provider_models() {
             .any(|language| language == "multi")
     );
     assert!(nemotron.offline);
-
-    let cohere = registry
-        .get("cohere-transcribe-03-2026")
-        .expect("Cohere Transcribe model");
-    assert_eq!(cohere.provider_runtime, "cohere-api");
-    assert!(!cohere.offline);
 }
 
 #[test]
@@ -235,14 +229,14 @@ fn model_store_discovers_handy_whisper_cpp_bins_without_json_registry() {
 fn model_store_delete_removes_model_file() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());
-    let path = store.model_path("whisper-tiny");
+    let path = store.model_path("whisper-small");
     std::fs::create_dir_all(path.parent().unwrap()).expect("models dir");
     std::fs::write(&path, b"model").expect("model file");
     store
-        .record_download_status("whisper-tiny", ModelStatus::Ready, 5, Some(5), None)
+        .record_download_status("whisper-small", ModelStatus::Ready, 5, Some(5), None)
         .expect("ready record");
 
-    store.delete_model("whisper-tiny").expect("delete");
+    store.delete_model("whisper-small").expect("delete");
 
     assert!(!path.exists());
     assert!(
@@ -250,7 +244,7 @@ fn model_store_delete_removes_model_file() {
             .load_download_state()
             .expect("download state")
             .downloads
-            .contains_key("whisper-tiny")
+            .contains_key("whisper-small")
     );
 }
 

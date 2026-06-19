@@ -75,26 +75,6 @@ function isBrowserUploadableAudioPath(audioPath: string) {
   return /\.(mp3|m4a|wav)$/i.test(audioPath);
 }
 
-// Mirror the backend: a cohere-api model is Ready when an API key is
-// configured and Missing otherwise. Keeps the browser mock's model list in
-// sync after the Cohere API key changes in Settings (Tauri does this via
-// verify_model on the next snapshot).
-function reconcileBrowserCohereStatus(
-  models: ModelDescriptor[],
-  cohereApiKey: string,
-): ModelDescriptor[] {
-  const status: ModelDescriptor["status"] = cohereApiKey.trim().length > 0 ? "ready" : "missing";
-  let changed = false;
-  const next = models.map((model) => {
-    if (model.provider_runtime !== "cohere-api" || model.status === status) {
-      return model;
-    }
-    changed = true;
-    return { ...model, status };
-  });
-  return changed ? next : models;
-}
-
 function isUsableBrowserModel(modelId: string, models: ModelDescriptor[]) {
   const model = models.find((candidate) => candidate.id === modelId);
   return Boolean(model && ["ready", "installed", "unloaded"].includes(model.status));
@@ -335,7 +315,7 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
     browserSnapshot = {
       ...browserSnapshot,
       settings,
-      models: reconcileBrowserCohereStatus(models, settings.cohere_api_key),
+      models,
       status: statusFrom(settings, queue),
       queue,
     };

@@ -462,7 +462,7 @@ describe("TranscriptsView", () => {
       entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
       models: [
         { id: "whisper-medium", display_name: "Whisper Medium", status: "ready" },
-        { id: "whisper-tiny", display_name: "Whisper Tiny", status: "ready" },
+        { id: "whisper-small", display_name: "Whisper Small", status: "ready" },
         { id: "whisper-large", display_name: "Whisper Large", status: "missing" },
       ],
       selectedModelId: "whisper-medium",

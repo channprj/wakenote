@@ -8,10 +8,10 @@ function model(id: string, displayName: string): Pick<ModelDescriptor, "id" | "d
 
 describe("formatModelLabel", () => {
   it("returns the friendly display name when the model is in the list", () => {
-    const models = [model("whisper-medium", "Whisper Medium"), model("whisper-tiny", "Whisper Tiny")];
+    const models = [model("whisper-medium", "Whisper Medium"), model("whisper-small", "Whisper Small")];
 
     expect(formatModelLabel("whisper-medium", models)).toBe("Whisper Medium");
-    expect(formatModelLabel("whisper-tiny", models)).toBe("Whisper Tiny");
+    expect(formatModelLabel("whisper-small", models)).toBe("Whisper Small");
   });
 
   it("falls back to the raw id when the model is not in the list", () => {

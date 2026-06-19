@@ -104,7 +104,7 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
     let store = AppPersistence::new(tmp.path());
     let mut queue = TranscriptionQueue::new();
     let first = queue.enqueue_file("/recordings/20260506/230709.wav", "whisper-medium");
-    let second = queue.enqueue_file("/recordings/20260506/230810.wav", "whisper-tiny");
+    let second = queue.enqueue_file("/recordings/20260506/230810.wav", "whisper-small");
     queue.start_next().expect("running job");
     queue
         .mark_failed(second, "checksum mismatch")

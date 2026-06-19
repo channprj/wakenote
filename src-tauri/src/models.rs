@@ -76,10 +76,6 @@ impl ModelDownloadRecord {
 #[derive(Debug, Clone)]
 pub struct ModelStore {
     model_directory: PathBuf,
-    /// Resolved Cohere API key (settings value or environment fallback). Used
-    /// only to decide whether a `cohere-api` model is `Ready`; the transcriber
-    /// carries its own copy of the key.
-    cohere_api_key: Option<String>,
 }
 
 /// Which in-process sherpa-onnx recognizer a model uses.
@@ -181,30 +177,7 @@ impl ModelStore {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: model_directory.as_ref().to_path_buf(),
-            cohere_api_key: cohere_api_key_from_env(),
         }
-    }
-
-    /// Like [`Self::new`] but with an explicit Cohere API key (e.g. from
-    /// settings). A blank/`None` key falls back to the environment so the
-    /// configured key wins but env credentials still work.
-    pub fn with_cohere_api_key(
-        model_directory: impl AsRef<Path>,
-        cohere_api_key: Option<String>,
-    ) -> Self {
-        let cohere_api_key = cohere_api_key
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or_else(cohere_api_key_from_env);
-        Self {
-            model_directory: model_directory.as_ref().to_path_buf(),
-            cohere_api_key,
-        }
-    }
-
-    /// Whether a usable Cohere API key is configured (settings or environment).
-    pub fn cohere_key_available(&self) -> bool {
-        self.cohere_api_key.is_some()
     }
 
     /// Directory the sherpa-onnx archive for `model_id` extracts to, or `None`
@@ -546,16 +519,6 @@ impl ModelStore {
             } else {
                 ModelStatus::Missing
             });
-        }
-
-        if model.provider_runtime == "cohere-api" {
-            return Ok(
-                if self.command_path(&model.id).exists() || self.cohere_key_available() {
-                    ModelStatus::Ready
-                } else {
-                    ModelStatus::Missing
-                },
-            );
         }
 
         let path = self.model_path(&model.id);
@@ -1023,16 +986,6 @@ fn download_progress_percent(record: &ModelDownloadRecord) -> Option<u8> {
     )
 }
 
-/// The Cohere API key from the environment (`COHERE_API_KEY`, then
-/// `CO_API_KEY`), trimmed and only if non-empty.
-fn cohere_api_key_from_env() -> Option<String> {
-    std::env::var("COHERE_API_KEY")
-        .or_else(|_| std::env::var("CO_API_KEY"))
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 pub fn parse_model_registry_json(
     json: &str,
 ) -> Result<BTreeMap<String, ModelDescriptor>, ModelStoreError> {
@@ -1160,31 +1113,6 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
             speed_score: 5,
             accuracy_score: 8,
-            offline: true,
-            status: ModelStatus::Missing,
-            download_progress: None,
-            download_error: None,
-        },
-    );
-
-    registry.insert(
-        "whisper-tiny".to_string(),
-        ModelDescriptor {
-            id: "whisper-tiny".to_string(),
-            display_name: "Whisper Tiny".to_string(),
-            engine: "whisper.cpp".to_string(),
-            provider_runtime: "whisper-rs".to_string(),
-            download_url: Some(
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
-                    .to_string(),
-            ),
-            checksum_sha256: Some(
-                "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21".to_string(),
-            ),
-            size_mb: 75,
-            languages: vec!["ko".to_string(), "en".to_string(), "multi".to_string()],
-            speed_score: 9,
-            accuracy_score: 4,
             offline: true,
             status: ModelStatus::Missing,
             download_progress: None,
@@ -1328,35 +1256,6 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
-    registry.insert(
-        "cohere-transcribe-03-2026".to_string(),
-        ModelDescriptor {
-            id: "cohere-transcribe-03-2026".to_string(),
-            display_name: "Cohere Transcribe".to_string(),
-            engine: "Cohere Transcribe".to_string(),
-            provider_runtime: "cohere-api".to_string(),
-            download_url: None,
-            checksum_sha256: None,
-            size_mb: 0,
-            languages: vec![
-                "ko".to_string(),
-                "en".to_string(),
-                "ja".to_string(),
-                "zh".to_string(),
-                "es".to_string(),
-                "fr".to_string(),
-                "de".to_string(),
-                "multi".to_string(),
-            ],
-            speed_score: 8,
-            accuracy_score: 8,
-            offline: false,
-            status: ModelStatus::Missing,
-            download_progress: None,
-            download_error: None,
-        },
-    );
-
     registry
 }
 
@@ -1367,8 +1266,6 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    const WHISPER_TINY_SHA256: &str =
-        "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21";
     const WHISPER_SMALL_SHA256: &str =
         "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
     const WHISPER_MEDIUM_SHA256: &str =
@@ -1377,9 +1274,7 @@ mod tests {
         "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
     const WHISPER_LARGE_SHA256: &str =
         "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1";
-    // Pre-fix bogus values that shipped to users; never reintroduce.
-    const WHISPER_TINY_BOGUS_SHA256: &str =
-        "bd577a113a864445d4c299885e0cb97d4ba92b5fca5b2bce5b656d95d0f941a2";
+    // Pre-fix bogus value that shipped to users; never reintroduce.
     const WHISPER_MEDIUM_BOGUS_SHA256: &str =
         "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e";
 
@@ -1500,23 +1395,8 @@ mod tests {
             .filter(|model| model.provider_runtime == "whisper-rs")
             .count();
         assert_eq!(
-            whisper_models, 5,
-            "registry should ship five pinned Whisper models",
-        );
-
-        let tiny = registry.get("whisper-tiny").expect("whisper-tiny entry");
-        let tiny_hash = tiny
-            .checksum_sha256
-            .as_deref()
-            .expect("whisper-tiny must have a checksum");
-        assert!(
-            is_lowercase_hex_64(tiny_hash),
-            "tiny checksum must be 64 lowercase hex chars: {tiny_hash}",
-        );
-        assert_eq!(tiny_hash, WHISPER_TINY_SHA256);
-        assert_ne!(
-            tiny_hash, WHISPER_TINY_BOGUS_SHA256,
-            "regression: pre-fix bogus tiny checksum must never reappear",
+            whisper_models, 4,
+            "registry should ship four pinned Whisper models",
         );
 
         let small = registry.get("whisper-small").expect("whisper-small entry");
@@ -1819,37 +1699,4 @@ mod tests {
         assert_eq!(record.error.as_deref(), Some("cancelled by user"));
     }
 
-    #[test]
-    fn cohere_model_ready_when_api_key_configured() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let model = ModelDescriptor {
-            provider_runtime: "cohere-api".to_string(),
-            ..descriptor("cohere-transcribe-03-2026", None)
-        };
-
-        let with_key = ModelStore::with_cohere_api_key(tmp.path(), Some("secret-key".to_string()));
-        assert!(with_key.cohere_key_available());
-        assert_eq!(
-            with_key.verify_model(&model).expect("verify with key"),
-            ModelStatus::Ready
-        );
-    }
-
-    #[test]
-    fn with_cohere_api_key_trims_configured_key() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let model = ModelDescriptor {
-            provider_runtime: "cohere-api".to_string(),
-            ..descriptor("cohere-transcribe-03-2026", None)
-        };
-
-        // A surrounding-whitespace key is trimmed to a usable value (the
-        // configured key takes precedence over the environment).
-        let store = ModelStore::with_cohere_api_key(tmp.path(), Some("  spaced-key  ".to_string()));
-        assert!(store.cohere_key_available());
-        assert_eq!(
-            store.verify_model(&model).expect("verify trimmed key"),
-            ModelStatus::Ready
-        );
-    }
 }

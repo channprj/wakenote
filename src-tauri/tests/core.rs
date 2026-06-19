@@ -717,11 +717,6 @@ fn default_model_registry_includes_whisper_medium_and_fast_local_fallback() {
     assert_eq!(medium.status, ModelStatus::Missing);
     assert!(medium.checksum_sha256.is_some());
 
-    let fast = registry.get("whisper-tiny").expect("fast fallback");
-    assert!(fast.speed_score > medium.speed_score);
-    assert!(fast.offline);
-    assert!(fast.languages.iter().any(|language| language == "ko"));
-
     let turbo = registry.get("whisper-turbo").expect("turbo model");
     assert_eq!(turbo.display_name, "Whisper Turbo");
     assert!(turbo.offline);
@@ -753,10 +748,6 @@ fn default_registry_uses_pinned_remote_sha256() {
         (
             "whisper-medium",
             "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
-        ),
-        (
-            "whisper-tiny",
-            "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
         ),
         (
             "whisper-turbo",

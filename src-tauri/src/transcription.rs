@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Once;
 
-use serde::Deserialize;
 use thiserror::Error;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
@@ -367,24 +366,12 @@ impl Transcriber for WhisperTranscriber {
 #[derive(Debug, Clone)]
 pub struct RuntimeTranscriber {
     model_directory: PathBuf,
-    cohere_api_key: Option<String>,
 }
 
 impl RuntimeTranscriber {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
-            cohere_api_key: cohere_api_key_from_env(),
-        }
-    }
-
-    pub fn with_cohere_api_key(
-        model_directory: impl AsRef<Path>,
-        cohere_api_key: Option<String>,
-    ) -> Self {
-        Self {
-            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
-            cohere_api_key,
         }
     }
 
@@ -420,7 +407,6 @@ impl Transcriber for RuntimeTranscriber {
             "external-command" => {
                 ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
             }
-            "cohere-api" => CohereTranscriber::new(self.cohere_api_key.clone()).transcribe(request),
             _ => WhisperTranscriber::new(&self.model_directory).transcribe(request),
         }
     }
@@ -462,7 +448,7 @@ fn transcribe_with_sherpa(
         SherpaModelKind::Transducer => {
             // A NeMo/Parakeet transducer has no language parameter — the decoded
             // language is fixed by the trained model, so `request.language` does
-            // not apply here (unlike Whisper/SenseVoice/Cohere).
+            // not apply here (unlike Whisper/SenseVoice).
             let config = sherpa_rs::transducer::TransducerConfig {
                 encoder: file("encoder.int8.onnx"),
                 decoder: file("decoder.int8.onnx"),
@@ -668,153 +654,6 @@ impl Transcriber for ExternalCommandTranscriber {
             stderr
         }))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CohereTranscriber {
-    api_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CohereTranscriptionResponse {
-    text: String,
-}
-
-impl CohereTranscriber {
-    pub fn new(api_key: Option<String>) -> Self {
-        Self { api_key }
-    }
-}
-
-impl Transcriber for CohereTranscriber {
-    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
-        let api_key = self
-            .api_key
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                TranscriptionError::Engine(
-                    "COHERE_API_KEY is required for Cohere Transcribe".to_string(),
-                )
-            })?;
-        let language = request.language.whisper_code().ok_or_else(|| {
-            TranscriptionError::Engine(
-                "Cohere Transcribe requires an explicit transcription language".to_string(),
-            )
-        })?;
-        let (audio_path, cleanup_path) = cohere_supported_audio_path(request.audio_path)?;
-        let result = post_cohere_transcription(api_key, request.model_id, language, &audio_path);
-        if let Some(path) = cleanup_path {
-            let _ = std::fs::remove_file(path);
-        }
-        result
-    }
-}
-
-fn cohere_api_key_from_env() -> Option<String> {
-    std::env::var("COHERE_API_KEY")
-        .or_else(|_| std::env::var("CO_API_KEY"))
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-}
-
-/// Resolve the Cohere key to use for transcription: the configured (settings)
-/// value when non-empty, otherwise the environment.
-pub fn effective_cohere_api_key(configured: Option<&str>) -> Option<String> {
-    configured
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(cohere_api_key_from_env)
-}
-
-fn cohere_supported_audio_path(
-    path: &Path,
-) -> Result<(PathBuf, Option<PathBuf>), TranscriptionError> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("");
-    if matches_ignore_ascii_case(extension, &["flac", "mp3", "mpeg", "mpga", "ogg", "wav"]) {
-        return Ok((path.to_path_buf(), None));
-    }
-
-    let wav_path = path.with_extension("cohere.wav");
-    let output = Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("WAVE")
-        .arg("-d")
-        .arg("LEI16@16000")
-        .arg(path)
-        .arg(&wav_path)
-        .output()
-        .map_err(|error| TranscriptionError::M4a(error.to_string()))?;
-
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(TranscriptionError::M4a(if message.is_empty() {
-            format!("afconvert exited with status {}", output.status)
-        } else {
-            message
-        }));
-    }
-
-    Ok((wav_path.clone(), Some(wav_path)))
-}
-
-fn post_cohere_transcription(
-    api_key: &str,
-    model_id: &str,
-    language: &str,
-    audio_path: &Path,
-) -> Result<String, TranscriptionError> {
-    let file_bytes =
-        std::fs::read(audio_path).map_err(|error| TranscriptionError::M4a(error.to_string()))?;
-    let file_name = audio_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("audio.wav");
-    let boundary = "----wakenote-cohere-transcribe-boundary";
-    let body = cohere_multipart_body(boundary, model_id, language, file_name, &file_bytes);
-    let response = ureq::post("https://api.cohere.com/v2/audio/transcriptions")
-        .set("Authorization", &format!("Bearer {api_key}"))
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={boundary}"),
-        )
-        .send_bytes(&body)
-        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
-    let response_text = response
-        .into_string()
-        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
-    let value: CohereTranscriptionResponse = serde_json::from_str(&response_text)
-        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
-    Ok(value.text.trim().to_string())
-}
-
-fn cohere_multipart_body(
-    boundary: &str,
-    model_id: &str,
-    language: &str,
-    file_name: &str,
-    file_bytes: &[u8],
-) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"model\"\r\n\r\n");
-    body.extend_from_slice(model_id.as_bytes());
-    body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"language\"\r\n\r\n");
-    body.extend_from_slice(language.as_bytes());
-    body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
-    body.extend_from_slice(
-        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n")
-            .as_bytes(),
-    );
-    body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
-    body.extend_from_slice(file_bytes);
-    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    body
 }
 
 pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
@@ -1134,26 +973,8 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "asr-sherpa")]
     use super::*;
-
-    #[test]
-    fn effective_cohere_api_key_uses_configured_value_and_ignores_blanks() {
-        // A configured, non-empty key is returned as-is and short-circuits the
-        // environment fallback — the settings key takes precedence over env.
-        assert_eq!(
-            effective_cohere_api_key(Some("configured")),
-            Some("configured".to_string())
-        );
-        assert_eq!(
-            effective_cohere_api_key(Some("  trimmed  ")),
-            Some("trimmed".to_string())
-        );
-        // A blank configured key never counts as a key; it falls through to the
-        // environment (whose value we don't assert, to stay independent of it).
-        let blank = effective_cohere_api_key(Some("   "));
-        assert_ne!(blank, Some("   ".to_string()));
-        assert_ne!(blank, Some(String::new()));
-    }
 
     #[cfg(feature = "asr-sherpa")]
     #[test]

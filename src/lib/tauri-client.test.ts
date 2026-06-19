@@ -90,19 +90,6 @@ describe("tauri live capture client", () => {
     expect(dark.settings.theme_mode).toBe("dark");
   });
 
-  it("persists browser fallback Cohere API key patches and toggles the Cohere model status", async () => {
-    const cohereStatus = (models: { id: string; status: string }[]) =>
-      models.find((model) => model.id === "cohere-transcribe-03-2026")?.status;
-
-    const withKey = await saveSettingsPatch({ cohere_api_key: "co-test-key" });
-    expect(withKey.settings.cohere_api_key).toBe("co-test-key");
-    expect(cohereStatus(withKey.models)).toBe("ready");
-
-    const cleared = await saveSettingsPatch({ cohere_api_key: "" });
-    expect(cleared.settings.cohere_api_key).toBe("");
-    expect(cohereStatus(cleared.models)).toBe("missing");
-  });
-
   it("simulates live browser fallback level snapshots while input is active", async () => {
     await startLiveCapture();
 
@@ -164,9 +151,9 @@ describe("tauri live capture client", () => {
     )?.id;
     expect(pendingId).toBeTypeOf("number");
 
-    await downloadModel("whisper-tiny");
+    await downloadModel("whisper-small");
     await loadSnapshot();
-    await saveSettingsPatch({ selected_model: "whisper-tiny" });
+    await saveSettingsPatch({ selected_model: "whisper-small" });
     await deleteModel("whisper-medium");
 
     const processed = await processNextTranscription();
@@ -181,19 +168,19 @@ describe("tauri live capture client", () => {
     await downloadModel("whisper-medium");
     await loadSnapshot();
     await saveSettingsPatch({ selected_model: "whisper-medium" });
-    await deleteModel("whisper-tiny");
+    await deleteModel("whisper-small");
   });
 
   it("simulates model download and cancel state outside Tauri", async () => {
-    const downloading = await downloadModel("whisper-tiny");
-    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    const downloading = await downloadModel("whisper-small");
+    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
     });
 
-    const cancelled = await cancelModelDownload("whisper-tiny");
-    expect(cancelled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    const cancelled = await cancelModelDownload("whisper-small");
+    expect(cancelled.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "error",
       download_progress: 0,
       download_error: "cancelled by user",
@@ -203,7 +190,7 @@ describe("tauri live capture client", () => {
   it("cancels active browser fallback model downloads from the generic cancel action", async () => {
     const current = await loadSnapshot();
     const targetModelId =
-      current.settings.selected_model === "whisper-tiny" ? "whisper-medium" : "whisper-tiny";
+      current.settings.selected_model === "whisper-small" ? "whisper-medium" : "whisper-small";
     await deleteModel(targetModelId);
     const downloading = await downloadModel(targetModelId);
     expect(downloading.models.find((model) => model.id === targetModelId)).toMatchObject({
@@ -222,11 +209,11 @@ describe("tauri live capture client", () => {
   });
 
   it("does not create cancelled errors for inactive browser fallback model downloads", async () => {
-    await deleteModel("whisper-tiny");
+    await deleteModel("whisper-small");
 
-    const cancelled = await cancelModelDownload("whisper-tiny");
+    const cancelled = await cancelModelDownload("whisper-small");
 
-    expect(cancelled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(cancelled.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "missing",
       download_progress: null,
       download_error: null,
@@ -234,10 +221,10 @@ describe("tauri live capture client", () => {
   });
 
   it("settles browser fallback model downloads during snapshot polling", async () => {
-    await deleteModel("whisper-tiny");
+    await deleteModel("whisper-small");
 
-    const downloading = await downloadModel("whisper-tiny");
-    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    const downloading = await downloadModel("whisper-small");
+    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -245,7 +232,7 @@ describe("tauri live capture client", () => {
 
     const settled = await loadSnapshot();
 
-    expect(settled.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(settled.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -253,18 +240,18 @@ describe("tauri live capture client", () => {
   });
 
   it("does not restart usable browser fallback model downloads", async () => {
-    await deleteModel("whisper-tiny");
-    await downloadModel("whisper-tiny");
+    await deleteModel("whisper-small");
+    await downloadModel("whisper-small");
     const ready = await loadSnapshot();
-    expect(ready.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(ready.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
     });
 
-    const repeated = await downloadModel("whisper-tiny");
+    const repeated = await downloadModel("whisper-small");
 
-    expect(repeated.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(repeated.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -272,17 +259,17 @@ describe("tauri live capture client", () => {
   });
 
   it("does not delete active browser fallback model downloads", async () => {
-    await deleteModel("whisper-tiny");
-    const downloading = await downloadModel("whisper-tiny");
-    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    await deleteModel("whisper-small");
+    const downloading = await downloadModel("whisper-small");
+    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
     });
 
-    const deleted = await deleteModel("whisper-tiny");
+    const deleted = await deleteModel("whisper-small");
 
-    expect(deleted.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(deleted.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -290,17 +277,17 @@ describe("tauri live capture client", () => {
   });
 
   it("does not verify active browser fallback model downloads", async () => {
-    await deleteModel("whisper-tiny");
-    const downloading = await downloadModel("whisper-tiny");
-    expect(downloading.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    await deleteModel("whisper-small");
+    const downloading = await downloadModel("whisper-small");
+    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
     });
 
-    const verified = await verifyModel("whisper-tiny");
+    const verified = await verifyModel("whisper-small");
 
-    expect(verified.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(verified.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -308,9 +295,9 @@ describe("tauri live capture client", () => {
   });
 
   it("settles browser fallback verification during snapshot polling", async () => {
-    await downloadModel("whisper-tiny");
+    await downloadModel("whisper-small");
     await loadSnapshot();
-    await saveSettingsPatch({ selected_model: "whisper-tiny" });
+    await saveSettingsPatch({ selected_model: "whisper-small" });
     await deleteModel("whisper-medium");
 
     const verifying = await verifyModel("whisper-medium");
@@ -329,17 +316,17 @@ describe("tauri live capture client", () => {
   });
 
   it("ignores browser fallback selected model patches for unusable models", async () => {
-    await deleteModel("whisper-tiny");
-    await downloadModel("whisper-tiny");
+    await deleteModel("whisper-small");
+    await downloadModel("whisper-small");
     await loadSnapshot();
-    const selectedTiny = await saveSettingsPatch({ selected_model: "whisper-tiny" });
-    expect(selectedTiny.settings.selected_model).toBe("whisper-tiny");
+    const selectedTiny = await saveSettingsPatch({ selected_model: "whisper-small" });
+    expect(selectedTiny.settings.selected_model).toBe("whisper-small");
 
     await deleteModel("whisper-medium");
     const blocked = await saveSettingsPatch({ selected_model: "whisper-medium" });
 
-    expect(blocked.settings.selected_model).toBe("whisper-tiny");
-    expect(blocked.status.active_model).toBe("whisper-tiny");
+    expect(blocked.settings.selected_model).toBe("whisper-small");
+    expect(blocked.status.active_model).toBe("whisper-small");
 
     await downloadModel("whisper-medium");
     await loadSnapshot();
@@ -350,16 +337,16 @@ describe("tauri live capture client", () => {
   });
 
   it("does not delete the active browser fallback model", async () => {
-    await deleteModel("whisper-tiny");
-    await downloadModel("whisper-tiny");
+    await deleteModel("whisper-small");
+    await downloadModel("whisper-small");
     await loadSnapshot();
-    await saveSettingsPatch({ selected_model: "whisper-tiny" });
+    await saveSettingsPatch({ selected_model: "whisper-small" });
 
-    const deleted = await deleteModel("whisper-tiny");
+    const deleted = await deleteModel("whisper-small");
 
-    expect(deleted.settings.selected_model).toBe("whisper-tiny");
-    expect(deleted.status.active_model).toBe("whisper-tiny");
-    expect(deleted.models.find((model) => model.id === "whisper-tiny")).toMatchObject({
+    expect(deleted.settings.selected_model).toBe("whisper-small");
+    expect(deleted.status.active_model).toBe("whisper-small");
+    expect(deleted.models.find((model) => model.id === "whisper-small")).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -407,16 +394,16 @@ describe("tauri live capture client", () => {
   });
 
   it("requeues browser fallback regeneration with an explicit model", async () => {
-    await downloadModel("whisper-tiny");
+    await downloadModel("whisper-small");
     await loadSnapshot();
     await saveSettingsPatch({ selected_model: "whisper-medium" });
     const audioPath = "/tmp/imported/regenerate-with-tiny.wav";
     await enqueueAudioFiles([audioPath]);
 
-    const snapshot = await regenerateTranscript(audioPath, "whisper-tiny");
+    const snapshot = await regenerateTranscript(audioPath, "whisper-small");
 
     expect(snapshot.queue.jobs.find((job) => job.audio_path === audioPath)).toMatchObject({
-      model_id: "whisper-tiny",
+      model_id: "whisper-small",
       status: "pending",
       error: null,
     });

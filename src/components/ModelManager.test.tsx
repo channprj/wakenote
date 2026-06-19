@@ -164,17 +164,6 @@ describe("model acquire action", () => {
       modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
     ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
   });
-
-  it("directs cohere-api models to the API key setting instead of a download", () => {
-    expect(
-      modelAcquireAction({ provider_runtime: "cohere-api", download_url: null, status: "missing" }),
-    ).toEqual({
-      kind: "none",
-      enabled: false,
-      label: "Download",
-      reason: "Set a Cohere API key in Settings",
-    });
-  });
 });
 
 describe("formatModelSize", () => {
@@ -287,12 +276,6 @@ describe("model switch disabled reason", () => {
       ).toBe(reason);
     },
   );
-
-  it("points a missing Cohere model at the API key setting instead of a download", () => {
-    expect(
-      modelSwitchDisabledReason({ status: "missing", provider_runtime: "cohere-api" }, false),
-    ).toBe("Set a Cohere API key in Settings");
-  });
 });
 
 describe("model download disabled reason", () => {

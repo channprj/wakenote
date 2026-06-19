@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  defaultSettings,
   deriveProductMode,
   deriveTrayState,
   mockModels,
@@ -54,12 +53,10 @@ describe("app state derivation", () => {
       "whisper-large",
       "whisper-medium",
       "whisper-small",
-      "whisper-tiny",
       "whisper-turbo",
       "parakeet-tdt-0.6b-v3",
       "sensevoice-small",
       "nemotron-3.5-asr-streaming-0.6b",
-      "cohere-transcribe-03-2026",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
@@ -68,11 +65,6 @@ describe("app state derivation", () => {
     expect(
       models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")?.languages,
     ).toContain("ko");
-    expect(models.find((model) => model.id === "cohere-transcribe-03-2026")?.offline).toBe(false);
-  });
-
-  it("defaults the Cohere API key to an empty string", () => {
-    expect(defaultSettings().cohere_api_key).toBe("");
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {
@@ -250,7 +242,7 @@ describe("app state derivation", () => {
         {
           id: 2,
           audio_path: "/tmp/imported/tiny.wav",
-          model_id: "whisper-tiny",
+          model_id: "whisper-small",
           status: "pending" as const,
           error: null,
         },
