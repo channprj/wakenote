@@ -161,7 +161,7 @@ export function defaultSettings(): AppSettings {
     auto_transcript_input_trailing_space: false,
     show_dock_icon: true,
     show_tray_icon: true,
-    tray_left_click_action: "toggle_pause",
+    tray_left_click_action: "open_menu",
     show_floating_overlay: true,
     floating_overlay_position: "top",
     theme_mode: "dark",

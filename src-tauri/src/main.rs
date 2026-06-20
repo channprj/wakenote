@@ -3430,10 +3430,10 @@ mod tests {
     #[test]
     fn tray_left_click_menu_flag_follows_click_action_setting() {
         let mut settings = AppSettings::default();
-        assert!(!tray_show_menu_on_left_click(&settings));
-
-        settings.tray_left_click_action = wakenote::settings::TrayClickAction::OpenMenu;
         assert!(tray_show_menu_on_left_click(&settings));
+
+        settings.tray_left_click_action = wakenote::settings::TrayClickAction::TogglePause;
+        assert!(!tray_show_menu_on_left_click(&settings));
     }
 
     #[test]

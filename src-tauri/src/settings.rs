@@ -230,7 +230,7 @@ pub fn default_lead_in_padding_ms() -> u64 {
 }
 
 pub fn default_tray_left_click_action() -> TrayClickAction {
-    TrayClickAction::TogglePause
+    TrayClickAction::OpenMenu
 }
 
 pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
@@ -707,16 +707,13 @@ mod tests {
     }
 
     #[test]
-    fn default_tray_left_click_toggles_app_and_right_click_opens_menu() {
+    fn default_tray_left_click_opens_menu_and_right_click_toggles_app() {
         let settings = AppSettings::default();
 
-        assert_eq!(
-            settings.tray_left_click_action,
-            TrayClickAction::TogglePause
-        );
+        assert_eq!(settings.tray_left_click_action, TrayClickAction::OpenMenu);
         assert_eq!(
             settings.tray_right_click_action(),
-            TrayClickAction::OpenMenu
+            TrayClickAction::TogglePause
         );
     }
 
