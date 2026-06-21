@@ -2542,6 +2542,7 @@ mod tests {
             live_capture_chunk_id: Some(42),
             source: ChunkSource::Microphone,
             source_label: None,
+            transcribed_at: None,
         };
         std::fs::write(
             audio_path.with_extension("json"),

@@ -62,6 +62,11 @@ pub struct ChunkMetadata {
     pub source: ChunkSource,
     #[serde(default)]
     pub source_label: Option<String>,
+    /// Wall-clock time transcription last ran for this chunk (success or failure).
+    /// Recorded for debugging clock/latency issues and is absent until the chunk
+    /// has been transcribed; `#[serde(default)]` keeps older sidecars loading.
+    #[serde(default)]
+    pub transcribed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]
@@ -182,6 +187,7 @@ impl Recorder {
             live_capture_chunk_id: request.live_capture_chunk_id,
             source: request.source,
             source_label: request.source_label.map(str::to_string),
+            transcribed_at: None,
         };
         write_metadata(&target.metadata_path, &metadata)?;
 
@@ -360,6 +366,12 @@ fn remove_file_if_present(path: &Path) -> Result<(), RecorderError> {
 
 fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<(), RecorderError> {
     let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
+    // Stamp when transcription actually ran (success or failure); clear it when a
+    // chunk is requeued so a regenerated transcript gets a fresh timestamp.
+    metadata.transcribed_at = match status {
+        TranscriptionStatus::Completed | TranscriptionStatus::Failed => Some(Utc::now()),
+        TranscriptionStatus::Queued | TranscriptionStatus::NotRequested => None,
+    };
     metadata.transcription_status = status;
     write_metadata(path, &metadata)
 }
@@ -403,6 +415,7 @@ mod tests {
             live_capture_chunk_id: Some(1),
             source,
             source_label,
+            transcribed_at: None,
         }
     }
 
@@ -460,5 +473,60 @@ mod tests {
         assert_eq!(meta.live_capture_chunk_id, None);
         assert_eq!(meta.attack_ms, 0);
         assert_eq!(meta.lead_in_padding_ms, 0);
+        assert_eq!(meta.transcribed_at, None);
+    }
+
+    fn seeded_chunk(tmp: &tempfile::TempDir, status: TranscriptionStatus) -> RecordedChunk {
+        let chunk = RecordedChunk::from_audio_path(tmp.path().join("010203.wav"));
+        let mut meta = sample_metadata(ChunkSource::Microphone, None);
+        meta.transcription_status = status;
+        write_metadata(&chunk.metadata_path, &meta).expect("seed metadata");
+        chunk
+    }
+
+    #[test]
+    fn write_success_stamps_transcribed_at_and_marks_completed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chunk = seeded_chunk(&tmp, TranscriptionStatus::Queued);
+
+        let before = Utc::now();
+        TranscriptionSidecar::write_success(&chunk, "hello").expect("write success");
+        let after = Utc::now();
+
+        let stored: ChunkMetadata =
+            serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
+        assert_eq!(stored.transcription_status, TranscriptionStatus::Completed);
+        let transcribed_at = stored.transcribed_at.expect("transcribed_at recorded");
+        assert!(transcribed_at >= before && transcribed_at <= after);
+    }
+
+    #[test]
+    fn write_error_stamps_transcribed_at_and_marks_failed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chunk = seeded_chunk(&tmp, TranscriptionStatus::Queued);
+
+        TranscriptionSidecar::write_error(&chunk, "boom").expect("write error");
+
+        let stored: ChunkMetadata =
+            serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
+        assert_eq!(stored.transcription_status, TranscriptionStatus::Failed);
+        assert!(stored.transcribed_at.is_some());
+    }
+
+    #[test]
+    fn reset_for_regenerate_clears_transcribed_at() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chunk = seeded_chunk(&tmp, TranscriptionStatus::Completed);
+        let mut meta = sample_metadata(ChunkSource::Microphone, None);
+        meta.transcription_status = TranscriptionStatus::Completed;
+        meta.transcribed_at = Some(Utc::now());
+        write_metadata(&chunk.metadata_path, &meta).expect("seed completed metadata");
+
+        TranscriptionSidecar::reset_for_regenerate(&chunk).expect("reset");
+
+        let stored: ChunkMetadata =
+            serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
+        assert_eq!(stored.transcription_status, TranscriptionStatus::Queued);
+        assert_eq!(stored.transcribed_at, None);
     }
 }
