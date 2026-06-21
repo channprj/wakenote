@@ -223,7 +223,14 @@ impl CaptureProcessor {
     ) -> Result<(), RecorderError> {
         let observed_end_ms = offset_from_base_ms(self.config.base_time, captured_at);
         let synthetic_end_ms = self.elapsed_ms.saturating_add(duration_ms);
-        let frame_end_ms = observed_end_ms.max(synthetic_end_ms);
+        // Advance by the audio-sample duration, but never past the wall-clock
+        // arrival (`observed_end_ms`, bounded by `now`): a device that over-delivers
+        // audio (e.g. system-audio at a higher native rate than requested) would
+        // otherwise let the synthetic clock outrun real time, and because the
+        // timeline only ratchets upward (`elapsed_ms = frame_end_ms`) that drift
+        // would latch in and stamp chunks in the future. `.max(elapsed_ms)` keeps
+        // the timeline monotonic when a frame arrives early.
+        let frame_end_ms = synthetic_end_ms.min(observed_end_ms).max(self.elapsed_ms);
         let frame_start_ms = frame_end_ms.saturating_sub(duration_ms);
         self.process_samples_window(samples, duration_ms, frame_start_ms, frame_end_ms)
     }
@@ -560,5 +567,63 @@ mod tests {
         assert_eq!(metadata.source, ChunkSource::System);
         assert_eq!(metadata.source_label.as_deref(), Some("meet"));
         assert_eq!(metadata.device_name, "Google Meet");
+    }
+
+    #[test]
+    fn process_samples_at_never_stamps_a_chunk_in_the_future() {
+        // Synthetic audio-sample clock runs 10x ahead of wall-clock: every frame
+        // claims 1000ms of audio but only 100ms of real time elapses between
+        // deliveries (the system-audio over-delivery case). The committed chunk's
+        // started_at/ended_at must stay anchored to wall-clock (captured_at) and
+        // never exceed the latest observed time — i.e. never land in the future.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+        let mut controller = CaptureController::new(CaptureControllerConfig {
+            save_root: tmp.path().to_path_buf(),
+            settings: AppSettings {
+                attack_ms: 0,
+                release_ms: 600_000,
+                pre_roll_ms: 0,
+                post_roll_ms: 0,
+                min_chunk_ms: 0,
+                max_chunk_ms: 600_000,
+                ..settings()
+            },
+            sample_rate: 16_000,
+            device_id: "mic".to_string(),
+            device_name: "Mic".to_string(),
+            used_fallback_device: false,
+            base_time,
+            app_version: "0.1.0".to_string(),
+            source: ChunkSource::Microphone,
+            source_label: None,
+        });
+
+        let mut last_captured_at = base_time;
+        for index in 1..=6i64 {
+            let captured_at = base_time + Duration::milliseconds(index * 100);
+            last_captured_at = captured_at;
+            controller
+                .process_samples_at(&[0.8; 1], 1_000, captured_at)
+                .expect("frame");
+        }
+        controller.flush().expect("flush");
+
+        let chunks = controller.completed_chunks();
+        assert_eq!(chunks.len(), 1, "expected exactly one committed chunk");
+        let metadata: ChunkMetadata =
+            serde_json::from_str(&std::fs::read_to_string(&chunks[0].metadata_path).expect("meta"))
+                .expect("parse metadata");
+
+        assert!(
+            metadata.ended_at <= last_captured_at,
+            "ended_at {} must not exceed the latest wall-clock {last_captured_at}",
+            metadata.ended_at
+        );
+        assert!(
+            metadata.started_at <= last_captured_at,
+            "started_at {} must not exceed the latest wall-clock {last_captured_at}",
+            metadata.started_at
+        );
     }
 }
