@@ -22,7 +22,7 @@ describe("capture status presentation", () => {
       tone: "neutral",
       modeLabel: "Recording + transcription",
       microphone: "System Default",
-      threshold: "-42 dBFS",
+      threshold: "-44 dBFS",
       queueSummary: "0 pending · 0 running · 0 failed · 0 completed",
       queueCompletedCount: 0,
     });

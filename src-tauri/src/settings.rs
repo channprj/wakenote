@@ -640,13 +640,13 @@ impl Default for AppSettings {
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
-            threshold_dbfs: -42.0,
+            threshold_dbfs: -44.0,
             calibration_completed: false,
-            attack_ms: 100,
+            attack_ms: 200,
             release_ms: 1_000,
-            pre_roll_ms: 1_000,
+            pre_roll_ms: 600,
             lead_in_padding_ms: default_lead_in_padding_ms(),
-            post_roll_ms: 300,
+            post_roll_ms: 600,
             min_chunk_ms: 600,
             max_chunk_ms: 120_000,
             selected_model: "whisper-medium".to_string(),
@@ -754,12 +754,13 @@ mod tests {
     }
 
     #[test]
-    fn default_vad_timing_uses_fast_attack_and_longer_pre_roll() {
+    fn default_vad_timing_uses_tuned_capture_profile() {
         let settings = AppSettings::default();
-        assert_eq!(settings.threshold_dbfs, -42.0);
-        assert_eq!(settings.attack_ms, 100);
-        assert_eq!(settings.pre_roll_ms, 1_000);
+        assert_eq!(settings.threshold_dbfs, -44.0);
+        assert_eq!(settings.attack_ms, 200);
+        assert_eq!(settings.pre_roll_ms, 600);
         assert_eq!(settings.lead_in_padding_ms, 300);
+        assert_eq!(settings.post_roll_ms, 600);
     }
 
     #[test]
