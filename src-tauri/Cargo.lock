@@ -4845,7 +4845,7 @@ dependencies = [
 
 [[package]]
 name = "wakenote"
-version = "0.260620.1"
+version = "0.260624.0"
 dependencies = [
  "block2",
  "chrono",
