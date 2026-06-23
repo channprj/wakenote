@@ -16,6 +16,12 @@ describe("App branding", () => {
     expect(markup).not.toContain("Voice-activated meeting notes");
   });
 
+  it("shows the app version in the sidebar footer", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toContain(`<footer class="sidebar__footer">v${__APP_VERSION__}</footer>`);
+  });
+
   it("does not render the About menu item", () => {
     const markup = renderToStaticMarkup(<App />);
 

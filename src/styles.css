@@ -229,6 +229,14 @@ svg {
   background: var(--surface);
 }
 
+.sidebar__footer {
+  margin-top: auto;
+  padding: 8px 10px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .workspace {
   position: relative;
   min-width: 0;

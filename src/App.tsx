@@ -375,6 +375,7 @@ export default function App() {
             );
           })}
         </nav>
+        <footer className="sidebar__footer">{`v${__APP_VERSION__}`}</footer>
       </aside>
 
       <main className="workspace">

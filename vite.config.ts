@@ -1,10 +1,18 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8"));
+
 export default defineConfig({
   base: "./",
+  define: {
+    // Single source of truth: the version lives in package.json and is injected
+    // at build time so the UI never shows a stale, hand-copied number.
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   server: {
