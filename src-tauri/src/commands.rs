@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -16,9 +17,7 @@ use crate::audio::{
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
-use crate::models::{
-    ModelDescriptor, ModelStatus, ModelStore, default_model_registry,
-};
+use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{
     BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
@@ -346,7 +345,31 @@ pub fn validate_audio_playback_file(path: &Path) -> Result<&'static str, String>
     if !metadata.is_file() {
         return Err("recording path is not a file".to_string());
     }
+    if metadata.len() == 0 {
+        return Err("recording file is empty".to_string());
+    }
+    ensure_audio_file_readable(path)?;
     Ok(content_type)
+}
+
+fn ensure_audio_file_readable(path: &Path) -> Result<(), String> {
+    let mut file =
+        fs::File::open(path).map_err(|error| format!("recording file is not readable: {error}"))?;
+    let mut saw_bytes = false;
+    let mut buffer = [0_u8; 64 * 1024];
+
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(_) => saw_bytes = true,
+            Err(error) => return Err(format!("recording file is not readable: {error}")),
+        }
+    }
+
+    if !saw_bytes {
+        return Err("recording file is empty".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

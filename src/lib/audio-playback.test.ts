@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { audioPlaybackUrlFromPath } from "./audio-playback";
+import { audioPlaybackUrlFromPath, initialAudioPlaybackSource } from "./audio-playback";
 
 describe("audio playback helpers", () => {
   it("allows a Tauri audio file before converting it to an asset URL", async () => {
@@ -29,5 +29,21 @@ describe("audio playback helpers", () => {
     ).resolves.toBe("file:///tmp/WakeNote/20260510/010203%20voice.wav");
 
     expect(allowAudioPlayback).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a raw file URL before Tauri prepares playback", () => {
+    expect(
+      initialAudioPlaybackSource("/Users/channprj/Documents/WakeNote/20260510/002816.m4a", {
+        tauriRuntime: true,
+      }),
+    ).toBe("");
+  });
+
+  it("keeps a browser preview source outside Tauri", () => {
+    expect(
+      initialAudioPlaybackSource("/tmp/WakeNote/20260510/010203 voice.wav", {
+        tauriRuntime: false,
+      }),
+    ).toBe("file:///tmp/WakeNote/20260510/010203%20voice.wav");
   });
 });

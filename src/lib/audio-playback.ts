@@ -27,6 +27,17 @@ export async function audioPlaybackUrlFromPath(
   return (options.convertFileSrc ?? convertFileSrc)(audioPath);
 }
 
+export function initialAudioPlaybackSource(
+  audioPath: string | null | undefined,
+  options: Pick<AudioPlaybackUrlOptions, "tauriRuntime"> = {},
+): string {
+  if (!audioPath) {
+    return "";
+  }
+  const tauriRuntime = options.tauriRuntime ?? isTauriRuntime();
+  return tauriRuntime ? "" : fileUrlFromPath(audioPath);
+}
+
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }

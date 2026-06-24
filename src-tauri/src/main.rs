@@ -737,9 +737,12 @@ async fn transcripts_for_day(
 }
 
 #[tauri::command]
-fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
+async fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
     let path = PathBuf::from(audio_path);
-    validate_audio_playback_file(&path)?;
+    let validated_path = path.clone();
+    tauri::async_runtime::spawn_blocking(move || validate_audio_playback_file(&validated_path))
+        .await
+        .map_err(|error| error.to_string())??;
     app.asset_protocol_scope()
         .allow_file(&path)
         .map_err(|error| error.to_string())

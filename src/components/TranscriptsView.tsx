@@ -18,7 +18,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { audioPlaybackUrlFromPath } from "../lib/audio-playback";
+import { audioPlaybackUrlFromPath, initialAudioPlaybackSource } from "../lib/audio-playback";
 import {
   fileUrlFromPath,
   formatLocalTimestamp,
@@ -1168,7 +1168,7 @@ function TranscriptPlayerSheet({
   const audioPath = entry.audio_path;
 
   const [audioSource, setAudioSource] = useState(() =>
-    audioPath ? fileUrlFromPath(audioPath) : "",
+    initialAudioPlaybackSource(audioPath),
   );
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1178,8 +1178,7 @@ function TranscriptPlayerSheet({
       return;
     }
     let cancelled = false;
-    const fallback = fileUrlFromPath(audioPath);
-    setAudioSource(fallback);
+    setAudioSource(initialAudioPlaybackSource(audioPath));
     setAudioError(null);
 
     audioPlaybackUrlFromPath(audioPath)
@@ -1222,6 +1221,9 @@ function TranscriptPlayerSheet({
     if (!element) {
       return;
     }
+    if (!audioSource) {
+      return;
+    }
     if (paused) {
       element.pause();
       return;
@@ -1257,10 +1259,10 @@ function TranscriptPlayerSheet({
       <audio
         autoPlay={!paused}
         controls
-        key={audioSource}
+        key={audioSource || "pending"}
         preload="metadata"
         ref={audioRef}
-        src={audioSource}
+        src={audioSource || undefined}
       />
       {audioError ? (
         <span className="transcript-player-sheet__error">{audioError}</span>

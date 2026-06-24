@@ -7,7 +7,7 @@ use wakenote::commands::{
     audio_playback_content_type, main_window_close_action, microphone_devices_from_input_devices,
     open_containing_folder_request, reveal_save_folder_request, tray_icon_image_for_presentation,
     tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    with_live_runtime_warning, with_runtime_warning,
+    validate_audio_playback_file, with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, ModelStore};
@@ -74,6 +74,43 @@ fn audio_playback_accepts_recording_formats_only() {
         audio_playback_content_type(&PathBuf::from("/tmp/transcript.txt")),
         None
     );
+}
+
+#[test]
+fn audio_playback_rejects_empty_recordings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("empty.m4a");
+    std::fs::write(&audio_path, []).expect("empty audio");
+
+    let error = validate_audio_playback_file(&audio_path).expect_err("empty audio is invalid");
+
+    assert!(error.contains("empty"));
+}
+
+#[cfg(unix)]
+#[test]
+fn audio_playback_rejects_unreadable_recordings() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("locked.m4a");
+    std::fs::write(&audio_path, b"audio").expect("audio");
+
+    let mut permissions = std::fs::metadata(&audio_path)
+        .expect("metadata")
+        .permissions();
+    permissions.set_mode(0o000);
+    std::fs::set_permissions(&audio_path, permissions).expect("lock audio");
+
+    let error = validate_audio_playback_file(&audio_path).expect_err("unreadable audio is invalid");
+
+    let mut restore = std::fs::metadata(&audio_path)
+        .expect("metadata after validation")
+        .permissions();
+    restore.set_mode(0o600);
+    std::fs::set_permissions(&audio_path, restore).expect("restore audio");
+
+    assert!(error.contains("read"));
 }
 
 fn wav_settings_patch(save_root: &std::path::Path) -> SettingsPatch {
@@ -280,6 +317,7 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
         ended_at: chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 4).unwrap(),
         duration_ms: 1_000,
         transcription_status: TranscriptionStatus::Completed,
+        transcribed_at: None,
         app_version: "0.1.1".into(),
         used_fallback_device: false,
         live_capture_chunk_id: None,
@@ -673,6 +711,7 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
         ended_at: now,
         duration_ms: 1000,
         transcription_status: TranscriptionStatus::Queued,
+        transcribed_at: None,
         app_version: "0.0.0".into(),
         used_fallback_device: false,
         live_capture_chunk_id: None,
