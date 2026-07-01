@@ -110,6 +110,8 @@ const TRAY_ICON_TRANSCRIBING_RGBA: [u8; 4] = [217, 119, 6, 255];
 const TRAY_ICON_DISCONNECTED_RGBA: [u8; 4] = [220, 38, 38, 255];
 const TRAY_ICON_IMAGE_SIZE: u32 = 64;
 const TRAY_ICON_DOT_DIAMETER: u32 = TRAY_ICON_IMAGE_SIZE / 2;
+const TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION: u32 = 1;
+const TRANSCRIPT_DAY_INDEX_FILE_NAME: &str = "all.json";
 
 pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
     match state {
@@ -417,6 +419,22 @@ pub struct RecentTranscript {
 pub struct TranscriptDay {
     pub day: String,
     pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TranscriptDayIndex {
+    pub schema_version: u32,
+    pub day: String,
+    pub generated_at: String,
+    pub source_files: Vec<TranscriptDayIndexSourceFile>,
+    pub entries: Vec<RecentTranscript>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct TranscriptDayIndexSourceFile {
+    pub path: String,
+    pub len: u64,
+    pub modified_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1660,9 +1678,8 @@ impl AppBackend {
 
 /// Lists the `YYYY-MM-DD` days that contain at least one non-empty transcript
 /// sidecar, with a per-day sidecar count. Scans both top-level `YYYYMMDD`
-/// folders and `uploaded/YYYYMMDD`. Reads `.txt` content (not just metadata) so
-/// the count matches what the day view actually renders: empty/suppressed
-/// sidecars are excluded, exactly as `recent_transcript_from_sidecar` does.
+/// folders and `uploaded/YYYYMMDD`. Uses file size only so the calendar can
+/// stay fast and avoid iCloud materialization.
 pub fn transcript_days_from_save_root(root: &Path) -> Vec<TranscriptDay> {
     // Counts are size-based (see `sidecar_has_content`): no file content is read
     // here, so this never triggers an iCloud download and works on evicted
@@ -1760,10 +1777,16 @@ fn compact_day_from_dashed(day: &str) -> Option<String> {
 /// day, reading only that day's `YYYYMMDD` folder (and its `uploaded` twin).
 /// Entries are returned in ascending (oldest-first) order.
 ///
+/// Normal navigation (`download == false`) first tries `YYYYMMDD/all.json` when
+/// that index exists and its file fingerprints still match the sidecars. Missing
+/// indexes fall back to the legacy sidecar scan without writing one, so existing
+/// archives are not migrated implicitly.
+///
 /// When `download` is false (on-navigation load) the dataless guard is held so
 /// iCloud-evicted sidecars are skipped instead of downloaded. When `download`
 /// is true (an explicit user reload) the guard is dropped so the requested
-/// day's evicted sidecars are materialized (fetched) and returned.
+/// day's evicted sidecars are materialized (fetched), returned, and persisted
+/// into `YYYYMMDD/all.json`.
 pub fn transcripts_for_day_from_save_root(
     root: &Path,
     day: &str,
@@ -1773,11 +1796,46 @@ pub fn transcripts_for_day_from_save_root(
         return Vec::new();
     };
 
+    if !download {
+        if let Some(entries) = read_valid_transcript_day_index(root, day, &compact) {
+            return entries;
+        }
+    }
+
     let _dataless_guard = if download {
         None
     } else {
         Some(DatalessMaterializationGuard::disabled())
     };
+    let entries = collect_transcripts_for_compact_day(root, &compact);
+
+    if download {
+        let _ = write_transcript_day_index(root, day, &compact, &entries);
+    }
+
+    entries
+}
+
+pub fn rebuild_transcript_day_index_from_save_root(
+    root: &Path,
+    day: &str,
+    download: bool,
+) -> Result<Vec<RecentTranscript>, String> {
+    let Some(compact) = compact_day_from_dashed(day) else {
+        return Ok(Vec::new());
+    };
+
+    let _dataless_guard = if download {
+        None
+    } else {
+        Some(DatalessMaterializationGuard::disabled())
+    };
+    let entries = collect_transcripts_for_compact_day(root, &compact);
+    write_transcript_day_index(root, day, &compact, &entries)?;
+    Ok(entries)
+}
+
+fn collect_transcripts_for_compact_day(root: &Path, compact: &str) -> Vec<RecentTranscript> {
     let day_dir = root.join(&compact);
     let uploaded_dir = root.join("uploaded").join(&compact);
     let mut paths = Vec::new();
@@ -1791,6 +1849,93 @@ pub fn transcripts_for_day_from_save_root(
         .iter()
         .filter_map(|path| recent_transcript_from_sidecar(path))
         .collect()
+}
+
+fn transcript_day_index_path(root: &Path, compact: &str) -> PathBuf {
+    root.join(compact).join(TRANSCRIPT_DAY_INDEX_FILE_NAME)
+}
+
+fn read_valid_transcript_day_index(
+    root: &Path,
+    day: &str,
+    compact: &str,
+) -> Option<Vec<RecentTranscript>> {
+    let index_path = transcript_day_index_path(root, compact);
+    let index = fs::read(&index_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<TranscriptDayIndex>(&bytes).ok())?;
+    if index.schema_version != TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION || index.day != day {
+        return None;
+    }
+    let source_files = transcript_day_index_source_files(root, compact);
+    (index.source_files == source_files).then_some(index.entries)
+}
+
+fn write_transcript_day_index(
+    root: &Path,
+    day: &str,
+    compact: &str,
+    entries: &[RecentTranscript],
+) -> Result<(), String> {
+    let index_path = transcript_day_index_path(root, compact);
+    let parent = index_path
+        .parent()
+        .ok_or_else(|| "transcript day index path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let index = TranscriptDayIndex {
+        schema_version: TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION,
+        day: day.to_string(),
+        generated_at: Utc::now().to_rfc3339(),
+        source_files: transcript_day_index_source_files(root, compact),
+        entries: entries.to_vec(),
+    };
+    let tmp_path = index_path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&index).map_err(|error| error.to_string())?;
+    fs::write(&tmp_path, bytes).map_err(|error| error.to_string())?;
+    fs::rename(&tmp_path, &index_path).map_err(|error| error.to_string())
+}
+
+fn transcript_day_index_source_files(
+    root: &Path,
+    compact: &str,
+) -> Vec<TranscriptDayIndexSourceFile> {
+    let mut paths = BTreeSet::new();
+    let mut sidecars = Vec::new();
+    collect_day_sidecar_paths(&root.join(compact), &mut sidecars);
+    collect_day_sidecar_paths(&root.join("uploaded").join(compact), &mut sidecars);
+
+    for sidecar in sidecars {
+        paths.insert(sidecar.clone());
+        let metadata_path = sidecar.with_extension("json");
+        if metadata_path.exists() {
+            paths.insert(metadata_path);
+        }
+        for extension in ["m4a", "wav"] {
+            let audio_path = sidecar.with_extension(extension);
+            if audio_path.exists() {
+                paths.insert(audio_path);
+            }
+        }
+    }
+
+    paths
+        .into_iter()
+        .filter_map(|path| transcript_day_index_source_file(&path))
+        .collect()
+}
+
+fn transcript_day_index_source_file(path: &Path) -> Option<TranscriptDayIndexSourceFile> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .map(DateTime::<Utc>::from)
+        .map(|timestamp| timestamp.to_rfc3339())?;
+    Some(TranscriptDayIndexSourceFile {
+        path: path.to_string_lossy().to_string(),
+        len: metadata.len(),
+        modified_at,
+    })
 }
 
 /// Non-recursive: collect non-error `.txt` sidecars directly inside `dir`.
@@ -2460,6 +2605,72 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(settings.selected_microphone, "input-3-by-v");
+    }
+
+    fn cached_source_file(path: &Path) -> serde_json::Value {
+        let metadata = std::fs::metadata(path).expect("source metadata");
+        let modified = metadata
+            .modified()
+            .map(DateTime::<Utc>::from)
+            .map(|timestamp| timestamp.to_rfc3339())
+            .expect("source modified time");
+        serde_json::json!({
+            "path": path.to_string_lossy(),
+            "len": metadata.len(),
+            "modified_at": modified,
+        })
+    }
+
+    #[test]
+    fn transcripts_for_day_reads_valid_all_json_before_sidecars() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        let sidecar_path = day.join("090000.txt");
+        std::fs::write(&sidecar_path, "sidecar transcript").expect("sidecar");
+        let cached_entry = serde_json::json!({
+            "transcript_path": sidecar_path.to_string_lossy(),
+            "audio_path": null,
+            "recorded_at": "2026-05-10T09:00:00+09:00",
+            "text": "cached transcript",
+            "source": "microphone",
+            "source_label": null,
+        });
+        let index = serde_json::json!({
+            "schema_version": 1,
+            "day": "2026-05-10",
+            "generated_at": "2026-05-10T00:00:00Z",
+            "source_files": [cached_source_file(&sidecar_path)],
+            "entries": [cached_entry],
+        });
+        std::fs::write(
+            day.join("all.json"),
+            serde_json::to_vec_pretty(&index).expect("index json"),
+        )
+        .expect("index");
+
+        let transcripts = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", false);
+
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(transcripts[0].text, "cached transcript");
+    }
+
+    #[test]
+    fn transcripts_for_day_reload_writes_all_json_for_manual_rebuild() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        std::fs::write(day.join("090000.txt"), "morning transcript").expect("sidecar");
+
+        let transcripts = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", true);
+
+        assert_eq!(transcripts.len(), 1);
+        let index_path = day.join("all.json");
+        assert!(index_path.exists());
+        let index: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(index_path).expect("index")).expect("index json");
+        assert_eq!(index["day"], "2026-05-10");
+        assert_eq!(index["entries"][0]["text"], "morning transcript");
     }
 
     #[test]

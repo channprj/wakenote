@@ -284,6 +284,17 @@ export async function loadTranscriptsForDay(
   return invoke<RecentTranscript[]>("transcripts_for_day", { day, download });
 }
 
+export async function rebuildTranscriptDayIndex(
+  day: string,
+  download = true,
+): Promise<RecentTranscript[]> {
+  if (!isTauriRuntime()) {
+    return loadTranscriptsForDay(day, download);
+  }
+
+  return invoke<RecentTranscript[]>("rebuild_transcript_day_index", { day, download });
+}
+
 export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const previousSettings = browserSnapshot.settings ?? defaultSettings();

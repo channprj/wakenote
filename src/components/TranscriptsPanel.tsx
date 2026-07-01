@@ -3,6 +3,7 @@ import {
   loadTranscriptDays,
   loadTranscriptsForDay,
   openTranscriptFolder,
+  rebuildTranscriptDayIndex,
   regenerateTranscript,
 } from "../lib/tauri-client";
 import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
@@ -59,6 +60,22 @@ export function TranscriptsPanel({
     }
   }, []);
 
+  const rebuildDay = useCallback(async (day: string, download = true) => {
+    setLoadingDay(day);
+    try {
+      const entries = await rebuildTranscriptDayIndex(day, download);
+      setEntriesByDay((prev) => {
+        const next = new Map(prev);
+        next.set(day, entries);
+        return next;
+      });
+    } catch {
+      // Leave any previously loaded entries in place on failure.
+    } finally {
+      setLoadingDay((current) => (current === day ? null : current));
+    }
+  }, []);
+
   // TranscriptsView fires onActiveDayChange(effectiveActiveDay) on mount (with
   // today) and whenever the active day changes. ensureDayLoaded's requestedRef
   // guard is what keeps each day loaded at most once across those effect
@@ -80,10 +97,10 @@ export function TranscriptsPanel({
   const reloadDay = useCallback(
     (day: string) => {
       requestedRef.current.add(day);
-      void loadDay(day, true);
+      void rebuildDay(day, true);
       void refreshDays();
     },
-    [loadDay, refreshDays],
+    [rebuildDay, refreshDays],
   );
 
   const regenerateEntries = useCallback(

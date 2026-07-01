@@ -737,6 +737,24 @@ async fn transcripts_for_day(
 }
 
 #[tauri::command]
+async fn rebuild_transcript_day_index(
+    state: State<'_, BackendState>,
+    day: String,
+    download: bool,
+) -> Result<Vec<RecentTranscript>, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::commands::rebuild_transcript_day_index_from_save_root(&save_root, &day, download)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
     let path = PathBuf::from(audio_path);
     let validated_path = path.clone();
@@ -2756,6 +2774,7 @@ fn main() {
             recent_transcripts,
             transcript_days,
             transcripts_for_day,
+            rebuild_transcript_day_index,
             allow_audio_playback,
             upload_audio_file,
             analyze_audio_waveform,

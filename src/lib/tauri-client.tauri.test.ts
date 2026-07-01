@@ -61,6 +61,15 @@ function mockInvoke(command: string) {
           text: "recent transcript",
         },
       ] satisfies RecentTranscript[]);
+    case "rebuild_transcript_day_index":
+      return Promise.resolve([
+        {
+          transcript_path: "/tmp/WakeNote/20260512/120000.txt",
+          audio_path: null,
+          recorded_at: "2026-05-12T12:00:00+09:00",
+          text: "rebuilt transcript",
+        },
+      ] satisfies RecentTranscript[]);
     default:
       return Promise.reject(new Error(`unexpected invoke command: ${command}`));
   }
@@ -96,6 +105,20 @@ describe("tauri runtime client snapshots", () => {
 
     expect(transcripts).toHaveLength(1);
     expect(mocks.invoke).toHaveBeenCalledWith("recent_transcripts", { limit: 50 });
+  });
+
+  it("rebuilds one transcript day index through an explicit Tauri command", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { rebuildTranscriptDayIndex } = await import("./tauri-client");
+
+    const transcripts = await rebuildTranscriptDayIndex("2026-05-12", true);
+
+    expect(transcripts[0].text).toBe("rebuilt transcript");
+    expect(mocks.invoke).toHaveBeenCalledWith("rebuild_transcript_day_index", {
+      day: "2026-05-12",
+      download: true,
+    });
   });
 
   it("invokes regenerate_transcript and reloads the Tauri snapshot", async () => {
