@@ -156,6 +156,7 @@ fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
         ended_at: now,
         duration_ms: 1000,
         transcription_status: TranscriptionStatus::Queued,
+        transcribed_at: None,
         app_version: "0.0.0".into(),
         used_fallback_device: false,
         live_capture_chunk_id: None,
