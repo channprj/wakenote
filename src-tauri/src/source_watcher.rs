@@ -8,7 +8,13 @@
 //! switch away from an active source until that source's window disappears,
 //! which avoids flapping between e.g. a Meet tab and a YouTube tab).
 
-use crate::sources::{SourceDefinition, match_source};
+use crate::sources::{match_source, SourceDefinition};
+
+/// Number of consecutive watcher polls that may miss the active source before
+/// the source is considered ended. The watcher currently polls every 5 seconds,
+/// so this gives long-running calls roughly 30 seconds of tolerance for
+/// transient ScreenCaptureKit enumeration failures or browser-title flapping.
+pub const SOURCE_MISSING_GRACE_POLLS: u8 = 6;
 
 /// A window observed on screen, reduced to what detection needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +104,37 @@ pub fn compute_source_transition(
     }
 }
 
+/// Compute a transition while tolerating a bounded run of missing active-source
+/// polls. The caller keeps `missing_polls` across watcher iterations and stores
+/// the returned counter for the next poll.
+pub fn compute_source_transition_with_missing_grace(
+    previous: Option<&DetectedSource>,
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+    missing_polls: u8,
+    required_missing_polls: u8,
+) -> (SourceTransition, u8) {
+    match previous {
+        None => match first_candidate(windows, sources) {
+            Some(detected) => (SourceTransition::Detected(detected), 0),
+            None => (SourceTransition::Unchanged, 0),
+        },
+        Some(active) => {
+            if source_still_present(active, windows, sources) {
+                return (SourceTransition::Unchanged, 0);
+            }
+
+            let required_missing_polls = required_missing_polls.max(1);
+            let missing_polls = missing_polls.saturating_add(1);
+            if missing_polls >= required_missing_polls {
+                (SourceTransition::Ended(active.clone()), 0)
+            } else {
+                (SourceTransition::Unchanged, missing_polls)
+            }
+        }
+    }
+}
+
 /// Whether a freshly-detected source should start capturing automatically. The
 /// per-source auto-capture preference is resolved by the caller via
 /// [`crate::settings::resolve_auto_prompt`]; this only combines the gating flags
@@ -169,6 +206,75 @@ mod tests {
             compute_source_transition(Some(&active), &windows, &sources()),
             SourceTransition::Ended(active)
         );
+    }
+
+    #[test]
+    fn grace_keeps_active_source_through_transient_missing_polls() {
+        let active = DetectedSource {
+            source_id: "meet".into(),
+            label: "Google Meet".into(),
+            app_name: "Google Chrome".into(),
+            pid: 42,
+        };
+        let windows_without_meet = [window("Inbox - Gmail", "Google Chrome", 42)];
+
+        let (transition, missing_polls) = compute_source_transition_with_missing_grace(
+            Some(&active),
+            &windows_without_meet,
+            &sources(),
+            0,
+            SOURCE_MISSING_GRACE_POLLS,
+        );
+
+        assert_eq!(transition, SourceTransition::Unchanged);
+        assert_eq!(missing_polls, 1);
+
+        let windows_with_meet = [window("Weekly sync - Google Meet", "Google Chrome", 42)];
+        let (transition, missing_polls) = compute_source_transition_with_missing_grace(
+            Some(&active),
+            &windows_with_meet,
+            &sources(),
+            missing_polls,
+            SOURCE_MISSING_GRACE_POLLS,
+        );
+
+        assert_eq!(transition, SourceTransition::Unchanged);
+        assert_eq!(missing_polls, 0);
+    }
+
+    #[test]
+    fn grace_ends_active_source_after_consecutive_missing_polls() {
+        let active = DetectedSource {
+            source_id: "meet".into(),
+            label: "Google Meet".into(),
+            app_name: "Google Chrome".into(),
+            pid: 42,
+        };
+        let windows_without_meet = [window("Inbox - Gmail", "Google Chrome", 42)];
+        let mut missing_polls = 0;
+
+        for _ in 1..SOURCE_MISSING_GRACE_POLLS {
+            let (transition, next_missing_polls) = compute_source_transition_with_missing_grace(
+                Some(&active),
+                &windows_without_meet,
+                &sources(),
+                missing_polls,
+                SOURCE_MISSING_GRACE_POLLS,
+            );
+            assert_eq!(transition, SourceTransition::Unchanged);
+            missing_polls = next_missing_polls;
+        }
+
+        let (transition, missing_polls) = compute_source_transition_with_missing_grace(
+            Some(&active),
+            &windows_without_meet,
+            &sources(),
+            missing_polls,
+            SOURCE_MISSING_GRACE_POLLS,
+        );
+
+        assert_eq!(transition, SourceTransition::Ended(active));
+        assert_eq!(missing_polls, 0);
     }
 
     #[test]

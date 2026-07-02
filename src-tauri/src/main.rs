@@ -49,7 +49,8 @@ use wakenote::settings::{
     resolve_auto_prompt,
 };
 use wakenote::source_watcher::{
-    DetectedSource, SourceTransition, compute_source_transition, should_auto_capture_source,
+    DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
+    compute_source_transition_with_missing_grace, should_auto_capture_source,
 };
 use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
@@ -1651,6 +1652,7 @@ fn spawn_source_watcher(
     transcription_state: AutoTranscriptionState,
 ) {
     thread::spawn(move || {
+        let mut missing_source_polls = 0;
         loop {
             thread::sleep(SOURCE_WATCH_INTERVAL);
 
@@ -1673,7 +1675,16 @@ fn spawn_source_watcher(
                 Ok(slot) => slot.clone(),
                 Err(_) => continue,
             };
-            match compute_source_transition(previous.as_ref(), &windows, &source_defs) {
+            let (transition, next_missing_source_polls) =
+                compute_source_transition_with_missing_grace(
+                    previous.as_ref(),
+                    &windows,
+                    &source_defs,
+                    missing_source_polls,
+                    SOURCE_MISSING_GRACE_POLLS,
+                );
+            missing_source_polls = next_missing_source_polls;
+            match transition {
                 SourceTransition::Detected(source) => {
                     if let Ok(mut slot) = detected_source_state.lock() {
                         *slot = Some(source.clone());
