@@ -1831,7 +1831,7 @@ pub fn rebuild_transcript_day_index_from_save_root(
         Some(DatalessMaterializationGuard::disabled())
     };
     let entries = collect_transcripts_for_compact_day(root, &compact);
-    write_transcript_day_index(root, day, &compact, &entries)?;
+    let _ = write_transcript_day_index(root, day, &compact, &entries);
     Ok(entries)
 }
 
@@ -2671,6 +2671,22 @@ mod tests {
             serde_json::from_slice(&std::fs::read(index_path).expect("index")).expect("index json");
         assert_eq!(index["day"], "2026-05-10");
         assert_eq!(index["entries"][0]["text"], "morning transcript");
+    }
+
+    #[test]
+    fn rebuild_transcript_day_index_returns_entries_when_cache_write_fails() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        std::fs::write(day.join("090000.txt"), "morning transcript").expect("sidecar");
+        std::fs::create_dir(day.join("all.json.tmp")).expect("block temp index write");
+
+        let transcripts =
+            rebuild_transcript_day_index_from_save_root(tmp.path(), "2026-05-10", true)
+                .expect("reload should return entries even if cache write fails");
+
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(transcripts[0].text, "morning transcript");
     }
 
     #[test]
