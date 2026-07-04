@@ -52,7 +52,7 @@ export function formatEta(etaMs: number): string {
 }
 
 const STATUS_LABELS: Record<MeetingStatus, string> = {
-  pending: "Pending",
+  pending: "Recorded",
   processing: "Transcribing",
   completed: "Completed",
   failed: "Failed",
@@ -64,7 +64,7 @@ export function meetingStatusLabel(status: MeetingStatus): string {
 }
 
 const STATUS_TONES: Record<MeetingStatus, StatusTone> = {
-  pending: "neutral",
+  pending: "warning",
   processing: "primary",
   completed: "success",
   failed: "danger",
@@ -76,10 +76,10 @@ export function meetingStatusTone(status: MeetingStatus): StatusTone {
 }
 
 export function isMeetingActive(status: MeetingStatus): boolean {
-  return status === "pending" || status === "processing";
+  return status === "processing";
 }
 
 /** A meeting can be resumed when it stopped before finishing all segments. */
 export function canResumeMeeting(status: MeetingStatus): boolean {
-  return status === "failed" || status === "canceled";
+  return status === "pending" || status === "failed" || status === "canceled";
 }

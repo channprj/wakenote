@@ -50,14 +50,18 @@ describe("formatEta", () => {
 
 describe("status presentation", () => {
   it("maps labels and tones", () => {
+    expect(meetingStatusLabel("pending")).toBe("Recorded");
+    expect(meetingStatusTone("pending")).toBe("warning");
     expect(meetingStatusLabel("processing")).toBe("Transcribing");
     expect(meetingStatusTone("completed")).toBe("success");
     expect(meetingStatusTone("failed")).toBe("danger");
   });
 
   it("classifies active and resumable states", () => {
+    expect(isMeetingActive("pending")).toBe(false);
     expect(isMeetingActive("processing")).toBe(true);
     expect(isMeetingActive("completed")).toBe(false);
+    expect(canResumeMeeting("pending")).toBe(true);
     expect(canResumeMeeting("failed")).toBe(true);
     expect(canResumeMeeting("canceled")).toBe(true);
     expect(canResumeMeeting("completed")).toBe(false);

@@ -1825,18 +1825,18 @@ fn stop_source_capture_runtime(
     }
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
-    let (settings, status, meeting_job_ids) = {
+    let (settings, status, meeting_job_actions) = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
         append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
         let status = backend.stop_system_capture_session()?;
-        let meeting_job_ids = collect_finished_system_meeting_jobs(&mut backend);
-        (backend.settings(), status, meeting_job_ids)
+        let meeting_job_actions = drain_finished_system_meeting_job_actions(&mut backend);
+        (backend.settings(), status, meeting_job_actions)
     };
     start_finished_system_meeting_jobs(
         app,
         backend_state,
         meeting_state,
-        meeting_job_ids,
+        meeting_job_actions,
         &settings,
     );
     update_tray_presentation(app, &settings, &status);
@@ -1870,14 +1870,34 @@ fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
     );
 }
 
-fn collect_finished_system_meeting_jobs(backend: &mut AppBackend) -> Vec<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FinishedSystemMeetingJobAction {
+    Start(String),
+    Pending { id: String, reason: &'static str },
+}
+
+fn drain_finished_system_meeting_job_actions(
+    backend: &mut AppBackend,
+) -> Vec<FinishedSystemMeetingJobAction> {
     let ids = backend.take_finished_system_meeting_ids();
     let settings = backend.settings();
-    if settings.transcription_enabled && selected_meeting_model_is_ready(&settings) {
-        ids
-    } else {
-        Vec::new()
-    }
+    ids.into_iter()
+        .map(|id| {
+            if !settings.transcription_enabled {
+                FinishedSystemMeetingJobAction::Pending {
+                    id,
+                    reason: "transcription_disabled",
+                }
+            } else if !selected_meeting_model_is_ready(&settings) {
+                FinishedSystemMeetingJobAction::Pending {
+                    id,
+                    reason: "model_not_ready",
+                }
+            } else {
+                FinishedSystemMeetingJobAction::Start(id)
+            }
+        })
+        .collect()
 }
 
 fn selected_meeting_model_is_ready(settings: &AppSettings) -> bool {
@@ -1890,10 +1910,27 @@ fn start_finished_system_meeting_jobs(
     app: &AppHandle,
     backend_state: &BackendState,
     meeting_state: &MeetingState,
-    ids: Vec<String>,
+    actions: Vec<FinishedSystemMeetingJobAction>,
     settings: &AppSettings,
 ) {
-    for id in ids {
+    for action in actions {
+        let id = match action {
+            FinishedSystemMeetingJobAction::Start(id) => id,
+            FinishedSystemMeetingJobAction::Pending { id, reason } => {
+                append_runtime_debug_log(
+                    settings,
+                    format!(
+                        "[meeting-capture] state=pending id={} reason={}",
+                        id, reason
+                    ),
+                );
+                continue;
+            }
+        };
+        append_runtime_debug_log(
+            settings,
+            format!("[meeting-capture] state=queued id={}", id),
+        );
         if let Err(error) = spawn_meeting_job(
             app.clone(),
             backend_state.clone(),
@@ -1902,12 +1939,15 @@ fn start_finished_system_meeting_jobs(
         ) {
             append_runtime_debug_log(
                 settings,
-                format!("[meeting-capture] auto_start_failed id={} error={}", id, error),
+                format!(
+                    "[meeting-capture] state=pending id={} reason=worker_unavailable error={}",
+                    id, error
+                ),
             );
         } else {
             append_runtime_debug_log(
                 settings,
-                format!("[meeting-capture] auto_started id={}", id),
+                format!("[meeting-capture] state=transcribing id={}", id),
             );
         }
     }
@@ -3917,10 +3957,16 @@ mod tests {
             .stop_system_capture_session()
             .expect("stop meet system capture");
 
-        let ids = collect_finished_system_meeting_jobs(&mut backend);
+        let meetings = wakenote::meeting::list_meetings(tmp.path());
+        let actions = drain_finished_system_meeting_job_actions(&mut backend);
 
-        assert_eq!(ids.len(), 1);
-        assert!(collect_finished_system_meeting_jobs(&mut backend).is_empty());
+        assert_eq!(
+            actions,
+            vec![FinishedSystemMeetingJobAction::Start(
+                meetings[0].id.clone()
+            )]
+        );
+        assert!(drain_finished_system_meeting_job_actions(&mut backend).is_empty());
     }
 
     #[test]
@@ -3955,10 +4001,21 @@ mod tests {
             .stop_system_capture_session()
             .expect("stop meet system capture");
 
-        assert!(collect_finished_system_meeting_jobs(&mut backend).is_empty());
         let meetings = wakenote::meeting::list_meetings(tmp.path());
+        let actions = drain_finished_system_meeting_job_actions(&mut backend);
+
+        assert_eq!(
+            actions,
+            vec![FinishedSystemMeetingJobAction::Pending {
+                id: meetings[0].id.clone(),
+                reason: "model_not_ready",
+            }]
+        );
         assert_eq!(meetings.len(), 1);
-        assert_eq!(meetings[0].status, wakenote::meeting::MeetingStatus::Pending);
+        assert_eq!(
+            meetings[0].status,
+            wakenote::meeting::MeetingStatus::Pending
+        );
     }
 
     #[test]
