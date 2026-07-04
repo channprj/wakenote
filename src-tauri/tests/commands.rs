@@ -12,6 +12,7 @@ use wakenote::commands::{
     tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
     validate_audio_playback_file, with_live_runtime_warning, with_runtime_warning,
 };
+use wakenote::debug_log::debug_log_path_for;
 use wakenote::live_capture::AudioFrame;
 use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
 use wakenote::models::{ModelStatus, ModelStore};
@@ -1273,6 +1274,29 @@ fn backend_processes_next_transcription_job_and_writes_sidecar() {
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
         "queued transcript\n"
     );
+}
+
+#[test]
+fn backend_logs_backfilled_jobs_when_enqueueing_backlog() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230709.wav");
+    std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
+    std::fs::write(&audio_path, b"recorded audio").expect("audio");
+
+    let mut backend = AppBackend::default();
+    backend.update_settings(wav_settings_patch(tmp.path()));
+
+    let snapshot = backend
+        .enqueue_backlog(tmp.path())
+        .expect("enqueue backlog");
+
+    assert_eq!(snapshot.pending_count, 1);
+    let log_path = debug_log_path_for(tmp.path(), chrono::Local::now().date_naive());
+    let log = std::fs::read_to_string(log_path).expect("debug log");
+    assert!(log.contains("[queue] state=backfilled"));
+    assert!(log.contains("job_id=1"));
+    assert!(log.contains("model=whisper-medium"));
+    assert!(log.contains("20260506/230709.wav"));
 }
 
 #[test]

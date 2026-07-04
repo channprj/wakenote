@@ -1347,6 +1347,20 @@ impl AppBackend {
             .queue
             .enqueue_backlog(scan, self.settings.selected_model.clone());
         if !enqueued.is_empty() {
+            let log_root = self.save_root_path();
+            for job_id in &enqueued {
+                if let Some(job) = self.queue.job(*job_id) {
+                    append_debug_log(
+                        &log_root,
+                        format!(
+                            "[queue] state=backfilled job_id={} path={} model={}",
+                            job.id,
+                            job.audio_path.display(),
+                            job.model_id
+                        ),
+                    );
+                }
+            }
             self.persist_queue();
         }
         Ok(self.queue.snapshot())
