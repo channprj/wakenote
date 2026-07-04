@@ -148,6 +148,14 @@ pub fn should_auto_capture_source(
     system_audio_enabled && auto_capture && !already_capturing && !paused_this_session
 }
 
+pub fn should_defer_source_end_for_recent_audio(
+    transition: &SourceTransition,
+    already_capturing: bool,
+    recent_audio: bool,
+) -> bool {
+    matches!(transition, SourceTransition::Ended(_)) && already_capturing && recent_audio
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +341,26 @@ mod tests {
         assert!(!should_auto_capture_source(true, true, true, false));
         // paused for this session
         assert!(!should_auto_capture_source(true, true, false, true));
+    }
+
+    #[test]
+    fn recent_audio_defers_auto_stop_for_missing_active_source() {
+        let active = DetectedSource {
+            source_id: "meet".into(),
+            label: "Google Meet".into(),
+            app_name: "Google Chrome".into(),
+            pid: 42,
+        };
+        let ended = SourceTransition::Ended(active);
+
+        assert!(should_defer_source_end_for_recent_audio(&ended, true, true));
+        assert!(!should_defer_source_end_for_recent_audio(&ended, true, false));
+        assert!(!should_defer_source_end_for_recent_audio(&ended, false, true));
+        assert!(!should_defer_source_end_for_recent_audio(
+            &SourceTransition::Unchanged,
+            true,
+            true
+        ));
     }
 
     #[test]

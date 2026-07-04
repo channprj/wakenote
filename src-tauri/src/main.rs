@@ -51,6 +51,7 @@ use wakenote::settings::{
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
     compute_source_transition_with_missing_grace, should_auto_capture_source,
+    should_defer_source_end_for_recent_audio,
 };
 use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
@@ -67,6 +68,7 @@ type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
 /// the mic runtime so the two capture paths are independent. Managed as an
 /// `Arc<Mutex<…>>` so the watcher thread and IPC commands share one handle.
 type SystemCaptureState = Arc<Mutex<Option<Box<dyn AudioStreamHandle>>>>;
+type SourceCaptureLifecycleState = Arc<Mutex<SourceCaptureLifecycle>>;
 /// The recognized source currently detected on screen, threaded across polls by
 /// the watcher and read by the capture commands.
 type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
@@ -96,6 +98,41 @@ struct TrayPresentationSnapshot {
     runtime: TrayRuntimePresentation,
     menu: TrayMenuPresentation,
     show_menu_on_left_click: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SourceCaptureLifecycle {
+    Idle,
+    Starting {
+        source_id: String,
+        attempt: u8,
+    },
+    Running {
+        source_id: String,
+    },
+    Stopping {
+        source_id: String,
+    },
+    Failed {
+        source_id: String,
+        failed_at: Instant,
+        attempts: u8,
+    },
+}
+
+impl Default for SourceCaptureLifecycle {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SourceCaptureStartDecision {
+    Start { attempt: u8 },
+    AlreadyStarting,
+    AlreadyRunning,
+    Stopping,
+    BackingOff { retry_after: Duration },
 }
 
 const EVENT_LIVE_STARTED: &str = "live-transcript-started";
@@ -131,6 +168,12 @@ const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 1;
 const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
+const SOURCE_CAPTURE_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+];
+const SOURCE_CAPTURE_AUDIO_LIVENESS_HOLD: Duration = Duration::from_secs(20);
 /// Sleep inserted between a watchdog-driven `stop` and the immediately
 /// following `start`. macOS CoreAudio occasionally retains wedged state
 /// when a device is reopened the instant after it's released; a brief
@@ -300,6 +343,7 @@ fn update_settings(
     transcription_state: State<'_, AutoTranscriptionState>,
     live_transcriber_state: State<'_, LiveTranscriberState>,
     system_capture_state: State<'_, SystemCaptureState>,
+    source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
@@ -356,6 +400,7 @@ fn update_settings(
         &settings,
         state.inner(),
         system_capture_state.inner(),
+        source_capture_lifecycle_state.inner(),
         detected_source_state.inner(),
     )?;
     kick_transcription_worker_if_needed(
@@ -429,6 +474,108 @@ fn system_capture_settings_action(
     }
 }
 
+fn source_capture_retry_delay(attempts: u8) -> Duration {
+    let index = attempts.saturating_sub(1) as usize;
+    SOURCE_CAPTURE_RETRY_DELAYS[index.min(SOURCE_CAPTURE_RETRY_DELAYS.len() - 1)]
+}
+
+fn source_capture_start_decision(
+    lifecycle: &SourceCaptureLifecycle,
+    source_id: &str,
+    now: Instant,
+) -> SourceCaptureStartDecision {
+    match lifecycle {
+        SourceCaptureLifecycle::Idle => SourceCaptureStartDecision::Start { attempt: 1 },
+        SourceCaptureLifecycle::Starting { .. } => SourceCaptureStartDecision::AlreadyStarting,
+        SourceCaptureLifecycle::Running { .. } => SourceCaptureStartDecision::AlreadyRunning,
+        SourceCaptureLifecycle::Stopping { .. } => SourceCaptureStartDecision::Stopping,
+        SourceCaptureLifecycle::Failed {
+            source_id: failed_source_id,
+            failed_at,
+            attempts,
+        } if failed_source_id == source_id => {
+            let delay = source_capture_retry_delay(*attempts);
+            let retry_at = *failed_at + delay;
+            match retry_at.checked_duration_since(now) {
+                Some(retry_after) if !retry_after.is_zero() => {
+                    SourceCaptureStartDecision::BackingOff { retry_after }
+                }
+                _ => SourceCaptureStartDecision::Start {
+                    attempt: attempts.saturating_add(1).max(1),
+                },
+            }
+        }
+        SourceCaptureLifecycle::Failed { .. } => SourceCaptureStartDecision::Start { attempt: 1 },
+    }
+}
+
+fn source_capture_mark_starting(
+    lifecycle: &mut SourceCaptureLifecycle,
+    source_id: &str,
+    attempt: u8,
+) {
+    *lifecycle = SourceCaptureLifecycle::Starting {
+        source_id: source_id.to_string(),
+        attempt: attempt.max(1),
+    };
+}
+
+fn source_capture_mark_running(lifecycle: &mut SourceCaptureLifecycle, source_id: &str) {
+    *lifecycle = SourceCaptureLifecycle::Running {
+        source_id: source_id.to_string(),
+    };
+}
+
+fn source_capture_mark_stopping(lifecycle: &mut SourceCaptureLifecycle, source_id: &str) {
+    *lifecycle = SourceCaptureLifecycle::Stopping {
+        source_id: source_id.to_string(),
+    };
+}
+
+fn source_capture_mark_failed(
+    lifecycle: &mut SourceCaptureLifecycle,
+    source_id: &str,
+    failed_at: Instant,
+) {
+    let attempts = match lifecycle {
+        SourceCaptureLifecycle::Starting {
+            source_id: active_source,
+            attempt,
+        } if active_source == source_id => *attempt,
+        SourceCaptureLifecycle::Failed {
+            source_id: failed_source,
+            attempts,
+            ..
+        } if failed_source == source_id => *attempts,
+        _ => 1,
+    };
+    *lifecycle = SourceCaptureLifecycle::Failed {
+        source_id: source_id.to_string(),
+        failed_at,
+        attempts: attempts.max(1),
+    };
+}
+
+fn source_capture_mark_idle(lifecycle: &mut SourceCaptureLifecycle) {
+    *lifecycle = SourceCaptureLifecycle::Idle;
+}
+
+fn source_capture_failure_diagnostic(
+    source_id: &str,
+    attempt: u8,
+    screen_recording_status: permissions::PermissionGrantStatus,
+    error: &str,
+) -> String {
+    format!(
+        "[source-capture] error source_id={} attempt={} screen_recording_status={:?} next_retry_ms={} error={}",
+        source_id,
+        attempt.max(1),
+        screen_recording_status,
+        source_capture_retry_delay(attempt.max(1)).as_millis(),
+        error
+    )
+}
+
 /// Reconcile an active system-audio capture session with newly applied settings.
 /// If the feature was disabled, recording turned off, or pause-all turned on,
 /// tear the session down the same way `stop_source_capture` does (drop the
@@ -441,6 +588,7 @@ fn apply_system_capture_settings_action(
     settings: &AppSettings,
     backend_state: &BackendState,
     system_capture_state: &SystemCaptureState,
+    source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
 ) -> Result<(), String> {
     let capturing = system_capture_state
@@ -453,6 +601,7 @@ fn apply_system_capture_settings_action(
                 app,
                 backend_state,
                 system_capture_state,
+                source_capture_lifecycle_state,
                 detected_source_state,
             )?;
         }
@@ -1385,6 +1534,7 @@ fn start_source_capture(
     app: AppHandle,
     backend_state: State<'_, BackendState>,
     system_capture_state: State<'_, SystemCaptureState>,
+    source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
     source_capture_pause_state: State<'_, SourceCapturePauseState>,
     transcription_state: State<'_, AutoTranscriptionState>,
@@ -1397,6 +1547,7 @@ fn start_source_capture(
         &source_id,
         backend_state.inner(),
         system_capture_state.inner(),
+        source_capture_lifecycle_state.inner(),
         detected_source_state.inner(),
         transcription_state.inner().clone(),
     )
@@ -1409,6 +1560,7 @@ fn start_source_capture_runtime(
     source_id: &str,
     backend_state: &BackendState,
     system_capture_state: &SystemCaptureState,
+    source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
@@ -1424,15 +1576,49 @@ fn start_source_capture_runtime(
         }
     };
 
-    // Already capturing: report current status without restarting.
-    if system_capture_state
+    let stream_running = system_capture_state
         .lock()
         .map(|slot| slot.is_some())
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if stream_running {
+        if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+            source_capture_mark_running(&mut lifecycle, source_id);
+        }
         let backend = backend_state.lock().map_err(|e| e.to_string())?;
         return Ok(backend.app_status());
     }
+
+    let start_attempt = {
+        let mut lifecycle = source_capture_lifecycle_state
+            .lock()
+            .map_err(|e| e.to_string())?;
+        match source_capture_start_decision(&lifecycle, source_id, Instant::now()) {
+            SourceCaptureStartDecision::Start { attempt } => {
+                source_capture_mark_starting(&mut lifecycle, source_id, attempt);
+                attempt
+            }
+            SourceCaptureStartDecision::AlreadyStarting
+            | SourceCaptureStartDecision::AlreadyRunning
+            | SourceCaptureStartDecision::Stopping => {
+                let backend = backend_state.lock().map_err(|e| e.to_string())?;
+                return Ok(backend.app_status());
+            }
+            SourceCaptureStartDecision::BackingOff { retry_after } => {
+                if let Ok(backend) = backend_state.lock() {
+                    append_runtime_debug_log(
+                        &backend.settings(),
+                        format!(
+                            "[source-capture] backoff source_id={} retry_after_ms={}",
+                            source_id,
+                            retry_after.as_millis()
+                        ),
+                    );
+                    return Ok(backend.app_status());
+                }
+                return Err("source capture state is unavailable".to_string());
+            }
+        }
+    };
 
     let sample_rate = system_audio_sample_rate();
     let source_label = recording_source_label(&source);
@@ -1441,22 +1627,44 @@ fn start_source_capture_runtime(
         append_runtime_debug_log(
             &backend.settings(),
             format!(
-                "[source-capture] start source_id={} label={} recording_label={} app={} pid={} sample_rate={}",
+                "[source-capture] start source_id={} label={} recording_label={} app={} pid={} sample_rate={} attempt={}",
                 source.source_id,
                 source.label,
                 source_label,
                 source.app_name,
                 source.pid,
-                sample_rate
+                sample_rate,
+                start_attempt
             ),
         );
-        backend.start_system_capture_session(
+        if let Err(error) = backend.start_system_capture_session(
             sample_rate,
             chrono::Utc::now(),
             source.app_name.clone(),
             source.source_id.clone(),
             source_label,
-        )?;
+        ) {
+            if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+                source_capture_mark_failed(&mut lifecycle, source_id, Instant::now());
+            }
+            let screen_recording_status =
+                permissions::permission_snapshot().screen_recording.status;
+            let diagnostic = source_capture_failure_diagnostic(
+                &source.source_id,
+                start_attempt,
+                screen_recording_status,
+                &error,
+            );
+            append_runtime_debug_log(
+                &backend.settings(),
+                format!(
+                    "{} label={} app={} pid={}",
+                    diagnostic, source.label, source.app_name, source.pid
+                ),
+            );
+            emit_source_capture_error(app, source_id, &error);
+            return Err(error);
+        }
     }
 
     let callback_backend = Arc::clone(backend_state);
@@ -1511,22 +1719,36 @@ fn start_source_capture_runtime(
         Ok(stream) => stream,
         Err(error) => {
             let message = format!("system-audio capture failed: {error}");
+            let screen_recording_status =
+                permissions::permission_snapshot().screen_recording.status;
+            let diagnostic = source_capture_failure_diagnostic(
+                &source.source_id,
+                start_attempt,
+                screen_recording_status,
+                &message,
+            );
             // Roll back the capture session we opened above.
             if let Ok(mut backend) = backend_state.lock() {
                 append_runtime_debug_log(
                     &backend.settings(),
                     format!(
-                        "[source-capture] error source_id={} label={} app={} pid={} error={}",
-                        source.source_id, source.label, source.app_name, source.pid, message
+                        "{} label={} app={} pid={}",
+                        diagnostic, source.label, source.app_name, source.pid
                     ),
                 );
                 let _ = backend.stop_system_capture_session();
+            }
+            if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+                source_capture_mark_failed(&mut lifecycle, source_id, Instant::now());
             }
             emit_source_capture_error(app, source_id, &message);
             return Err(message);
         }
     };
     *system_capture_state.lock().map_err(|e| e.to_string())? = Some(stream);
+    if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+        source_capture_mark_running(&mut lifecycle, source_id);
+    }
 
     let _ = app.emit(
         EVENT_SOURCE_CAPTURE_STARTED,
@@ -1549,6 +1771,7 @@ fn stop_source_capture(
     app: AppHandle,
     backend_state: State<'_, BackendState>,
     system_capture_state: State<'_, SystemCaptureState>,
+    source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
     source_capture_pause_state: State<'_, SourceCapturePauseState>,
     transcription_state: State<'_, AutoTranscriptionState>,
@@ -1566,6 +1789,7 @@ fn stop_source_capture(
         &app,
         backend_state.inner(),
         system_capture_state.inner(),
+        source_capture_lifecycle_state.inner(),
         detected_source_state.inner(),
     )?;
     kick_transcription_worker_if_needed(
@@ -1580,8 +1804,18 @@ fn stop_source_capture_runtime(
     app: &AppHandle,
     backend_state: &BackendState,
     system_capture_state: &SystemCaptureState,
+    source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
 ) -> Result<AppStatus, String> {
+    let stopped_source_id = detected_source_state
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()));
+    if let Some(source_id) = stopped_source_id.as_deref() {
+        if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+            source_capture_mark_stopping(&mut lifecycle, source_id);
+        }
+    }
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
     let (settings, status) = {
@@ -1605,6 +1839,9 @@ fn stop_source_capture_runtime(
             label: String::new(),
         });
     let _ = app.emit(EVENT_SOURCE_CAPTURE_STOPPED, payload);
+    if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+        source_capture_mark_idle(&mut lifecycle);
+    }
     Ok(status)
 }
 
@@ -1647,6 +1884,7 @@ fn spawn_source_watcher(
     app: AppHandle,
     backend_state: BackendState,
     system_capture_state: SystemCaptureState,
+    source_capture_lifecycle_state: SourceCaptureLifecycleState,
     detected_source_state: DetectedSourceState,
     source_capture_pause_state: SourceCapturePauseState,
     transcription_state: AutoTranscriptionState,
@@ -1718,6 +1956,7 @@ fn spawn_source_watcher(
                             &source.source_id,
                             &backend_state,
                             &system_capture_state,
+                            &source_capture_lifecycle_state,
                             &detected_source_state,
                             transcription_state.clone(),
                         ) {
@@ -1726,6 +1965,40 @@ fn spawn_source_watcher(
                     }
                 }
                 SourceTransition::Ended(source) => {
+                    let capturing = system_capture_state
+                        .lock()
+                        .map(|slot| slot.is_some())
+                        .unwrap_or(false);
+                    let recent_audio = backend_state
+                        .lock()
+                        .map(|backend| {
+                            backend.has_recent_system_audio_frame(
+                                Instant::now(),
+                                SOURCE_CAPTURE_AUDIO_LIVENESS_HOLD,
+                            )
+                        })
+                        .unwrap_or(false);
+                    let ended_transition = SourceTransition::Ended(source.clone());
+                    if should_defer_source_end_for_recent_audio(
+                        &ended_transition,
+                        capturing,
+                        recent_audio,
+                    ) {
+                        missing_source_polls = SOURCE_MISSING_GRACE_POLLS.saturating_sub(1);
+                        append_runtime_debug_log(
+                            &settings,
+                            format!(
+                                "[source-watch] hold-ended source_id={} label={} app={} pid={} audio_liveness_window_ms={}",
+                                source.source_id,
+                                source.label,
+                                source.app_name,
+                                source.pid,
+                                SOURCE_CAPTURE_AUDIO_LIVENESS_HOLD.as_millis()
+                            ),
+                        );
+                        continue;
+                    }
+
                     append_runtime_debug_log(
                         &settings,
                         format!(
@@ -1736,27 +2009,61 @@ fn spawn_source_watcher(
                     if let Ok(mut paused) = source_capture_pause_state.lock() {
                         paused.remove(&source.source_id);
                     }
-                    if let Ok(mut slot) = detected_source_state.lock() {
-                        *slot = None;
-                    }
                     let _ = app.emit(EVENT_SOURCE_ENDED, SourcePayload::from(&source));
 
-                    let capturing = system_capture_state
-                        .lock()
-                        .map(|slot| slot.is_some())
-                        .unwrap_or(false);
                     if capturing {
                         if let Err(error) = stop_source_capture_runtime(
                             &app,
                             &backend_state,
                             &system_capture_state,
+                            &source_capture_lifecycle_state,
                             &detected_source_state,
                         ) {
                             eprintln!("[source-watch] auto-stop failed: {error}");
                         }
+                    } else if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+                        source_capture_mark_idle(&mut lifecycle);
+                    }
+                    if let Ok(mut slot) = detected_source_state.lock() {
+                        *slot = None;
                     }
                 }
-                SourceTransition::Unchanged => {}
+                SourceTransition::Unchanged => {
+                    let source = detected_source_state
+                        .lock()
+                        .ok()
+                        .and_then(|slot| slot.clone());
+                    let Some(source) = source else {
+                        continue;
+                    };
+                    let already_capturing = system_capture_state
+                        .lock()
+                        .map(|slot| slot.is_some())
+                        .unwrap_or(false);
+                    let auto_capture = resolve_auto_prompt(&settings, &source.source_id);
+                    let paused_this_session = source_capture_pause_state
+                        .lock()
+                        .map(|paused| paused.contains(&source.source_id))
+                        .unwrap_or(false);
+                    if should_auto_capture_source(
+                        settings.system_audio_enabled,
+                        auto_capture,
+                        already_capturing,
+                        paused_this_session,
+                    ) {
+                        if let Err(error) = start_source_capture_runtime(
+                            &app,
+                            &source.source_id,
+                            &backend_state,
+                            &system_capture_state,
+                            &source_capture_lifecycle_state,
+                            &detected_source_state,
+                            transcription_state.clone(),
+                        ) {
+                            eprintln!("[source-watch] auto-capture retry failed: {error}");
+                        }
+                    }
+                }
             }
         }
     });
@@ -2627,6 +2934,8 @@ fn main() {
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
             let system_capture_state: SystemCaptureState = Arc::new(Mutex::new(None));
+            let source_capture_lifecycle_state: SourceCaptureLifecycleState =
+                Arc::new(Mutex::new(SourceCaptureLifecycle::Idle));
             let detected_source_state: DetectedSourceState = Arc::new(Mutex::new(None));
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
@@ -2636,6 +2945,7 @@ fn main() {
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             app.manage(live_transcriber_state.clone());
             app.manage(system_capture_state.clone());
+            app.manage(source_capture_lifecycle_state.clone());
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state);
@@ -2644,6 +2954,7 @@ fn main() {
                 app.handle().clone(),
                 backend_state.clone(),
                 system_capture_state,
+                source_capture_lifecycle_state,
                 detected_source_state,
                 source_capture_pause_state,
                 transcription_state.clone(),
@@ -3408,6 +3719,105 @@ mod tests {
             &settings,
             permissions::PermissionGrantStatus::Granted
         ));
+    }
+
+    #[test]
+    fn source_capture_start_decision_blocks_duplicate_starts() {
+        let now = Instant::now();
+        let starting = SourceCaptureLifecycle::Starting {
+            source_id: "meet".into(),
+            attempt: 1,
+        };
+        let running = SourceCaptureLifecycle::Running {
+            source_id: "meet".into(),
+        };
+
+        assert_eq!(
+            source_capture_start_decision(&starting, "meet", now),
+            SourceCaptureStartDecision::AlreadyStarting
+        );
+        assert_eq!(
+            source_capture_start_decision(&running, "meet", now),
+            SourceCaptureStartDecision::AlreadyRunning
+        );
+    }
+
+    #[test]
+    fn source_capture_start_decision_backs_off_after_failed_start() {
+        let now = Instant::now();
+        let failed = SourceCaptureLifecycle::Failed {
+            source_id: "meet".into(),
+            failed_at: now,
+            attempts: 1,
+        };
+
+        assert_eq!(
+            source_capture_start_decision(&failed, "meet", now + Duration::from_secs(1)),
+            SourceCaptureStartDecision::BackingOff {
+                retry_after: Duration::from_secs(1),
+            }
+        );
+        assert_eq!(
+            source_capture_start_decision(&failed, "meet", now + Duration::from_secs(2)),
+            SourceCaptureStartDecision::Start { attempt: 2 }
+        );
+    }
+
+    #[test]
+    fn source_capture_retry_delay_steps_then_caps() {
+        assert_eq!(source_capture_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(source_capture_retry_delay(2), Duration::from_secs(5));
+        assert_eq!(source_capture_retry_delay(3), Duration::from_secs(10));
+        assert_eq!(source_capture_retry_delay(8), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn source_capture_lifecycle_preserves_failed_attempt_count() {
+        let now = Instant::now();
+        let mut lifecycle = SourceCaptureLifecycle::Idle;
+
+        source_capture_mark_starting(&mut lifecycle, "meet", 1);
+        assert_eq!(
+            lifecycle,
+            SourceCaptureLifecycle::Starting {
+                source_id: "meet".into(),
+                attempt: 1,
+            }
+        );
+
+        source_capture_mark_failed(&mut lifecycle, "meet", now);
+        assert_eq!(
+            lifecycle,
+            SourceCaptureLifecycle::Failed {
+                source_id: "meet".into(),
+                failed_at: now,
+                attempts: 1,
+            }
+        );
+
+        source_capture_mark_starting(&mut lifecycle, "meet", 2);
+        source_capture_mark_failed(&mut lifecycle, "meet", now + Duration::from_secs(3));
+        assert_eq!(
+            source_capture_start_decision(&lifecycle, "meet", now + Duration::from_secs(7)),
+            SourceCaptureStartDecision::BackingOff {
+                retry_after: Duration::from_secs(1),
+            }
+        );
+    }
+
+    #[test]
+    fn source_capture_failure_diagnostic_includes_permission_and_retry_context() {
+        let message = source_capture_failure_diagnostic(
+            "meet",
+            2,
+            permissions::PermissionGrantStatus::Granted,
+            "system-audio capture failed: cpal error: timed out querying shareable content elapsed_ms=10000",
+        );
+
+        assert_eq!(
+            message,
+            "[source-capture] error source_id=meet attempt=2 screen_recording_status=Granted next_retry_ms=5000 error=system-audio capture failed: cpal error: timed out querying shareable content elapsed_ms=10000"
+        );
     }
 
     #[test]

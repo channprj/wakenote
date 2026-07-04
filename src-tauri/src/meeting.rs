@@ -10,6 +10,7 @@
 //! incomplete segment instead of re-running the whole file.
 
 use std::fs;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
-use hound::WavReader;
+use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 use whisper_rs::WhisperContext;
 
@@ -501,6 +502,111 @@ fn write_transcript(dir: &Path, record: &MeetingRecord) -> std::io::Result<()> {
 // ---------------------------------------------------------------------------
 // Public operations
 // ---------------------------------------------------------------------------
+
+pub struct MeetingCaptureRecorder {
+    dir: PathBuf,
+    record: MeetingRecord,
+    writer: Option<WavWriter<BufWriter<fs::File>>>,
+    sample_rate: u32,
+    samples_written: u64,
+}
+
+impl std::fmt::Debug for MeetingCaptureRecorder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeetingCaptureRecorder")
+            .field("id", &self.record.id)
+            .field("dir", &self.dir)
+            .field("sample_rate", &self.sample_rate)
+            .field("samples_written", &self.samples_written)
+            .finish()
+    }
+}
+
+pub fn start_recorded_meeting_capture(
+    save_root: &Path,
+    title: &str,
+    source_filename: &str,
+    model_id: &str,
+    language: TranscriptionLanguage,
+    app_version: &str,
+    sample_rate: u32,
+    timestamp: DateTime<Local>,
+) -> Result<MeetingCaptureRecorder, String> {
+    if sample_rate == 0 {
+        return Err("meeting capture sample rate must be greater than zero".to_string());
+    }
+    let slug = slugify(title);
+    let id = allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
+    let dir = meeting_dir(save_root, &id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let audio_file = "audio.wav".to_string();
+    let writer = WavWriter::create(
+        dir.join(&audio_file),
+        WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    let now = timestamp.with_timezone(&Utc);
+    let record = MeetingRecord {
+        id,
+        title: title.to_string(),
+        source_filename: source_filename.to_string(),
+        audio_file,
+        audio_format: "wav".to_string(),
+        model_id: model_id.to_string(),
+        language,
+        app_version: app_version.to_string(),
+        created_at: now,
+        updated_at: now,
+        duration_ms: 0,
+        status: MeetingStatus::Pending,
+        progress: MeetingProgress::default(),
+        segments: Vec::new(),
+        error: None,
+    };
+
+    Ok(MeetingCaptureRecorder {
+        dir,
+        record,
+        writer: Some(writer),
+        sample_rate,
+        samples_written: 0,
+    })
+}
+
+impl MeetingCaptureRecorder {
+    pub fn write_samples(&mut self, samples: &[f32]) -> Result<(), String> {
+        let Some(writer) = self.writer.as_mut() else {
+            return Err("meeting capture writer is already finalized".to_string());
+        };
+        for sample in samples {
+            let clamped = sample.clamp(-1.0, 1.0);
+            writer
+                .write_sample((clamped * i16::MAX as f32) as i16)
+                .map_err(|e| e.to_string())?;
+        }
+        self.samples_written = self.samples_written.saturating_add(samples.len() as u64);
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<MeetingRecord, String> {
+        if let Some(writer) = self.writer.take() {
+            writer.finalize().map_err(|e| e.to_string())?;
+        }
+        self.record.duration_ms =
+            (self.samples_written as u128 * 1_000 / self.sample_rate as u128) as u64;
+        self.record.updated_at = Utc::now();
+        self.record
+            .save_atomic(&record_path(&self.dir))
+            .map_err(|e| e.to_string())?;
+        Ok(self.record)
+    }
+}
 
 /// Copy an uploaded recording into a fresh `meetings/<id>/` directory and write
 /// the initial `meeting.json`. The job itself is started separately.

@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
@@ -10,6 +13,7 @@ use wakenote::commands::{
     validate_audio_playback_file, with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::live_capture::AudioFrame;
+use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
 use wakenote::models::{ModelStatus, ModelStore};
 use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
@@ -2397,8 +2401,8 @@ fn system_capture_session_lifecycle_reports_active_state() {
             16_000,
             base_time,
             "Google Chrome".into(),
-            "meet".into(),
-            "meet".into(),
+            "youtube".into(),
+            "youtube".into(),
         )
         .expect("start system capture session");
     assert!(backend.is_system_capturing());
@@ -2442,6 +2446,107 @@ fn system_capture_session_reports_recording_tray_state() {
 }
 
 #[test]
+fn system_capture_tracks_recent_audio_frame_liveness() {
+    let mut backend = AppBackend::default();
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+    backend
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "youtube".into(),
+            "youtube".into(),
+        )
+        .expect("start system capture session");
+    assert!(!backend.has_recent_system_audio_frame(
+        Instant::now(),
+        Duration::from_secs(20)
+    ));
+
+    let before_frame = Instant::now();
+    backend
+        .process_system_audio_frame(AudioFrame {
+            samples: vec![0.1; 1_600],
+            duration_ms: 100,
+            captured_at: base_time + chrono::Duration::milliseconds(100),
+        })
+        .expect("system audio frame");
+
+    assert!(backend.has_recent_system_audio_frame(
+        Instant::now(),
+        Duration::from_secs(20)
+    ));
+    assert!(!backend.has_recent_system_audio_frame(
+        before_frame + Duration::from_secs(21),
+        Duration::from_secs(20)
+    ));
+
+    backend
+        .stop_system_capture_session()
+        .expect("stop system capture session");
+    assert!(!backend.has_recent_system_audio_frame(
+        Instant::now(),
+        Duration::from_secs(20)
+    ));
+}
+
+#[test]
+fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+    backend
+        .start_system_capture_session(
+            10,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
+        .expect("start meet system capture");
+    for end_ms in [100, 200, 300] {
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.5],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(end_ms),
+            })
+            .expect("meet audio frame");
+    }
+    assert!(list_meetings(tmp.path()).is_empty());
+
+    backend
+        .stop_system_capture_session()
+        .expect("stop meet system capture");
+
+    let meetings = list_meetings(tmp.path());
+    assert_eq!(meetings.len(), 1);
+    assert_eq!(meetings[0].status, MeetingStatus::Pending);
+    assert_eq!(meetings[0].duration_ms, 300);
+    assert_eq!(meetings[0].source_filename, "Google Meet system audio.wav");
+    assert_eq!(
+        backend.take_finished_system_meeting_ids(),
+        vec![meetings[0].id.clone()]
+    );
+    assert!(backend.take_finished_system_meeting_ids().is_empty());
+
+    let detail = meeting_detail(tmp.path(), &meetings[0].id).expect("meeting detail");
+    assert_eq!(detail.record.audio_file, "audio.wav");
+    assert_eq!(detail.record.audio_format, "wav");
+    assert_eq!(detail.record.model_id, "whisper-medium");
+    assert_eq!(detail.record.duration_ms, 300);
+    assert!(std::path::Path::new(&detail.audio_path).is_file());
+}
+
+#[test]
 fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
     let mut backend = AppBackend::default();
     // No active session: syncing must not crash or open one.
@@ -2454,8 +2559,8 @@ fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
             16_000,
             base_time,
             "Google Chrome".into(),
-            "meet".into(),
-            "meet".into(),
+            "youtube".into(),
+            "youtube".into(),
         )
         .expect("start system capture session");
 

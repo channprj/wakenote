@@ -5,7 +5,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -17,6 +17,7 @@ use crate::audio::{
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
+use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
 use crate::persistence::{AppPersistence, PersistenceError};
 use crate::queue::{
@@ -239,6 +240,13 @@ pub fn main_window_close_action(window_label: &str) -> MainWindowCloseAction {
         MainWindowCloseAction::HideToTray
     } else {
         MainWindowCloseAction::AllowClose
+    }
+}
+
+fn system_capture_meeting_title(source_id: &str) -> Option<&'static str> {
+    match source_id {
+        "meet" => Some("Google Meet"),
+        _ => None,
     }
 }
 
@@ -476,6 +484,9 @@ pub struct AppBackend {
     /// Parallel capture session for system-audio frames. Mirrors `capture`
     /// but has no level/health monitoring and tags chunks `source = System`.
     system_capture: Option<CaptureController>,
+    system_meeting_capture: Option<MeetingCaptureRecorder>,
+    finished_system_meeting_ids: Vec<String>,
+    last_system_audio_frame_at: Option<Instant>,
     level_monitor: LevelMonitor,
     active_microphone_label: Option<String>,
     microphone_warning: Option<String>,
@@ -499,6 +510,9 @@ impl std::fmt::Debug for AppBackend {
             .field("queue", &self.queue)
             .field("capture", &self.capture)
             .field("system_capture", &self.system_capture)
+            .field("system_meeting_capture", &self.system_meeting_capture.is_some())
+            .field("finished_system_meeting_ids", &self.finished_system_meeting_ids)
+            .field("last_system_audio_frame_at", &self.last_system_audio_frame_at)
             .field("level_monitor", &self.level_monitor)
             .field("active_microphone_label", &self.active_microphone_label)
             .field("microphone_warning", &self.microphone_warning)
@@ -523,6 +537,9 @@ impl Default for AppBackend {
             queue: TranscriptionQueue::new(),
             capture: None,
             system_capture: None,
+            system_meeting_capture: None,
+            finished_system_meeting_ids: Vec::new(),
+            last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
@@ -546,6 +563,9 @@ impl AppBackend {
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
             system_capture: None,
+            system_meeting_capture: None,
+            finished_system_meeting_ids: Vec::new(),
+            last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
             active_microphone_label: None,
             microphone_warning: None,
@@ -570,6 +590,10 @@ impl AppBackend {
 
     pub fn drain_live_events(&mut self) -> Vec<LiveTranscriptEvent> {
         std::mem::take(&mut self.pending_live_events)
+    }
+
+    pub fn take_finished_system_meeting_ids(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.finished_system_meeting_ids)
     }
 
     pub fn chunk_id_for_audio_path(&self, audio_path: &std::path::Path) -> Option<u64> {
@@ -1091,6 +1115,17 @@ impl AppBackend {
             let events = capture.flush().map_err(|error| error.to_string())?;
             self.handle_system_capture_events(events);
         }
+        if let Some(recorder) = self.system_meeting_capture.take() {
+            let record = recorder.finish()?;
+            self.finished_system_meeting_ids.push(record.id.clone());
+            append_debug_log(
+                self.save_root_path(),
+                format!(
+                    "[system-capture] meeting_recorded id={} duration_ms={}",
+                    record.id, record.duration_ms
+                ),
+            );
+        }
         append_debug_log(
             self.save_root_path(),
             format!(
@@ -1098,6 +1133,21 @@ impl AppBackend {
                 source_id, source_label, app_name, sample_rate
             ),
         );
+        self.last_system_audio_frame_at = None;
+        self.system_meeting_capture = system_capture_meeting_title(&source_id)
+            .map(|title| {
+                start_recorded_meeting_capture(
+                    &self.save_root_path(),
+                    title,
+                    &format!("{title} system audio.wav"),
+                    &self.settings.selected_model,
+                    self.settings.transcription_language,
+                    env!("CARGO_PKG_VERSION"),
+                    sample_rate,
+                    base_time.with_timezone(&Local),
+                )
+            })
+            .transpose()?;
         self.system_capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: self.save_root_path(),
             settings: self.settings.clone(),
@@ -1125,8 +1175,18 @@ impl AppBackend {
         let events = capture
             .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
+        if let Some(recorder) = self.system_meeting_capture.as_mut() {
+            recorder.write_samples(&frame.samples)?;
+        }
+        self.last_system_audio_frame_at = Some(Instant::now());
         self.handle_system_capture_events(events);
         Ok(self.app_status())
+    }
+
+    pub fn has_recent_system_audio_frame(&self, now: Instant, window: Duration) -> bool {
+        self.last_system_audio_frame_at
+            .map(|last_frame_at| now.saturating_duration_since(last_frame_at) <= window)
+            .unwrap_or(false)
     }
 
     /// Flush the active system chunk and tear down the system capture session.
@@ -1138,6 +1198,18 @@ impl AppBackend {
             self.handle_system_capture_events(events);
         }
         self.system_capture = None;
+        self.last_system_audio_frame_at = None;
+        if let Some(recorder) = self.system_meeting_capture.take() {
+            let record = recorder.finish()?;
+            self.finished_system_meeting_ids.push(record.id.clone());
+            append_debug_log(
+                self.save_root_path(),
+                format!(
+                    "[system-capture] meeting_recorded id={} duration_ms={}",
+                    record.id, record.duration_ms
+                ),
+            );
+        }
         append_debug_log(self.save_root_path(), "[system-capture] stop");
         Ok(self.app_status())
     }

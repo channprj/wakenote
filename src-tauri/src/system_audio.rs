@@ -173,7 +173,7 @@ mod macos {
 #[cfg(target_os = "macos")]
 mod macos {
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use std::ptr;
 
@@ -387,6 +387,7 @@ mod macos {
     /// Resolve the running applications/displays available to capture.
     /// `getShareableContentWithCompletionHandler:` is async; block on it.
     fn fetch_shareable_content() -> Result<Retained<SCShareableContent>, LiveCaptureError> {
+        let started_at = Instant::now();
         let (tx, rx) = std::sync::mpsc::channel();
         let handler = RcBlock::new(
             move |content: *mut SCShareableContent, error: *mut NSError| {
@@ -407,15 +408,18 @@ mod macos {
 
         match rx.recv_timeout(SHAREABLE_CONTENT_TIMEOUT) {
             Ok(Ok(Some(content))) => Ok(content),
-            Ok(Ok(None)) => Err(LiveCaptureError::Cpal(
-                "shareable content was null".to_string(),
-            )),
-            Ok(Err(message)) => Err(LiveCaptureError::Cpal(format!(
-                "could not query shareable content: {message}"
+            Ok(Ok(None)) => Err(LiveCaptureError::Cpal(format!(
+                "shareable content was null elapsed_ms={}",
+                started_at.elapsed().as_millis()
             ))),
-            Err(_) => Err(LiveCaptureError::Cpal(
-                "timed out querying shareable content (Screen Recording permission?)".to_string(),
-            )),
+            Ok(Err(message)) => Err(LiveCaptureError::Cpal(format!(
+                "could not query shareable content elapsed_ms={}: {message}",
+                started_at.elapsed().as_millis()
+            ))),
+            Err(_) => Err(LiveCaptureError::Cpal(format!(
+                "timed out querying shareable content elapsed_ms={} (Screen Recording permission?)",
+                started_at.elapsed().as_millis()
+            ))),
         }
     }
 
@@ -513,6 +517,7 @@ mod macos {
     }
 
     fn start_capture_blocking(stream: &SCStream) -> Result<(), LiveCaptureError> {
+        let started_at = Instant::now();
         let (tx, rx) = std::sync::mpsc::channel();
         let handler = RcBlock::new(move |error: *mut NSError| {
             let result = unsafe { error.as_ref() }
@@ -527,11 +532,13 @@ mod macos {
         match rx.recv_timeout(STREAM_START_TIMEOUT) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(message)) => Err(LiveCaptureError::Cpal(format!(
-                "failed to start system-audio capture: {message}"
+                "failed to start system-audio capture elapsed_ms={}: {message}",
+                started_at.elapsed().as_millis()
             ))),
-            Err(_) => Err(LiveCaptureError::Cpal(
-                "timed out starting system-audio capture".to_string(),
-            )),
+            Err(_) => Err(LiveCaptureError::Cpal(format!(
+                "timed out starting system-audio capture elapsed_ms={}",
+                started_at.elapsed().as_millis()
+            ))),
         }
     }
 
