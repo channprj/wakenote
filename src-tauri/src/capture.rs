@@ -222,15 +222,10 @@ impl CaptureProcessor {
         captured_at: DateTime<Utc>,
     ) -> Result<(), RecorderError> {
         let observed_end_ms = offset_from_base_ms(self.config.base_time, captured_at);
-        let synthetic_end_ms = self.elapsed_ms.saturating_add(duration_ms);
-        // Advance by the audio-sample duration, but never past the wall-clock
-        // arrival (`observed_end_ms`, bounded by `now`): a device that over-delivers
-        // audio (e.g. system-audio at a higher native rate than requested) would
-        // otherwise let the synthetic clock outrun real time, and because the
-        // timeline only ratchets upward (`elapsed_ms = frame_end_ms`) that drift
-        // would latch in and stamp chunks in the future. `.max(elapsed_ms)` keeps
-        // the timeline monotonic when a frame arrives early.
-        let frame_end_ms = synthetic_end_ms.min(observed_end_ms).max(self.elapsed_ms);
+        // `captured_at` is the end timestamp for this frame. Use it as the
+        // canonical timeline so real wall-clock gaps before speech are preserved,
+        // while still keeping the timeline monotonic if a frame arrives early.
+        let frame_end_ms = observed_end_ms.max(self.elapsed_ms);
         let frame_start_ms = frame_end_ms.saturating_sub(duration_ms);
         self.process_samples_window(samples, duration_ms, frame_start_ms, frame_end_ms)
     }
