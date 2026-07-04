@@ -2547,6 +2547,35 @@ fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
 }
 
 #[test]
+fn meet_system_capture_without_audio_discards_empty_meeting_record_on_stop() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+    backend
+        .start_system_capture_session(
+            10,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
+        .expect("start meet system capture");
+    backend
+        .stop_system_capture_session()
+        .expect("stop empty meet system capture");
+
+    assert!(list_meetings(tmp.path()).is_empty());
+    assert!(backend.take_finished_system_meeting_ids().is_empty());
+}
+
+#[test]
 fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
     let mut backend = AppBackend::default();
     // No active session: syncing must not crash or open one.

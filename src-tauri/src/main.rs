@@ -345,6 +345,7 @@ fn update_settings(
     system_capture_state: State<'_, SystemCaptureState>,
     source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
+    meeting_state: State<'_, MeetingState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
     let (
@@ -402,6 +403,7 @@ fn update_settings(
         system_capture_state.inner(),
         source_capture_lifecycle_state.inner(),
         detected_source_state.inner(),
+        meeting_state.inner(),
     )?;
     kick_transcription_worker_if_needed(
         app.clone(),
@@ -590,6 +592,7 @@ fn apply_system_capture_settings_action(
     system_capture_state: &SystemCaptureState,
     source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
+    meeting_state: &MeetingState,
 ) -> Result<(), String> {
     let capturing = system_capture_state
         .lock()
@@ -603,6 +606,7 @@ fn apply_system_capture_settings_action(
                 system_capture_state,
                 source_capture_lifecycle_state,
                 detected_source_state,
+                meeting_state,
             )?;
         }
         SystemCaptureSettingsAction::Sync => {
@@ -1773,6 +1777,7 @@ fn stop_source_capture(
     system_capture_state: State<'_, SystemCaptureState>,
     source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
+    meeting_state: State<'_, MeetingState>,
     source_capture_pause_state: State<'_, SourceCapturePauseState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
@@ -1791,6 +1796,7 @@ fn stop_source_capture(
         system_capture_state.inner(),
         source_capture_lifecycle_state.inner(),
         detected_source_state.inner(),
+        meeting_state.inner(),
     )?;
     kick_transcription_worker_if_needed(
         app,
@@ -1806,6 +1812,7 @@ fn stop_source_capture_runtime(
     system_capture_state: &SystemCaptureState,
     source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
+    meeting_state: &MeetingState,
 ) -> Result<AppStatus, String> {
     let stopped_source_id = detected_source_state
         .lock()
@@ -1818,12 +1825,20 @@ fn stop_source_capture_runtime(
     }
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
-    let (settings, status) = {
+    let (settings, status, meeting_job_ids) = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
         append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
         let status = backend.stop_system_capture_session()?;
-        (backend.settings(), status)
+        let meeting_job_ids = collect_finished_system_meeting_jobs(&mut backend);
+        (backend.settings(), status, meeting_job_ids)
     };
+    start_finished_system_meeting_jobs(
+        app,
+        backend_state,
+        meeting_state,
+        meeting_job_ids,
+        &settings,
+    );
     update_tray_presentation(app, &settings, &status);
     let payload = detected_source_state
         .lock()
@@ -1853,6 +1868,49 @@ fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
             error: error.to_string(),
         },
     );
+}
+
+fn collect_finished_system_meeting_jobs(backend: &mut AppBackend) -> Vec<String> {
+    let ids = backend.take_finished_system_meeting_ids();
+    let settings = backend.settings();
+    if settings.transcription_enabled && selected_meeting_model_is_ready(&settings) {
+        ids
+    } else {
+        Vec::new()
+    }
+}
+
+fn selected_meeting_model_is_ready(settings: &AppSettings) -> bool {
+    expand_user_path(&settings.model_directory)
+        .join(format!("{}.bin", settings.selected_model))
+        .is_file()
+}
+
+fn start_finished_system_meeting_jobs(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    meeting_state: &MeetingState,
+    ids: Vec<String>,
+    settings: &AppSettings,
+) {
+    for id in ids {
+        if let Err(error) = spawn_meeting_job(
+            app.clone(),
+            backend_state.clone(),
+            meeting_state.clone(),
+            id.clone(),
+        ) {
+            append_runtime_debug_log(
+                settings,
+                format!("[meeting-capture] auto_start_failed id={} error={}", id, error),
+            );
+        } else {
+            append_runtime_debug_log(
+                settings,
+                format!("[meeting-capture] auto_started id={}", id),
+            );
+        }
+    }
 }
 
 /// ScreenCaptureKit is asked to deliver audio at the transcription pipeline rate
@@ -1886,6 +1944,7 @@ fn spawn_source_watcher(
     system_capture_state: SystemCaptureState,
     source_capture_lifecycle_state: SourceCaptureLifecycleState,
     detected_source_state: DetectedSourceState,
+    meeting_state: MeetingState,
     source_capture_pause_state: SourceCapturePauseState,
     transcription_state: AutoTranscriptionState,
 ) {
@@ -2018,6 +2077,7 @@ fn spawn_source_watcher(
                             &system_capture_state,
                             &source_capture_lifecycle_state,
                             &detected_source_state,
+                            &meeting_state,
                         ) {
                             eprintln!("[source-watch] auto-stop failed: {error}");
                         }
@@ -2948,7 +3008,7 @@ fn main() {
             app.manage(source_capture_lifecycle_state.clone());
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
-            app.manage(meeting_state);
+            app.manage(meeting_state.clone());
 
             spawn_source_watcher(
                 app.handle().clone(),
@@ -2956,6 +3016,7 @@ fn main() {
                 system_capture_state,
                 source_capture_lifecycle_state,
                 detected_source_state,
+                meeting_state,
                 source_capture_pause_state,
                 transcription_state.clone(),
             );
@@ -3532,6 +3593,7 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use wakenote::settings::SourceAutoPromptEntry;
 
     #[test]
@@ -3818,6 +3880,85 @@ mod tests {
             message,
             "[source-capture] error source_id=meet attempt=2 screen_recording_status=Granted next_retry_ms=5000 error=system-audio capture failed: cpal error: timed out querying shareable content elapsed_ms=10000"
         );
+    }
+
+    #[test]
+    fn finalized_meet_capture_ids_are_collected_once_for_auto_meeting_jobs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model_dir = tmp.path().join("models");
+        std::fs::create_dir_all(&model_dir).expect("model dir");
+        std::fs::write(model_dir.join("whisper-medium.bin"), b"fake model").expect("model file");
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            save_root: Some(tmp.path().to_string_lossy().to_string()),
+            model_directory: Some(model_dir.to_string_lossy().to_string()),
+            transcription_enabled: Some(true),
+            ..SettingsPatch::default()
+        });
+        let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+        backend
+            .start_system_capture_session(
+                10,
+                base_time,
+                "Google Chrome".into(),
+                "meet".into(),
+                "meet".into(),
+            )
+            .expect("start meet system capture");
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.5],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(100),
+            })
+            .expect("meet audio frame");
+        backend
+            .stop_system_capture_session()
+            .expect("stop meet system capture");
+
+        let ids = collect_finished_system_meeting_jobs(&mut backend);
+
+        assert_eq!(ids.len(), 1);
+        assert!(collect_finished_system_meeting_jobs(&mut backend).is_empty());
+    }
+
+    #[test]
+    fn finalized_meet_capture_ids_wait_when_meeting_model_is_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            save_root: Some(tmp.path().to_string_lossy().to_string()),
+            model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
+            transcription_enabled: Some(true),
+            ..SettingsPatch::default()
+        });
+        let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+
+        backend
+            .start_system_capture_session(
+                10,
+                base_time,
+                "Google Chrome".into(),
+                "meet".into(),
+                "meet".into(),
+            )
+            .expect("start meet system capture");
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.5],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(100),
+            })
+            .expect("meet audio frame");
+        backend
+            .stop_system_capture_session()
+            .expect("stop meet system capture");
+
+        assert!(collect_finished_system_meeting_jobs(&mut backend).is_empty());
+        let meetings = wakenote::meeting::list_meetings(tmp.path());
+        assert_eq!(meetings.len(), 1);
+        assert_eq!(meetings[0].status, wakenote::meeting::MeetingStatus::Pending);
     }
 
     #[test]

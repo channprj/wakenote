@@ -1116,15 +1116,7 @@ impl AppBackend {
             self.handle_system_capture_events(events);
         }
         if let Some(recorder) = self.system_meeting_capture.take() {
-            let record = recorder.finish()?;
-            self.finished_system_meeting_ids.push(record.id.clone());
-            append_debug_log(
-                self.save_root_path(),
-                format!(
-                    "[system-capture] meeting_recorded id={} duration_ms={}",
-                    record.id, record.duration_ms
-                ),
-            );
+            self.finish_system_meeting_capture(recorder)?;
         }
         append_debug_log(
             self.save_root_path(),
@@ -1200,18 +1192,36 @@ impl AppBackend {
         self.system_capture = None;
         self.last_system_audio_frame_at = None;
         if let Some(recorder) = self.system_meeting_capture.take() {
-            let record = recorder.finish()?;
-            self.finished_system_meeting_ids.push(record.id.clone());
-            append_debug_log(
-                self.save_root_path(),
-                format!(
-                    "[system-capture] meeting_recorded id={} duration_ms={}",
-                    record.id, record.duration_ms
-                ),
-            );
+            self.finish_system_meeting_capture(recorder)?;
         }
         append_debug_log(self.save_root_path(), "[system-capture] stop");
         Ok(self.app_status())
+    }
+
+    fn finish_system_meeting_capture(
+        &mut self,
+        recorder: MeetingCaptureRecorder,
+    ) -> Result<(), String> {
+        if recorder.is_empty() {
+            let id = recorder.id().to_string();
+            recorder.discard()?;
+            append_debug_log(
+                self.save_root_path(),
+                format!("[system-capture] meeting_discarded id={} reason=no_audio", id),
+            );
+            return Ok(());
+        }
+
+        let record = recorder.finish()?;
+        self.finished_system_meeting_ids.push(record.id.clone());
+        append_debug_log(
+            self.save_root_path(),
+            format!(
+                "[system-capture] meeting_recorded id={} duration_ms={}",
+                record.id, record.duration_ms
+            ),
+        );
+        Ok(())
     }
 
     /// Enqueue completed system chunks into the shared transcription queue,

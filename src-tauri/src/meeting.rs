@@ -580,6 +580,14 @@ pub fn start_recorded_meeting_capture(
 }
 
 impl MeetingCaptureRecorder {
+    pub fn id(&self) -> &str {
+        &self.record.id
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples_written == 0
+    }
+
     pub fn write_samples(&mut self, samples: &[f32]) -> Result<(), String> {
         let Some(writer) = self.writer.as_mut() else {
             return Err("meeting capture writer is already finalized".to_string());
@@ -592,6 +600,13 @@ impl MeetingCaptureRecorder {
         }
         self.samples_written = self.samples_written.saturating_add(samples.len() as u64);
         Ok(())
+    }
+
+    pub fn discard(mut self) -> Result<(), String> {
+        if let Some(writer) = self.writer.take() {
+            writer.finalize().map_err(|e| e.to_string())?;
+        }
+        fs::remove_dir_all(&self.dir).map_err(|e| e.to_string())
     }
 
     pub fn finish(mut self) -> Result<MeetingRecord, String> {
