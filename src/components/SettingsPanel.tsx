@@ -585,6 +585,12 @@ export function SettingsPanel({
           onChange={(start_live_input_on_launch) => onPatch({ start_live_input_on_launch })}
         />
         <ToggleRow
+          label="Monitor input audio"
+          checked={settings.input_monitoring_enabled}
+          onChange={(input_monitoring_enabled) => onPatch({ input_monitoring_enabled })}
+          title="Play the selected microphone through the default output device while live input is running."
+        />
+        <ToggleRow
           label="Auto-type transcripts into cursor"
           checked={settings.auto_transcript_input_enabled}
           onChange={(auto_transcript_input_enabled) =>

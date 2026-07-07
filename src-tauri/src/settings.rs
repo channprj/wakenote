@@ -132,6 +132,8 @@ pub struct AppSettings {
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
     #[serde(default)]
+    pub input_monitoring_enabled: bool,
+    #[serde(default)]
     pub auto_transcript_input_enabled: bool,
     #[serde(default)]
     pub auto_transcript_input_trailing_space: bool,
@@ -184,6 +186,7 @@ pub struct SettingsPatch {
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
+    pub input_monitoring_enabled: Option<bool>,
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
     pub show_dock_icon: Option<bool>,
@@ -579,6 +582,9 @@ impl AppSettings {
         if let Some(value) = patch.start_live_input_on_launch {
             self.start_live_input_on_launch = value;
         }
+        if let Some(value) = patch.input_monitoring_enabled {
+            self.input_monitoring_enabled = value;
+        }
         if let Some(value) = patch.auto_transcript_input_enabled {
             self.auto_transcript_input_enabled = value;
         }
@@ -654,6 +660,7 @@ impl Default for AppSettings {
             vad_enabled: false,
             launch_at_login: false,
             start_live_input_on_launch: true,
+            input_monitoring_enabled: false,
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
             show_dock_icon: true,
@@ -693,6 +700,27 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.system_audio_enabled);
+    }
+
+    #[test]
+    fn patch_sets_input_monitoring_without_restarting_live_capture() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.input_monitoring_enabled);
+
+        let action = live_capture_runtime_action_for_patch(
+            &settings,
+            &SettingsPatch {
+                input_monitoring_enabled: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(action, LiveCaptureRuntimeAction::Unchanged);
+
+        settings.apply_patch(SettingsPatch {
+            input_monitoring_enabled: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.input_monitoring_enabled);
     }
 
     #[test]
@@ -875,6 +903,7 @@ mod tests {
             "selected_model": "whisper-medium",
             "model_directory": "~/Library/Application Support/WakeNote/models",
             "vad_enabled": false, "launch_at_login": false, "start_live_input_on_launch": true,
+            "input_monitoring_enabled": false,
             "show_dock_icon": true, "show_tray_icon": true, "show_floating_overlay": true,
             "floating_overlay_position": "top", "theme_mode": "dark", "theme_primary_color": "#000"
         }"##;

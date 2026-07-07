@@ -168,6 +168,10 @@ impl CaptureController {
         self.is_listening() && self.processor.is_recording()
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.config.sample_rate
+    }
+
     pub fn completed_chunks(&self) -> &[RecordedChunk] {
         self.processor.completed_chunks()
     }

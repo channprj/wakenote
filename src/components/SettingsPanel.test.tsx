@@ -95,6 +95,16 @@ describe("settings panel", () => {
     expect(on).toContain("Google Meet or browser tabs with Meet in the title");
   });
 
+  it("shows an input monitoring toggle in recording settings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.input_monitoring_enabled = false;
+
+    const markup = renderSettingsPanel(snapshot);
+
+    expect(markup).toContain("Monitor input audio");
+    expect(switchTag(markup, "Monitor input audio")).toContain('aria-checked="false"');
+  });
+
   it("renders custom system-audio sources from settings", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.system_audio_enabled = true;

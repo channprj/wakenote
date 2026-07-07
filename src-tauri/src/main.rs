@@ -29,6 +29,7 @@ use wakenote::commands::{
     validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::debug_log::append_debug_log;
+use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
     LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
@@ -62,6 +63,7 @@ use wakenote::transcription::{
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
+type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
 /// Open system-audio stream handle (dropping it stops capture). Held alongside
@@ -440,6 +442,7 @@ fn update_settings(
         transcription_state.inner().clone(),
         live_capture_action,
     )?;
+    apply_input_monitor_settings(&app, state.inner())?;
     apply_system_capture_settings_action(
         &app,
         &settings,
@@ -502,6 +505,26 @@ enum SystemCaptureSettingsAction {
     None,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMonitorRuntimeAction {
+    Start,
+    Stop,
+    Unchanged,
+}
+
+fn input_monitor_runtime_action(
+    settings: &AppSettings,
+    live_input_running: bool,
+    monitor_running: bool,
+) -> InputMonitorRuntimeAction {
+    let should_run = settings.input_monitoring_enabled && live_input_running;
+    match (monitor_running, should_run) {
+        (false, true) => InputMonitorRuntimeAction::Start,
+        (true, false) => InputMonitorRuntimeAction::Stop,
+        _ => InputMonitorRuntimeAction::Unchanged,
+    }
+}
+
 /// Pure decision for `apply_system_capture_settings_action`. The session must be
 /// stopped when the feature is disabled, recording is off, or pause-all is on
 /// (§7/§2 pause semantics); otherwise the live settings are synced so the
@@ -518,6 +541,57 @@ fn system_capture_settings_action(
     } else {
         SystemCaptureSettingsAction::Sync
     }
+}
+
+fn apply_input_monitor_settings(
+    app: &AppHandle,
+    backend_state: &BackendState,
+) -> Result<(), String> {
+    let Some(input_monitor_state) = app.try_state::<InputMonitorState>() else {
+        return Ok(());
+    };
+    let input_monitor_state = input_monitor_state.inner().clone();
+    let (settings, sample_rate) = {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        (backend.settings(), backend.active_capture_sample_rate())
+    };
+
+    let mut monitor = input_monitor_state
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if let Some(error) = monitor.runtime_error() {
+        append_runtime_debug_log(
+            &settings,
+            format!("[input-monitor] output_stream_error error={error}"),
+        );
+        monitor.stop();
+    }
+
+    match input_monitor_runtime_action(&settings, sample_rate.is_some(), monitor.is_running()) {
+        InputMonitorRuntimeAction::Start => {
+            if let Some(sample_rate) = sample_rate {
+                match monitor.start(sample_rate) {
+                    Ok(()) => append_runtime_debug_log(
+                        &settings,
+                        format!("[input-monitor] start sample_rate={sample_rate}"),
+                    ),
+                    Err(error) => {
+                        monitor.stop();
+                        append_runtime_debug_log(
+                            &settings,
+                            format!("[input-monitor] start_failed error={error}"),
+                        );
+                    }
+                }
+            }
+        }
+        InputMonitorRuntimeAction::Stop => {
+            monitor.stop();
+            append_runtime_debug_log(&settings, "[input-monitor] stop");
+        }
+        InputMonitorRuntimeAction::Unchanged => {}
+    }
+    Ok(())
 }
 
 fn source_capture_retry_delay(attempts: u8) -> Duration {
@@ -1371,7 +1445,10 @@ fn start_live_capture_runtime(
         Ok(resolved) => resolved,
         Err(error) => {
             let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-            return Ok(backend.capture_start_failed(format!("Microphone unavailable: {error}")));
+            let status = backend.capture_start_failed(format!("Microphone unavailable: {error}"));
+            drop(backend);
+            apply_input_monitor_settings(app, backend_state)?;
+            return Ok(status);
         }
     };
     // True if the device we actually opened diverges from the user's pinned
@@ -1414,6 +1491,9 @@ fn start_live_capture_runtime(
     let callback_backend = backend_arc.clone();
     let callback_transcription = transcription_state.clone();
     let callback_app = app.clone();
+    let callback_input_monitor = app
+        .try_state::<InputMonitorState>()
+        .map(|state| state.inner().clone());
     let callback_overlay_level_throttle = Arc::new(Mutex::new(
         Instant::now()
             .checked_sub(Duration::from_millis(100))
@@ -1426,6 +1506,11 @@ fn start_live_capture_runtime(
             label_hint: requested_label_hint,
         },
         move |frame| {
+            if let Some(input_monitor) = callback_input_monitor.as_ref() {
+                if let Ok(monitor) = input_monitor.try_lock() {
+                    monitor.feed(&frame.samples);
+                }
+            }
             let waveform_levels = overlay::waveform_levels_from_samples(
                 &frame.samples,
                 overlay::OVERLAY_WAVEFORM_BAR_COUNT,
@@ -1465,8 +1550,12 @@ fn start_live_capture_runtime(
 
     if let Err(error) = start_result {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        return Ok(backend.capture_start_failed(format!("Microphone capture failed: {error}")));
+        let status = backend.capture_start_failed(format!("Microphone capture failed: {error}"));
+        drop(backend);
+        apply_input_monitor_settings(app, backend_state)?;
+        return Ok(status);
     }
+    apply_input_monitor_settings(app, backend_state)?;
 
     // Warm the live-transcription model now that capture is live. whisper
     // (esp. medium, 1.5 GB) takes 5-15 s to load; preloading here means the
@@ -1532,6 +1621,7 @@ fn stop_live_capture_runtime(
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (status, handler, events)
     };
+    apply_input_monitor_settings(app, backend_state)?;
     dispatch_live_events(handler, events);
     let queue_idle = backend_state
         .lock()
@@ -3118,9 +3208,12 @@ fn main() {
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
             let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
+            let input_monitor_state: InputMonitorState =
+                Arc::new(Mutex::new(InputMonitorRuntime::new()));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
+            app.manage(input_monitor_state);
             app.manage(live_transcriber_state.clone());
             app.manage(system_capture_state.clone());
             app.manage(source_capture_lifecycle_state.clone());
@@ -3694,6 +3787,7 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
         transcription_state.inner().clone(),
         live_capture_action,
     );
+    let _ = apply_input_monitor_settings(app, state.inner());
     let presentation = state
         .lock()
         .map(|backend| (backend.settings(), backend.app_status()))
@@ -3873,6 +3967,37 @@ mod tests {
         assert_eq!(
             system_capture_settings_action(&paused, true),
             SystemCaptureSettingsAction::Stop
+        );
+    }
+
+    #[test]
+    fn input_monitor_action_starts_only_when_enabled_and_live_input_running() {
+        let mut settings = AppSettings::default();
+        settings.input_monitoring_enabled = true;
+
+        assert_eq!(
+            input_monitor_runtime_action(&settings, true, false),
+            InputMonitorRuntimeAction::Start
+        );
+        assert_eq!(
+            input_monitor_runtime_action(&settings, false, false),
+            InputMonitorRuntimeAction::Unchanged
+        );
+    }
+
+    #[test]
+    fn input_monitor_action_stops_when_disabled_or_live_input_stops() {
+        let mut settings = AppSettings::default();
+        settings.input_monitoring_enabled = false;
+        assert_eq!(
+            input_monitor_runtime_action(&settings, true, true),
+            InputMonitorRuntimeAction::Stop
+        );
+
+        settings.input_monitoring_enabled = true;
+        assert_eq!(
+            input_monitor_runtime_action(&settings, false, true),
+            InputMonitorRuntimeAction::Stop
         );
     }
 

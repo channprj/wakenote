@@ -157,6 +157,7 @@ export function defaultSettings(): AppSettings {
     vad_enabled: false,
     launch_at_login: false,
     start_live_input_on_launch: true,
+    input_monitoring_enabled: false,
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,
     show_dock_icon: true,

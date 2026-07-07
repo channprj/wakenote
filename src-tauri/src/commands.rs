@@ -600,6 +600,10 @@ impl AppBackend {
         self.chunk_id_index.get(audio_path).copied()
     }
 
+    pub fn active_capture_sample_rate(&self) -> Option<u32> {
+        self.capture.as_ref().map(|capture| capture.sample_rate())
+    }
+
     pub fn settings(&self) -> AppSettings {
         self.settings.clone()
     }
