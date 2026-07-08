@@ -143,6 +143,7 @@ export function defaultSettings(): AppSettings {
     save_root_confirmed: false,
     audio_format: "m4a",
     audio_bitrate_kbps: 96,
+    mic_input_volume_percent: 100,
     threshold_dbfs: -44,
     calibration_completed: false,
     attack_ms: 200,

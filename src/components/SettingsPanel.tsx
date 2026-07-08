@@ -289,6 +289,17 @@ export function SettingsPanel({
                 suffix=" dBFS"
                 onValueChange={(threshold_dbfs) => onPatch({ threshold_dbfs })}
               />
+              <Slider
+                label="Mic Input Volume"
+                value={settings.mic_input_volume_percent}
+                min={0}
+                max={200}
+                step={5}
+                suffix="%"
+                onValueChange={(mic_input_volume_percent) =>
+                  onPatch({ mic_input_volume_percent })
+                }
+              />
               {durationFields.map(([key, label, min, max]) => (
                 <Slider
                   key={key}

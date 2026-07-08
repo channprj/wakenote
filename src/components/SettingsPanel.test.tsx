@@ -453,6 +453,17 @@ describe("settings panel", () => {
     expect(markup).toContain('max="2000"');
   });
 
+  it("shows mic input volume as an adjustable recording control", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.mic_input_volume_percent = 135;
+
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup).toContain("Mic Input Volume");
+    expect(markup).toContain("135%");
+    expect(markup).toContain('max="200"');
+  });
+
   it("omits live recording status and capture actions from general settings", () => {
     const snapshot = mockSnapshot();
     snapshot.status.tray_state = "error";

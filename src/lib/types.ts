@@ -63,6 +63,7 @@ export interface AppSettings {
   save_root_confirmed: boolean;
   audio_format: AudioFormat;
   audio_bitrate_kbps: number;
+  mic_input_volume_percent: number;
   threshold_dbfs: number;
   calibration_completed: boolean;
   attack_ms: number;

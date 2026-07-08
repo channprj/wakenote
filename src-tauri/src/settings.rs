@@ -22,6 +22,8 @@ pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 18;
 pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
+pub const MIC_INPUT_VOLUME_MIN_PERCENT: u32 = 0;
+pub const MIC_INPUT_VOLUME_MAX_PERCENT: u32 = 200;
 
 pub fn default_floating_overlay_font_size_px() -> u32 {
     24
@@ -37,6 +39,10 @@ pub fn default_floating_overlay_background_color() -> String {
 
 pub fn default_floating_overlay_background_opacity() -> u8 {
     82
+}
+
+pub fn default_mic_input_volume_percent() -> u32 {
+    100
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +151,8 @@ pub struct AppSettings {
     pub audio_format: AudioFormat,
     #[serde(default = "default_audio_bitrate_kbps")]
     pub audio_bitrate_kbps: u32,
+    #[serde(default = "default_mic_input_volume_percent")]
+    pub mic_input_volume_percent: u32,
     pub threshold_dbfs: f32,
     pub calibration_completed: bool,
     pub attack_ms: u64,
@@ -209,6 +217,7 @@ pub struct SettingsPatch {
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
+    pub mic_input_volume_percent: Option<u32>,
     pub threshold_dbfs: Option<f32>,
     pub calibration_completed: Option<bool>,
     pub attack_ms: Option<u64>,
@@ -283,6 +292,10 @@ pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
         81..=112 => 96,
         _ => 128,
     }
+}
+
+pub fn clamp_mic_input_volume_percent(value: u32) -> u32 {
+    value.clamp(MIC_INPUT_VOLUME_MIN_PERCENT, MIC_INPUT_VOLUME_MAX_PERCENT)
 }
 
 pub fn launch_at_login_action_for_patch(
@@ -581,6 +594,9 @@ impl AppSettings {
         if let Some(value) = patch.audio_bitrate_kbps {
             self.audio_bitrate_kbps = clamp_audio_bitrate_kbps(value);
         }
+        if let Some(value) = patch.mic_input_volume_percent {
+            self.mic_input_volume_percent = clamp_mic_input_volume_percent(value);
+        }
         if let Some(value) = patch.threshold_dbfs {
             self.threshold_dbfs = clamp_threshold_dbfs(value);
         }
@@ -705,6 +721,7 @@ impl Default for AppSettings {
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
+            mic_input_volume_percent: default_mic_input_volume_percent(),
             threshold_dbfs: -44.0,
             calibration_completed: false,
             attack_ms: 200,
@@ -854,6 +871,27 @@ mod tests {
     }
 
     #[test]
+    fn default_mic_input_volume_is_neutral() {
+        assert_eq!(AppSettings::default().mic_input_volume_percent, 100);
+    }
+
+    #[test]
+    fn patch_clamps_mic_input_volume() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            mic_input_volume_percent: Some(250),
+            ..Default::default()
+        });
+        assert_eq!(settings.mic_input_volume_percent, 200);
+
+        settings.apply_patch(SettingsPatch {
+            mic_input_volume_percent: Some(0),
+            ..Default::default()
+        });
+        assert_eq!(settings.mic_input_volume_percent, 0);
+    }
+
+    #[test]
     fn default_vad_timing_uses_tuned_capture_profile() {
         let settings = AppSettings::default();
         assert_eq!(settings.threshold_dbfs, -44.0);
@@ -982,6 +1020,7 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
         assert_eq!(settings.audio_bitrate_kbps, 96);
+        assert_eq!(settings.mic_input_volume_percent, 100);
         assert_eq!(settings.lead_in_padding_ms, 300);
         assert!(!settings.system_audio_enabled);
         assert!(!settings.auto_transcript_input_trailing_space);
