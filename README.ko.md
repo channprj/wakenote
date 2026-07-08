@@ -16,7 +16,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
-- **macOS 트레이 + Floating overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 녹음 또는 transcription 중일 때만 나타납니다.
+- **macOS 트레이 + 자막 overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 현재 데스크톱에만 뜨는 click-through 자막 surface로, WakeNote 메인 창을 열지 않고 현재 live/final transcript text만 보여줍니다.
 - **첫 실행 onboarding** — 마이크, 저장 폴더, 모델, 캘리브레이션 단계는 각각 명시적으로 확인되어야 complete 처리됩니다. 캘리브레이션이 끝나면 라이브 신호 기반 suggested threshold가 자동 적용됩니다.
 
 ## 동작 흐름
@@ -45,7 +45,8 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
 - `src-tauri/src/models.rs` — 모델 레지스트리, 진행률 / 취소 / 체크섬 검증을 포함한 다운로드, 디스크 `ModelStore`.
 - `src-tauri/src/persistence.rs` — app data 디렉터리 아래의 `settings.json`과 `transcription-queue.json`을 atomic하게 저장. 시작 시 in-flight 작업을 pending으로 복구.
-- `src/App.tsx`, `src/components/*` — 설정 UI, onboarding strip, level meter, queue panel, 모델 매니저, 트레이 프리뷰, floating overlay.
+- `src/App.tsx`, `src/components/*` — 설정 UI, onboarding strip, level meter, queue panel, 모델 매니저, 트레이 프리뷰.
+- `src/overlay/*` — click-through live caption window용 별도 Tauri overlay entrypoint.
 
 ## 출력 파일 구조
 
@@ -145,7 +146,8 @@ wakenote/
 │   ├── styles.css
 │   ├── components/                 SettingsPanel, ModelManager, QueuePanel,
 │   │                               LevelMeter, TrayPreview, Onboarding,
-│   │                               FloatingOverlay, ui/primitives
+│   │                               ui/primitives
+│   ├── overlay/                    click-through live caption overlay
 │   └── lib/                        tauri-client, app-state, status-summary,
 │                                   onboarding, calibration, types
 └── src-tauri/                      Rust 백엔드 (Tauri 2)

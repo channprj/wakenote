@@ -16,7 +16,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; Parakeet V3 and SenseVoice download and run fully on-device via a bundled sherpa-onnx engine (no external tools), and Nemotron 3.5 ASR runs through an external-command adapter.
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
-- **macOS tray + floating overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay only appears when recording or transcribing.
+- **macOS tray + caption overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay is a click-through caption surface for the active desktop: it shows only the current live/final transcript text and never opens the main WakeNote window.
 - **First-run onboarding** — microphone, save folder, model, and calibration steps must each be confirmed before they count as complete; completed calibration automatically applies the suggested live threshold.
 
 ## How it works
@@ -45,7 +45,8 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
 - `src-tauri/src/models.rs` — model registry, download with progress/cancel/checksum, on-disk `ModelStore`.
 - `src-tauri/src/persistence.rs` — atomic JSON writes for `settings.json` and `transcription-queue.json` under the app data dir; in-flight jobs recovered as pending on startup.
-- `src/App.tsx`, `src/components/*` — settings UI, onboarding strip, level meter, queue panel, model manager, tray preview, floating overlay.
+- `src/App.tsx`, `src/components/*` — settings UI, onboarding strip, level meter, queue panel, model manager, tray preview.
+- `src/overlay/*` — separate Tauri overlay entrypoint for the click-through live caption window.
 
 ## Output layout
 
@@ -164,7 +165,8 @@ wakenote/
 │   ├── styles.css
 │   ├── components/                 SettingsPanel, ModelManager, QueuePanel,
 │   │                               LevelMeter, TrayPreview, Onboarding,
-│   │                               FloatingOverlay, ui/primitives
+│   │                               ui/primitives
+│   ├── overlay/                    click-through live caption overlay
 │   └── lib/                        tauri-client, app-state, status-summary,
 │                                   onboarding, calibration, types
 └── src-tauri/                      Rust backend (Tauri 2)

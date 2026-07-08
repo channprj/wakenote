@@ -1,41 +1,55 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { OverlayContent } from "./RecordingOverlay";
+import { initialCaptionState, type OverlayCaptionState } from "./caption-state";
 
-function render(state: "hidden" | "recording" | "transcribing", levels?: number[]) {
-  return renderToStaticMarkup(<OverlayContent state={state} levels={levels} onStop={() => {}} />);
+function caption(patch: Partial<OverlayCaptionState>): OverlayCaptionState {
+  return {
+    ...initialCaptionState(),
+    ...patch,
+  };
 }
 
-describe("recording overlay states", () => {
-  it("renders nothing when hidden", () => {
-    expect(render("hidden")).toBe("");
+function render(state: OverlayCaptionState) {
+  return renderToStaticMarkup(<OverlayContent caption={state} />);
+}
+
+describe("caption overlay content", () => {
+  it("renders nothing before transcript text is available", () => {
+    expect(render(caption({ chunkId: 1, visible: false }))).toBe("");
   });
 
-  it("renders mic icon, waveform bars, and close X button when recording", () => {
-    const markup = render("recording");
-    expect(markup).toContain('data-state="recording"');
-    expect(markup).toContain("lucide-mic");
-    expect(markup).toContain("overlay-waveform");
-    expect(markup).toContain('aria-label="Stop recording"');
-    expect(markup).toContain("lucide-x");
+  it("renders the live transcript as caption text without app controls or waveform", () => {
+    const markup = render(
+      caption({
+        chunkId: 1,
+        status: "partial",
+        text: "회의에서 결정된 내용입니다",
+        visible: true,
+      }),
+    );
+
+    expect(markup).toContain('class="overlay-caption"');
+    expect(markup).toContain('data-status="partial"');
+    expect(markup).toContain("회의에서 결정된 내용입니다");
+    expect(markup).not.toContain("overlay-waveform");
+    expect(markup).not.toContain("lucide-mic");
+    expect(markup).not.toContain("lucide-x");
+    expect(markup).not.toContain("<button");
   });
 
-  it("renders live waveform levels as fixed bar heights when recording", () => {
-    const markup = render("recording", [0, 0.5, 1]);
-    expect(markup.match(/class="overlay-waveform__bar"/g)?.length).toBe(11);
-    expect(markup).toContain("--bar-height:4px");
-    expect(markup).toContain("--bar-height:11px");
-    expect(markup).toContain("--bar-height:18px");
-    expect(markup).toContain('data-peak="true"');
-    expect(markup).not.toContain("animation-delay");
-  });
+  it("does not add visible status labels around final caption text", () => {
+    const markup = render(
+      caption({
+        chunkId: 1,
+        status: "final",
+        text: "최종 전사 내용입니다",
+        visible: true,
+      }),
+    );
 
-  it("renders Loader2 spinner and Transcribing label when transcribing", () => {
-    const markup = render("transcribing");
-    expect(markup).toContain('data-state="transcribing"');
-    // lucide-react renders Loader2 with class "lucide-loader-circle"
-    expect(markup).toContain("lucide-loader-circle");
-    expect(markup).toContain("Transcribing");
-    expect(markup).toContain("overlay-pill__middle--pulse");
+    expect(markup).toContain("최종 전사 내용입니다");
+    expect(markup).not.toContain("Final");
+    expect(markup).not.toContain("Transcribing");
   });
 });

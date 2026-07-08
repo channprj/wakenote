@@ -266,6 +266,7 @@ struct LivePartialPayload {
 struct LiveCommittedPayload {
     chunk_id: u64,
     audio_path: String,
+    will_transcribe: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2480,7 +2481,7 @@ fn wire_live_transcription(
             chunk_id,
             audio_path,
             overlay_position: _,
-            will_transcribe: _,
+            will_transcribe,
         } => {
             eprintln!(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
@@ -2491,14 +2492,10 @@ fn wire_live_transcription(
                 LiveCommittedPayload {
                     chunk_id,
                     audio_path: audio_path.to_string_lossy().to_string(),
+                    will_transcribe,
                 },
             ) {
                 eprintln!("[wakenote] WARN emit committed failed: {error}");
-            }
-            if let Err(error) =
-                overlay::hide_overlay_on_main_thread(&app_for_handler, "hide after commit")
-            {
-                eprintln!("[overlay] commit hide failed: {error}");
             }
         }
     });

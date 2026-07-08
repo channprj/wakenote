@@ -9,8 +9,10 @@ pub const OVERLAY_EVENT: &str = "overlay-state";
 pub const OVERLAY_LEVEL_EVENT: &str = "overlay-level";
 pub const OVERLAY_WAVEFORM_BAR_COUNT: usize = 11;
 
-const OVERLAY_WIDTH_LOGICAL: f64 = 172.0;
-const OVERLAY_HEIGHT_LOGICAL: f64 = 36.0;
+const OVERLAY_MAX_WIDTH_LOGICAL: f64 = 720.0;
+const OVERLAY_MIN_WIDTH_LOGICAL: f64 = 280.0;
+const OVERLAY_HEIGHT_LOGICAL: f64 = 104.0;
+const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
 
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
@@ -33,6 +35,13 @@ const TOP_OFFSET_LOGICAL: f64 = 8.0;
 const BOTTOM_OFFSET_LOGICAL: f64 = 46.0;
 #[cfg(not(target_os = "macos"))]
 const BOTTOM_OFFSET_LOGICAL: f64 = 8.0;
+
+#[cfg(target_os = "macos")]
+fn overlay_collection_behavior() -> tauri_nspanel::CollectionBehavior {
+    tauri_nspanel::CollectionBehavior::new()
+        .move_to_active_space()
+        .full_screen_auxiliary()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,26 +89,22 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     }
 
     use tauri::{Size, WebviewUrl};
-    use tauri_nspanel::{CollectionBehavior, PanelBuilder, PanelLevel};
+    use tauri_nspanel::{PanelBuilder, PanelLevel};
 
     let panel = PanelBuilder::<_, WakeNoteOverlayPanel>::new(app, OVERLAY_LABEL)
         .url(WebviewUrl::App("overlay.html".into()))
         .title("WakeNote Overlay")
         .level(PanelLevel::Status)
         .size(Size::Logical(LogicalSize::new(
-            OVERLAY_WIDTH_LOGICAL,
+            OVERLAY_MAX_WIDTH_LOGICAL,
             OVERLAY_HEIGHT_LOGICAL,
         )))
         .has_shadow(false)
         .transparent(true)
         .no_activate(true)
         .corner_radius(0.0)
-        .collection_behavior(
-            CollectionBehavior::new()
-                .can_join_all_spaces()
-                .full_screen_auxiliary()
-                .stationary(),
-        )
+        .collection_behavior(overlay_collection_behavior())
+        .ignores_mouse_events(true)
         .with_window(|window| {
             window
                 .resizable(false)
@@ -134,7 +139,7 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
         tauri::WebviewUrl::App("overlay.html".into()),
     )
     .title("WakeNote Overlay")
-    .inner_size(OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL)
+    .inner_size(OVERLAY_MAX_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL)
     .resizable(false)
     .decorations(false)
     .visible(false)
@@ -147,7 +152,11 @@ pub fn create_overlay_window(app: &AppHandle) -> tauri::Result<()> {
     .maximizable(false)
     .minimizable(false)
     .closable(false)
-    .build()?;
+    .build()
+    .and_then(|window| {
+        window.set_ignore_cursor_events(true)?;
+        Ok(window)
+    })?;
 
     Ok(())
 }
@@ -174,15 +183,9 @@ pub fn show_overlay(
             FloatingOverlayPosition::Bottom => OverlayAnchor::Bottom,
             FloatingOverlayPosition::Off => return hide_overlay(app),
         };
-        let logical = calculate_position(
-            rect,
-            anchor,
-            (OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL),
-        );
-        window.set_size(LogicalSize::new(
-            OVERLAY_WIDTH_LOGICAL,
-            OVERLAY_HEIGHT_LOGICAL,
-        ))?;
+        let overlay_size = overlay_size_for_monitor(rect);
+        let logical = calculate_position(rect, anchor, overlay_size);
+        window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
         window.set_position(logical)?;
     }
 
@@ -296,6 +299,20 @@ pub(crate) fn calculate_position(
     LogicalPosition::new(logical_x, logical_y)
 }
 
+fn overlay_size_for_monitor(monitor: MonitorRect) -> (f64, f64) {
+    let scale = if monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let monitor_logical_w = monitor.size_physical.0 as f64 / scale;
+    let available_w = (monitor_logical_w - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
+    let width = available_w
+        .min(OVERLAY_MAX_WIDTH_LOGICAL)
+        .max(OVERLAY_MIN_WIDTH_LOGICAL.min(available_w));
+    (width, OVERLAY_HEIGHT_LOGICAL)
+}
+
 pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
     if count == 0 {
         return Vec::new();
@@ -347,34 +364,85 @@ mod tests {
     #[test]
     fn top_anchor_centers_horizontally_and_offsets_vertically() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        assert_eq!(pos.x, ((1920 - 172) / 2) as f64);
+        let pos = calculate_position(
+            monitor,
+            OverlayAnchor::Top,
+            overlay_size_for_monitor(monitor),
+        );
+        assert_eq!(pos.x, ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0));
         assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
     fn bottom_anchor_mirrors_top_offset() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(monitor, OverlayAnchor::Bottom, (172.0, 36.0));
-        assert_eq!(pos.x, ((1920 - 172) / 2) as f64);
-        assert_eq!(pos.y, 1080.0 - 36.0 - BOTTOM_OFFSET_LOGICAL);
+        let pos = calculate_position(
+            monitor,
+            OverlayAnchor::Bottom,
+            overlay_size_for_monitor(monitor),
+        );
+        assert_eq!(pos.x, ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0));
+        assert_eq!(
+            pos.y,
+            1080.0 - OVERLAY_HEIGHT_LOGICAL - BOTTOM_OFFSET_LOGICAL
+        );
     }
 
     #[test]
     fn secondary_monitor_with_negative_origin_produces_absolute_coords() {
         let monitor = rect((-1920, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        assert_eq!(pos.x, -1920.0 + ((1920 - 172) / 2) as f64);
+        let pos = calculate_position(
+            monitor,
+            OverlayAnchor::Top,
+            overlay_size_for_monitor(monitor),
+        );
+        assert_eq!(
+            pos.x,
+            -1920.0 + ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0)
+        );
         assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
     fn high_dpi_monitor_returns_logical_coords() {
         let monitor = rect((0, 0), (3840, 2160), 2.0);
-        let pos = calculate_position(monitor, OverlayAnchor::Top, (172.0, 36.0));
-        // Logical width = 1920, logical x = (1920 - 172) / 2 = 874.
-        assert_eq!(pos.x, 874.0);
+        let pos = calculate_position(
+            monitor,
+            OverlayAnchor::Top,
+            overlay_size_for_monitor(monitor),
+        );
+        // Logical width = 1920, logical x = (1920 - 720) / 2 = 600.
+        assert_eq!(pos.x, 600.0);
         assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
+    }
+
+    #[test]
+    fn overlay_size_shrinks_to_current_monitor_width() {
+        let monitor = rect((0, 0), (640, 480), 1.0);
+        let size = overlay_size_for_monitor(monitor);
+
+        assert!(size.0 <= 592.0);
+        assert_eq!(size.1, OVERLAY_HEIGHT_LOGICAL);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_overlay_moves_to_active_space_instead_of_joining_all_spaces() {
+        use tauri_nspanel::CollectionBehavior;
+
+        assert_eq!(
+            overlay_collection_behavior(),
+            CollectionBehavior::new()
+                .move_to_active_space()
+                .full_screen_auxiliary()
+        );
+        assert_ne!(
+            overlay_collection_behavior(),
+            CollectionBehavior::new()
+                .can_join_all_spaces()
+                .full_screen_auxiliary()
+                .stationary()
+        );
     }
 
     #[test]
