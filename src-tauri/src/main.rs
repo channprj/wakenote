@@ -285,6 +285,45 @@ struct LiveFailedPayload {
     error: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlayWindowAction {
+    ShowCaption { position: FloatingOverlayPosition },
+    None,
+}
+
+fn overlay_action_for_live_started(_position: FloatingOverlayPosition) -> OverlayWindowAction {
+    OverlayWindowAction::None
+}
+
+fn overlay_action_for_caption_text(position: FloatingOverlayPosition) -> OverlayWindowAction {
+    match position {
+        FloatingOverlayPosition::Off => OverlayWindowAction::None,
+        FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom => {
+            OverlayWindowAction::ShowCaption { position }
+        }
+    }
+}
+
+fn apply_overlay_window_action(
+    app: &AppHandle,
+    action: OverlayWindowAction,
+    context: &'static str,
+) {
+    match action {
+        OverlayWindowAction::ShowCaption { position } => {
+            if let Err(error) = overlay::show_overlay_on_main_thread(
+                app,
+                OverlayState::Recording,
+                position,
+                context,
+            ) {
+                eprintln!("[overlay] {context} failed: {error}");
+            }
+        }
+        OverlayWindowAction::None => {}
+    }
+}
+
 /// Emitted on `source-detected` / `source-ended`, and reused inside the capture
 /// status snapshot to describe the recognized source on screen.
 #[derive(Debug, Clone, Serialize)]
@@ -2364,12 +2403,23 @@ fn wire_live_transcription(
     eprintln!("[wakenote] wire_live_transcription: model_dir={model_directory}");
 
     let app_for_partial = app_handle.clone();
+    let backend_for_partial = backend_state.clone();
     let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(
         move |event| match event {
             LivePartialEvent::Text(result) => {
                 eprintln!(
                     "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
+                );
+                let overlay_position = backend_for_partial
+                    .lock()
+                    .ok()
+                    .map(|backend| backend.settings().floating_overlay_position)
+                    .unwrap_or(FloatingOverlayPosition::Off);
+                apply_overlay_window_action(
+                    &app_for_partial,
+                    overlay_action_for_caption_text(overlay_position),
+                    "show caption on live text",
                 );
                 if let Err(error) = app_for_partial.emit(
                     EVENT_LIVE_PARTIAL,
@@ -2434,14 +2484,11 @@ fn wire_live_transcription(
             overlay_position,
         } => {
             eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
-            if let Err(error) = overlay::show_overlay_on_main_thread(
+            apply_overlay_window_action(
                 &app_for_handler,
-                OverlayState::Recording,
-                overlay_position,
-                "show recording on voice",
-            ) {
-                eprintln!("[overlay] show recording on voice failed: {error}");
-            }
+                overlay_action_for_live_started(overlay_position),
+                "show caption on voice start",
+            );
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_STARTED,
                 LiveStartedPayload {
@@ -2648,6 +2695,11 @@ fn emit_outcome_to_frontend(
                 chunk_id,
                 audio_path_str,
                 text.len()
+            );
+            apply_overlay_window_action(
+                app,
+                overlay_action_for_caption_text(settings_for_log.floating_overlay_position),
+                "show caption on final text",
             );
             if wakenote::text_input::auto_transcript_input_should_type(
                 auto_input_enabled,
@@ -2979,6 +3031,22 @@ fn open_settings_window_for_reopen(app: &AppHandle) -> tauri::Result<()> {
     }
 }
 
+fn prepare_main_window_for_launch(
+    app: &AppHandle,
+    settings: &AppSettings,
+    show_dock_icon: bool,
+) -> tauri::Result<()> {
+    if settings_window_should_open_on_launch(settings) {
+        ensure_main_window_visible(app, show_dock_icon)?;
+    } else {
+        apply_dock_icon_visibility(app, show_dock_icon)?;
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+            window.hide()?;
+        }
+    }
+    Ok(())
+}
+
 fn apply_dock_icon_visibility(app: &AppHandle, show_dock_icon: bool) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -3194,7 +3262,11 @@ fn main() {
             ));
             let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
             let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
-            ensure_main_window_visible(app.handle(), show_dock_icon)?;
+            prepare_main_window_for_launch(
+                app.handle(),
+                &initial_settings_for_runtime,
+                show_dock_icon,
+            )?;
             let backend_state = Arc::new(Mutex::new(backend));
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
@@ -4473,6 +4545,32 @@ mod tests {
 
         settings.show_tray_icon = false;
         assert!(settings_window_should_open_on_launch(&settings));
+    }
+
+    #[test]
+    fn live_started_event_does_not_open_caption_overlay_without_text() {
+        assert_eq!(
+            overlay_action_for_live_started(FloatingOverlayPosition::Top),
+            OverlayWindowAction::None
+        );
+    }
+
+    #[test]
+    fn caption_text_event_opens_overlay_on_configured_position() {
+        assert_eq!(
+            overlay_action_for_caption_text(FloatingOverlayPosition::Bottom),
+            OverlayWindowAction::ShowCaption {
+                position: FloatingOverlayPosition::Bottom
+            }
+        );
+    }
+
+    #[test]
+    fn caption_text_event_does_not_open_overlay_when_disabled() {
+        assert_eq!(
+            overlay_action_for_caption_text(FloatingOverlayPosition::Off),
+            OverlayWindowAction::None
+        );
     }
 
     #[test]
