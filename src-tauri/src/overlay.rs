@@ -15,6 +15,8 @@ const OVERLAY_HEIGHT_LOGICAL: f64 = 104.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
 const OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL: f64 = 36.0;
 const OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL: f64 = 28.0;
+const OVERLAY_CAPTION_BORDER_LOGICAL: f64 = 2.0;
+const OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL: f64 = 16.0;
 const OVERLAY_CAPTION_LINE_HEIGHT_RATIO: f64 = 1.25;
 
 #[cfg(target_os = "macos")]
@@ -381,7 +383,10 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let max_height = (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(
         OVERLAY_HEIGHT_LOGICAL,
     );
-    let height = (text_height + OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL)
+    let height = (text_height
+        + OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL
+        + OVERLAY_CAPTION_BORDER_LOGICAL
+        + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL)
         .ceil()
         .max(OVERLAY_HEIGHT_LOGICAL)
         .min(max_height);
@@ -513,6 +518,15 @@ mod tests {
         assert_eq!(short.1, OVERLAY_HEIGHT_LOGICAL);
         assert!(long.1 > short.1);
         assert!(long.1 <= 1080.0 - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0);
+    }
+
+    #[test]
+    fn caption_overlay_height_keeps_breathing_room_for_four_lines() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let four_line_caption = "a".repeat(280);
+        let size = caption_overlay_size_for_monitor(monitor, &four_line_caption, 24);
+
+        assert!(size.1 >= 166.0, "caption height was {}", size.1);
     }
 
     #[cfg(target_os = "macos")]

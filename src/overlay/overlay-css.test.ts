@@ -10,4 +10,10 @@ describe("overlay caption css", () => {
     expect(css).not.toMatch(/\.overlay-caption__text\s*\{[^}]*overflow:\s*hidden/);
     expect(css).toMatch(/\.overlay-caption__text\s*\{[^}]*white-space:\s*normal/);
   });
+
+  it("keeps vertical breathing room inside the overlay window", () => {
+    expect(css).toMatch(/#overlay-root\s*\{[^}]*padding:\s*8px\s+0/);
+    expect(css).toMatch(/#overlay-root\s*\{[^}]*box-sizing:\s*border-box/);
+    expect(css).toMatch(/\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/);
+  });
 });
