@@ -13,6 +13,9 @@ const OVERLAY_MAX_WIDTH_LOGICAL: f64 = 720.0;
 const OVERLAY_MIN_WIDTH_LOGICAL: f64 = 280.0;
 const OVERLAY_HEIGHT_LOGICAL: f64 = 104.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
+const OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL: f64 = 36.0;
+const OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL: f64 = 28.0;
+const OVERLAY_CAPTION_LINE_HEIGHT_RATIO: f64 = 1.25;
 
 #[cfg(target_os = "macos")]
 tauri_nspanel::tauri_panel! {
@@ -196,6 +199,45 @@ pub fn show_overlay(
     Ok(())
 }
 
+pub fn show_caption_overlay(
+    app: &AppHandle,
+    position: FloatingOverlayPosition,
+    text: &str,
+    font_size_px: u32,
+) -> tauri::Result<()> {
+    if matches!(position, FloatingOverlayPosition::Off) || text.trim().is_empty() {
+        return hide_overlay(app);
+    }
+
+    if app.get_webview_window(OVERLAY_LABEL).is_none() {
+        create_overlay_window(app)?;
+    }
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Ok(());
+    };
+
+    if let Some(rect) = monitor_with_cursor(&window) {
+        let anchor = match position {
+            FloatingOverlayPosition::Top => OverlayAnchor::Top,
+            FloatingOverlayPosition::Bottom => OverlayAnchor::Bottom,
+            FloatingOverlayPosition::Off => return hide_overlay(app),
+        };
+        let overlay_size = caption_overlay_size_for_monitor(rect, text, font_size_px);
+        let logical = calculate_position(rect, anchor, overlay_size);
+        window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
+        window.set_position(logical)?;
+    }
+
+    window.show()?;
+    let payload = OverlayStatePayload {
+        state: OverlayState::Recording,
+        position,
+    };
+    let _ = window.emit(OVERLAY_EVENT, payload.clone());
+    let _ = app.emit(OVERLAY_EVENT, payload);
+    Ok(())
+}
+
 pub fn emit_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
     let payload = OverlayLevelPayload { levels };
     if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
@@ -313,6 +355,39 @@ fn overlay_size_for_monitor(monitor: MonitorRect) -> (f64, f64) {
     (width, OVERLAY_HEIGHT_LOGICAL)
 }
 
+pub(crate) fn caption_overlay_size_for_monitor(
+    monitor: MonitorRect,
+    text: &str,
+    font_size_px: u32,
+) -> (f64, f64) {
+    let (width, _) = overlay_size_for_monitor(monitor);
+    let scale = if monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let monitor_logical_h = monitor.size_physical.1 as f64 / scale;
+    let font_size = (font_size_px as f64).clamp(18.0, 48.0);
+    let text_width = (width - OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL).max(font_size * 8.0);
+    let average_char_width = font_size * 0.56;
+    let chars_per_line = (text_width / average_char_width).floor().max(8.0);
+    let weighted_chars = text
+        .chars()
+        .map(|ch| if ch.is_ascii() { 0.58 } else { 1.0 })
+        .sum::<f64>()
+        .max(1.0);
+    let lines = (weighted_chars / chars_per_line).ceil().max(1.0);
+    let text_height = lines * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
+    let max_height = (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(
+        OVERLAY_HEIGHT_LOGICAL,
+    );
+    let height = (text_height + OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL)
+        .ceil()
+        .max(OVERLAY_HEIGHT_LOGICAL)
+        .min(max_height);
+    (width, height)
+}
+
 pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
     if count == 0 {
         return Vec::new();
@@ -423,6 +498,21 @@ mod tests {
 
         assert!(size.0 <= 592.0);
         assert_eq!(size.1, OVERLAY_HEIGHT_LOGICAL);
+    }
+
+    #[test]
+    fn caption_overlay_height_grows_for_long_text() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let short = caption_overlay_size_for_monitor(monitor, "짧은 자막", 24);
+        let long = caption_overlay_size_for_monitor(
+            monitor,
+            "긴 자막은 두 줄에서 잘리면 안 됩니다. 실시간 전사 문장이 길어져도 전체 텍스트가 보이도록 오버레이 높이를 텍스트 길이에 맞춰 확장해야 합니다. 사용자가 회의 중 빠르게 말하면 partial transcript가 길어질 수 있으므로 말줄임표 없이 모두 표시해야 합니다.",
+            24,
+        );
+
+        assert_eq!(short.1, OVERLAY_HEIGHT_LOGICAL);
+        assert!(long.1 > short.1);
+        assert!(long.1 <= 1080.0 - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0);
     }
 
     #[cfg(target_os = "macos")]

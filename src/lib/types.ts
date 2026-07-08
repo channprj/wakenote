@@ -85,6 +85,10 @@ export interface AppSettings {
   tray_left_click_action: TrayClickAction;
   show_floating_overlay: boolean;
   floating_overlay_position: FloatingOverlayPosition;
+  floating_overlay_font_size_px: number;
+  floating_overlay_text_color: string;
+  floating_overlay_background_color: string;
+  floating_overlay_background_opacity: number;
   theme_mode: ThemeMode;
   theme_primary_color: string;
   system_audio_enabled: boolean;

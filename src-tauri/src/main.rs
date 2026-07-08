@@ -39,7 +39,11 @@ use wakenote::live_transcription::{
 };
 use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore};
-use wakenote::overlay::{self, OverlayState};
+use wakenote::overlay;
+use wakenote::overlay_caption::{
+    OVERLAY_CAPTION_FINAL_HOLD, OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT,
+    OverlayCaptionRuntime, OverlayCaptionSnapshot,
+};
 use wakenote::permissions::{self, AppPermissions};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
@@ -66,6 +70,8 @@ type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
+type OverlayCaptionState = Arc<Mutex<OverlayCaptionRuntime>>;
+type IntentionalQuitState = Arc<AtomicBool>;
 /// Open system-audio stream handle (dropping it stops capture). Held alongside
 /// the mic runtime so the two capture paths are independent. Managed as an
 /// `Arc<Mutex<…>>` so the watcher thread and IPC commands share one handle.
@@ -285,43 +291,62 @@ struct LiveFailedPayload {
     error: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OverlayWindowAction {
-    ShowCaption { position: FloatingOverlayPosition },
-    None,
-}
-
-fn overlay_action_for_live_started(_position: FloatingOverlayPosition) -> OverlayWindowAction {
-    OverlayWindowAction::None
-}
-
-fn overlay_action_for_caption_text(position: FloatingOverlayPosition) -> OverlayWindowAction {
-    match position {
-        FloatingOverlayPosition::Off => OverlayWindowAction::None,
-        FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom => {
-            OverlayWindowAction::ShowCaption { position }
-        }
-    }
-}
-
-fn apply_overlay_window_action(
+fn publish_overlay_caption_snapshot(
     app: &AppHandle,
-    action: OverlayWindowAction,
+    snapshot: OverlayCaptionSnapshot,
     context: &'static str,
 ) {
-    match action {
-        OverlayWindowAction::ShowCaption { position } => {
-            if let Err(error) = overlay::show_overlay_on_main_thread(
-                app,
-                OverlayState::Recording,
-                position,
-                context,
+    let app_for_task = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if snapshot.visible
+            && !snapshot.text.is_empty()
+            && !matches!(snapshot.position, FloatingOverlayPosition::Off)
+        {
+            if let Err(error) = overlay::show_caption_overlay(
+                &app_for_task,
+                snapshot.position,
+                &snapshot.text,
+                snapshot.style.font_size_px,
             ) {
-                eprintln!("[overlay] {context} failed: {error}");
+                eprintln!("[overlay-caption] {context} show failed: {error}");
+                return;
+            }
+            if let Some(window) = app_for_task.get_webview_window(overlay::OVERLAY_LABEL) {
+                let _ = window.emit(OVERLAY_CAPTION_UPDATED_EVENT, snapshot.clone());
+            }
+            let _ = app_for_task.emit(OVERLAY_CAPTION_UPDATED_EVENT, snapshot);
+        } else {
+            if let Some(window) = app_for_task.get_webview_window(overlay::OVERLAY_LABEL) {
+                let _ = window.emit(OVERLAY_CAPTION_HIDDEN_EVENT, snapshot.clone());
+            }
+            let _ = app_for_task.emit(OVERLAY_CAPTION_HIDDEN_EVENT, snapshot);
+            if let Err(error) = overlay::hide_overlay(&app_for_task) {
+                eprintln!("[overlay-caption] {context} hide failed: {error}");
             }
         }
-        OverlayWindowAction::None => {}
+    }) {
+        eprintln!("[overlay-caption] {context} schedule failed: {error}");
     }
+}
+
+fn schedule_overlay_caption_hide(
+    app: AppHandle,
+    overlay_caption_state: OverlayCaptionState,
+    generation: u64,
+) {
+    thread::spawn(move || {
+        thread::sleep(OVERLAY_CAPTION_FINAL_HOLD);
+        let snapshot = overlay_caption_state.lock().ok().and_then(|mut runtime| {
+            if runtime.hide_if_generation(generation) {
+                Some(runtime.snapshot())
+            } else {
+                None
+            }
+        });
+        if let Some(snapshot) = snapshot {
+            publish_overlay_caption_snapshot(&app, snapshot, "final hold elapsed");
+        }
+    });
 }
 
 /// Emitted on `source-detected` / `source-ended`, and reused inside the capture
@@ -422,6 +447,78 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
+fn overlay_caption_snapshot(state: State<'_, OverlayCaptionState>) -> OverlayCaptionSnapshot {
+    state
+        .lock()
+        .map(|runtime| runtime.snapshot())
+        .unwrap_or_else(|_| OverlayCaptionRuntime::default().snapshot())
+}
+
+#[tauri::command]
+fn debug_show_overlay_caption(
+    app: AppHandle,
+    state: State<'_, OverlayCaptionState>,
+    backend_state: State<'_, BackendState>,
+    text: String,
+) -> Result<OverlayCaptionSnapshot, String> {
+    let style = backend_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings()
+        .floating_overlay_caption_style();
+    let snapshot = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.show_partial(0, text, FloatingOverlayPosition::Top, style);
+        runtime.snapshot()
+    };
+    publish_overlay_caption_snapshot(&app, snapshot.clone(), "debug show caption");
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn debug_hide_overlay_caption(
+    app: AppHandle,
+    state: State<'_, OverlayCaptionState>,
+) -> Result<OverlayCaptionSnapshot, String> {
+    let snapshot = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.hide();
+        runtime.snapshot()
+    };
+    publish_overlay_caption_snapshot(&app, snapshot.clone(), "debug hide caption");
+    Ok(snapshot)
+}
+
+fn maybe_show_debug_overlay_caption_from_env(app: &AppHandle) {
+    let Ok(text) = std::env::var("WAKENOTE_DEBUG_OVERLAY_CAPTION") else {
+        return;
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let Some(state) = app.try_state::<OverlayCaptionState>() else {
+        return;
+    };
+    let style = app
+        .try_state::<BackendState>()
+        .and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .map(|backend| backend.settings().floating_overlay_caption_style())
+        })
+        .unwrap_or_else(|| AppSettings::default().floating_overlay_caption_style());
+    let snapshot = state.lock().ok().map(|mut runtime| {
+        runtime.show_partial(0, text, FloatingOverlayPosition::Top, style);
+        runtime.snapshot()
+    });
+    if let Some(snapshot) = snapshot {
+        publish_overlay_caption_snapshot(app, snapshot, "debug env caption");
+    }
+}
+
+#[tauri::command]
 fn update_settings(
     app: AppHandle,
     state: State<'_, BackendState>,
@@ -438,6 +535,7 @@ fn update_settings(
         launch_at_login_action,
         live_capture_action,
         prior_position,
+        prior_caption_style,
         previous_model_directory,
         previous_show_dock_icon,
     ) = {
@@ -447,6 +545,7 @@ fn update_settings(
             launch_at_login_action_for_patch(&settings, &patch),
             live_capture_runtime_action_for_patch(&settings, &patch),
             settings.floating_overlay_position,
+            settings.floating_overlay_caption_style(),
             settings.model_directory.clone(),
             settings.show_dock_icon,
         )
@@ -498,38 +597,29 @@ fn update_settings(
         transcription_state.inner().clone(),
     );
 
-    if prior_position != settings.floating_overlay_position {
-        apply_overlay_position_change(&app, &settings);
+    if prior_position != settings.floating_overlay_position
+        || prior_caption_style != settings.floating_overlay_caption_style()
+    {
+        apply_overlay_settings_change(&app, &settings);
     }
 
     Ok(settings)
 }
 
-fn apply_overlay_position_change(app: &AppHandle, settings: &AppSettings) {
-    let overlay_state = app
-        .try_state::<BackendState>()
-        .and_then(|state| {
-            state.lock().ok().map(|backend| {
-                overlay::overlay_state_for_tray_state(backend.app_status().tray_state)
-            })
-        })
-        .unwrap_or(OverlayState::Hidden);
-    let result = if matches!(
-        settings.floating_overlay_position,
-        FloatingOverlayPosition::Off
-    ) {
-        overlay::hide_overlay_on_main_thread(app, "position change hide")
-    } else if !matches!(overlay_state, OverlayState::Hidden) {
-        overlay::show_overlay_on_main_thread(
-            app,
-            overlay_state,
-            settings.floating_overlay_position,
-            "position change show overlay",
-        )
-    } else {
-        overlay::hide_overlay_on_main_thread(app, "position change hide inactive")
-    };
-    if let Err(error) = result {
+fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
+    if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
+        let snapshot = caption_state.lock().ok().map(|mut runtime| {
+            runtime.set_position(settings.floating_overlay_position);
+            runtime.set_style(settings.floating_overlay_caption_style());
+            runtime.snapshot()
+        });
+        if let Some(snapshot) = snapshot {
+            publish_overlay_caption_snapshot(app, snapshot, "overlay settings change");
+            return;
+        }
+    }
+
+    if let Err(error) = overlay::hide_overlay_on_main_thread(app, "position change hide inactive") {
         eprintln!("[overlay] position change failed: {error}");
     }
 }
@@ -2411,16 +2501,40 @@ fn wire_live_transcription(
                     "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
                 );
-                let overlay_position = backend_for_partial
-                    .lock()
-                    .ok()
-                    .map(|backend| backend.settings().floating_overlay_position)
-                    .unwrap_or(FloatingOverlayPosition::Off);
-                apply_overlay_window_action(
-                    &app_for_partial,
-                    overlay_action_for_caption_text(overlay_position),
-                    "show caption on live text",
-                );
+                if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
+                    let (overlay_position, caption_style) = backend_for_partial
+                        .lock()
+                        .ok()
+                        .map(|backend| {
+                            let settings = backend.settings();
+                            (
+                                settings.floating_overlay_position,
+                                settings.floating_overlay_caption_style(),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            (
+                                FloatingOverlayPosition::Off,
+                                AppSettings::default().floating_overlay_caption_style(),
+                            )
+                        });
+                    let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                        runtime.show_partial(
+                            result.chunk_id,
+                            &result.text,
+                            overlay_position,
+                            caption_style,
+                        );
+                        runtime.snapshot()
+                    });
+                    if let Some(snapshot) = snapshot {
+                        publish_overlay_caption_snapshot(
+                            &app_for_partial,
+                            snapshot,
+                            "live partial caption",
+                        );
+                    }
+                }
                 if let Err(error) = app_for_partial.emit(
                     EVENT_LIVE_PARTIAL,
                     LivePartialPayload {
@@ -2438,6 +2552,19 @@ fn wire_live_transcription(
                 let error = format!(
                     "Live transcription model {model_id} is not installed. Open Models tab to download it.",
                 );
+                if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
+                    let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                        runtime.hide();
+                        runtime.snapshot()
+                    });
+                    if let Some(snapshot) = snapshot {
+                        publish_overlay_caption_snapshot(
+                            &app_for_partial,
+                            snapshot,
+                            "live partial model missing",
+                        );
+                    }
+                }
                 if let Err(emit_error) = app_for_partial.emit(
                     EVENT_LIVE_FAILED,
                     LiveFailedPayload {
@@ -2454,6 +2581,19 @@ fn wire_live_transcription(
                 eprintln!(
                     "[wakenote] live partial: engine error chunk_id={chunk_id} message={message}"
                 );
+                if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
+                    let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                        runtime.hide();
+                        runtime.snapshot()
+                    });
+                    if let Some(snapshot) = snapshot {
+                        publish_overlay_caption_snapshot(
+                            &app_for_partial,
+                            snapshot,
+                            "live partial engine error",
+                        );
+                    }
+                }
                 if let Err(emit_error) = app_for_partial.emit(
                     EVENT_LIVE_FAILED,
                     LiveFailedPayload {
@@ -2484,11 +2624,28 @@ fn wire_live_transcription(
             overlay_position,
         } => {
             eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
-            apply_overlay_window_action(
-                &app_for_handler,
-                overlay_action_for_live_started(overlay_position),
-                "show caption on voice start",
-            );
+            if let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>() {
+                let caption_style = app_for_handler
+                    .try_state::<BackendState>()
+                    .and_then(|state| {
+                        state
+                            .lock()
+                            .ok()
+                            .map(|backend| backend.settings().floating_overlay_caption_style())
+                    })
+                    .unwrap_or_else(|| AppSettings::default().floating_overlay_caption_style());
+                let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                    runtime.start_chunk(chunk_id, overlay_position, caption_style);
+                    runtime.snapshot()
+                });
+                if let Some(snapshot) = snapshot {
+                    publish_overlay_caption_snapshot(
+                        &app_for_handler,
+                        snapshot,
+                        "live started caption",
+                    );
+                }
+            }
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_STARTED,
                 LiveStartedPayload {
@@ -2534,6 +2691,33 @@ fn wire_live_transcription(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
+            if let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>() {
+                let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                    runtime.mark_committed(chunk_id, audio_path.clone(), will_transcribe);
+                    runtime.snapshot()
+                });
+                if let Some(snapshot) = snapshot {
+                    let generation = snapshot.generation;
+                    let should_schedule_hide = snapshot.final_hold_ms.is_some()
+                        && snapshot.visible
+                        && matches!(
+                            snapshot.position,
+                            FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
+                        );
+                    publish_overlay_caption_snapshot(
+                        &app_for_handler,
+                        snapshot,
+                        "live committed caption",
+                    );
+                    if should_schedule_hide {
+                        schedule_overlay_caption_hide(
+                            app_for_handler.clone(),
+                            caption_state.inner().clone(),
+                            generation,
+                        );
+                    }
+                }
+            }
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_COMMITTED,
                 LiveCommittedPayload {
@@ -2696,11 +2880,39 @@ fn emit_outcome_to_frontend(
                 audio_path_str,
                 text.len()
             );
-            apply_overlay_window_action(
-                app,
-                overlay_action_for_caption_text(settings_for_log.floating_overlay_position),
-                "show caption on final text",
-            );
+            if chunk_id.is_some() {
+                if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
+                    let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
+                        if runtime.show_final_at(
+                            chunk_id,
+                            audio_path.to_path_buf(),
+                            &text,
+                            settings_for_log.floating_overlay_position,
+                            settings_for_log.floating_overlay_caption_style(),
+                        ) {
+                            Some(runtime.snapshot())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(snapshot) = snapshot {
+                        let generation = snapshot.generation;
+                        let should_schedule_hide = snapshot.visible
+                            && matches!(
+                                snapshot.position,
+                                FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
+                            );
+                        publish_overlay_caption_snapshot(app, snapshot, "live final caption");
+                        if should_schedule_hide {
+                            schedule_overlay_caption_hide(
+                                app.clone(),
+                                caption_state.inner().clone(),
+                                generation,
+                            );
+                        }
+                    }
+                }
+            }
             if wakenote::text_input::auto_transcript_input_should_type(
                 auto_input_enabled,
                 chunk_id,
@@ -2740,6 +2952,15 @@ fn emit_outcome_to_frontend(
                 "[wakenote] emit failed chunk_id={:?} path={} error={}",
                 chunk_id, audio_path_str, error
             );
+            if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
+                let snapshot = caption_state.lock().ok().map(|mut runtime| {
+                    runtime.hide();
+                    runtime.snapshot()
+                });
+                if let Some(snapshot) = snapshot {
+                    publish_overlay_caption_snapshot(app, snapshot, "live final failed");
+                }
+            }
             if let Err(emit_error) = app.emit(
                 EVENT_LIVE_FAILED,
                 LiveFailedPayload {
@@ -2962,13 +3183,34 @@ fn settings_window_should_open_on_launch(settings: &AppSettings) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppMenuAction {
     HideSettingsWindow,
+    IntentionalQuit,
     Noop,
 }
 
 fn app_menu_action(menu_id: &str) -> AppMenuAction {
     match menu_id {
         CLOSE_SETTINGS_WINDOW_MENU_ID => AppMenuAction::HideSettingsWindow,
+        "quit" => AppMenuAction::IntentionalQuit,
         _ => AppMenuAction::Noop,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitRequestDecision {
+    Allow,
+    Prevent,
+}
+
+fn exit_request_decision(
+    code: Option<i32>,
+    show_tray_icon: bool,
+    runtime_active: bool,
+    intentional_quit: bool,
+) -> ExitRequestDecision {
+    if code.is_some() || intentional_quit || !show_tray_icon || !runtime_active {
+        ExitRequestDecision::Allow
+    } else {
+        ExitRequestDecision::Prevent
     }
 }
 
@@ -2999,7 +3241,27 @@ fn handle_app_menu_event(app: &AppHandle, menu_id: &str) {
                 eprintln!("[window] failed to close settings window: {error}");
             }
         }
+        AppMenuAction::IntentionalQuit => {
+            mark_intentional_quit(app, "app menu");
+            app.exit(0);
+        }
         AppMenuAction::Noop => {}
+    }
+}
+
+fn mark_intentional_quit(app: &AppHandle, reason: &'static str) {
+    if let Some(state) = app.try_state::<IntentionalQuitState>() {
+        state.store(true, Ordering::SeqCst);
+    }
+    append_app_lifecycle_debug_log(app, format!("[app] quit requested reason={reason}"));
+}
+
+fn append_app_lifecycle_debug_log(app: &AppHandle, message: impl AsRef<str>) {
+    if let Some(settings) = app
+        .try_state::<BackendState>()
+        .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
+    {
+        append_runtime_debug_log(&settings, message);
     }
 }
 
@@ -3270,6 +3532,9 @@ fn main() {
             let backend_state = Arc::new(Mutex::new(backend));
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
+            let overlay_caption_state: OverlayCaptionState =
+                Arc::new(Mutex::new(OverlayCaptionRuntime::default()));
+            let intentional_quit_state: IntentionalQuitState = Arc::new(AtomicBool::new(false));
             let system_capture_state: SystemCaptureState = Arc::new(Mutex::new(None));
             let source_capture_lifecycle_state: SourceCaptureLifecycleState =
                 Arc::new(Mutex::new(SourceCaptureLifecycle::Idle));
@@ -3284,6 +3549,8 @@ fn main() {
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
             app.manage(input_monitor_state);
             app.manage(live_transcriber_state.clone());
+            app.manage(overlay_caption_state);
+            app.manage(intentional_quit_state);
             app.manage(system_capture_state.clone());
             app.manage(source_capture_lifecycle_state.clone());
             app.manage(detected_source_state.clone());
@@ -3314,6 +3581,7 @@ fn main() {
             if let Err(error) = overlay::create_overlay_window(app.handle()) {
                 eprintln!("[overlay] initial hidden overlay creation failed: {error}");
             }
+            maybe_show_debug_overlay_caption_from_env(app.handle());
             let initial = backend_state
                 .lock()
                 .ok()
@@ -3420,6 +3688,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            overlay_caption_snapshot,
+            debug_show_overlay_caption,
+            debug_hide_overlay_caption,
             update_settings,
             app_status,
             list_microphones,
@@ -3472,6 +3743,37 @@ fn main() {
                 tauri::RunEvent::Reopen { .. } => {
                     schedule_settings_window_for_reopen(app, "macOS reopen");
                 }
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    let (settings, runtime_active) = app
+                        .try_state::<BackendState>()
+                        .and_then(|state| {
+                            state.lock().ok().map(|backend| {
+                                let status = backend.app_status();
+                                let runtime_active = status.live_input_active
+                                    || status.queue.running_count > 0
+                                    || backend.live_capture_should_run();
+                                (backend.settings(), runtime_active)
+                            })
+                        })
+                        .unwrap_or_else(|| (AppSettings::default(), false));
+                    let show_tray_icon = settings
+                        .show_tray_icon;
+                    let intentional_quit = app
+                        .try_state::<IntentionalQuitState>()
+                        .map(|state| state.load(Ordering::SeqCst))
+                        .unwrap_or(false);
+                    let decision =
+                        exit_request_decision(code, show_tray_icon, runtime_active, intentional_quit);
+                    append_runtime_debug_log(
+                        &settings,
+                        format!(
+                            "[app] exit_requested code={code:?} show_tray_icon={show_tray_icon} runtime_active={runtime_active} intentional_quit={intentional_quit} decision={decision:?}"
+                        ),
+                    );
+                    if matches!(decision, ExitRequestDecision::Prevent) {
+                        api.prevent_exit();
+                    }
+                }
                 // whisper.cpp's GGML Metal backend aborts inside its
                 // static destructor (`ggml_metal_rsets_free` -> `ggml_abort`)
                 // when the process tears down via libc `exit()` ->
@@ -3482,6 +3784,7 @@ fn main() {
                 // GPU resources anyway, and all durable state (settings,
                 // transcription queue) is already persisted on write.
                 tauri::RunEvent::Exit => {
+                    append_app_lifecycle_debug_log(app, "[app] exit");
                     unsafe { libc::_exit(0) };
                 }
                 _ => {}
@@ -3828,7 +4131,10 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
                 eprintln!("[window] failed to open settings window: {error}");
             }
         }
-        "quit" => app.exit(0),
+        "quit" => {
+            mark_intentional_quit(app, "tray menu");
+            app.exit(0);
+        }
         _ => {}
     }
 }
@@ -4548,38 +4854,53 @@ mod tests {
     }
 
     #[test]
-    fn live_started_event_does_not_open_caption_overlay_without_text() {
-        assert_eq!(
-            overlay_action_for_live_started(FloatingOverlayPosition::Top),
-            OverlayWindowAction::None
-        );
-    }
-
-    #[test]
-    fn caption_text_event_opens_overlay_on_configured_position() {
-        assert_eq!(
-            overlay_action_for_caption_text(FloatingOverlayPosition::Bottom),
-            OverlayWindowAction::ShowCaption {
-                position: FloatingOverlayPosition::Bottom
-            }
-        );
-    }
-
-    #[test]
-    fn caption_text_event_does_not_open_overlay_when_disabled() {
-        assert_eq!(
-            overlay_action_for_caption_text(FloatingOverlayPosition::Off),
-            OverlayWindowAction::None
-        );
-    }
-
-    #[test]
     fn close_window_shortcut_hides_settings_window() {
         assert_eq!(
             app_menu_action(CLOSE_SETTINGS_WINDOW_MENU_ID),
             AppMenuAction::HideSettingsWindow
         );
         assert_eq!(app_menu_action("open-settings"), AppMenuAction::Noop);
+    }
+
+    #[test]
+    fn quit_menu_action_marks_intentional_quit() {
+        assert_eq!(app_menu_action("quit"), AppMenuAction::IntentionalQuit);
+    }
+
+    #[test]
+    fn unexpected_exit_request_is_prevented_for_tray_app() {
+        assert_eq!(
+            exit_request_decision(None, true, true, false),
+            ExitRequestDecision::Prevent
+        );
+    }
+
+    #[test]
+    fn explicit_or_intentional_exit_request_is_allowed() {
+        assert_eq!(
+            exit_request_decision(Some(0), true, true, false),
+            ExitRequestDecision::Allow
+        );
+        assert_eq!(
+            exit_request_decision(None, true, true, true),
+            ExitRequestDecision::Allow
+        );
+    }
+
+    #[test]
+    fn exit_request_is_allowed_when_tray_icon_is_disabled() {
+        assert_eq!(
+            exit_request_decision(None, false, true, false),
+            ExitRequestDecision::Allow
+        );
+    }
+
+    #[test]
+    fn exit_request_is_allowed_when_runtime_is_idle() {
+        assert_eq!(
+            exit_request_decision(None, true, false, false),
+            ExitRequestDecision::Allow
+        );
     }
 
     #[test]

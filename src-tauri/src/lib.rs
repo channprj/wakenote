@@ -9,6 +9,7 @@ pub mod live_transcription;
 pub mod meeting;
 pub mod models;
 pub mod overlay;
+pub mod overlay_caption;
 pub mod permissions;
 pub mod persistence;
 pub mod queue;

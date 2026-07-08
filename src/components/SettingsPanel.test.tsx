@@ -405,6 +405,29 @@ describe("settings panel", () => {
     expect(markup).toContain("Right click uses the other action.");
   });
 
+  it("shows floating overlay caption style controls in advanced settings", () => {
+    const snapshot = mockSnapshot();
+    Object.assign(snapshot.settings, {
+      floating_overlay_font_size_px: 32,
+      floating_overlay_text_color: "#f8fafc",
+      floating_overlay_background_color: "#123456",
+      floating_overlay_background_opacity: 68,
+    });
+
+    const markup = renderSettingsPanel(snapshot, "advanced");
+
+    expect(markup).toContain("Floating overlay");
+    expect(markup).toContain("Overlay font size");
+    expect(markup).toContain('value="32"');
+    expect(markup).toContain("Overlay text color");
+    expect(markup).toContain('type="color"');
+    expect(markup).toContain('value="#f8fafc"');
+    expect(markup).toContain("Overlay background color");
+    expect(markup).toContain('value="#123456"');
+    expect(markup).toContain("Overlay background opacity");
+    expect(markup).toContain("68%");
+  });
+
   it("shows quick max chunk duration presets for transcription-friendly chunking", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.max_chunk_ms = 120_000;

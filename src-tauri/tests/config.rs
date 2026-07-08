@@ -93,3 +93,28 @@ fn main_window_capability_allows_dialog_open_for_audio_uploads() {
             .any(|permission| permission.as_str() == Some("dialog:allow-open"))
     );
 }
+
+#[test]
+fn overlay_window_capability_allows_caption_snapshot_events() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let capability_path = manifest_dir.join("capabilities/default.json");
+    let capability: Value = serde_json::from_str(
+        &std::fs::read_to_string(capability_path).expect("default capability"),
+    )
+    .expect("valid capability json");
+
+    assert!(
+        capability["windows"]
+            .as_array()
+            .expect("capability windows")
+            .iter()
+            .any(|window| window.as_str() == Some("overlay"))
+    );
+    assert!(
+        capability["permissions"]
+            .as_array()
+            .expect("capability permissions")
+            .iter()
+            .any(|permission| permission.as_str() == Some("core:default"))
+    );
+}

@@ -18,6 +18,35 @@ pub enum FloatingOverlayPosition {
     Bottom,
 }
 
+pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 18;
+pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
+pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
+pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
+
+pub fn default_floating_overlay_font_size_px() -> u32 {
+    24
+}
+
+pub fn default_floating_overlay_text_color() -> String {
+    "#ffffff".to_string()
+}
+
+pub fn default_floating_overlay_background_color() -> String {
+    "#050507".to_string()
+}
+
+pub fn default_floating_overlay_background_opacity() -> u8 {
+    82
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FloatingOverlayCaptionStyle {
+    pub font_size_px: u32,
+    pub text_color: String,
+    pub background_color: String,
+    pub background_opacity: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -143,6 +172,14 @@ pub struct AppSettings {
     pub tray_left_click_action: TrayClickAction,
     pub show_floating_overlay: bool,
     pub floating_overlay_position: FloatingOverlayPosition,
+    #[serde(default = "default_floating_overlay_font_size_px")]
+    pub floating_overlay_font_size_px: u32,
+    #[serde(default = "default_floating_overlay_text_color")]
+    pub floating_overlay_text_color: String,
+    #[serde(default = "default_floating_overlay_background_color")]
+    pub floating_overlay_background_color: String,
+    #[serde(default = "default_floating_overlay_background_opacity")]
+    pub floating_overlay_background_opacity: u8,
     pub theme_mode: ThemeMode,
     pub theme_primary_color: String,
     /// Master switch for system-audio (Google Meet / YouTube …) capture.
@@ -194,6 +231,10 @@ pub struct SettingsPatch {
     pub tray_left_click_action: Option<TrayClickAction>,
     pub show_floating_overlay: Option<bool>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
+    pub floating_overlay_font_size_px: Option<u32>,
+    pub floating_overlay_text_color: Option<String>,
+    pub floating_overlay_background_color: Option<String>,
+    pub floating_overlay_background_opacity: Option<u8>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
@@ -606,6 +647,24 @@ impl AppSettings {
         if let Some(value) = patch.floating_overlay_position {
             self.floating_overlay_position = value;
         }
+        if let Some(value) = patch.floating_overlay_font_size_px {
+            self.floating_overlay_font_size_px = value.clamp(
+                FLOATING_OVERLAY_FONT_SIZE_MIN_PX,
+                FLOATING_OVERLAY_FONT_SIZE_MAX_PX,
+            );
+        }
+        if let Some(value) = patch.floating_overlay_text_color {
+            self.floating_overlay_text_color = value;
+        }
+        if let Some(value) = patch.floating_overlay_background_color {
+            self.floating_overlay_background_color = value;
+        }
+        if let Some(value) = patch.floating_overlay_background_opacity {
+            self.floating_overlay_background_opacity = value.clamp(
+                FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN,
+                FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX,
+            );
+        }
         if let Some(value) = patch.theme_mode {
             self.theme_mode = value;
         }
@@ -668,6 +727,10 @@ impl Default for AppSettings {
             tray_left_click_action: default_tray_left_click_action(),
             show_floating_overlay: true,
             floating_overlay_position: FloatingOverlayPosition::Top,
+            floating_overlay_font_size_px: default_floating_overlay_font_size_px(),
+            floating_overlay_text_color: default_floating_overlay_text_color(),
+            floating_overlay_background_color: default_floating_overlay_background_color(),
+            floating_overlay_background_opacity: default_floating_overlay_background_opacity(),
             theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
@@ -683,6 +746,15 @@ impl AppSettings {
         match self.tray_left_click_action {
             TrayClickAction::TogglePause => TrayClickAction::OpenMenu,
             TrayClickAction::OpenMenu => TrayClickAction::TogglePause,
+        }
+    }
+
+    pub fn floating_overlay_caption_style(&self) -> FloatingOverlayCaptionStyle {
+        FloatingOverlayCaptionStyle {
+            font_size_px: self.floating_overlay_font_size_px,
+            text_color: self.floating_overlay_text_color.clone(),
+            background_color: self.floating_overlay_background_color.clone(),
+            background_opacity: self.floating_overlay_background_opacity,
         }
     }
 }
@@ -915,5 +987,26 @@ mod tests {
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
+        assert_eq!(settings.floating_overlay_font_size_px, 24);
+        assert_eq!(settings.floating_overlay_text_color, "#ffffff");
+        assert_eq!(settings.floating_overlay_background_color, "#050507");
+        assert_eq!(settings.floating_overlay_background_opacity, 82);
+    }
+
+    #[test]
+    fn patch_clamps_floating_overlay_caption_style() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            floating_overlay_font_size_px: Some(4),
+            floating_overlay_text_color: Some("#f8fafc".into()),
+            floating_overlay_background_color: Some("#123456".into()),
+            floating_overlay_background_opacity: Some(128),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.floating_overlay_font_size_px, 18);
+        assert_eq!(settings.floating_overlay_text_color, "#f8fafc");
+        assert_eq!(settings.floating_overlay_background_color, "#123456");
+        assert_eq!(settings.floating_overlay_background_opacity, 100);
     }
 }

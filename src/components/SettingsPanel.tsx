@@ -494,6 +494,42 @@ export function SettingsPanel({
             <option value="top">Top</option>
             <option value="bottom">Bottom</option>
           </Select>
+          <Slider
+            label="Overlay font size"
+            value={settings.floating_overlay_font_size_px}
+            min={18}
+            max={48}
+            suffix=" px"
+            onValueChange={(floating_overlay_font_size_px) =>
+              onPatch({ floating_overlay_font_size_px })
+            }
+          />
+          <TextInput
+            label="Overlay text color"
+            type="color"
+            value={settings.floating_overlay_text_color}
+            onChange={(event) =>
+              onPatch({ floating_overlay_text_color: event.currentTarget.value })
+            }
+          />
+          <TextInput
+            label="Overlay background color"
+            type="color"
+            value={settings.floating_overlay_background_color}
+            onChange={(event) =>
+              onPatch({ floating_overlay_background_color: event.currentTarget.value })
+            }
+          />
+          <Slider
+            label="Overlay background opacity"
+            value={settings.floating_overlay_background_opacity}
+            min={0}
+            max={100}
+            suffix="%"
+            onValueChange={(floating_overlay_background_opacity) =>
+              onPatch({ floating_overlay_background_opacity })
+            }
+          />
           <Select
             label="Theme"
             value={settings.theme_mode}
