@@ -914,6 +914,71 @@ svg {
   font-size: 12px;
 }
 
+.ui-field__label-copy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ui-field__label-copy > label {
+  min-width: 0;
+}
+
+.ui-field-help {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ui-field-help__trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ui-field-help__trigger:hover,
+.ui-field-help__trigger[aria-expanded="true"] {
+  background: var(--neutral-soft-bg);
+  color: var(--text);
+}
+
+.ui-field-help__trigger svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ui-field-help__popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(320px, calc(100vw - 48px));
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  pointer-events: auto;
+  transform: none;
+}
+
+.ui-field-help__popover[hidden] {
+  display: none;
+}
+
 .ui-field__label strong {
   color: var(--text);
   font-weight: 700;
@@ -2803,6 +2868,16 @@ code {
 }
 
 @media (max-width: 940px) {
+  .ui-field-help__popover {
+    position: fixed;
+    top: auto;
+    left: auto;
+    right: 16px;
+    bottom: 16px;
+    width: min(360px, calc(100vw - 32px));
+    transform: none;
+  }
+
   html,
   body,
   #root {

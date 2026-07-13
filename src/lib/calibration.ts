@@ -1,8 +1,6 @@
 import type { StatusTone } from "./status-summary";
 import type { SettingsPatch } from "./types";
 
-export const DEFAULT_THRESHOLD_DBFS = -44;
-
 export interface CalibrationBadgePresentation {
   tone: StatusTone;
   label: string;
@@ -59,12 +57,5 @@ export function calibrationSettingsPatch(thresholdDbfs: number): SettingsPatch {
   return {
     threshold_dbfs: thresholdDbfs,
     calibration_completed: true,
-  };
-}
-
-export function resetCalibrationSettingsPatch(): SettingsPatch {
-  return {
-    threshold_dbfs: DEFAULT_THRESHOLD_DBFS,
-    calibration_completed: false,
   };
 }

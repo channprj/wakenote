@@ -54,7 +54,7 @@ function renderLevelMeterBadge(snapshot: AppSnapshot): string {
       settings={snapshot.settings}
       status={snapshot.status}
       onApplyThreshold={() => {}}
-      onResetThreshold={() => {}}
+      onResetRecordingSettings={() => {}}
     />,
   );
 }

@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_THRESHOLD_DBFS,
   calibrationBadgePresentation,
   calibrationProgress,
   calibrationSettingsPatch,
   calibrationShouldAutoApply,
-  resetCalibrationSettingsPatch,
   suggestedThresholdValue,
 } from "./calibration";
 
@@ -35,13 +33,6 @@ describe("calibration helpers", () => {
     expect(calibrationShouldAutoApply(1000, 12_000, 10_000, true)).toBe(false);
   });
 
-  it("resets threshold calibration to the default value", () => {
-    expect(DEFAULT_THRESHOLD_DBFS).toBe(-44);
-    expect(resetCalibrationSettingsPatch()).toEqual({
-      threshold_dbfs: -44,
-      calibration_completed: false,
-    });
-  });
 });
 
 describe("calibrationBadgePresentation", () => {

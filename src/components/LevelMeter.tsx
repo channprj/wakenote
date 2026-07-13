@@ -26,12 +26,12 @@ export function LevelMeter({
   settings,
   status,
   onApplyThreshold,
-  onResetThreshold,
+  onResetRecordingSettings,
 }: {
   settings: AppSettings;
   status: AppStatus;
   onApplyThreshold: (thresholdDbfs: number) => void;
-  onResetThreshold: () => void;
+  onResetRecordingSettings: () => void;
 }) {
   const active = status.live_input_active;
   const calibrateReason = calibrateDisabledReason(status);
@@ -102,7 +102,7 @@ export function LevelMeter({
             onClick={() => {
               setCalibrationStartMs(null);
               setCalibrationApplied(false);
-              onResetThreshold();
+              onResetRecordingSettings();
             }}
           >
             <RotateCcw data-icon="inline-start" />

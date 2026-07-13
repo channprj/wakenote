@@ -1,4 +1,5 @@
 import { clsx } from "clsx";
+import { useId } from "react";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -7,6 +8,7 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import type { StatusTone } from "../../lib/status-summary";
+import { FieldHelp } from "./FieldHelp";
 
 export function Button({
   className,
@@ -67,6 +69,7 @@ export function Slider({
   step = 1,
   onValueChange,
   suffix,
+  help,
 }: {
   label: string;
   value: number;
@@ -75,26 +78,51 @@ export function Slider({
   step?: number;
   onValueChange: (value: number) => void;
   suffix?: string;
+  help?: string;
 }) {
+  const inputId = `slider-${useId().replaceAll(":", "")}`;
+  const input = (
+    <input
+      id={inputId}
+      className="ui-slider"
+      type="range"
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(event) => onValueChange(Number(event.currentTarget.value))}
+    />
+  );
+
+  if (!help) {
+    return (
+      <label className="ui-field">
+        <span className="ui-field__label">
+          <span>{label}</span>
+          <strong>
+            {value}
+            {suffix}
+          </strong>
+        </span>
+        {input}
+      </label>
+    );
+  }
+
   return (
-    <label className="ui-field">
+    <div className="ui-field">
       <span className="ui-field__label">
-        {label}
+        <span className="ui-field__label-copy">
+          <label htmlFor={inputId}>{label}</label>
+          <FieldHelp label={label} description={help} />
+        </span>
         <strong>
           {value}
           {suffix}
         </strong>
       </span>
-      <input
-        className="ui-slider"
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => onValueChange(Number(event.currentTarget.value))}
-      />
-    </label>
+      {input}
+    </div>
   );
 }
 

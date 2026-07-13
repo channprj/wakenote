@@ -9,6 +9,7 @@ import type {
   QueueSnapshot,
   TrayState,
 } from "./types";
+import { RECORDING_DEFAULTS } from "./recording-settings";
 
 type ModeInput = Pick<
   AppSettings,
@@ -143,16 +144,8 @@ export function defaultSettings(): AppSettings {
     save_root_confirmed: false,
     audio_format: "m4a",
     audio_bitrate_kbps: 96,
-    mic_input_volume_percent: 100,
-    threshold_dbfs: -44,
+    ...RECORDING_DEFAULTS,
     calibration_completed: false,
-    attack_ms: 200,
-    release_ms: 1000,
-    pre_roll_ms: 600,
-    lead_in_padding_ms: 300,
-    post_roll_ms: 600,
-    min_chunk_ms: 600,
-    max_chunk_ms: 120000,
     selected_model: "whisper-medium",
     model_directory: "~/Library/Application Support/WakeNote/models",
     vad_enabled: false,

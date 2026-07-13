@@ -259,14 +259,15 @@ describe("app state derivation", () => {
 
     expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
     expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
-    expect(snapshot.settings.threshold_dbfs).toBe(-44);
+    expect(snapshot.settings.threshold_dbfs).toBe(-40);
+    expect(snapshot.settings.mic_input_volume_percent).toBe(100);
     expect(snapshot.settings.attack_ms).toBe(200);
     expect(snapshot.settings.release_ms).toBe(1_000);
-    expect(snapshot.settings.pre_roll_ms).toBe(600);
-    expect(snapshot.settings.lead_in_padding_ms).toBe(300);
-    expect(snapshot.settings.post_roll_ms).toBe(600);
-    expect(snapshot.settings.min_chunk_ms).toBe(600);
-    expect(snapshot.settings.max_chunk_ms).toBe(120_000);
+    expect(snapshot.settings.pre_roll_ms).toBe(400);
+    expect(snapshot.settings.lead_in_padding_ms).toBe(200);
+    expect(snapshot.settings.post_roll_ms).toBe(400);
+    expect(snapshot.settings.min_chunk_ms).toBe(800);
+    expect(snapshot.settings.max_chunk_ms).toBe(180_000);
     expect(snapshot.settings.transcription_language).toBe("ko");
     expect(snapshot.settings.suppress_low_confidence_transcripts).toBe(true);
     expect(snapshot.settings.show_dock_icon).toBe(true);
@@ -276,7 +277,7 @@ describe("app state derivation", () => {
     expect(snapshot.settings.theme_primary_color).toBe("#000");
     expect(snapshot.microphones[0].id).toBe("default");
     expect(snapshot.models.map((model) => model.id)).toContain("whisper-medium");
-    expect(snapshot.status.threshold_dbfs).toBe(-44);
+    expect(snapshot.status.threshold_dbfs).toBe(-40);
     expect(snapshot.status.microphone_warning).toBeNull();
     expect(snapshot.status.level).toEqual({
       current_dbfs: -120,

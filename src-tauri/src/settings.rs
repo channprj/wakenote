@@ -354,7 +354,7 @@ pub fn default_audio_bitrate_kbps() -> u32 {
 }
 
 pub fn default_lead_in_padding_ms() -> u64 {
-    300
+    200
 }
 
 pub fn default_tray_left_click_action() -> TrayClickAction {
@@ -825,15 +825,15 @@ impl Default for AppSettings {
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
             mic_input_volume_percent: default_mic_input_volume_percent(),
-            threshold_dbfs: -44.0,
+            threshold_dbfs: -40.0,
             calibration_completed: false,
             attack_ms: 200,
             release_ms: 1_000,
-            pre_roll_ms: 600,
+            pre_roll_ms: 400,
             lead_in_padding_ms: default_lead_in_padding_ms(),
-            post_roll_ms: 600,
-            min_chunk_ms: 600,
-            max_chunk_ms: 120_000,
+            post_roll_ms: 400,
+            min_chunk_ms: 800,
+            max_chunk_ms: 180_000,
             selected_model: "whisper-medium".to_string(),
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
             vad_enabled: false,
@@ -1064,11 +1064,15 @@ mod tests {
     #[test]
     fn default_vad_timing_uses_tuned_capture_profile() {
         let settings = AppSettings::default();
-        assert_eq!(settings.threshold_dbfs, -44.0);
+        assert_eq!(settings.threshold_dbfs, -40.0);
+        assert_eq!(settings.mic_input_volume_percent, 100);
         assert_eq!(settings.attack_ms, 200);
-        assert_eq!(settings.pre_roll_ms, 600);
-        assert_eq!(settings.lead_in_padding_ms, 300);
-        assert_eq!(settings.post_roll_ms, 600);
+        assert_eq!(settings.release_ms, 1_000);
+        assert_eq!(settings.pre_roll_ms, 400);
+        assert_eq!(settings.lead_in_padding_ms, 200);
+        assert_eq!(settings.post_roll_ms, 400);
+        assert_eq!(settings.min_chunk_ms, 800);
+        assert_eq!(settings.max_chunk_ms, 180_000);
     }
 
     #[test]
@@ -1191,7 +1195,7 @@ mod tests {
             serde_json::from_str(json).expect("legacy settings deserialize");
         assert_eq!(settings.audio_bitrate_kbps, 96);
         assert_eq!(settings.mic_input_volume_percent, 100);
-        assert_eq!(settings.lead_in_padding_ms, 300);
+        assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());

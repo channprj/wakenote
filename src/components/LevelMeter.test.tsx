@@ -22,7 +22,7 @@ function renderLevelMeter(liveInputActive: boolean, trayState?: TrayState) {
         },
       }}
       onApplyThreshold={() => {}}
-      onResetThreshold={() => {}}
+      onResetRecordingSettings={() => {}}
     />,
   );
 }

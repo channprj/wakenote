@@ -484,6 +484,53 @@ describe("settings panel", () => {
     expect(markup).toContain('max="200"');
   });
 
+  it("provides click-to-open explanations for every recording profile field", () => {
+    const snapshot = mockSnapshot();
+    const markup = renderSettingsPanel(snapshot, "recording");
+
+    expect(markup.match(/aria-label="About [^"]+"/g) ?? []).toEqual([
+      'aria-label="About Threshold"',
+      'aria-label="About Mic Input Volume"',
+      'aria-label="About Attack"',
+      'aria-label="About Release"',
+      'aria-label="About Pre-roll"',
+      'aria-label="About Lead-in"',
+      'aria-label="About Post-roll"',
+      'aria-label="About Min Chunk"',
+      'aria-label="About Max Chunk"',
+    ]);
+    expect(markup.match(/aria-expanded="false"/g) ?? []).toHaveLength(9);
+    expect(markup.match(/aria-controls=/g) ?? []).toHaveLength(9);
+    expect(markup).toContain(
+      "Minimum input level treated as active sound. More negative values are more sensitive and may capture more background noise.",
+    );
+    expect(markup).toContain(
+      "Software gain applied to microphone audio before level detection and recording. 100% is neutral; higher values amplify and may clip.",
+    );
+    expect(markup).toContain(
+      "Time the input must remain above Threshold before a chunk starts.",
+    );
+    expect(markup).toContain(
+      "Time the input must remain below Threshold before chunk ending begins.",
+    );
+    expect(markup).toContain(
+      "Real audio retained from immediately before activation and included at the start of the chunk.",
+    );
+    expect(markup).toContain(
+      "Silence inserted at the beginning of each saved audio file before the captured audio.",
+    );
+    expect(markup).toContain(
+      "Additional audio retained after Release completes before the chunk is closed.",
+    );
+    expect(markup).toContain(
+      "Minimum chunk duration before silence is allowed to close it.",
+    );
+    expect(markup).toContain(
+      "Maximum chunk duration before WakeNote splits the recording into another chunk.",
+    );
+    expect(markup).toContain("180000 ms (3 min)");
+  });
+
   it("omits live recording status and capture actions from general settings", () => {
     const snapshot = mockSnapshot();
     snapshot.status.tray_state = "error";

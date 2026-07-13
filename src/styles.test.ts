@@ -73,6 +73,26 @@ describe("narrow shell styling", () => {
   });
 });
 
+describe("recording field help styling", () => {
+  it("anchors desktop help within the recording control column", () => {
+    const popoverRule = cssRule(".ui-field-help__popover");
+
+    expect(popoverRule).toContain("left: 0;");
+    expect(popoverRule).toContain("top: calc(100% + 8px);");
+    expect(popoverRule).not.toContain("right: calc(100% + 8px);");
+    expect(popoverRule).toContain("pointer-events: auto;");
+    expect(popoverRule).toContain("transform: none;");
+  });
+
+  it("keeps narrow help inset from the viewport edge", () => {
+    const narrowCss = cssBlock("@media (max-width: 940px)");
+    const popoverRule = cssRule(".ui-field-help__popover", narrowCss);
+
+    expect(popoverRule).toContain("left: auto;");
+    expect(popoverRule).toContain("right: 16px;");
+  });
+});
+
 describe("storage path pattern styling", () => {
   it("uses theme-aware high-contrast code tokens", () => {
     const rootRule = cssRule(":root");

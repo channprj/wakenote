@@ -8,8 +8,12 @@ import { MeetingTranscriptionPanel } from "./MeetingTranscriptionPanel";
 import { ReportHistoryPanel } from "./ReportHistoryPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextArea, TextInput } from "./ui/primitives";
 import { SystemAudioSettings } from "./SystemAudioSettings";
-import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
+import { calibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
+import {
+  RECORDING_FIELD_HELP,
+  resetRecordingSettingsPatch,
+} from "../lib/recording-settings";
 import { modelStatusBadgeTone } from "../lib/status-summary";
 import { fileUrlFromPath } from "../lib/transcript-history";
 import type {
@@ -285,11 +289,12 @@ export function SettingsPanel({
               onApplyThreshold={(threshold_dbfs) =>
                 onPatch(calibrationSettingsPatch(threshold_dbfs))
               }
-              onResetThreshold={() => onPatch(resetCalibrationSettingsPatch())}
+              onResetRecordingSettings={() => onPatch(resetRecordingSettingsPatch())}
             />
             <div className="control-grid control-grid--stacked">
               <Slider
                 label="Threshold"
+                help={RECORDING_FIELD_HELP.threshold_dbfs}
                 value={settings.threshold_dbfs}
                 min={-90}
                 max={-10}
@@ -298,6 +303,7 @@ export function SettingsPanel({
               />
               <Slider
                 label="Mic Input Volume"
+                help={RECORDING_FIELD_HELP.mic_input_volume_percent}
                 value={settings.mic_input_volume_percent}
                 min={0}
                 max={200}
@@ -311,6 +317,7 @@ export function SettingsPanel({
                 <Slider
                   key={key}
                   label={label}
+                  help={RECORDING_FIELD_HELP[key]}
                   value={settings[key]}
                   min={min}
                   max={max}
@@ -867,6 +874,7 @@ function MaxChunkControl({
     <div className="max-chunk-control">
       <Slider
         label="Max Chunk"
+        help={RECORDING_FIELD_HELP.max_chunk_ms}
         value={value}
         min={10_000}
         max={900_000}
