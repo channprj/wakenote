@@ -24,6 +24,9 @@ pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
 pub const MIC_INPUT_VOLUME_MIN_PERCENT: u32 = 0;
 pub const MIC_INPUT_VOLUME_MAX_PERCENT: u32 = 200;
+pub const LLM_MAX_ITERATIONS_MIN: u8 = 1;
+pub const LLM_MAX_ITERATIONS_MAX: u8 = 30;
+pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-5.2";
 
 pub fn default_floating_overlay_font_size_px() -> u32 {
     24
@@ -43,6 +46,62 @@ pub fn default_floating_overlay_background_opacity() -> u8 {
 
 pub fn default_mic_input_volume_percent() -> u32 {
     100
+}
+
+pub fn default_openrouter_model() -> String {
+    OPENROUTER_DEFAULT_MODEL_ID.to_string()
+}
+
+pub fn default_llm_max_iterations() -> u8 {
+    3
+}
+
+pub fn default_llm_summary_prompt_template() -> String {
+    [
+        "You are WakeNote's transcript summary assistant.",
+        "Do not invent facts that are not present in the transcript. Mark uncertainty clearly.",
+        "Write in the transcript's dominant language; if Korean is present, write in Korean.",
+        "",
+        "Date range: {{date_range}}",
+        "Selected transcripts: {{selected_count}}",
+        "",
+        "Return this structure:",
+        "- One-line summary",
+        "- Key points",
+        "- Decisions",
+        "- Action items",
+        "- Open questions",
+        "",
+        "Transcript:",
+        "{{transcripts}}",
+    ]
+    .join("\n")
+}
+
+pub fn default_llm_report_prompt_template() -> String {
+    [
+        "You are WakeNote's detailed transcript report writer.",
+        "Use only the supplied transcript as evidence. Do not add unsupported assumptions.",
+        "Preserve important time/source context where it helps the reader verify the report.",
+        "",
+        "Date range: {{date_range}}",
+        "Selected transcripts: {{selected_count}}",
+        "",
+        "Write a Markdown report with these sections:",
+        "# Summary",
+        "# Context",
+        "# Chronological Details",
+        "# Main Discussion Points",
+        "# Decisions",
+        "# Action Items",
+        "# Risks and Issues",
+        "# Open Questions",
+        "# Evidence Notes",
+        "",
+        "Transcript:",
+        "{{transcripts}}",
+    ]
+    .join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +255,18 @@ pub struct AppSettings {
     /// When on, the Transcripts player auto-advances to the next item on end.
     #[serde(default)]
     pub autoplay_next_transcript: bool,
+    /// OpenRouter model used for transcript summary/report generation.
+    #[serde(default = "default_openrouter_model")]
+    pub openrouter_model: String,
+    /// Prompt template for concise transcript summaries.
+    #[serde(default = "default_llm_summary_prompt_template")]
+    pub llm_summary_prompt_template: String,
+    /// Prompt template for detailed transcript reports.
+    #[serde(default = "default_llm_report_prompt_template")]
+    pub llm_report_prompt_template: String,
+    /// Maximum refinement iterations for LLM-generated output.
+    #[serde(default = "default_llm_max_iterations")]
+    pub llm_max_iterations: u8,
     /// Per-source "auto-prompt on detection" overrides; see [`resolve_auto_prompt`].
     #[serde(default)]
     pub source_auto_prompt: Vec<SourceAutoPromptEntry>,
@@ -248,6 +319,10 @@ pub struct SettingsPatch {
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
     pub autoplay_next_transcript: Option<bool>,
+    pub openrouter_model: Option<String>,
+    pub llm_summary_prompt_template: Option<String>,
+    pub llm_report_prompt_template: Option<String>,
+    pub llm_max_iterations: Option<u8>,
     pub source_auto_prompt: Option<Vec<SourceAutoPromptEntry>>,
     pub custom_sources: Option<Vec<CustomSourceEntry>>,
 }
@@ -296,6 +371,10 @@ pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
 
 pub fn clamp_mic_input_volume_percent(value: u32) -> u32 {
     value.clamp(MIC_INPUT_VOLUME_MIN_PERCENT, MIC_INPUT_VOLUME_MAX_PERCENT)
+}
+
+pub fn clamp_llm_max_iterations(value: u8) -> u8 {
+    value.clamp(LLM_MAX_ITERATIONS_MIN, LLM_MAX_ITERATIONS_MAX)
 }
 
 pub fn launch_at_login_action_for_patch(
@@ -693,6 +772,30 @@ impl AppSettings {
         if let Some(value) = patch.autoplay_next_transcript {
             self.autoplay_next_transcript = value;
         }
+        if let Some(value) = patch.openrouter_model {
+            self.openrouter_model = if value.trim().is_empty() {
+                default_openrouter_model()
+            } else {
+                value.trim().to_string()
+            };
+        }
+        if let Some(value) = patch.llm_summary_prompt_template {
+            self.llm_summary_prompt_template = if value.trim().is_empty() {
+                default_llm_summary_prompt_template()
+            } else {
+                value
+            };
+        }
+        if let Some(value) = patch.llm_report_prompt_template {
+            self.llm_report_prompt_template = if value.trim().is_empty() {
+                default_llm_report_prompt_template()
+            } else {
+                value
+            };
+        }
+        if let Some(value) = patch.llm_max_iterations {
+            self.llm_max_iterations = clamp_llm_max_iterations(value);
+        }
         if let Some(list) = patch.custom_sources {
             self.custom_sources = normalize_custom_sources(list);
         }
@@ -752,6 +855,10 @@ impl Default for AppSettings {
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
             autoplay_next_transcript: false,
+            openrouter_model: default_openrouter_model(),
+            llm_summary_prompt_template: default_llm_summary_prompt_template(),
+            llm_report_prompt_template: default_llm_report_prompt_template(),
+            llm_max_iterations: default_llm_max_iterations(),
             source_auto_prompt: Vec::new(),
             custom_sources: Vec::new(),
         }
@@ -821,6 +928,69 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.autoplay_next_transcript);
+    }
+
+    #[test]
+    fn llm_defaults_use_zai_glm_52_and_three_iterations() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.openrouter_model, "z-ai/glm-5.2");
+        assert_eq!(settings.llm_max_iterations, 3);
+        assert!(
+            settings
+                .llm_summary_prompt_template
+                .contains("{{transcripts}}")
+        );
+        assert!(
+            settings
+                .llm_report_prompt_template
+                .contains("# Action Items")
+        );
+    }
+
+    #[test]
+    fn patch_clamps_llm_iterations_to_supported_range() {
+        let mut settings = AppSettings::default();
+
+        settings.apply_patch(SettingsPatch {
+            llm_max_iterations: Some(0),
+            ..Default::default()
+        });
+        assert_eq!(settings.llm_max_iterations, 1);
+
+        settings.apply_patch(SettingsPatch {
+            llm_max_iterations: Some(30),
+            ..Default::default()
+        });
+        assert_eq!(settings.llm_max_iterations, 30);
+
+        settings.apply_patch(SettingsPatch {
+            llm_max_iterations: Some(99),
+            ..Default::default()
+        });
+        assert_eq!(settings.llm_max_iterations, 30);
+    }
+
+    #[test]
+    fn patch_trims_openrouter_model_and_restores_blank_templates() {
+        let mut settings = AppSettings::default();
+
+        settings.apply_patch(SettingsPatch {
+            openrouter_model: Some("  z-ai/glm-5.2  ".into()),
+            llm_summary_prompt_template: Some("custom {{transcripts}}".into()),
+            llm_report_prompt_template: Some(" ".into()),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.openrouter_model, "z-ai/glm-5.2");
+        assert_eq!(
+            settings.llm_summary_prompt_template,
+            "custom {{transcripts}}"
+        );
+        assert_eq!(
+            settings.llm_report_prompt_template,
+            default_llm_report_prompt_template()
+        );
     }
 
     #[test]
@@ -1026,6 +1196,16 @@ mod tests {
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
+        assert_eq!(settings.openrouter_model, OPENROUTER_DEFAULT_MODEL_ID);
+        assert_eq!(settings.llm_max_iterations, 3);
+        assert_eq!(
+            settings.llm_summary_prompt_template,
+            default_llm_summary_prompt_template()
+        );
+        assert_eq!(
+            settings.llm_report_prompt_template,
+            default_llm_report_prompt_template()
+        );
         assert_eq!(settings.floating_overlay_font_size_px, 24);
         assert_eq!(settings.floating_overlay_text_color, "#ffffff");
         assert_eq!(settings.floating_overlay_background_color, "#050507");

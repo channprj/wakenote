@@ -46,6 +46,8 @@ function mockInvoke(command: string) {
       return Promise.resolve(mockModels());
     case "queue_snapshot":
       return Promise.resolve(queue satisfies QueueSnapshot);
+    case "openrouter_key_status":
+      return Promise.resolve({ configured: false });
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "open_transcript_folder":

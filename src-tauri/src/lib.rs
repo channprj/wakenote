@@ -6,6 +6,7 @@ pub mod debug_log;
 pub mod input_monitor;
 pub mod live_capture;
 pub mod live_transcription;
+pub mod llm;
 pub mod meeting;
 pub mod models;
 pub mod overlay;

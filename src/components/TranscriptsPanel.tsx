@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  generateTranscriptReport,
   loadTranscriptDays,
   loadTranscriptsForDay,
   openTranscriptFolder,
@@ -9,6 +10,8 @@ import {
 import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
 import type {
   CustomSourceEntry,
+  LlmGenerateResponse,
+  LlmReportKind,
   ModelDescriptor,
   RecentTranscript,
   TranscriptDay,
@@ -20,17 +23,22 @@ export function TranscriptsPanel({
   models = [],
   selectedModelId = "",
   autoPlayNext = false,
+  openrouterKeyConfigured = false,
 }: {
   customSources?: readonly CustomSourceEntry[];
   models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
   selectedModelId?: string;
   autoPlayNext?: boolean;
+  openrouterKeyConfigured?: boolean;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
     () => new Map(),
   );
   const [loadingDay, setLoadingDay] = useState<string | null>(null);
+  const [reportResult, setReportResult] = useState<LlmGenerateResponse | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
   const requestedRef = useRef<Set<string>>(new Set());
 
   const refreshDays = useCallback(async () => {
@@ -128,6 +136,28 @@ export function TranscriptsPanel({
     await openTranscriptFolder(entry.audio_path ?? entry.transcript_path);
   }, []);
 
+  const generateReport = useCallback(
+    async (entries: readonly RecentTranscript[], kind: LlmReportKind) => {
+      if (entries.length === 0) {
+        return;
+      }
+      setReportGenerating(true);
+      setReportError(null);
+      try {
+        const result = await generateTranscriptReport({
+          kind,
+          transcripts: [...entries],
+        });
+        setReportResult(result);
+      } catch (error) {
+        setReportError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setReportGenerating(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void refreshDays();
   }, [refreshDays]);
@@ -182,8 +212,13 @@ export function TranscriptsPanel({
       selectedModelId={selectedModelId}
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
       autoPlayNext={autoPlayNext}
+      openrouterKeyConfigured={openrouterKeyConfigured}
+      reportGenerating={reportGenerating}
+      reportError={reportError}
+      reportResult={reportResult}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
+      onGenerateReport={generateReport}
       onRegenerate={regenerateEntries}
       onReload={reloadDay}
     />

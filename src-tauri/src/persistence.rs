@@ -10,12 +10,19 @@ pub struct AppPersistence {
     root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct OpenRouterSecrets {
+    api_key: String,
+}
+
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("invalid secret: {0}")]
+    InvalidSecret(String),
 }
 
 impl AppPersistence {
@@ -36,6 +43,43 @@ impl AppPersistence {
 
     pub fn save_settings(&self, settings: &AppSettings) -> Result<(), PersistenceError> {
         write_json_atomic(&self.settings_path(), settings)
+    }
+
+    pub fn load_openrouter_api_key(&self) -> Result<Option<String>, PersistenceError> {
+        let Some(secrets) =
+            read_json_if_exists::<OpenRouterSecrets>(&self.openrouter_secrets_path())?
+        else {
+            return Ok(None);
+        };
+        let api_key = secrets.api_key.trim();
+        Ok((!api_key.is_empty()).then(|| api_key.to_string()))
+    }
+
+    pub fn save_openrouter_api_key(&self, api_key: &str) -> Result<(), PersistenceError> {
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(PersistenceError::InvalidSecret(
+                "OpenRouter API key cannot be blank".to_string(),
+            ));
+        }
+        write_json_atomic(
+            &self.openrouter_secrets_path(),
+            &OpenRouterSecrets {
+                api_key: api_key.to_string(),
+            },
+        )
+    }
+
+    pub fn delete_openrouter_api_key(&self) -> Result<(), PersistenceError> {
+        match std::fs::remove_file(self.openrouter_secrets_path()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn openrouter_api_key_configured(&self) -> Result<bool, PersistenceError> {
+        Ok(self.load_openrouter_api_key()?.is_some())
     }
 
     pub fn load_queue(&self) -> Result<Option<TranscriptionQueue>, PersistenceError> {
@@ -63,6 +107,10 @@ impl AppPersistence {
 
     fn queue_path(&self) -> PathBuf {
         self.root.join("transcription-queue.json")
+    }
+
+    fn openrouter_secrets_path(&self) -> PathBuf {
+        self.root.join("openrouter-secrets.json")
     }
 }
 

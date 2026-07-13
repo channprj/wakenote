@@ -94,6 +94,10 @@ export interface AppSettings {
   theme_primary_color: string;
   system_audio_enabled: boolean;
   autoplay_next_transcript: boolean;
+  openrouter_model: string;
+  llm_summary_prompt_template: string;
+  llm_report_prompt_template: string;
+  llm_max_iterations: number;
   source_auto_prompt: SourceAutoPromptEntry[];
   custom_sources: CustomSourceEntry[];
 }
@@ -186,6 +190,24 @@ export interface RecentTranscript {
   text: string;
   source?: ChunkSource;
   source_label?: string | null;
+}
+
+export type LlmReportKind = "summary" | "detailed_report";
+
+export interface LlmGenerateRequest {
+  kind: LlmReportKind;
+  transcripts: RecentTranscript[];
+}
+
+export interface LlmGenerateResponse {
+  content: string;
+  iterations_used: number;
+  model: string;
+  report_path?: string | null;
+}
+
+export interface OpenRouterKeyStatus {
+  configured: boolean;
 }
 
 export interface TranscriptDay {
@@ -351,4 +373,5 @@ export interface AppSnapshot {
   queue: QueueSnapshot;
   recent_transcripts: RecentTranscript[];
   permissions: AppPermissions;
+  openrouter_key_configured: boolean;
 }

@@ -7,9 +7,11 @@ import {
   cancelModelDownload,
   cancelCurrentTranscription,
   deleteModel,
+  deleteOpenRouterApiKey,
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
+  generateTranscriptReport,
   loadSnapshot,
   loadTranscriptDays,
   loadTranscriptsForDay,
@@ -17,6 +19,7 @@ import {
   regenerateTranscript,
   openTranscriptFolder,
   retryJob,
+  saveOpenRouterApiKey,
   saveSettingsPatch,
   skipJob,
   startLiveCapture,
@@ -88,6 +91,49 @@ describe("tauri live capture client", () => {
 
     const dark = await saveSettingsPatch({ theme_mode: "dark" });
     expect(dark.settings.theme_mode).toBe("dark");
+  });
+
+  it("tracks browser fallback OpenRouter key state and generated reports", async () => {
+    await deleteOpenRouterApiKey();
+    const missing = await loadSnapshot();
+    expect(missing.openrouter_key_configured).toBe(false);
+
+    await expect(
+      generateTranscriptReport({
+        kind: "summary",
+        transcripts: [
+          {
+            transcript_path: "/tmp/WakeNote/20260713/100000.txt",
+            audio_path: null,
+            recorded_at: "2026-07-13T10:00:00+09:00",
+            text: "browser summary source",
+            source: "microphone",
+            source_label: null,
+          },
+        ],
+      }),
+    ).rejects.toThrow("OpenRouter API key is not configured");
+
+    const saved = await saveOpenRouterApiKey(" sk-or-browser ");
+    expect(saved.openrouter_key_configured).toBe(true);
+
+    const report = await generateTranscriptReport({
+      kind: "summary",
+      transcripts: [
+        {
+          transcript_path: "/tmp/WakeNote/20260713/100000.txt",
+          audio_path: null,
+          recorded_at: "2026-07-13T10:00:00+09:00",
+          text: "browser summary source",
+          source: "microphone",
+          source_label: null,
+        },
+      ],
+    });
+
+    expect(report.model).toBe("z-ai/glm-5.2");
+    expect(report.iterations_used).toBeGreaterThanOrEqual(1);
+    expect(report.report_path).toContain("/reports/");
   });
 
   it("simulates live browser fallback level snapshots while input is active", async () => {

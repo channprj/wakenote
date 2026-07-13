@@ -1,10 +1,11 @@
-import { ArrowDown, ArrowUp, CheckCircle2, FolderOpen, Play, RefreshCw, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, FolderOpen, KeyRound, Play, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import { LevelMeter } from "./LevelMeter";
 import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
 import { MeetingTranscriptionPanel } from "./MeetingTranscriptionPanel";
-import { Badge, Button, Section, Select, Slider, Switch, TextInput } from "./ui/primitives";
+import { Badge, Button, Section, Select, Slider, Switch, TextArea, TextInput } from "./ui/primitives";
 import { SystemAudioSettings } from "./SystemAudioSettings";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
@@ -117,6 +118,8 @@ export function SettingsPanel({
   onDownloadModel,
   onCancelModelDownload,
   onDeleteModel,
+  onSaveOpenRouterApiKey,
+  onDeleteOpenRouterApiKey,
 }: {
   activeSection: string;
   snapshot: AppSnapshot;
@@ -139,8 +142,11 @@ export function SettingsPanel({
   onDownloadModel: (modelId: string) => void;
   onCancelModelDownload: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
+  onSaveOpenRouterApiKey: (apiKey: string) => void;
+  onDeleteOpenRouterApiKey: () => void;
 }) {
   const { settings, status, microphones, models, queue } = snapshot;
+  const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
   const microphonePermission = snapshot.permissions.microphone;
   const screenRecordingPermission = snapshot.permissions.screen_recording;
   // The backend's invariant is priority[0].id === selected_microphone. When a
@@ -458,6 +464,7 @@ export function SettingsPanel({
           models={models}
           selectedModelId={settings.selected_model}
           autoPlayNext={settings.autoplay_next_transcript}
+          openrouterKeyConfigured={snapshot.openrouter_key_configured}
         />
       </Section>
     );
@@ -567,6 +574,83 @@ export function SettingsPanel({
             value={settings.theme_primary_color}
             onChange={(event) => onPatch({ theme_primary_color: event.currentTarget.value })}
           />
+          <div className="llm-settings">
+            <div className="llm-settings__header">
+              <div>
+                <strong>OpenRouter</strong>
+                <span>Transcript summary and report generation</span>
+              </div>
+              <Badge tone={snapshot.openrouter_key_configured ? "success" : "warning"}>
+                {snapshot.openrouter_key_configured ? "API key saved" : "API key missing"}
+              </Badge>
+            </div>
+            <div className="model-directory-row">
+              <TextInput
+                label="API Key"
+                type="password"
+                value={openRouterApiKeyInput}
+                autoComplete="off"
+                placeholder={
+                  snapshot.openrouter_key_configured
+                    ? "Enter a new key to replace the saved key"
+                    : "OpenRouter API key"
+                }
+                onChange={(event) => setOpenRouterApiKeyInput(event.currentTarget.value)}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={openRouterApiKeyInput.trim().length === 0}
+                onClick={() => {
+                  onSaveOpenRouterApiKey(openRouterApiKeyInput);
+                  setOpenRouterApiKeyInput("");
+                }}
+              >
+                <KeyRound data-icon="inline-start" />
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!snapshot.openrouter_key_configured}
+                onClick={onDeleteOpenRouterApiKey}
+              >
+                <Trash2 data-icon="inline-start" />
+                Delete
+              </Button>
+            </div>
+            <TextInput
+              label="OpenRouter Model"
+              value={settings.openrouter_model}
+              onChange={(event) => onPatch({ openrouter_model: event.currentTarget.value })}
+            />
+            <Slider
+              label="LLM iterations"
+              value={settings.llm_max_iterations}
+              min={1}
+              max={30}
+              step={1}
+              onValueChange={(llm_max_iterations) => onPatch({ llm_max_iterations })}
+            />
+            <TextArea
+              label="Summary Prompt Template"
+              value={settings.llm_summary_prompt_template}
+              rows={9}
+              onChange={(event) =>
+                onPatch({ llm_summary_prompt_template: event.currentTarget.value })
+              }
+            />
+            <TextArea
+              label="Detailed Report Prompt Template"
+              value={settings.llm_report_prompt_template}
+              rows={11}
+              onChange={(event) =>
+                onPatch({ llm_report_prompt_template: event.currentTarget.value })
+              }
+            />
+          </div>
         </div>
       </Section>
     );

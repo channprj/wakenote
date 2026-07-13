@@ -42,10 +42,12 @@ import {
   openScreenRecordingSettings,
   processNextTranscription,
   retryJob,
+  saveOpenRouterApiKey,
   saveSettingsPatch,
   skipJob,
   startLiveCapture,
   stopLiveCapture,
+  deleteOpenRouterApiKey,
   verifyModel,
 } from "./lib/tauri-client";
 import {
@@ -481,6 +483,8 @@ export default function App() {
           onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
           onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
+          onSaveOpenRouterApiKey={(apiKey) => void runAction(() => saveOpenRouterApiKey(apiKey))}
+          onDeleteOpenRouterApiKey={() => void runAction(deleteOpenRouterApiKey)}
         />
         <TranscriptFooter
           entries={footerTranscriptEntries}

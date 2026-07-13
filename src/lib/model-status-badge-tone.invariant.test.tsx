@@ -72,6 +72,8 @@ function renderSettingsPanelSectionBadgeClass(status: ModelStatus): string {
       onDownloadModel={() => {}}
       onCancelModelDownload={() => {}}
       onDeleteModel={() => {}}
+      onSaveOpenRouterApiKey={() => {}}
+      onDeleteOpenRouterApiKey={() => {}}
     />,
   );
   // The Models section header Badge text is the selected model's display_name ("Whisper Medium"

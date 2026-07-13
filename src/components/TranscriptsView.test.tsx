@@ -38,6 +38,8 @@ function view(props: {
   models?: Array<{ id: string; display_name: string; status: "ready" | "missing" }>;
   selectedModelId?: string;
   onRegenerate?: (entries: readonly RecentTranscript[], modelId?: string) => void;
+  onGenerateReport?: (entries: readonly RecentTranscript[], kind: "summary" | "detailed_report") => void;
+  openrouterKeyConfigured?: boolean;
   onOpenFolder?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
@@ -51,6 +53,8 @@ function view(props: {
       models={props.models}
       selectedModelId={props.selectedModelId}
       onRegenerate={props.onRegenerate}
+      onGenerateReport={props.onGenerateReport}
+      openrouterKeyConfigured={props.openrouterKeyConfigured}
       onOpenFolder={props.onOpenFolder}
       today={props.today}
     />,
@@ -490,6 +494,34 @@ describe("TranscriptsView", () => {
     const empty = view({ today: new Date("2026-05-19T18:00:00+09:00") });
     expect(empty).toContain('aria-label="Reload this day"');
     expect(empty).not.toContain("Copy all");
+  });
+
+  it("shows OpenRouter summary and detailed report actions for visible transcripts", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [transcript({ text: "reportable transcript" })]]]),
+      openrouterKeyConfigured: true,
+      onGenerateReport: () => undefined,
+    });
+
+    expect(markup).toContain('aria-label="Summarize all visible transcripts for this day"');
+    expect(markup).toContain('aria-label="Create detailed report from all visible transcripts for this day"');
+    expect(markup).toContain("Summary all");
+    expect(markup).toContain("Report all");
+  });
+
+  it("disables OpenRouter report actions until an API key is saved", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [transcript({ text: "reportable transcript" })]]]),
+      openrouterKeyConfigured: false,
+      onGenerateReport: () => undefined,
+    });
+
+    expect(markup).toMatch(/aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/);
+    expect(markup).toContain("Save an OpenRouter API key in Advanced settings first");
   });
 
   it("disables the reload button while the active day is loading", () => {

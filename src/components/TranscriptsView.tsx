@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  FileText,
   FolderOpen,
   Mic,
   MonitorSpeaker,
@@ -26,10 +27,16 @@ import {
   transcriptSourceLabel,
 } from "../lib/transcript-history";
 import { formatModelLabel } from "../lib/models";
-import type { ModelDescriptor, RecentTranscript, TranscriptDay } from "../lib/types";
+import type {
+  LlmGenerateResponse,
+  LlmReportKind,
+  ModelDescriptor,
+  RecentTranscript,
+  TranscriptDay,
+} from "../lib/types";
 import { Button } from "./ui/primitives";
 
-type CopyToastKind = "all" | "selected";
+type CopyToastKind = "all" | "selected" | "report";
 type DragMode = "select" | "deselect";
 type RegenerationModel = Pick<ModelDescriptor, "id" | "display_name" | "status">;
 
@@ -116,8 +123,13 @@ export function TranscriptsView({
   onActiveDayChange,
   onRegenerate,
   onOpenFolder,
+  onGenerateReport,
   onReload,
   autoPlayNext = false,
+  openrouterKeyConfigured = false,
+  reportGenerating = false,
+  reportError = null,
+  reportResult = null,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
   today = new Date(),
@@ -134,8 +146,16 @@ export function TranscriptsView({
     modelId?: string,
   ) => void | Promise<void>;
   onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
+  onGenerateReport?: (
+    entries: readonly RecentTranscript[],
+    kind: LlmReportKind,
+  ) => void | Promise<void>;
   onReload?: (day: string) => void;
   autoPlayNext?: boolean;
+  openrouterKeyConfigured?: boolean;
+  reportGenerating?: boolean;
+  reportError?: string | null;
+  reportResult?: LlmGenerateResponse | null;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
   today?: Date;
@@ -340,8 +360,10 @@ export function TranscriptsView({
     try {
       await navigator.clipboard.writeText(text);
       setCopyToast(kind);
-      setSelectedPaths(new Set());
-      lastSelectionAnchorRef.current = null;
+      if (kind !== "report") {
+        setSelectedPaths(new Set());
+        lastSelectionAnchorRef.current = null;
+      }
       window.setTimeout(() => setCopyToast(null), 1500);
     } catch {
       // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
@@ -358,6 +380,21 @@ export function TranscriptsView({
     );
     void writeToClipboard(formatTranscriptsForCopy(selected, sourceLabels), "selected");
   }, [writeToClipboard, filteredEntries, selectedPaths, sourceLabels]);
+
+  const selectedEntries = useMemo(
+    () => filteredEntries.filter((entry) => selectedPaths.has(entry.transcript_path)),
+    [filteredEntries, selectedPaths],
+  );
+
+  const handleGenerateReport = useCallback(
+    (entries: readonly RecentTranscript[], kind: LlmReportKind) => {
+      if (!openrouterKeyConfigured || reportGenerating) {
+        return;
+      }
+      void onGenerateReport?.(entries, kind);
+    },
+    [onGenerateReport, openrouterKeyConfigured, reportGenerating],
+  );
 
   const handleClearSelection = useCallback(() => {
     setSelectedPaths(new Set());
@@ -449,6 +486,12 @@ export function TranscriptsView({
   const isLoadingActive = loadingDay === effectiveActiveDay;
   const canRegenerateFromContext =
     Boolean(onRegenerate) && usableRegenerationModels.length > 0;
+  const canGenerateReports = Boolean(onGenerateReport) && hasEntries;
+  const reportDisabledReason = !openrouterKeyConfigured
+    ? "Save an OpenRouter API key in Advanced settings first"
+    : reportGenerating
+      ? "Generating report"
+      : undefined;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -546,6 +589,32 @@ export function TranscriptsView({
                     </>
                   )}
                 </Button>
+                {canGenerateReports ? (
+                  <>
+                    <Button
+                      aria-label="Summarize selected transcripts"
+                      disabled={Boolean(reportDisabledReason)}
+                      title={reportDisabledReason}
+                      onClick={() => handleGenerateReport(selectedEntries, "summary")}
+                      size="sm"
+                      type="button"
+                      variant="secondary"
+                    >
+                      <FileText /> Summary
+                    </Button>
+                    <Button
+                      aria-label="Create detailed report from selected transcripts"
+                      disabled={Boolean(reportDisabledReason)}
+                      title={reportDisabledReason}
+                      onClick={() => handleGenerateReport(selectedEntries, "detailed_report")}
+                      size="sm"
+                      type="button"
+                      variant="secondary"
+                    >
+                      <FileText /> Report
+                    </Button>
+                  </>
+                ) : null}
               </>
             ) : null}
             {hasEntries ? (
@@ -582,6 +651,40 @@ export function TranscriptsView({
                   </>
                 )}
               </Button>
+            ) : null}
+            {canGenerateReports ? (
+              <>
+                <Button
+                  aria-label={
+                    effectiveSourceFilter === ALL_SOURCE_FILTER
+                      ? "Summarize all visible transcripts for this day"
+                      : "Summarize all visible transcripts in current filter"
+                  }
+                  disabled={Boolean(reportDisabledReason)}
+                  title={reportDisabledReason}
+                  onClick={() => handleGenerateReport(filteredEntries, "summary")}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  <FileText /> Summary all
+                </Button>
+                <Button
+                  aria-label={
+                    effectiveSourceFilter === ALL_SOURCE_FILTER
+                      ? "Create detailed report from all visible transcripts for this day"
+                      : "Create detailed report from all visible transcripts in current filter"
+                  }
+                  disabled={Boolean(reportDisabledReason)}
+                  title={reportDisabledReason}
+                  onClick={() => handleGenerateReport(filteredEntries, "detailed_report")}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  <FileText /> Report all
+                </Button>
+              </>
             ) : null}
             {hasPending && hasAnyEntries ? (
               <span className="transcript-day__icloud-hint">
@@ -630,6 +733,50 @@ export function TranscriptsView({
                 : "No transcripts for this day"}
           </div>
         )}
+        {reportError ? (
+          <div className="warning-banner warning-banner--danger transcript-report-status">
+            {reportError}
+          </div>
+        ) : null}
+        {reportGenerating ? (
+          <div className="warning-banner transcript-report-status">Generating report...</div>
+        ) : null}
+        {reportResult ? (
+          <div className="transcript-report-output">
+            <header>
+              <div>
+                <strong>{reportResult.model}</strong>
+                <span>{reportResult.iterations_used} iteration(s)</span>
+                {reportResult.report_path ? (
+                  <a
+                    href={fileUrlFromPath(reportResult.report_path)}
+                    title={reportResult.report_path}
+                  >
+                    {reportResult.report_path}
+                  </a>
+                ) : null}
+              </div>
+              <Button
+                aria-label="Copy generated report"
+                onClick={() => void writeToClipboard(reportResult.content, "report")}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {copyToast === "report" ? (
+                  <>
+                    <Check /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy /> Copy
+                  </>
+                )}
+              </Button>
+            </header>
+            <pre>{reportResult.content}</pre>
+          </div>
+        ) : null}
       </article>
       {playingTranscript?.audio_path ? (
         <TranscriptPlayerSheet

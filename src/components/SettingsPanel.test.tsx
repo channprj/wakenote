@@ -45,6 +45,8 @@ function renderSettingsPanel(snapshot: AppSnapshot, activeSection = "general") {
       onDownloadModel={() => {}}
       onCancelModelDownload={() => {}}
       onDeleteModel={() => {}}
+      onSaveOpenRouterApiKey={() => {}}
+      onDeleteOpenRouterApiKey={() => {}}
     />,
   );
 }
@@ -250,6 +252,24 @@ describe("settings panel", () => {
     expect(markup).toContain("Theme");
     expect(markup).toContain('<option value="dark" selected="">Dark</option>');
     expect(markup).toContain('<option value="light">Light</option>');
+  });
+
+  it("shows OpenRouter transcript report settings in advanced settings", () => {
+    const snapshot = mockSnapshot();
+    snapshot.openrouter_key_configured = false;
+    snapshot.settings.openrouter_model = "z-ai/glm-5.2";
+    snapshot.settings.llm_max_iterations = 30;
+
+    const markup = renderSettingsPanel(snapshot, "advanced");
+
+    expect(markup).toContain("OpenRouter");
+    expect(markup).toContain("API key missing");
+    expect(markup).toContain("OpenRouter Model");
+    expect(markup).toContain('value="z-ai/glm-5.2"');
+    expect(markup).toContain("LLM iterations");
+    expect(markup).toContain('max="30"');
+    expect(markup).toContain("Summary Prompt Template");
+    expect(markup).toContain("Detailed Report Prompt Template");
   });
 
   it("shows microphone permission status in general controls", () => {

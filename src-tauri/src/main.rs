@@ -440,10 +440,42 @@ struct TrayMenuItems {
     pause_all: CheckMenuItem<Wry>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct OpenRouterKeyStatus {
+    configured: bool,
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.settings())
+}
+
+#[tauri::command]
+fn openrouter_key_status(state: State<'_, BackendState>) -> Result<OpenRouterKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(OpenRouterKeyStatus {
+        configured: backend.openrouter_api_key_configured()?,
+    })
+}
+
+#[tauri::command]
+fn save_openrouter_api_key(
+    state: State<'_, BackendState>,
+    api_key: String,
+) -> Result<OpenRouterKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.save_openrouter_api_key(&api_key)?;
+    Ok(OpenRouterKeyStatus { configured: true })
+}
+
+#[tauri::command]
+fn delete_openrouter_api_key(
+    state: State<'_, BackendState>,
+) -> Result<OpenRouterKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.delete_openrouter_api_key()?;
+    Ok(OpenRouterKeyStatus { configured: false })
 }
 
 #[tauri::command]
@@ -1157,6 +1189,26 @@ async fn rebuild_transcript_day_index(
 }
 
 #[tauri::command]
+async fn generate_transcript_report(
+    state: State<'_, BackendState>,
+    request: wakenote::llm::LlmGenerateRequest,
+) -> Result<wakenote::llm::LlmGenerateResponse, String> {
+    let (settings, api_key) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        let api_key = backend
+            .load_openrouter_api_key()?
+            .ok_or_else(|| "OpenRouter API key is not configured".to_string())?;
+        (backend.settings(), api_key)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::llm::generate_transcript_report(&settings, &api_key, request)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn allow_audio_playback(app: AppHandle, audio_path: String) -> Result<(), String> {
     let path = PathBuf::from(audio_path);
     let validated_path = path.clone();
@@ -1401,7 +1453,9 @@ fn spawn_meeting_job(
 
 #[tauri::command]
 fn list_meetings(state: State<'_, BackendState>) -> Result<Vec<MeetingSummary>, String> {
-    Ok(wakenote::meeting::list_meetings(&meeting_save_root(&state)?))
+    Ok(wakenote::meeting::list_meetings(&meeting_save_root(
+        &state,
+    )?))
 }
 
 #[tauri::command]
@@ -1490,7 +1544,9 @@ fn delete_meeting(
     {
         let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
         if runtime.current.as_deref() == Some(id.as_str()) {
-            return Err("Cannot delete a meeting that is being processed. Cancel it first.".to_string());
+            return Err(
+                "Cannot delete a meeting that is being processed. Cancel it first.".to_string(),
+            );
         }
     }
     wakenote::meeting::delete_meeting(&meeting_save_root(&state)?, &id)
@@ -2059,10 +2115,7 @@ fn start_source_capture_runtime(
             },
         );
 
-        let settings = backend_state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .settings();
+        let settings = backend_state.lock().map_err(|e| e.to_string())?.settings();
         update_tray_presentation(app, &settings, &result.status);
     }
     Ok(result.status)
@@ -3688,6 +3741,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            openrouter_key_status,
+            save_openrouter_api_key,
+            delete_openrouter_api_key,
             overlay_caption_snapshot,
             debug_show_overlay_caption,
             debug_hide_overlay_caption,
@@ -3709,6 +3765,7 @@ fn main() {
             transcript_days,
             transcripts_for_day,
             rebuild_transcript_day_index,
+            generate_transcript_report,
             allow_audio_playback,
             upload_audio_file,
             analyze_audio_waveform,

@@ -467,7 +467,6 @@ pub struct PreparedModelDownload {
     pub registry: Vec<ModelDescriptor>,
 }
 
-
 /// One-shot device override staged by the recovery watchdog. Carries the
 /// stable device id plus the persisted label, so the resolver can still
 /// reattach to the same physical mic when its enumeration index has moved.
@@ -510,9 +509,18 @@ impl std::fmt::Debug for AppBackend {
             .field("queue", &self.queue)
             .field("capture", &self.capture)
             .field("system_capture", &self.system_capture)
-            .field("system_meeting_capture", &self.system_meeting_capture.is_some())
-            .field("finished_system_meeting_ids", &self.finished_system_meeting_ids)
-            .field("last_system_audio_frame_at", &self.last_system_audio_frame_at)
+            .field(
+                "system_meeting_capture",
+                &self.system_meeting_capture.is_some(),
+            )
+            .field(
+                "finished_system_meeting_ids",
+                &self.finished_system_meeting_ids,
+            )
+            .field(
+                "last_system_audio_frame_at",
+                &self.last_system_audio_frame_at,
+            )
             .field("level_monitor", &self.level_monitor)
             .field("active_microphone_label", &self.active_microphone_label)
             .field("microphone_warning", &self.microphone_warning)
@@ -777,6 +785,38 @@ impl AppBackend {
 
     pub fn recent_transcripts(&self, limit: usize) -> Vec<RecentTranscript> {
         recent_transcripts_from_save_root(&self.save_root_path(), limit)
+    }
+
+    pub fn openrouter_api_key_configured(&self) -> Result<bool, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .openrouter_api_key_configured()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn load_openrouter_api_key(&self) -> Result<Option<String>, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .load_openrouter_api_key()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn save_openrouter_api_key(&self, api_key: &str) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .save_openrouter_api_key(api_key)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn delete_openrouter_api_key(&self) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .delete_openrouter_api_key()
+            .map_err(|error| error.to_string())
     }
 
     pub fn upload_audio_file(
@@ -1211,7 +1251,10 @@ impl AppBackend {
             recorder.discard()?;
             append_debug_log(
                 self.save_root_path(),
-                format!("[system-capture] meeting_discarded id={} reason=no_audio", id),
+                format!(
+                    "[system-capture] meeting_discarded id={} reason=no_audio",
+                    id
+                ),
             );
             return Ok(());
         }

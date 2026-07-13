@@ -30,6 +30,9 @@ import type {
   SourcePayload,
   MeetingSummary,
   MeetingDetail,
+  LlmGenerateRequest,
+  LlmGenerateResponse,
+  OpenRouterKeyStatus,
 } from "./types";
 
 declare global {
@@ -47,6 +50,7 @@ let browserCaptureSessionTranscriptionRequested = false;
 // `stopSourceCapture` flips it off so dev reflects session active/inactive.
 let browserSourceCapturing = false;
 let browserDetectedSource: SourcePayload | null = null;
+let browserOpenRouterApiKey: string | null = null;
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 const defaultRecentTranscriptLimit = 50;
 
@@ -211,20 +215,31 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
       models,
       queue,
       status: statusFrom(settings, queue),
+      openrouter_key_configured: Boolean(browserOpenRouterApiKey),
     };
     return browserSnapshot;
   }
 
-  const [settings, status, microphones, models, queue, permissions] = await Promise.all([
+  const [settings, status, microphones, models, queue, permissions, openRouterKeyStatus] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
     invoke<AppPermissions>("permission_snapshot"),
+    invoke<OpenRouterKeyStatus>("openrouter_key_status"),
   ]);
 
-  return { settings, status, microphones, models, queue, permissions, recent_transcripts: [] };
+  return {
+    settings,
+    status,
+    microphones,
+    models,
+    queue,
+    permissions,
+    recent_transcripts: [],
+    openrouter_key_configured: openRouterKeyStatus.configured,
+  };
 }
 
 export async function loadPermissions(): Promise<AppPermissions> {
@@ -309,6 +324,12 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
     if (typeof safePatch.save_root === "string") {
       safePatch.save_root_confirmed = safePatch.save_root.trim().length > 0;
     }
+    if (typeof safePatch.llm_max_iterations === "number") {
+      safePatch.llm_max_iterations = Math.max(
+        1,
+        Math.min(30, Math.round(safePatch.llm_max_iterations)),
+      );
+    }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (
       safePatch.recording_enabled === false ||
@@ -329,12 +350,65 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
       models,
       status: statusFrom(settings, queue),
       queue,
+      openrouter_key_configured: Boolean(browserOpenRouterApiKey),
     };
     return browserSnapshot;
   }
 
   await invoke<AppSettings>("update_settings", { patch });
   return loadSnapshot();
+}
+
+export async function saveOpenRouterApiKey(apiKey: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      throw new Error("OpenRouter API key cannot be blank");
+    }
+    browserOpenRouterApiKey = trimmed;
+    browserSnapshot = {
+      ...browserSnapshot,
+      openrouter_key_configured: true,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<OpenRouterKeyStatus>("save_openrouter_api_key", { apiKey });
+  return loadSnapshot();
+}
+
+export async function deleteOpenRouterApiKey(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserOpenRouterApiKey = null;
+    browserSnapshot = {
+      ...browserSnapshot,
+      openrouter_key_configured: false,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<OpenRouterKeyStatus>("delete_openrouter_api_key");
+  return loadSnapshot();
+}
+
+export async function generateTranscriptReport(
+  request: LlmGenerateRequest,
+): Promise<LlmGenerateResponse> {
+  const settings = browserSnapshot.settings ?? defaultSettings();
+  if (!isTauriRuntime()) {
+    if (!browserOpenRouterApiKey) {
+      throw new Error("OpenRouter API key is not configured");
+    }
+    const label = request.kind === "summary" ? "Summary" : "Detailed report";
+    return {
+      content: `# ${label}\n\nGenerated from ${request.transcripts.length} transcript${request.transcripts.length === 1 ? "" : "s"}.`,
+      iterations_used: settings.llm_max_iterations,
+      model: settings.openrouter_model,
+      report_path: `${settings.save_root}/reports/browser-${request.kind}.md`,
+    };
+  }
+
+  return invoke<LlmGenerateResponse>("generate_transcript_report", { request });
 }
 
 export async function enqueueBacklog(saveRoot: string): Promise<AppSnapshot> {

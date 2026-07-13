@@ -1,5 +1,11 @@
 import { clsx } from "clsx";
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
+} from "react";
 import type { StatusTone } from "../../lib/status-summary";
 
 export function Button({
@@ -115,6 +121,18 @@ export function TextInput({
     <label className="ui-field">
       <span className="ui-field__label">{label}</span>
       <input className="ui-input" {...props} />
+    </label>
+  );
+}
+
+export function TextArea({
+  label,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
+  return (
+    <label className="ui-field">
+      <span className="ui-field__label">{label}</span>
+      <textarea className="ui-input ui-textarea" {...props} />
     </label>
   );
 }
