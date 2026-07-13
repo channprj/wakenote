@@ -1,15 +1,21 @@
 import {
+  AlertCircle,
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   FileText,
   FolderOpen,
+  Loader2,
   Mic,
   MonitorSpeaker,
   Pause,
   Play,
   RotateCw,
+  Save,
+  Search,
+  Sparkles,
   Video,
   X,
   Youtube,
@@ -29,6 +35,8 @@ import {
 import { formatModelLabel } from "../lib/models";
 import type {
   LlmGenerateResponse,
+  LlmProgressEvent,
+  LlmProgressStage,
   LlmReportKind,
   ModelDescriptor,
   RecentTranscript,
@@ -124,11 +132,14 @@ export function TranscriptsView({
   onRegenerate,
   onOpenFolder,
   onGenerateReport,
+  onDownloadReport,
   onReload,
   autoPlayNext = false,
   openrouterKeyConfigured = false,
   reportGenerating = false,
+  reportDownloading = false,
   reportError = null,
+  reportProgress = [],
   reportResult = null,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
@@ -150,11 +161,14 @@ export function TranscriptsView({
     entries: readonly RecentTranscript[],
     kind: LlmReportKind,
   ) => void | Promise<void>;
+  onDownloadReport?: (reportId: string, fileName: string) => void | Promise<void>;
   onReload?: (day: string) => void;
   autoPlayNext?: boolean;
   openrouterKeyConfigured?: boolean;
   reportGenerating?: boolean;
+  reportDownloading?: boolean;
   reportError?: string | null;
+  reportProgress?: readonly LlmProgressEvent[];
   reportResult?: LlmGenerateResponse | null;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
@@ -189,6 +203,7 @@ export function TranscriptsView({
   const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const lastSelectionAnchorRef = useRef<string | null>(null);
+  const latestReportProgress = reportProgress[reportProgress.length - 1];
 
   const effectiveActiveDay = activeDay ?? todayDay;
 
@@ -738,15 +753,62 @@ export function TranscriptsView({
             {reportError}
           </div>
         ) : null}
-        {reportGenerating ? (
-          <div className="warning-banner transcript-report-status">Generating report...</div>
+        {reportGenerating || reportProgress.length > 0 ? (
+          <section
+            aria-label="Report generation progress"
+            aria-live="polite"
+            className="transcript-report-progress"
+            data-current-stage={latestReportProgress?.stage ?? "preparing"}
+          >
+            <header>
+              {reportGenerating ? (
+                <Loader2 aria-hidden="true" className="transcript-footer__spin" />
+              ) : latestReportProgress ? (
+                <ReportProgressIcon stage={latestReportProgress.stage} />
+              ) : (
+                <Check aria-hidden="true" />
+              )}
+              <strong>
+                {latestReportProgress?.message ?? "Starting report agent"}
+              </strong>
+            </header>
+            <ol>
+              {reportProgress.map((progress, index) => (
+                <li
+                  data-stage={progress.stage}
+                  key={`${progress.run_id}-${progress.stage}-${progress.iteration}-${index}`}
+                >
+                  <ReportProgressIcon stage={progress.stage} />
+                  <div>
+                    <span>{progress.message}</span>
+                    {progress.iteration > 0 ? (
+                      <small>
+                        Iteration {progress.iteration} of {progress.max_iterations}
+                      </small>
+                    ) : null}
+                    {progress.detail ? <p>{progress.detail}</p> : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
         ) : null}
         {reportResult ? (
-          <div className="transcript-report-output">
+          <div
+            className="transcript-report-output"
+            data-completion-reason={reportResult.completion_reason}
+          >
             <header>
               <div>
-                <strong>{reportResult.model}</strong>
-                <span>{reportResult.iterations_used} iteration(s)</span>
+                <strong>
+                  {reportResult.success_criteria_met
+                    ? "Success criteria met"
+                    : "Maximum iterations reached"}
+                </strong>
+                <span>
+                  {reportResult.model} · {reportResult.iterations_used} of{" "}
+                  {reportResult.max_iterations} iterations
+                </span>
                 {reportResult.report_path ? (
                   <a
                     href={fileUrlFromPath(reportResult.report_path)}
@@ -756,24 +818,51 @@ export function TranscriptsView({
                   </a>
                 ) : null}
               </div>
-              <Button
-                aria-label="Copy generated report"
-                onClick={() => void writeToClipboard(reportResult.content, "report")}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                {copyToast === "report" ? (
-                  <>
-                    <Check /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy /> Copy
-                  </>
-                )}
-              </Button>
+              <div className="transcript-report-output__actions">
+                {onDownloadReport ? (
+                  <Button
+                    aria-label="Download generated report as Markdown"
+                    disabled={reportDownloading}
+                    onClick={() =>
+                      void onDownloadReport(
+                        reportResult.report_id,
+                        reportFileName(reportResult),
+                      )
+                    }
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    {reportDownloading ? (
+                      <Loader2 className="transcript-footer__spin" />
+                    ) : (
+                      <Download />
+                    )}
+                    Markdown
+                  </Button>
+                ) : null}
+                <Button
+                  aria-label="Copy generated report"
+                  onClick={() => void writeToClipboard(reportResult.content, "report")}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  {copyToast === "report" ? (
+                    <>
+                      <Check /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy /> Copy
+                    </>
+                  )}
+                </Button>
+              </div>
             </header>
+            <p className="transcript-report-output__feedback">
+              {reportResult.quality_feedback}
+            </p>
             <pre>{reportResult.content}</pre>
           </div>
         ) : null}
@@ -823,6 +912,27 @@ export function TranscriptsView({
       ) : null}
     </div>
   );
+}
+
+function reportFileName(report: LlmGenerateResponse): string {
+  const fileName = report.report_path?.split(/[\\/]/).pop();
+  return fileName || `${report.report_id}.md`;
+}
+
+function ReportProgressIcon({ stage }: { stage: LlmProgressStage }) {
+  if (stage === "failed" || stage === "max_iterations_reached") {
+    return <AlertCircle aria-hidden="true" />;
+  }
+  if (stage === "completed") {
+    return <Check aria-hidden="true" />;
+  }
+  if (stage === "evaluating") {
+    return <Search aria-hidden="true" />;
+  }
+  if (stage === "saving") {
+    return <Save aria-hidden="true" />;
+  }
+  return <Sparkles aria-hidden="true" />;
 }
 
 function TranscriptEntryRow({

@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { RecentTranscript, TranscriptDay } from "../lib/types";
+import type {
+  LlmGenerateResponse,
+  LlmProgressEvent,
+  RecentTranscript,
+  TranscriptDay,
+} from "../lib/types";
 import {
   TranscriptsView,
   addDays,
@@ -40,6 +45,10 @@ function view(props: {
   onRegenerate?: (entries: readonly RecentTranscript[], modelId?: string) => void;
   onGenerateReport?: (entries: readonly RecentTranscript[], kind: "summary" | "detailed_report") => void;
   openrouterKeyConfigured?: boolean;
+  reportGenerating?: boolean;
+  reportProgress?: LlmProgressEvent[];
+  reportResult?: LlmGenerateResponse | null;
+  onDownloadReport?: (reportId: string, fileName: string) => void;
   onOpenFolder?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
@@ -55,6 +64,10 @@ function view(props: {
       onRegenerate={props.onRegenerate}
       onGenerateReport={props.onGenerateReport}
       openrouterKeyConfigured={props.openrouterKeyConfigured}
+      reportGenerating={props.reportGenerating}
+      reportProgress={props.reportProgress}
+      reportResult={props.reportResult}
+      onDownloadReport={props.onDownloadReport}
       onOpenFolder={props.onOpenFolder}
       today={props.today}
     />,
@@ -522,6 +535,80 @@ describe("TranscriptsView", () => {
 
     expect(markup).toMatch(/aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/);
     expect(markup).toContain("Save an OpenRouter API key in Advanced settings first");
+  });
+
+  it("shows live agent stages and quality feedback while a report is running", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      reportGenerating: true,
+      reportProgress: [
+        {
+          run_id: "report-run-1",
+          stage: "generating",
+          iteration: 1,
+          max_iterations: 5,
+          message: "Drafting report",
+          detail: null,
+        },
+        {
+          run_id: "report-run-1",
+          stage: "evaluating",
+          iteration: 1,
+          max_iterations: 5,
+          message: "Checking success criteria",
+          detail: "Action items are missing.",
+        },
+      ],
+    });
+
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain("Drafting report");
+    expect(markup).toContain("Checking success criteria");
+    expect(markup).toContain("Action items are missing.");
+    expect(markup).toContain("Iteration 1 of 5");
+  });
+
+  it("distinguishes success from reaching the maximum iteration limit", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      reportProgress: [
+        {
+          run_id: "report-run-1",
+          stage: "max_iterations_reached",
+          iteration: 3,
+          max_iterations: 3,
+          message: "Maximum iterations reached; saved the latest draft",
+          detail: "Evidence notes are still incomplete.",
+        },
+      ],
+      reportResult: {
+        run_id: "report-run-1",
+        content: "best available report",
+        iterations_used: 3,
+        max_iterations: 3,
+        success_criteria_met: false,
+        completion_reason: "max_iterations_reached",
+        quality_feedback: "Evidence notes are still incomplete.",
+        model: "z-ai/glm-5.2",
+        report_id: "20260713-100000-detailed-report",
+        usage: {
+          request_count: 6,
+          prompt_tokens: 1200,
+          completion_tokens: 400,
+          total_tokens: 1600,
+          cost: 0.0125,
+        },
+        report_path: "/tmp/reports/report.md",
+      },
+      onDownloadReport: () => undefined,
+    });
+
+    expect(markup).toContain("Maximum iterations reached");
+    expect(markup).toContain("3 of 3 iterations");
+    expect(markup).toContain("Evidence notes are still incomplete.");
+    expect(markup).not.toContain("Success criteria met");
+    expect(markup).toContain('data-current-stage="max_iterations_reached"');
+    expect(markup).toContain('aria-label="Download generated report as Markdown"');
   });
 
   it("disables the reload button while the active day is loading", () => {

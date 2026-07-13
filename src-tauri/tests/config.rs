@@ -69,7 +69,7 @@ fn main_window_config_starts_hidden_for_tray_only_caption_overlay() {
 }
 
 #[test]
-fn main_window_capability_allows_dialog_open_for_audio_uploads() {
+fn main_window_capability_allows_dialog_open_and_markdown_save() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let capability_path = manifest_dir.join("capabilities/default.json");
     let capability: Value = serde_json::from_str(
@@ -91,6 +91,13 @@ fn main_window_capability_allows_dialog_open_for_audio_uploads() {
             .expect("capability permissions")
             .iter()
             .any(|permission| permission.as_str() == Some("dialog:allow-open"))
+    );
+    assert!(
+        capability["permissions"]
+            .as_array()
+            .expect("capability permissions")
+            .iter()
+            .any(|permission| permission.as_str() == Some("dialog:allow-save"))
     );
 }
 

@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Allows WakeNote windows to use required core APIs and open file dialogs.",
   "windows": ["main", "overlay"],
-  "permissions": ["core:default", "dialog:allow-open", "notification:default"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "notification:default"
+  ]
 }

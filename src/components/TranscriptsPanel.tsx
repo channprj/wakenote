@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  downloadLlmReport,
   generateTranscriptReport,
   loadTranscriptDays,
   loadTranscriptsForDay,
@@ -11,6 +12,7 @@ import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
 import type {
   CustomSourceEntry,
   LlmGenerateResponse,
+  LlmProgressEvent,
   LlmReportKind,
   ModelDescriptor,
   RecentTranscript,
@@ -39,6 +41,8 @@ export function TranscriptsPanel({
   const [reportResult, setReportResult] = useState<LlmGenerateResponse | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportDownloading, setReportDownloading] = useState(false);
+  const [reportProgress, setReportProgress] = useState<LlmProgressEvent[]>([]);
   const requestedRef = useRef<Set<string>>(new Set());
 
   const refreshDays = useCallback(async () => {
@@ -143,11 +147,18 @@ export function TranscriptsPanel({
       }
       setReportGenerating(true);
       setReportError(null);
+      setReportResult(null);
+      setReportProgress([]);
       try {
-        const result = await generateTranscriptReport({
-          kind,
-          transcripts: [...entries],
-        });
+        const result = await generateTranscriptReport(
+          {
+            kind,
+            transcripts: [...entries],
+          },
+          (progress) => {
+            setReportProgress((current) => [...current, progress]);
+          },
+        );
         setReportResult(result);
       } catch (error) {
         setReportError(error instanceof Error ? error.message : String(error));
@@ -157,6 +168,18 @@ export function TranscriptsPanel({
     },
     [],
   );
+
+  const downloadReport = useCallback(async (reportId: string, fileName: string) => {
+    setReportDownloading(true);
+    setReportError(null);
+    try {
+      await downloadLlmReport(reportId, fileName);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReportDownloading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refreshDays();
@@ -214,8 +237,11 @@ export function TranscriptsPanel({
       autoPlayNext={autoPlayNext}
       openrouterKeyConfigured={openrouterKeyConfigured}
       reportGenerating={reportGenerating}
+      reportDownloading={reportDownloading}
       reportError={reportError}
+      reportProgress={reportProgress}
       reportResult={reportResult}
+      onDownloadReport={(reportId, fileName) => void downloadReport(reportId, fileName)}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
       onGenerateReport={generateReport}

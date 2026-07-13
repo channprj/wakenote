@@ -200,6 +200,7 @@ const EVENT_SOURCE_CAPTURE_ERROR: &str = "source-capture-error";
 const EVENT_MEETING_PROGRESS: &str = "meeting-progress";
 const EVENT_MEETING_SEGMENT: &str = "meeting-segment-committed";
 const EVENT_MEETING_FINISHED: &str = "meeting-finished";
+const EVENT_LLM_REPORT_PROGRESS: &str = "llm-report-progress";
 /// How often the watcher re-enumerates windows while the feature is enabled.
 const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -1190,6 +1191,7 @@ async fn rebuild_transcript_day_index(
 
 #[tauri::command]
 async fn generate_transcript_report(
+    app: AppHandle,
     state: State<'_, BackendState>,
     request: wakenote::llm::LlmGenerateRequest,
 ) -> Result<wakenote::llm::LlmGenerateResponse, String> {
@@ -1202,7 +1204,63 @@ async fn generate_transcript_report(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        wakenote::llm::generate_transcript_report(&settings, &api_key, request)
+        wakenote::llm::generate_transcript_report_with_progress(
+            &settings,
+            &api_key,
+            request,
+            |progress| {
+                let _ = app.emit(EVENT_LLM_REPORT_PROGRESS, progress);
+            },
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn list_llm_report_history(
+    state: State<'_, BackendState>,
+) -> Result<Vec<wakenote::llm::LlmReportHistoryItem>, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.settings().save_root
+    };
+
+    tauri::async_runtime::spawn_blocking(move || wakenote::llm::list_llm_report_history(&save_root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn load_llm_report_history_detail(
+    state: State<'_, BackendState>,
+    report_id: String,
+) -> Result<wakenote::llm::LlmReportHistoryDetail, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.settings().save_root
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::llm::load_llm_report_history_detail(&save_root, &report_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn export_llm_report(
+    state: State<'_, BackendState>,
+    report_id: String,
+    destination_path: String,
+) -> Result<String, String> {
+    let save_root = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        backend.settings().save_root
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::llm::export_llm_report(&save_root, &report_id, &destination_path)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -3766,6 +3824,9 @@ fn main() {
             transcripts_for_day,
             rebuild_transcript_day_index,
             generate_transcript_report,
+            list_llm_report_history,
+            load_llm_report_history_detail,
+            export_llm_report,
             allow_audio_playback,
             upload_audio_file,
             analyze_audio_waveform,

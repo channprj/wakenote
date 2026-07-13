@@ -5,6 +5,7 @@ import { ModelManager } from "./ModelManager";
 import { QueuePanel } from "./QueuePanel";
 import { TranscriptsPanel } from "./TranscriptsPanel";
 import { MeetingTranscriptionPanel } from "./MeetingTranscriptionPanel";
+import { ReportHistoryPanel } from "./ReportHistoryPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextArea, TextInput } from "./ui/primitives";
 import { SystemAudioSettings } from "./SystemAudioSettings";
 import { calibrationSettingsPatch, resetCalibrationSettingsPatch } from "../lib/calibration";
@@ -440,6 +441,14 @@ export function SettingsPanel({
     );
   }
 
+  if (activeSection === "reports") {
+    return (
+      <Section title="Reports" eyebrow="LLM generation history">
+        <ReportHistoryPanel />
+      </Section>
+    );
+  }
+
   if (activeSection === "transcripts") {
     return (
       <Section
@@ -627,7 +636,7 @@ export function SettingsPanel({
               onChange={(event) => onPatch({ openrouter_model: event.currentTarget.value })}
             />
             <Slider
-              label="LLM iterations"
+              label="Maximum agent iterations"
               value={settings.llm_max_iterations}
               min={1}
               max={30}

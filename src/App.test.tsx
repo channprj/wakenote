@@ -34,6 +34,12 @@ describe("App branding", () => {
     expect(markup).not.toContain("Privacy");
   });
 
+  it("offers a separate Reports history section", () => {
+    const markup = renderToStaticMarkup(<App />);
+
+    expect(markup).toContain(">Reports</button>");
+  });
+
   it("does not render Open Save Folder as a global header action", () => {
     const markup = renderToStaticMarkup(<App />);
 

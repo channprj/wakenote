@@ -194,16 +194,78 @@ export interface RecentTranscript {
 
 export type LlmReportKind = "summary" | "detailed_report";
 
+export type LlmCompletionReason =
+  | "success_criteria_met"
+  | "max_iterations_reached";
+
+export type LlmProgressStage =
+  | "preparing"
+  | "generating"
+  | "evaluating"
+  | "refining"
+  | "saving"
+  | "completed"
+  | "max_iterations_reached"
+  | "failed";
+
 export interface LlmGenerateRequest {
   kind: LlmReportKind;
   transcripts: RecentTranscript[];
+  run_id?: string | null;
+}
+
+export interface LlmProgressEvent {
+  run_id: string;
+  stage: LlmProgressStage;
+  iteration: number;
+  max_iterations: number;
+  message: string;
+  detail?: string | null;
 }
 
 export interface LlmGenerateResponse {
+  run_id: string;
   content: string;
   iterations_used: number;
+  max_iterations: number;
+  success_criteria_met: boolean;
+  completion_reason: LlmCompletionReason;
+  quality_feedback: string;
   model: string;
+  report_id: string;
+  usage: LlmUsageTotals;
   report_path?: string | null;
+}
+
+export interface LlmUsageTotals {
+  request_count: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  total_tokens: number | null;
+  cost: number | null;
+}
+
+export interface LlmReportHistoryItem {
+  report_id: string;
+  kind: LlmReportKind;
+  created_at: string;
+  file_name: string;
+  report_path: string;
+  model: string | null;
+  iterations_used: number | null;
+  max_iterations: number | null;
+  success_criteria_met: boolean | null;
+  completion_reason: LlmCompletionReason | null;
+  quality_feedback: string | null;
+  selected_count: number | null;
+  date_range: string | null;
+  usage: LlmUsageTotals | null;
+  legacy: boolean;
+}
+
+export interface LlmReportHistoryDetail {
+  item: LlmReportHistoryItem;
+  content: string;
 }
 
 export interface OpenRouterKeyStatus {

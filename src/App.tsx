@@ -6,6 +6,7 @@ import {
   Folder,
   Files,
   FileAudio,
+  FileText,
   ListTodo,
   Mic,
   RadioTower,
@@ -76,6 +77,7 @@ const sections = [
   { id: "storage", label: "Storage", icon: Folder },
   { id: "meetings", label: "Meetings", icon: FileAudio },
   { id: "transcripts", label: "Transcripts", icon: Files },
+  { id: "reports", label: "Reports", icon: FileText },
   { id: "history", label: "History", icon: Clock3 },
   { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
 ];

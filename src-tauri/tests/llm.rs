@@ -1,10 +1,14 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use wakenote::commands::RecentTranscript;
 use wakenote::llm::{
-    LlmGenerateRequest, LlmReportKind, OpenRouterClient, build_openrouter_request_body,
-    format_transcripts_for_llm, generate_transcript_report_with_client,
-    parse_openrouter_chat_content, render_prompt_template,
+    LlmCompletionReason, LlmGenerateRequest, LlmProgressStage, LlmReportHistoryItem, LlmReportKind,
+    OpenRouterClient, build_openrouter_request_body, build_openrouter_request_body_with_system,
+    export_llm_report, format_transcripts_for_llm,
+    generate_transcript_report_with_client_and_progress, list_llm_report_history,
+    load_llm_report_history_detail, parse_openrouter_chat_content, parse_openrouter_chat_response,
+    parse_quality_evaluation, render_prompt_template,
 };
 use wakenote::recorder::ChunkSource;
 use wakenote::settings::{AppSettings, SettingsPatch};
@@ -73,6 +77,26 @@ fn openrouter_request_body_uses_selected_model_and_prompt() {
 }
 
 #[test]
+fn openrouter_evaluation_request_separates_system_rules_from_untrusted_report_data() {
+    let body = build_openrouter_request_body_with_system(
+        "z-ai/glm-5.2",
+        "Judge the report against the success criteria.",
+        "Transcript and candidate report",
+    );
+
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(
+        body["messages"][0]["content"],
+        "Judge the report against the success criteria."
+    );
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert_eq!(
+        body["messages"][1]["content"],
+        "Transcript and candidate report"
+    );
+}
+
+#[test]
 fn openrouter_response_parser_extracts_assistant_content() {
     let body = r#"{
       "choices": [
@@ -83,79 +107,492 @@ fn openrouter_response_parser_extracts_assistant_content() {
     assert_eq!(parse_openrouter_chat_content(body).unwrap(), "report body");
 }
 
-#[derive(Clone)]
-struct RecordingClient {
-    prompts: Arc<Mutex<Vec<String>>>,
-}
+#[test]
+fn openrouter_response_parser_extracts_usage_and_provider_reported_cost() {
+    let body = r#"{
+      "choices": [
+        { "message": { "role": "assistant", "content": "report body" } }
+      ],
+      "usage": {
+        "prompt_tokens": 120,
+        "completion_tokens": 30,
+        "total_tokens": 150,
+        "cost": 0.00125
+      }
+    }"#;
 
-impl OpenRouterClient for RecordingClient {
-    fn chat(&self, _api_key: &str, body: serde_json::Value) -> Result<String, String> {
-        let prompt = body["messages"][0]["content"]
-            .as_str()
-            .expect("prompt")
-            .to_string();
-        self.prompts.lock().expect("lock").push(prompt);
-        let count = self.prompts.lock().expect("lock").len();
-        Ok(format!(
-            r#"{{"choices":[{{"message":{{"content":"draft {count}"}}}}]}}"#
-        ))
-    }
+    let response = parse_openrouter_chat_response(body).unwrap();
+
+    assert_eq!(response.content, "report body");
+    let usage = response.usage.expect("usage");
+    assert_eq!(usage.prompt_tokens, 120);
+    assert_eq!(usage.completion_tokens, 30);
+    assert_eq!(usage.total_tokens, 150);
+    assert_eq!(usage.cost, Some(0.00125));
 }
 
 #[test]
-fn generation_uses_configured_iterations_up_to_thirty() {
+fn malformed_usage_does_not_discard_an_otherwise_valid_completion() {
+    let body = r#"{
+      "choices": [
+        { "message": { "role": "assistant", "content": "report body" } }
+      ],
+      "usage": { "prompt_tokens": "unknown" }
+    }"#;
+
+    let response = parse_openrouter_chat_response(body).unwrap();
+
+    assert_eq!(response.content, "report body");
+    assert!(response.usage.is_none());
+}
+
+#[derive(Clone)]
+struct ScriptedClient {
+    prompts: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+    responses: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl ScriptedClient {
+    fn new(responses: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(
+                responses
+                    .into_iter()
+                    .map(openrouter_response)
+                    .collect::<VecDeque<_>>(),
+            )),
+        }
+    }
+
+    fn from_raw(responses: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(responses.into_iter().collect::<VecDeque<_>>())),
+        }
+    }
+}
+
+impl OpenRouterClient for ScriptedClient {
+    fn chat(&self, _api_key: &str, body: serde_json::Value) -> Result<String, String> {
+        let prompt = body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .and_then(|message| message["content"].as_str())
+            .expect("prompt")
+            .to_string();
+        self.prompts.lock().expect("lock").push(prompt);
+        self.requests.lock().expect("lock").push(body);
+        self.responses
+            .lock()
+            .expect("lock")
+            .pop_front()
+            .ok_or_else(|| "unexpected OpenRouter call".to_string())
+    }
+}
+
+fn openrouter_response(content: &str) -> String {
+    serde_json::json!({
+        "choices": [{ "message": { "role": "assistant", "content": content } }]
+    })
+    .to_string()
+}
+
+fn openrouter_response_with_usage(
+    content: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    cost: f64,
+) -> String {
+    serde_json::json!({
+        "choices": [{ "message": { "role": "assistant", "content": content } }],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "cost": cost,
+        }
+    })
+    .to_string()
+}
+
+fn generation_settings(save_root: &std::path::Path, max_iterations: u8) -> AppSettings {
     let mut settings = AppSettings::default();
     settings.apply_patch(SettingsPatch {
-        llm_max_iterations: Some(30),
+        save_root: Some(save_root.to_string_lossy().to_string()),
+        llm_max_iterations: Some(max_iterations),
         ..Default::default()
     });
-    let prompts = Arc::new(Mutex::new(Vec::new()));
-    let client = RecordingClient {
-        prompts: prompts.clone(),
-    };
-    let request = LlmGenerateRequest {
-        kind: LlmReportKind::Summary,
+    settings
+}
+
+fn generation_request(kind: LlmReportKind) -> LlmGenerateRequest {
+    LlmGenerateRequest {
+        kind,
         transcripts: vec![transcript(
             "/tmp/WakeNote/20260713/100000.txt",
             "2026-07-13T10:00:00+09:00",
             "summarize me",
         )],
-    };
+        run_id: Some("report-run-1".to_string()),
+    }
+}
 
-    let result =
-        generate_transcript_report_with_client(&settings, "sk-or-test", request, &client).unwrap();
+#[test]
+fn generation_stops_after_the_first_successful_quality_evaluation() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 30);
+    let client = ScriptedClient::new([
+        "first complete draft",
+        r#"{"success":true,"feedback":"All requested sections are complete and grounded."}"#,
+    ]);
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let progress_events = progress.clone();
 
-    assert_eq!(result.content, "draft 30");
-    assert_eq!(result.iterations_used, 30);
-    assert_eq!(prompts.lock().expect("lock").len(), 30);
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::Summary),
+        &client,
+        move |event| progress_events.lock().expect("lock").push(event),
+    )
+    .unwrap();
+
+    assert_eq!(result.content, "first complete draft");
+    assert_eq!(result.iterations_used, 1);
+    assert_eq!(result.max_iterations, 30);
+    assert!(result.success_criteria_met);
+    assert_eq!(
+        result.completion_reason,
+        LlmCompletionReason::SuccessCriteriaMet
+    );
+    assert_eq!(client.prompts.lock().expect("lock").len(), 2);
+    assert_eq!(
+        progress
+            .lock()
+            .expect("lock")
+            .iter()
+            .map(|event| event.stage)
+            .collect::<Vec<_>>(),
+        vec![
+            LlmProgressStage::Preparing,
+            LlmProgressStage::Generating,
+            LlmProgressStage::Evaluating,
+            LlmProgressStage::Saving,
+            LlmProgressStage::Completed,
+        ]
+    );
+}
+
+#[test]
+fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 30);
+    let client = ScriptedClient::from_raw([
+        openrouter_response_with_usage("complete draft", 100, 40, 0.001),
+        openrouter_response_with_usage(
+            r#"{"success":true,"feedback":"Complete."}"#,
+            80,
+            20,
+            0.0005,
+        ),
+    ]);
+
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::Summary),
+        &client,
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(result.usage.request_count, 2);
+    assert_eq!(result.usage.prompt_tokens, Some(180));
+    assert_eq!(result.usage.completion_tokens, Some(60));
+    assert_eq!(result.usage.total_tokens, Some(240));
+    assert_eq!(result.usage.cost, Some(0.0015));
+}
+
+#[test]
+fn generation_refines_with_quality_feedback_and_stops_when_the_second_draft_passes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 5);
+    let client = ScriptedClient::new([
+        "incomplete draft",
+        r#"{"success":false,"feedback":"Add the missing action items."}"#,
+        "complete revised draft",
+        r#"{"success":true,"feedback":"The missing action items are now included."}"#,
+    ]);
+
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::DetailedReport),
+        &client,
+        |_| {},
+    )
+    .unwrap();
+
+    assert_eq!(result.content, "complete revised draft");
+    assert_eq!(result.iterations_used, 2);
+    assert!(result.success_criteria_met);
+    let prompts = client.prompts.lock().expect("lock");
+    assert_eq!(prompts.len(), 4);
+    assert!(prompts[2].contains("Add the missing action items."));
+    assert!(prompts[2].contains("incomplete draft"));
+    drop(prompts);
+    let requests = client.requests.lock().expect("lock");
+    assert_eq!(requests[0]["messages"][0]["role"], "system");
+    assert_eq!(requests[2]["messages"][0]["role"], "system");
+    let refinement_payload: serde_json::Value =
+        serde_json::from_str(requests[2]["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        refinement_payload["quality_feedback"],
+        "Add the missing action items."
+    );
+    assert_eq!(refinement_payload["current_draft"], "incomplete draft");
+    assert_eq!(
+        refinement_payload["transcript_data"]
+            .as_str()
+            .unwrap()
+            .contains("summarize me"),
+        true
+    );
+}
+
+#[test]
+fn generation_returns_the_latest_draft_with_an_explicit_incomplete_status_at_the_limit() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 2);
+    let client = ScriptedClient::new([
+        "draft one",
+        r#"{"success":false,"feedback":"Missing decisions."}"#,
+        "draft two",
+        r#"{"success":false,"feedback":"Evidence notes are still incomplete."}"#,
+    ]);
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let progress_events = progress.clone();
+
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::DetailedReport),
+        &client,
+        move |event| progress_events.lock().expect("lock").push(event),
+    )
+    .unwrap();
+
+    assert_eq!(result.content, "draft two");
+    assert_eq!(result.iterations_used, 2);
+    assert_eq!(result.max_iterations, 2);
+    assert!(!result.success_criteria_met);
+    assert_eq!(
+        result.completion_reason,
+        LlmCompletionReason::MaxIterationsReached
+    );
+    assert_eq!(
+        result.quality_feedback,
+        "Evidence notes are still incomplete."
+    );
+    assert_eq!(client.prompts.lock().expect("lock").len(), 4);
+    assert_eq!(
+        progress.lock().expect("lock").last().unwrap().message,
+        "Maximum iterations reached; saved the latest draft"
+    );
+}
+
+#[test]
+fn quality_evaluation_parser_accepts_a_json_code_fence() {
+    let evaluation = parse_quality_evaluation(
+        "```json\n{\"success\":false,\"feedback\":\"Add evidence notes.\"}\n```",
+    )
+    .unwrap();
+
+    assert!(!evaluation.success);
+    assert_eq!(evaluation.feedback, "Add evidence notes.");
+}
+
+#[test]
+fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_a_report() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 3);
+    let client = ScriptedClient::new(["draft", "not json"]);
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let progress_events = progress.clone();
+
+    let error = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::Summary),
+        &client,
+        move |event| progress_events.lock().expect("lock").push(event),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("Quality evaluator did not return a JSON object"));
+    let events = progress.lock().expect("lock");
+    let failed = events.last().expect("failed event");
+    assert_eq!(failed.stage, LlmProgressStage::Failed);
+    assert_eq!(failed.iteration, 1);
+    assert!(!tmp.path().join("reports").exists());
 }
 
 #[test]
 fn generation_persists_markdown_report_under_save_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut settings = AppSettings::default();
-    settings.apply_patch(SettingsPatch {
-        save_root: Some(tmp.path().to_string_lossy().to_string()),
-        llm_max_iterations: Some(1),
-        ..Default::default()
-    });
-    let client = RecordingClient {
-        prompts: Arc::new(Mutex::new(Vec::new())),
-    };
-    let request = LlmGenerateRequest {
-        kind: LlmReportKind::DetailedReport,
-        transcripts: vec![transcript(
-            "/tmp/WakeNote/20260713/100000.txt",
-            "2026-07-13T10:00:00+09:00",
-            "persist me",
-        )],
-    };
+    let settings = generation_settings(tmp.path(), 1);
+    let client = ScriptedClient::new(["persist me", r#"{"success":true,"feedback":"Complete."}"#]);
 
-    let result =
-        generate_transcript_report_with_client(&settings, "sk-or-test", request, &client).unwrap();
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::DetailedReport),
+        &client,
+        |_| {},
+    )
+    .unwrap();
     let report_path = result.report_path.expect("report path");
 
     assert!(report_path.contains("/reports/"));
     assert!(report_path.ends_with("-detailed-report.md"));
-    assert_eq!(std::fs::read_to_string(report_path).unwrap(), "draft 1");
+    assert_eq!(std::fs::read_to_string(report_path).unwrap(), "persist me");
+}
+
+#[test]
+fn generated_report_is_available_as_history_detail_with_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = generation_settings(tmp.path(), 1);
+    let client = ScriptedClient::from_raw([
+        openrouter_response_with_usage("persist me", 100, 25, 0.001),
+        openrouter_response_with_usage(
+            r#"{"success":true,"feedback":"Complete."}"#,
+            50,
+            10,
+            0.0002,
+        ),
+    ]);
+
+    let result = generate_transcript_report_with_client_and_progress(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::DetailedReport),
+        &client,
+        |_| {},
+    )
+    .unwrap();
+
+    let history = list_llm_report_history(tmp.path().to_str().unwrap()).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].report_id, result.report_id);
+    assert_eq!(history[0].kind, LlmReportKind::DetailedReport);
+    assert_eq!(history[0].selected_count, Some(1));
+    assert_eq!(history[0].usage.as_ref().unwrap().total_tokens, Some(185));
+    assert!(!history[0].legacy);
+
+    let detail =
+        load_llm_report_history_detail(tmp.path().to_str().unwrap(), &result.report_id).unwrap();
+    assert_eq!(detail.content, "persist me");
+    assert_eq!(detail.item.quality_feedback.as_deref(), Some("Complete."));
+}
+
+#[test]
+fn history_discovers_legacy_markdown_without_sidecar_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let reports = tmp.path().join("reports");
+    std::fs::create_dir_all(&reports).unwrap();
+    std::fs::write(
+        reports.join("20260712-091500-summary.md"),
+        "# Earlier summary",
+    )
+    .unwrap();
+
+    let history = list_llm_report_history(tmp.path().to_str().unwrap()).unwrap();
+
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].report_id, "20260712-091500-summary");
+    assert_eq!(history[0].kind, LlmReportKind::Summary);
+    assert!(history[0].legacy);
+    assert!(history[0].usage.is_none());
+    let detail =
+        load_llm_report_history_detail(tmp.path().to_str().unwrap(), "20260712-091500-summary")
+            .unwrap();
+    assert_eq!(detail.content, "# Earlier summary");
+}
+
+#[test]
+fn history_sorts_rfc3339_timestamps_by_instant_across_offsets() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let reports = tmp.path().join("reports");
+    std::fs::create_dir_all(&reports).unwrap();
+    let older_path = reports.join("20260713-100000-summary.md");
+    let newer_path = reports.join("20260713-110000-summary.md");
+    std::fs::write(&older_path, "# Older").unwrap();
+    std::fs::write(&newer_path, "# Newer").unwrap();
+
+    for (path, created_at) in [
+        (&older_path, "2026-01-01T01:30:00+02:00"),
+        (&newer_path, "2026-01-01T00:45:00+00:00"),
+    ] {
+        let report_id = path.file_stem().unwrap().to_string_lossy().to_string();
+        let item = LlmReportHistoryItem {
+            report_id,
+            kind: LlmReportKind::Summary,
+            created_at: created_at.to_string(),
+            file_name: path.file_name().unwrap().to_string_lossy().to_string(),
+            report_path: path.to_string_lossy().to_string(),
+            model: None,
+            iterations_used: None,
+            max_iterations: None,
+            success_criteria_met: None,
+            completion_reason: None,
+            quality_feedback: None,
+            selected_count: None,
+            date_range: None,
+            usage: None,
+            legacy: false,
+        };
+        std::fs::write(
+            path.with_extension("json"),
+            serde_json::to_vec_pretty(&item).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let history = list_llm_report_history(tmp.path().to_str().unwrap()).unwrap();
+
+    assert_eq!(history[0].report_id, "20260713-110000-summary");
+    assert_eq!(history[1].report_id, "20260713-100000-summary");
+}
+
+#[test]
+fn report_export_copies_previous_markdown_and_rejects_path_traversal_ids() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let reports = tmp.path().join("reports");
+    std::fs::create_dir_all(&reports).unwrap();
+    std::fs::write(
+        reports.join("20260712-091500-summary.md"),
+        "# Earlier summary",
+    )
+    .unwrap();
+    let destination = tmp.path().join("downloaded-summary.md");
+
+    let exported = export_llm_report(
+        tmp.path().to_str().unwrap(),
+        "20260712-091500-summary",
+        destination.to_str().unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(exported, destination.to_string_lossy());
+    assert_eq!(
+        std::fs::read_to_string(destination).unwrap(),
+        "# Earlier summary"
+    );
+    let error =
+        load_llm_report_history_detail(tmp.path().to_str().unwrap(), "../settings").unwrap_err();
+    assert!(error.contains("Invalid report id"));
 }

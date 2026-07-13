@@ -266,7 +266,7 @@ describe("settings panel", () => {
     expect(markup).toContain("API key missing");
     expect(markup).toContain("OpenRouter Model");
     expect(markup).toContain('value="z-ai/glm-5.2"');
-    expect(markup).toContain("LLM iterations");
+    expect(markup).toContain("Maximum agent iterations");
     expect(markup).toContain('max="30"');
     expect(markup).toContain("Summary Prompt Template");
     expect(markup).toContain("Detailed Report Prompt Template");
