@@ -65,14 +65,15 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 
 | 항목 | 기본값 | 허용 범위 |
 | --- | --- | --- |
-| Threshold | `-44 dBFS` | `-90 … -10` |
+| Threshold | `-40 dBFS` | `-90 … -10` |
+| Mic input volume | `100%` | `0 … 200` |
 | Attack | `200 ms` | `50 … 2 000` |
 | Release | `1 000 ms` | `250 … 5 000` |
-| Pre-roll | `600 ms` | `0 … 1 500` |
-| Lead-in | `300 ms` | `0 … 2 000` |
-| Post-roll | `600 ms` | `0 … 2 000` |
-| Min chunk | `600 ms` | `100 … 5 000` |
-| Max chunk | `120 000 ms` (2분) | `10 000 … 900 000` |
+| Pre-roll | `400 ms` | `0 … 1 500` |
+| Lead-in | `200 ms` | `0 … 2 000` |
+| Post-roll | `400 ms` | `0 … 2 000` |
+| Min chunk | `800 ms` | `100 … 5 000` |
+| Max chunk | `180 000 ms` (3분) | `10 000 … 900 000` |
 | 오디오 포맷 | `m4a` | `m4a` / `wav` |
 | 저장 루트 | `~/Documents/WakeNote` | 임의 디렉터리 |
 | 기본 모델 | `whisper-medium` | 레지스트리 내 모델 |
