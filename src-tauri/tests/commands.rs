@@ -2483,10 +2483,7 @@ fn system_capture_tracks_recent_audio_frame_liveness() {
             "youtube".into(),
         )
         .expect("start system capture session");
-    assert!(!backend.has_recent_system_audio_frame(
-        Instant::now(),
-        Duration::from_secs(20)
-    ));
+    assert!(!backend.has_recent_system_audio_frame(Instant::now(), Duration::from_secs(20)));
 
     let before_frame = Instant::now();
     backend
@@ -2497,10 +2494,7 @@ fn system_capture_tracks_recent_audio_frame_liveness() {
         })
         .expect("system audio frame");
 
-    assert!(backend.has_recent_system_audio_frame(
-        Instant::now(),
-        Duration::from_secs(20)
-    ));
+    assert!(backend.has_recent_system_audio_frame(Instant::now(), Duration::from_secs(20)));
     assert!(!backend.has_recent_system_audio_frame(
         before_frame + Duration::from_secs(21),
         Duration::from_secs(20)
@@ -2509,10 +2503,7 @@ fn system_capture_tracks_recent_audio_frame_liveness() {
     backend
         .stop_system_capture_session()
         .expect("stop system capture session");
-    assert!(!backend.has_recent_system_audio_frame(
-        Instant::now(),
-        Duration::from_secs(20)
-    ));
+    assert!(!backend.has_recent_system_audio_frame(Instant::now(), Duration::from_secs(20)));
 }
 
 #[test]

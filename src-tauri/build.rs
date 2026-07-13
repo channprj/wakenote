@@ -25,6 +25,9 @@ fn link_clang_compiler_rt() {
         // rlib) — exactly the targets that perform a final link.
         println!("cargo:rustc-link-arg={}", rt.display());
     } else {
-        println!("cargo:warning=libclang_rt.osx.a not found at {}", rt.display());
+        println!(
+            "cargo:warning=libclang_rt.osx.a not found at {}",
+            rt.display()
+        );
     }
 }

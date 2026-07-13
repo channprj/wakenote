@@ -155,7 +155,13 @@ impl OverlayCaptionRuntime {
         audio_path: PathBuf,
         text: impl AsRef<str>,
     ) -> bool {
-        self.show_final_at(chunk_id, audio_path, text, self.position, self.style.clone())
+        self.show_final_at(
+            chunk_id,
+            audio_path,
+            text,
+            self.position,
+            self.style.clone(),
+        )
     }
 
     pub fn show_final_at(

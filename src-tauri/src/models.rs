@@ -1524,8 +1524,7 @@ mod tests {
         assert_eq!(sensevoice.kind, SherpaModelKind::SenseVoice);
         assert!(sensevoice.files.iter().any(|f| f == "model.int8.onnx"));
 
-        let nemotron =
-            sherpa_model_spec("nemotron-3.5-asr-streaming-0.6b").expect("nemotron spec");
+        let nemotron = sherpa_model_spec("nemotron-3.5-asr-streaming-0.6b").expect("nemotron spec");
         assert_eq!(nemotron.kind, SherpaModelKind::OnlineTransducer);
         assert!(nemotron.files.iter().any(|f| f == "encoder.int8.onnx"));
         assert!(nemotron.files.iter().any(|f| f == "tokens.txt"));
@@ -1698,5 +1697,4 @@ mod tests {
         assert_eq!(record.status, ModelStatus::Error);
         assert_eq!(record.error.as_deref(), Some("cancelled by user"));
     }
-
 }

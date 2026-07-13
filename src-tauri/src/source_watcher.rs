@@ -8,7 +8,7 @@
 //! switch away from an active source until that source's window disappears,
 //! which avoids flapping between e.g. a Meet tab and a YouTube tab).
 
-use crate::sources::{match_source, SourceDefinition};
+use crate::sources::{SourceDefinition, match_source};
 
 /// Number of consecutive watcher polls that may miss the active source before
 /// the source is considered ended. The watcher currently polls every 5 seconds,
@@ -354,8 +354,12 @@ mod tests {
         let ended = SourceTransition::Ended(active);
 
         assert!(should_defer_source_end_for_recent_audio(&ended, true, true));
-        assert!(!should_defer_source_end_for_recent_audio(&ended, true, false));
-        assert!(!should_defer_source_end_for_recent_audio(&ended, false, true));
+        assert!(!should_defer_source_end_for_recent_audio(
+            &ended, true, false
+        ));
+        assert!(!should_defer_source_end_for_recent_audio(
+            &ended, false, true
+        ));
         assert!(!should_defer_source_end_for_recent_audio(
             &SourceTransition::Unchanged,
             true,

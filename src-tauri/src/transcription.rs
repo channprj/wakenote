@@ -479,7 +479,11 @@ fn transcribe_with_sherpa(
             };
             let mut recognizer = sherpa_rs::sense_voice::SenseVoiceRecognizer::new(config)
                 .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
-            Ok(recognizer.transcribe(16_000, &samples).text.trim().to_string())
+            Ok(recognizer
+                .transcribe(16_000, &samples)
+                .text
+                .trim()
+                .to_string())
         }
     }
 }

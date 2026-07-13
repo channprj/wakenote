@@ -13,8 +13,8 @@ use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
@@ -113,8 +113,7 @@ impl MeetingRecord {
 
     fn save_atomic(&self, path: &Path) -> std::io::Result<()> {
         let tmp = path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(self)
-            .map_err(std::io::Error::other)?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         fs::write(&tmp, bytes)?;
         fs::rename(&tmp, path)
     }
@@ -349,10 +348,16 @@ pub fn plan_segments(
     while total_ms - start > opts.max_segment_ms {
         let win_lo = start + opts.min_segment_ms;
         let win_hi = (start + opts.max_segment_ms).min(total_ms);
-        let cut = best_silence_cut(frame_rms, frame_ms, opts.silence_rms_threshold, win_lo, win_hi)
-            .unwrap_or(win_hi)
-            .clamp(win_lo, total_ms)
-            .max(start + 1);
+        let cut = best_silence_cut(
+            frame_rms,
+            frame_ms,
+            opts.silence_rms_threshold,
+            win_lo,
+            win_hi,
+        )
+        .unwrap_or(win_hi)
+        .clamp(win_lo, total_ms)
+        .max(start + 1);
         segments.push((start, cut));
         start = cut;
     }
@@ -381,13 +386,14 @@ fn best_silence_cut(
     let mut best_len = 0usize;
     let mut best_center: Option<usize> = None;
     let mut run_start: Option<usize> = None;
-    let consider = |start: usize, end: usize, best_len: &mut usize, best_center: &mut Option<usize>| {
-        let len = end - start;
-        if len > *best_len {
-            *best_len = len;
-            *best_center = Some((start + end) / 2);
-        }
-    };
+    let consider =
+        |start: usize, end: usize, best_len: &mut usize, best_center: &mut Option<usize>| {
+            let len = end - start;
+            if len > *best_len {
+                *best_len = len;
+                *best_center = Some((start + end) / 2);
+            }
+        };
     for index in lo..hi {
         if frame_rms[index] < threshold {
             run_start.get_or_insert(index);
@@ -536,7 +542,8 @@ pub fn start_recorded_meeting_capture(
         return Err("meeting capture sample rate must be greater than zero".to_string());
     }
     let slug = slugify(title);
-    let id = allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
+    let id =
+        allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
     let dir = meeting_dir(save_root, &id);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let audio_file = "audio.wav".to_string();
@@ -654,7 +661,8 @@ pub fn import_meeting(
         .and_then(|stem| stem.to_str())
         .unwrap_or("audio");
     let slug = slugify(stem);
-    let id = allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
+    let id =
+        allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
     let dir = meeting_dir(save_root, &id);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let audio_file = format!("audio.{extension}");
@@ -678,7 +686,9 @@ pub fn import_meeting(
         segments: Vec::new(),
         error: None,
     };
-    record.save_atomic(&record_path(&dir)).map_err(|e| e.to_string())?;
+    record
+        .save_atomic(&record_path(&dir))
+        .map_err(|e| e.to_string())?;
     Ok(record)
 }
 
@@ -738,9 +748,13 @@ pub fn reconcile_interrupted(save_root: &Path) {
         }
         let path = record_path(&entry.path());
         if let Ok(mut record) = MeetingRecord::load(&path) {
-            if matches!(record.status, MeetingStatus::Processing | MeetingStatus::Pending) {
+            if matches!(
+                record.status,
+                MeetingStatus::Processing | MeetingStatus::Pending
+            ) {
                 record.status = MeetingStatus::Failed;
-                record.error = Some("Interrupted because the app was closed (resumable)".to_string());
+                record.error =
+                    Some("Interrupted because the app was closed (resumable)".to_string());
                 record.touch();
                 let _ = record.save_atomic(&path);
             }
@@ -772,8 +786,13 @@ fn emit_progress_running(
     elapsed_ms: u64,
     processed_at_start: u64,
 ) {
-    let processed_this_run = record.progress.processed_ms.saturating_sub(processed_at_start);
-    let remaining = record.duration_ms.saturating_sub(record.progress.processed_ms);
+    let processed_this_run = record
+        .progress
+        .processed_ms
+        .saturating_sub(processed_at_start);
+    let remaining = record
+        .duration_ms
+        .saturating_sub(record.progress.processed_ms);
     emit(MeetingEvent::Progress(MeetingProgressEvent {
         id: record.id.clone(),
         status: record.status,
@@ -821,7 +840,12 @@ pub fn run_meeting_job(
     // 1. Normalize to a temp 16 kHz WAV (regenerated on resume, deleted at the end).
     let wav = work_wav_path(&dir);
     if let Err(error) = normalize_to_wav16k(&dir.join(&record.audio_file), &wav) {
-        return finish_failed(&mut record, &rpath, &emit, format!("audio decode failed: {error}"));
+        return finish_failed(
+            &mut record,
+            &rpath,
+            &emit,
+            format!("audio decode failed: {error}"),
+        );
     }
 
     // 2. Plan segments (only when fresh — resume keeps the existing plan).
@@ -839,7 +863,12 @@ pub fn run_meeting_job(
     };
     record.duration_ms = total_ms;
     if record.segments.is_empty() {
-        let spans = plan_segments(&frame_rms, FRAME_MS, total_ms, SegmentPlanOptions::default());
+        let spans = plan_segments(
+            &frame_rms,
+            FRAME_MS,
+            total_ms,
+            SegmentPlanOptions::default(),
+        );
         record.segments = spans
             .into_iter()
             .enumerate()
@@ -865,14 +894,19 @@ pub fn run_meeting_job(
     );
 
     // 3. Load the model once for the whole meeting.
-    let context = match WhisperContext::new_with_params(&model_path, default_whisper_context_parameters())
-    {
-        Ok(context) => Arc::new(context),
-        Err(error) => {
-            let _ = fs::remove_file(&wav);
-            return finish_failed(&mut record, &rpath, &emit, format!("model load failed: {error}"));
-        }
-    };
+    let context =
+        match WhisperContext::new_with_params(&model_path, default_whisper_context_parameters()) {
+            Ok(context) => Arc::new(context),
+            Err(error) => {
+                let _ = fs::remove_file(&wav);
+                return finish_failed(
+                    &mut record,
+                    &rpath,
+                    &emit,
+                    format!("model load failed: {error}"),
+                );
+            }
+        };
 
     let language = record.language;
     let total_ms = record.duration_ms;
@@ -906,14 +940,22 @@ pub fn run_meeting_job(
         let samples = match read_window_samples(&wav, read_lo, end_ms) {
             Ok(samples) => samples,
             Err(error) => {
-                eprintln!("[wakenote] meeting {}: segment {idx} read failed: {error}", record.id);
+                eprintln!(
+                    "[wakenote] meeting {}: segment {idx} read failed: {error}",
+                    record.id
+                );
                 record.segments[idx].status = MeetingSegmentStatus::Failed;
                 any_failed = true;
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
                 let _ = record.save_atomic(&rpath);
-                emit_progress_running(&emit, &record, record.progress.elapsed_ms, processed_at_start);
+                emit_progress_running(
+                    &emit,
+                    &record,
+                    record.progress.elapsed_ms,
+                    processed_at_start,
+                );
                 continue;
             }
         };
@@ -977,17 +1019,30 @@ pub fn run_meeting_job(
                     end_ms,
                     text: decoded.text,
                 }));
-                emit_progress_running(&emit, &record, record.progress.elapsed_ms, processed_at_start);
+                emit_progress_running(
+                    &emit,
+                    &record,
+                    record.progress.elapsed_ms,
+                    processed_at_start,
+                );
             }
             Err(error) => {
-                eprintln!("[wakenote] meeting {}: segment {idx} decode failed: {error}", record.id);
+                eprintln!(
+                    "[wakenote] meeting {}: segment {idx} decode failed: {error}",
+                    record.id
+                );
                 record.segments[idx].status = MeetingSegmentStatus::Failed;
                 any_failed = true;
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
                 let _ = record.save_atomic(&rpath);
-                emit_progress_running(&emit, &record, record.progress.elapsed_ms, processed_at_start);
+                emit_progress_running(
+                    &emit,
+                    &record,
+                    record.progress.elapsed_ms,
+                    processed_at_start,
+                );
             }
         }
     }
@@ -1021,7 +1076,11 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn rms_with_silence(total_frames: usize, silent: &[(usize, usize)], threshold_value: f32) -> Vec<f32> {
+    fn rms_with_silence(
+        total_frames: usize,
+        silent: &[(usize, usize)],
+        threshold_value: f32,
+    ) -> Vec<f32> {
         let mut rms = vec![threshold_value; total_frames];
         for &(start, end) in silent {
             for frame in rms.iter_mut().take(end).skip(start) {
@@ -1073,7 +1132,10 @@ mod tests {
 
     #[test]
     fn slugify_handles_ascii_and_unicode() {
-        assert_eq!(slugify("Weekly Sync 2026").as_deref(), Some("weekly-sync-2026"));
+        assert_eq!(
+            slugify("Weekly Sync 2026").as_deref(),
+            Some("weekly-sync-2026")
+        );
         assert_eq!(slugify("회의록"), None);
         assert_eq!(slugify("  ---  "), None);
     }

@@ -380,9 +380,8 @@ pub(crate) fn caption_overlay_size_for_monitor(
         .max(1.0);
     let lines = (weighted_chars / chars_per_line).ceil().max(1.0);
     let text_height = lines * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
-    let max_height = (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(
-        OVERLAY_HEIGHT_LOGICAL,
-    );
+    let max_height =
+        (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(OVERLAY_HEIGHT_LOGICAL);
     let height = (text_height
         + OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL
         + OVERLAY_CAPTION_BORDER_LOGICAL

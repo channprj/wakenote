@@ -690,7 +690,11 @@ mod tests {
             })
             .expect("live samples");
 
-        assert!(live_samples.iter().all(|sample| (*sample - 0.8).abs() < f32::EPSILON));
+        assert!(
+            live_samples
+                .iter()
+                .all(|sample| (*sample - 0.8).abs() < f32::EPSILON)
+        );
 
         let events = controller
             .process_samples(&[0.8; 10], 1_000)
@@ -703,7 +707,11 @@ mod tests {
             })
             .expect("second live samples");
 
-        assert!(live_samples.iter().any(|sample| (*sample - 1.0).abs() < f32::EPSILON));
+        assert!(
+            live_samples
+                .iter()
+                .any(|sample| (*sample - 1.0).abs() < f32::EPSILON)
+        );
     }
 
     #[test]
@@ -743,6 +751,10 @@ mod tests {
             })
             .expect("live samples");
 
-        assert!(live_samples.iter().all(|sample| (*sample - 0.4).abs() < f32::EPSILON));
+        assert!(
+            live_samples
+                .iter()
+                .all(|sample| (*sample - 0.4).abs() < f32::EPSILON)
+        );
     }
 }
