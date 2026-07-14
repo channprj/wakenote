@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8"));
 
@@ -20,6 +20,9 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  test: {
+    exclude: [...configDefaults.exclude, ".worktrees/**"],
+  },
   server: {
     host: "127.0.0.1",
     port: 1420,
