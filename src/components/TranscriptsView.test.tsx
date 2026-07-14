@@ -620,14 +620,17 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("Loading…");
   });
 
-  it("shows a bottom sheet player while a transcript is selected for playback", () => {
+  it("keeps the selected transcript player inside the archive flow", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
       entriesByDay: new Map([["2026-05-10", [transcript({ text: "currently playing transcript" })]]]),
       initialPlayingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
     });
-    expect(markup).toContain("transcript-player-sheet");
+    expect(markup).toContain('data-slot="transcript-player-dock"');
+    expect(markup).not.toContain("transcript-player-sheet");
+    expect(markup).toContain('data-slot="transcript-toolbar"');
+    expect(markup).toContain("Autoplay next");
     expect(markup).toContain("currently playing transcript");
     expect(markup).toContain('src="file:///tmp/WakeNote/20260510/010203.m4a"');
     expect(markup).toContain("Now playing");

@@ -17,7 +17,6 @@ import {
   Search,
   Sparkles,
   Video,
-  X,
   Youtube,
 } from "lucide-react";
 import type {
@@ -25,7 +24,6 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { audioPlaybackUrlFromPath, initialAudioPlaybackSource } from "../lib/audio-playback";
 import {
   fileUrlFromPath,
   formatLocalTimestamp,
@@ -42,7 +40,8 @@ import type {
   RecentTranscript,
   TranscriptDay,
 } from "../lib/types";
-import { Button } from "./ui/primitives";
+import { Button } from "./ui/button";
+import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
 
 type CopyToastKind = "all" | "selected" | "report";
 type DragMode = "select" | "deselect";
@@ -562,7 +561,10 @@ export function TranscriptsView({
             <span>{effectiveActiveDay}</span>
             <strong>{transcriptCountText}</strong>
           </div>
-          <div className="transcript-day__actions">
+          <div data-slot="transcript-toolbar" className="transcript-day__actions transcript-toolbar">
+            <span className="transcript-toolbar__autoplay">
+              Autoplay next: {autoPlayNext ? "On" : "Off"}
+            </span>
             {showSourceFilter ? (
               <label className="transcript-source-filter">
                 <span>Source</span>
@@ -719,7 +721,7 @@ export function TranscriptsView({
           </div>
         </header>
         {hasEntries ? (
-          <div className="transcript-entry-list transcript-entry-list--condensed">
+          <div data-slot="transcript-list" className="transcript-entry-list transcript-entry-list--condensed">
             {filteredEntries.map((entry) => (
               <TranscriptEntryRow
                 entry={entry}
@@ -866,19 +868,20 @@ export function TranscriptsView({
             <pre>{reportResult.content}</pre>
           </div>
         ) : null}
+        {playingTranscript?.audio_path ? (
+          <TranscriptPlayerDock
+            entry={playingTranscript}
+            paused={playbackPaused}
+            autoPlayNext={autoPlayNext}
+            onClose={() => {
+              setPlayingTranscriptPath(null);
+              setPlaybackPaused(false);
+            }}
+            onPausedChange={setPlaybackPaused}
+            onEnded={handlePlaybackEnded}
+          />
+        ) : null}
       </article>
-      {playingTranscript?.audio_path ? (
-        <TranscriptPlayerSheet
-          entry={playingTranscript}
-          paused={playbackPaused}
-          onClose={() => {
-            setPlayingTranscriptPath(null);
-            setPlaybackPaused(false);
-          }}
-          onPausedChange={setPlaybackPaused}
-          onEnded={handlePlaybackEnded}
-        />
-      ) : null}
       {contextMenu ? (
         <div
           className="transcript-context-menu"
@@ -1034,7 +1037,7 @@ function TranscriptEntryRow({
               : "No recording file"
           }
           type="button"
-          variant={isPlaybackActive ? "primary" : "secondary"}
+          variant={isPlaybackActive ? "default" : "secondary"}
         >
           {isPlaying ? <Pause /> : <Play />}
         </Button>
@@ -1347,6 +1350,7 @@ function TranscriptPagination({
 
   return (
     <nav
+      data-slot="transcript-week-picker"
       className="transcript-pagination transcript-pagination--calendar"
       aria-label="Transcript date pages"
     >
@@ -1406,125 +1410,5 @@ function TranscriptPagination({
         <ChevronRight />
       </Button>
     </nav>
-  );
-}
-
-function TranscriptPlayerSheet({
-  entry,
-  paused,
-  onClose,
-  onPausedChange,
-  onEnded,
-}: {
-  entry: RecentTranscript;
-  paused: boolean;
-  onClose: () => void;
-  onPausedChange: (paused: boolean) => void;
-  onEnded: () => void;
-}) {
-  const audioPath = entry.audio_path;
-
-  const [audioSource, setAudioSource] = useState(() =>
-    initialAudioPlaybackSource(audioPath),
-  );
-  const [audioError, setAudioError] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    if (!audioPath) {
-      return;
-    }
-    let cancelled = false;
-    setAudioSource(initialAudioPlaybackSource(audioPath));
-    setAudioError(null);
-
-    audioPlaybackUrlFromPath(audioPath)
-      .then((url) => {
-        if (!cancelled) {
-          setAudioSource(url);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setAudioError(error instanceof Error ? error.message : "Could not prepare recording");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [audioPath]);
-
-  useEffect(() => {
-    const element = audioRef.current;
-    if (!element) {
-      return;
-    }
-    const handlePlay = () => onPausedChange(false);
-    const handlePause = () => onPausedChange(true);
-    const handleEnded = () => onEnded();
-    element.addEventListener("play", handlePlay);
-    element.addEventListener("pause", handlePause);
-    element.addEventListener("ended", handleEnded);
-    return () => {
-      element.removeEventListener("play", handlePlay);
-      element.removeEventListener("pause", handlePause);
-      element.removeEventListener("ended", handleEnded);
-    };
-  }, [audioSource, onPausedChange, onEnded]);
-
-  useEffect(() => {
-    const element = audioRef.current;
-    if (!element) {
-      return;
-    }
-    if (!audioSource) {
-      return;
-    }
-    if (paused) {
-      element.pause();
-      return;
-    }
-    void element.play().catch(() => undefined);
-  }, [paused, audioSource]);
-
-  if (!audioPath) {
-    return null;
-  }
-
-  const timestamp = formatLocalTimestamp(entry.recorded_at);
-
-  return (
-    <aside className="transcript-player-sheet" aria-label="Transcript player">
-      <div className="transcript-player-sheet__header">
-        <div>
-          <span>Now playing</span>
-          <a href={fileUrlFromPath(audioPath)} title={audioPath}>
-            <strong>{timestamp || audioPath}</strong>
-          </a>
-        </div>
-        <Button
-          aria-label="Close player"
-          onClick={onClose}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <X />
-        </Button>
-      </div>
-      <audio
-        autoPlay={!paused}
-        controls
-        key={audioSource || "pending"}
-        preload="metadata"
-        ref={audioRef}
-        src={audioSource || undefined}
-      />
-      {audioError ? (
-        <span className="transcript-player-sheet__error">{audioError}</span>
-      ) : null}
-      <p>{entry.text}</p>
-    </aside>
   );
 }

@@ -466,6 +466,119 @@
   white-space: pre-wrap;
 }
 
+.transcripts-panel,
+.transcript-day,
+.transcript-toolbar,
+[data-slot="transcript-list"],
+.transcript-player-dock,
+.transcript-player-dock__copy {
+  min-width: 0;
+}
+
+.transcript-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.transcript-toolbar__autoplay {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.transcript-entry__text {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.transcript-player-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto minmax(210px, 320px) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 4px -1px -1px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--card) 94%, transparent);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 14%);
+  backdrop-filter: blur(12px);
+}
+
+.transcript-player-dock__copy {
+  display: grid;
+  gap: 1px;
+}
+
+.transcript-player-dock__copy small,
+.transcript-player-dock__copy a,
+.transcript-player-dock__copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-player-dock__copy small {
+  color: var(--muted-foreground);
+  font-size: 9px;
+  line-height: 11px;
+  text-transform: uppercase;
+}
+
+.transcript-player-dock__copy a {
+  color: var(--foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+  text-decoration: none;
+}
+
+.transcript-player-dock__copy span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 13px;
+}
+
+.transcript-player-dock audio {
+  width: 100%;
+  height: 28px;
+}
+
+.transcript-player-dock__error {
+  grid-column: 2 / -1;
+  color: var(--destructive);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 780px) {
+  .transcript-player-dock {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .transcript-player-dock audio {
+    grid-column: 1 / -1;
+  }
+
+  .transcript-player-dock [data-slot="badge"] {
+    display: none;
+  }
+}
+
 @media (max-width: 900px) {
   .settings-grid {
     grid-template-columns: minmax(0, 1fr);
