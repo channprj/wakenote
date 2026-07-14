@@ -5,12 +5,12 @@ import { AppPageRouter } from "./components/AppPageRouter";
 import { MeetingTranscriptionPanel } from "./components/MeetingTranscriptionPanel";
 import { QueuePanel } from "./components/QueuePanel";
 import { ReportHistoryPanel } from "./components/ReportHistoryPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptsPanel } from "./components/TranscriptsPanel";
 import { CapturePage } from "./components/capture/CapturePage";
 import { AppFrame } from "./components/shell/AppFrame";
 import { PageHeader } from "./components/shell/PageHeader";
 import { RecordingStatusRail } from "./components/shell/RecordingStatusRail";
+import { SettingsPage } from "./components/settings/SettingsPage";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { newestTranscriptTextEntries } from "./lib/live-transcripts";
 import type { PrimaryRoute, SettingsSection } from "./lib/navigation";
@@ -79,22 +79,6 @@ function transcriptEntriesFromRecent(
     audio_path: transcript.audio_path,
     error: null,
   }));
-}
-
-function legacySettingsSection(section: SettingsSection): string {
-  switch (section) {
-    case "general":
-      return "general";
-    case "audio":
-      return "recording";
-    case "models":
-      return "models";
-    case "storage":
-      return "storage";
-    case "integrations":
-    case "advanced":
-      return "advanced";
-  }
 }
 
 function WorkspacePage({
@@ -447,56 +431,37 @@ export default function App() {
       </WorkspacePage>
     ),
     settings: (
-      <WorkspacePage
-        slot="settings"
-        eyebrow="Application"
-        title="Settings"
-        description="Configure WakeNote capture, models, storage, and integrations."
-      >
-        <SettingsPanel
-          activeSection={legacySettingsSection(activeSettingsSection)}
-          snapshot={snapshot}
-          onPatch={(patch) => void patchSettings(patch)}
-          onRefresh={() => void refresh()}
-          onStartLiveCapture={() => void runAction(startLiveCapture)}
-          onStopLiveCapture={() => void runAction(stopLiveCapture)}
-          onChooseSaveRoot={() => void runAction(chooseSaveRoot)}
-          onRevealSaveFolder={() => void runAction(revealSaveFolder)}
-          onChooseModelDirectory={() => void runAction(chooseModelDirectory)}
-          onRequestMicrophonePermission={() =>
+      <SettingsPage
+        section={activeSettingsSection}
+        onSectionChange={setActiveSettingsSection}
+        snapshot={snapshot}
+        actions={{
+          onPatch: (patch) => void patchSettings(patch),
+          onChooseSaveRoot: () => void runAction(chooseSaveRoot),
+          onRevealSaveFolder: () => void runAction(revealSaveFolder),
+          onChooseModelDirectory: () => void runAction(chooseModelDirectory),
+          onRequestMicrophonePermission: () =>
             void runAction(
               snapshot.permissions.microphone.can_request
                 ? requestMicrophonePermission
                 : openMicrophonePermissionSettings,
-            )
-          }
-          onRequestScreenRecordingPermission={() =>
+            ),
+          onRequestScreenRecordingPermission: () =>
             void runAction(
               snapshot.permissions.screen_recording.can_request
                 ? requestScreenRecordingPermission
                 : openScreenRecordingSettings,
-            )
-          }
-          onImportAudioFiles={() => void runAction(chooseAudioFiles)}
-          onEnqueueBacklog={() =>
-            void runAction(() => enqueueBacklog(snapshot.settings.save_root))
-          }
-          onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
-          onProcessNextTranscription={() => void runAction(processNextTranscription)}
-          onRetry={(id) => void runAction(() => retryJob(id))}
-          onSkip={(id) => void runAction(() => skipJob(id))}
-          onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}
-          onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
-          onCancelModelDownload={(modelId) =>
-            void runAction(() => cancelModelDownload(modelId))
-          }
-          onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
-          onSaveOpenRouterApiKey={(apiKey) =>
-            void runAction(() => saveOpenRouterApiKey(apiKey))
-          }
-          onDeleteOpenRouterApiKey={() => void runAction(deleteOpenRouterApiKey)}
-        />
-      </WorkspacePage>
+            ),
+          onVerifyModel: (modelId) => void runAction(() => verifyModel(modelId)),
+          onDownloadModel: (modelId) => void runAction(() => downloadModel(modelId)),
+          onCancelModelDownload: (modelId) =>
+            void runAction(() => cancelModelDownload(modelId)),
+          onDeleteModel: (modelId) => void runAction(() => deleteModel(modelId)),
+          onSaveOpenRouterApiKey: (apiKey) =>
+            void runAction(() => saveOpenRouterApiKey(apiKey)),
+          onDeleteOpenRouterApiKey: () => void runAction(deleteOpenRouterApiKey),
+        }}
+      />
     ),
   };
 

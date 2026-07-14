@@ -1,0 +1,170 @@
+import type { ReactNode } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+
+export function SettingsCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card size="sm" className="settings-card">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description ? <CardDescription>{description}</CardDescription> : null}
+      </CardHeader>
+      <CardContent>
+        <FieldGroup className="gap-0 divide-y divide-border">{children}</FieldGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function SettingSwitch({
+  label,
+  description,
+  checked,
+  disabled,
+  title,
+  onCheckedChange,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled?: boolean;
+  title?: string;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <Field orientation="horizontal" className="settings-row" data-disabled={disabled || undefined}>
+      <FieldContent>
+        <FieldTitle>{label}</FieldTitle>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+      </FieldContent>
+      <Switch
+        aria-label={label}
+        checked={checked}
+        disabled={disabled}
+        title={title}
+        onCheckedChange={onCheckedChange}
+      />
+    </Field>
+  );
+}
+
+export interface SelectOption<T extends string = string> {
+  value: T;
+  label: string;
+}
+
+export function SettingSelect<T extends string>({
+  label,
+  description,
+  value,
+  options,
+  disabled,
+  title,
+  onValueChange,
+}: {
+  label: string;
+  description?: string;
+  value: T;
+  options: ReadonlyArray<SelectOption<T>>;
+  disabled?: boolean;
+  title?: string;
+  onValueChange: (value: T) => void;
+}) {
+  return (
+    <Field orientation="responsive" className="settings-row" data-disabled={disabled || undefined}>
+      <FieldContent>
+        <FieldLabel>{label}</FieldLabel>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+      </FieldContent>
+      <Select value={value} disabled={disabled} onValueChange={onValueChange}>
+        <SelectTrigger size="sm" className="min-w-40" aria-label={label} title={title}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+  );
+}
+
+export function SettingSlider({
+  label,
+  description,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix = "",
+  onValueChange,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  onValueChange: (value: number) => void;
+}) {
+  return (
+    <Field orientation="responsive" className="settings-row settings-row--slider">
+      <FieldContent>
+        <FieldLabel>{label}</FieldLabel>
+        {description ? <FieldDescription>{description}</FieldDescription> : null}
+      </FieldContent>
+      <div className="settings-slider">
+        <Slider
+          aria-label={label}
+          value={[value]}
+          min={min}
+          max={max}
+          step={step}
+          onValueChange={(values) => onValueChange(values[0] ?? value)}
+        />
+        <output>{value}{suffix}</output>
+      </div>
+    </Field>
+  );
+}
+
+export function SettingsGrid({ children }: { children: ReactNode }) {
+  return <div className="settings-grid">{children}</div>;
+}

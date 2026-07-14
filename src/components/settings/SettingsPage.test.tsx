@@ -1,0 +1,81 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { mockSnapshot } from "@/lib/app-state";
+import type { SettingsSection } from "@/lib/navigation";
+import { SettingsPage } from "./SettingsPage";
+import type { SettingsActions } from "./types";
+
+const actions: SettingsActions = {
+  onPatch: vi.fn(),
+  onChooseSaveRoot: vi.fn(),
+  onRevealSaveFolder: vi.fn(),
+  onChooseModelDirectory: vi.fn(),
+  onRequestMicrophonePermission: vi.fn(),
+  onRequestScreenRecordingPermission: vi.fn(),
+  onVerifyModel: vi.fn(),
+  onDownloadModel: vi.fn(),
+  onCancelModelDownload: vi.fn(),
+  onDeleteModel: vi.fn(),
+  onSaveOpenRouterApiKey: vi.fn(),
+  onDeleteOpenRouterApiKey: vi.fn(),
+};
+
+function renderSection(section: SettingsSection) {
+  return renderToStaticMarkup(
+    <SettingsPage
+      section={section}
+      onSectionChange={() => {}}
+      snapshot={mockSnapshot()}
+      actions={actions}
+    />,
+  );
+}
+
+describe("SettingsPage ownership", () => {
+  it("keeps application and window behavior in General", () => {
+    const markup = renderSection("general");
+
+    expect(markup).toContain("Launch at login");
+    expect(markup).toContain("Show Dock icon");
+    expect(markup).not.toContain("Threshold");
+  });
+
+  it("keeps input, permission, and timing controls in Audio", () => {
+    const markup = renderSection("audio");
+
+    expect(markup).toContain("Microphone Permission");
+    expect(markup).toContain("Threshold");
+    expect(markup).not.toContain("OpenRouter");
+  });
+
+  it("keeps model files and storage paths separate", () => {
+    expect(renderSection("models")).toContain("Model Directory");
+    expect(renderSection("storage")).toContain("Save Root");
+  });
+
+  it("keeps external behavior in Integrations and expert controls in Advanced", () => {
+    const integrations = renderSection("integrations");
+    const advanced = renderSection("advanced");
+
+    expect(integrations).toContain("OpenRouter");
+    expect(integrations).toContain("Floating overlay");
+    expect(advanced).toContain("VAD gate");
+    expect(advanced).not.toContain("OpenRouter");
+  });
+
+  it("renders six compact settings tabs without Library", () => {
+    const markup = renderSection("general");
+
+    for (const label of [
+      "General",
+      "Audio",
+      "Models",
+      "Storage",
+      "Integrations",
+      "Advanced",
+    ]) {
+      expect(markup).toContain(label);
+    }
+    expect(markup).not.toContain("Library");
+  });
+});

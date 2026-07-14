@@ -1,4 +1,3 @@
-import { Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   loadRecognizedSources,
@@ -8,11 +7,11 @@ import {
 } from "../lib/tauri-client";
 import type {
   AppSettings,
-  CustomSourceEntry,
   RecognizedSourceInfo,
   SourcePayload,
 } from "../lib/types";
-import { Button, Switch } from "./ui/primitives";
+import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
 
 const BUILTIN_SOURCES: ReadonlyArray<RecognizedSourceInfo> = [
   {
@@ -52,7 +51,6 @@ export function SystemAudioSettings({
 }) {
   const fallbackSources = useMemo(() => recognizedSourcesFromSettings(settings), [settings]);
   const [sources, setSources] = useState<RecognizedSourceInfo[]>(fallbackSources);
-  const [customDrafts, setCustomDrafts] = useState<CustomSourceEntry[]>(settings.custom_sources);
   const [detected, setDetected] = useState<SourcePayload | null>(null);
   const [capturing, setCapturing] = useState(false);
   const builtInSources = sources.filter((source) => !source.custom);
@@ -126,60 +124,6 @@ export function SystemAudioSettings({
     [settings.source_auto_prompt, onPatch],
   );
 
-  const patchCustomSources = useCallback(
-    (customSources: CustomSourceEntry[]) => {
-      setCustomDrafts(customSources);
-      onPatch({ custom_sources: customSources });
-      setSources(recognizedSourcesFromSettings({ ...settings, custom_sources: customSources }));
-    },
-    [settings, onPatch],
-  );
-
-  const setCustomSource = useCallback(
-    (sourceId: string, patch: Partial<CustomSourceEntry>) => {
-      setCustomDrafts((current) =>
-        current.map((source) =>
-          source.id === sourceId ? { ...source, ...patch } : source,
-        ),
-      );
-    },
-    [],
-  );
-
-  const commitCustomSources = useCallback(() => {
-    patchCustomSources(customDrafts);
-  }, [customDrafts, patchCustomSources]);
-
-  const setCustomAutoCapture = useCallback(
-    (sourceId: string, value: boolean) => {
-      const next = customDrafts.map((source) =>
-        source.id === sourceId ? { ...source, auto_prompt: value } : source,
-      );
-      patchCustomSources(next);
-    },
-    [customDrafts, patchCustomSources],
-  );
-
-  const addCustomSource = useCallback(() => {
-    const id = nextCustomSourceId(customDrafts);
-    patchCustomSources([
-      ...customDrafts,
-      {
-        id,
-        label: "New Source",
-        title_patterns: ["New Source"],
-        auto_prompt: true,
-      },
-    ]);
-  }, [customDrafts, patchCustomSources]);
-
-  const removeCustomSource = useCallback(
-    (sourceId: string) => {
-      patchCustomSources(customDrafts.filter((source) => source.id !== sourceId));
-    },
-    [customDrafts, patchCustomSources],
-  );
-
   return (
     <div className="system-audio-settings">
       {detected ? (
@@ -192,7 +136,7 @@ export function SystemAudioSettings({
           {capturing ? (
             <Button
               type="button"
-              variant="secondary"
+              variant="outline"
               size="sm"
               onClick={() => void stopSourceCapture()}
             >
@@ -201,7 +145,6 @@ export function SystemAudioSettings({
           ) : (
             <Button
               type="button"
-              variant="primary"
               size="sm"
               onClick={() => void startSourceCapture(detected.source_id)}
             >
@@ -219,7 +162,7 @@ export function SystemAudioSettings({
               <span>{source.description}</span>
             </div>
             <Switch
-              label={`Auto capture ${source.label}`}
+              aria-label={`Auto capture ${source.label}`}
               checked={source.auto_prompt}
               onCheckedChange={(value) =>
                 setBuiltInAutoCapture(source.id, value)
@@ -229,42 +172,6 @@ export function SystemAudioSettings({
         ))}
       </div>
 
-      <div className="custom-source-list">
-        {customDrafts.map((source) => (
-          <div className="custom-source-row" key={source.id}>
-            <input
-              aria-label="Custom source"
-              className="ui-input"
-              placeholder="Google Meet, Meet, Zoom Meeting"
-              value={customSourceText(source)}
-              onChange={(event) =>
-                setCustomSource(source.id, {
-                  ...parseCustomSourceInput(event.currentTarget.value),
-                })
-              }
-              onBlur={commitCustomSources}
-            />
-            <Switch
-              label={`Auto capture ${source.label}`}
-              checked={source.auto_prompt}
-              onCheckedChange={(value) => setCustomAutoCapture(source.id, value)}
-            />
-            <Button
-              aria-label={`Remove ${source.label}`}
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => removeCustomSource(source.id)}
-            >
-              <Trash2 />
-            </Button>
-          </div>
-        ))}
-        <Button type="button" variant="secondary" size="sm" onClick={addCustomSource}>
-          <Plus data-icon="inline-start" />
-          Add Source
-        </Button>
-      </div>
     </div>
   );
 }
@@ -293,30 +200,7 @@ function recognizedSourcesFromSettings(settings: AppSettings): RecognizedSourceI
   ];
 }
 
-export function customSourceText(source: CustomSourceEntry): string {
-  return source.title_patterns.length > 0 ? source.title_patterns.join(", ") : source.label;
-}
-
-export function parseCustomSourceInput(
-  value: string,
-): Pick<CustomSourceEntry, "label" | "title_patterns"> {
-  const titlePatterns = value
-    .split(",")
-    .map((pattern) => pattern.trim())
-    .filter((pattern) => pattern.length > 0);
-  return {
-    label: titlePatterns[0] ?? value.trim(),
-    title_patterns: titlePatterns,
-  };
-}
-
-function nextCustomSourceId(sources: CustomSourceEntry[]): string {
-  const used = new Set(sources.map((source) => source.id));
-  let index = sources.length + 1;
-  let id = `custom-source-${index}`;
-  while (used.has(id)) {
-    index += 1;
-    id = `custom-source-${index}`;
-  }
-  return id;
-}
+export {
+  customSourceText,
+  parseCustomSourceInput,
+} from "./settings/CustomSourceSettings";

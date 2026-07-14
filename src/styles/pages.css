@@ -200,6 +200,168 @@
   gap: 6px;
 }
 
+.settings-page,
+.settings-section,
+.settings-grid,
+.settings-card,
+.settings-card [data-slot="card-content"] {
+  min-width: 0;
+}
+
+.settings-tabs-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.settings-section {
+  padding-top: 4px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--page-gap);
+}
+
+.settings-card [data-slot="card-content"] {
+  overflow: hidden;
+}
+
+.settings-row {
+  min-width: 0;
+  min-height: var(--row-height);
+  padding: 8px 0;
+}
+
+.settings-row [data-slot="field-description"] {
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.settings-inline-control {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-action-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-slider {
+  display: grid;
+  grid-template-columns: minmax(120px, 260px) 78px;
+  width: min(100%, 350px);
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-slider output {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-path-list {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.settings-path-list code {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.settings-priority-list {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  list-style: none;
+  overflow: hidden;
+}
+
+.settings-priority-list li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px 3px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-priority-list li:last-child {
+  border-bottom: 0;
+}
+
+.settings-priority-list__position {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-priority-list__actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.custom-source-settings {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.custom-source-settings__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-inline-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-inline-control > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 760px) {
   .recorder-card__footer {
     align-items: stretch;

@@ -8,6 +8,7 @@ import { MeetingTranscriptionPanel } from "./MeetingTranscriptionPanel";
 import { ReportHistoryPanel } from "./ReportHistoryPanel";
 import { Badge, Button, Section, Select, Slider, Switch, TextArea, TextInput } from "./ui/primitives";
 import { SystemAudioSettings } from "./SystemAudioSettings";
+import { CustomSourceSettings } from "./settings/CustomSourceSettings";
 import { calibrationSettingsPatch } from "../lib/calibration";
 import { formatModelLabel } from "../lib/models";
 import {
@@ -693,6 +694,7 @@ export function SettingsPanel({
               onAction={onRequestScreenRecordingPermission}
             />
             <SystemAudioSettings settings={settings} onPatch={onPatch} />
+            <CustomSourceSettings settings={settings} onPatch={onPatch} />
           </>
         ) : null}
         <ToggleRow
