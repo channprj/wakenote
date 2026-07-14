@@ -41,6 +41,7 @@ import type {
   TranscriptDay,
 } from "../lib/types";
 import { Button } from "./ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
 
 type CopyToastKind = "all" | "selected" | "report";
@@ -225,6 +226,9 @@ export function TranscriptsView({
   )
     ? sourceFilter
     : ALL_SOURCE_FILTER;
+  const selectedSourceOption = sourceFilterOptions.find(
+    (option) => option.id === effectiveSourceFilter,
+  );
 
   const filteredEntries = useMemo(
     () => filterTranscriptsBySource(activeEntries, effectiveSourceFilter),
@@ -568,17 +572,25 @@ export function TranscriptsView({
             {showSourceFilter ? (
               <label className="transcript-source-filter">
                 <span>Source</span>
-                <select
-                  className="ui-select"
+                <Select
                   value={effectiveSourceFilter}
-                  onChange={(event) => setSourceFilter(event.currentTarget.value)}
+                  onValueChange={setSourceFilter}
                 >
-                  {sourceFilterOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label} ({option.count})
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger size="sm" aria-label="Transcript source">
+                    <SelectValue>
+                      {selectedSourceOption
+                        ? `${selectedSourceOption.label} (${selectedSourceOption.count})`
+                        : "All sources"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sourceFilterOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label} ({option.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </label>
             ) : null}
             {hasEntries && selectionCount > 0 ? (
@@ -764,7 +776,7 @@ export function TranscriptsView({
           >
             <header>
               {reportGenerating ? (
-                <Loader2 aria-hidden="true" className="transcript-footer__spin" />
+                <Loader2 aria-hidden="true" className="loading-spin" />
               ) : latestReportProgress ? (
                 <ReportProgressIcon stage={latestReportProgress.stage} />
               ) : (
@@ -836,7 +848,7 @@ export function TranscriptsView({
                     variant="secondary"
                   >
                     {reportDownloading ? (
-                      <Loader2 className="transcript-footer__spin" />
+                      <Loader2 className="loading-spin" />
                     ) : (
                       <Download />
                     )}

@@ -8,4 +8,11 @@
   --page-header-height: 44px;
   --status-rail-height: 36px;
   --radius: 6px;
+  --background: #0b0d10;
+  --card: #15191f;
+  --primary: #60a5fa;
+  --muted: #1d232b;
+  --muted-foreground: #9aa7b8;
+  --code-text: #e7edf5;
+  --code-bg: rgba(231, 237, 245, 0.08);
 }

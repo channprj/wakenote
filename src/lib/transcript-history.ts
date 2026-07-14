@@ -182,7 +182,7 @@ export interface QueueDayBreakdownEntry {
 // Folds six previously inline `if (count > 0) <span data-tone=...>` ternary blocks
 // into one ordered array — only statuses with count > 0 are surfaced. The order
 // (pending → running → completed → failed → cancelled → skipped) is pinned by
-// existing SettingsPanel render tests and matches the lifecycle stages a user
+// Activity render tests and matches the lifecycle stages a user
 // expects to scan top-to-bottom (queued work first, then in-flight, then outcomes).
 const QUEUE_DAY_BREAKDOWN_ORDER: readonly QueueJobStatus[] = [
   "pending",

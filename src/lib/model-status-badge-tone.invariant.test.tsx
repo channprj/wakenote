@@ -5,17 +5,17 @@ import { modelStatusBadgeTone } from "./status-summary";
 import { humanizeModelStatus } from "./transcript-history";
 import type { ModelStatus } from "./types";
 import { ModelManager } from "../components/ModelManager";
-import { SettingsPanel } from "../components/SettingsPanel";
+import { ModelsSettings } from "../components/settings/ModelsSettings";
 
 // Cross-surface invariant: every component that renders a model_status Badge must derive its tone
 // from the shared modelStatusBadgeTone() helper. The per-component tests already pin each surface's
-// markup individually (ModelManager's per-row Badge and SettingsPanel's Models section header
+// markup individually (ModelManager's per-row Badge and ModelsSettings' selected-model header
 // Badge), but this suite makes the cross-surface agreement EXPLICIT so a future regression where
-// one surface reverts to a hardcoded tone (e.g. the pre-iter-72 SettingsPanel `tone="primary"`
+// one surface reverts to a hardcoded tone (e.g. a selected-model `tone="primary"`
 // bug) fails an additional dedicated test rather than just looking like an isolated per-component
 // failure. Mirrors the iter-71 tray-state invariant suite.
 
-function renderModelManagerSelectedRowBadgeClass(status: ModelStatus): string {
+function renderModelManagerSelectedRowBadgeTone(status: ModelStatus): string {
   const snapshot = mockSnapshot();
   const models = snapshot.models.map((model) =>
     model.id === snapshot.settings.selected_model ? { ...model, status } : model,
@@ -37,52 +37,42 @@ function renderModelManagerSelectedRowBadgeClass(status: ModelStatus): string {
   // value. For "missing" itself, every row carries the same status — the assertion still
   // holds because every Badge resolves to the same tone via the shared helper.
   const humanized = humanizeModelStatus(status);
-  const match = markup.match(
-    new RegExp(`<span class="(ui-badge ui-badge--[a-z]+)">${humanized}</span>`),
-  );
+  const match = markup.match(new RegExp(`<span [^>]*data-tone="([a-z]+)">${humanized}</span>`));
   expect(match, `expected ModelManager Badge with text "${humanized}"`).not.toBeNull();
   return match?.[1] ?? "";
 }
 
-function renderSettingsPanelSectionBadgeClass(status: ModelStatus): string {
+function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
   const snapshot = mockSnapshot();
   snapshot.models = snapshot.models.map((model) =>
     model.id === snapshot.settings.selected_model ? { ...model, status } : model,
   );
   const markup = renderToStaticMarkup(
-    <SettingsPanel
-      activeSection="models"
+    <ModelsSettings
       snapshot={snapshot}
-      onPatch={() => {}}
-      onRefresh={() => {}}
-      onStartLiveCapture={() => {}}
-      onStopLiveCapture={() => {}}
-      onChooseSaveRoot={() => {}}
-      onRevealSaveFolder={() => {}}
-      onChooseModelDirectory={() => {}}
-      onRequestMicrophonePermission={() => {}}
-      onRequestScreenRecordingPermission={() => {}}
-      onImportAudioFiles={() => {}}
-      onEnqueueBacklog={() => {}}
-      onCancelCurrent={() => {}}
-      onProcessNextTranscription={() => {}}
-      onRetry={() => {}}
-      onSkip={() => {}}
-      onVerifyModel={() => {}}
-      onDownloadModel={() => {}}
-      onCancelModelDownload={() => {}}
-      onDeleteModel={() => {}}
-      onSaveOpenRouterApiKey={() => {}}
-      onDeleteOpenRouterApiKey={() => {}}
+      actions={{
+        onPatch: () => {},
+        onChooseSaveRoot: () => {},
+        onRevealSaveFolder: () => {},
+        onChooseModelDirectory: () => {},
+        onRequestMicrophonePermission: () => {},
+        onRequestScreenRecordingPermission: () => {},
+        onVerifyModel: () => {},
+        onDownloadModel: () => {},
+        onCancelModelDownload: () => {},
+        onDeleteModel: () => {},
+        onSaveOpenRouterApiKey: () => {},
+        onDeleteOpenRouterApiKey: () => {},
+      }}
     />,
   );
   // The Models section header Badge text is the selected model's display_name ("Whisper Medium"
   // in the mock snapshot), independent of the status value. This is unique within the Models
   // section markup because per-row Badges show humanized status text instead.
   const match = markup.match(
-    /<span class="(ui-badge ui-badge--[a-z]+)">Whisper Medium<\/span>/,
+    /<span [^>]*data-tone="([a-z]+)">Whisper Medium<\/span>/,
   );
-  expect(match, 'expected SettingsPanel Models section header Badge "Whisper Medium"').not.toBeNull();
+  expect(match, 'expected ModelsSettings selected-model Badge "Whisper Medium"').not.toBeNull();
   return match?.[1] ?? "";
 }
 
@@ -96,14 +86,14 @@ describe.each<ModelStatus>([
   "unloaded",
   "error",
 ])("model_status Badge cross-surface invariant for %s", (status) => {
-  it("renders the same ui-badge class in ModelManager and SettingsPanel", () => {
-    const expectedClass = `ui-badge ui-badge--${modelStatusBadgeTone(status)}`;
+  it("renders the same semantic tone in ModelManager and ModelsSettings", () => {
+    const expectedTone = modelStatusBadgeTone(status);
 
-    const modelManagerClass = renderModelManagerSelectedRowBadgeClass(status);
-    const settingsPanelClass = renderSettingsPanelSectionBadgeClass(status);
+    const modelManagerTone = renderModelManagerSelectedRowBadgeTone(status);
+    const modelsSettingsTone = renderModelsSettingsSectionBadgeTone(status);
 
-    expect(modelManagerClass).toBe(expectedClass);
-    expect(settingsPanelClass).toBe(expectedClass);
-    expect(modelManagerClass).toBe(settingsPanelClass);
+    expect(modelManagerTone).toBe(expectedTone);
+    expect(modelsSettingsTone).toBe(expectedTone);
+    expect(modelManagerTone).toBe(modelsSettingsTone);
   });
 });

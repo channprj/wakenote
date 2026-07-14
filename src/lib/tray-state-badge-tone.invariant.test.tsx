@@ -23,9 +23,8 @@ import { humanizeTrayState } from "./transcript-history";
 import type { AppSnapshot, TrayState } from "./types";
 
 // Cross-surface invariant: every component that renders a tray_state Badge must derive its tone
-// from the shared trayStateBadgeTone() helper. Capture now uses the shadcn StatusBadge data-tone
-// contract, while the legacy tray preview and level meter retain ui-badge tone classes until their
-// own migration. This suite checks semantic agreement across both renderers.
+// from the shared trayStateBadgeTone() helper. Every surface uses the shadcn StatusBadge data-tone
+// contract, so this suite checks semantic agreement across all renderers.
 
 function buildSnapshotWithTrayState(trayState: TrayState): AppSnapshot {
   // Calling the mocked mockSnapshot() with no active Once override falls through to its default
@@ -64,9 +63,9 @@ function renderAppMarkup(snapshot: AppSnapshot): string {
   return renderToStaticMarkup(<App />);
 }
 
-function extractTrayStateBadgeClass(markup: string, humanizedText: string): string {
+function extractTrayStateBadgeTone(markup: string, humanizedText: string): string {
   const match = markup.match(
-    new RegExp(`<span class="(ui-badge ui-badge--[a-z]+)">${humanizedText}</span>`),
+    new RegExp(`<span[^>]*data-tone="([a-z]+)"[^>]*>${humanizedText}</span>`),
   );
   expect(match, `expected tray_state Badge with text "${humanizedText}"`).not.toBeNull();
   return match?.[1] ?? "";
@@ -87,22 +86,20 @@ describe.each<TrayState>(["idle", "listening", "recording", "transcribing", "pau
       const snapshot = buildSnapshotWithTrayState(trayState);
       const humanized = humanizeTrayState(trayState);
       const expectedTone = trayStateBadgeTone(trayState);
-      const expectedClass = `ui-badge ui-badge--${expectedTone}`;
-
       const appTone = extractAppCaptureBadgeTone(renderAppMarkup(snapshot), humanized);
-      const trayPreviewClass = extractTrayStateBadgeClass(
+      const trayPreviewTone = extractTrayStateBadgeTone(
         renderTrayPreviewBadge(snapshot),
         humanized,
       );
-      const levelMeterClass = extractTrayStateBadgeClass(
+      const levelMeterTone = extractTrayStateBadgeTone(
         renderLevelMeterBadge(snapshot),
         humanized,
       );
 
       expect(appTone).toBe(expectedTone);
-      expect(trayPreviewClass).toBe(expectedClass);
-      expect(levelMeterClass).toBe(expectedClass);
-      expect(trayPreviewClass).toBe(levelMeterClass);
+      expect(trayPreviewTone).toBe(expectedTone);
+      expect(levelMeterTone).toBe(expectedTone);
+      expect(trayPreviewTone).toBe(levelMeterTone);
     });
   },
 );

@@ -628,7 +628,6 @@ describe("TranscriptsView", () => {
       initialPlayingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
     });
     expect(markup).toContain('data-slot="transcript-player-dock"');
-    expect(markup).not.toContain("transcript-player-sheet");
     expect(markup).toContain('data-slot="transcript-toolbar"');
     expect(markup).toContain("Autoplay next");
     expect(markup).toContain("currently playing transcript");

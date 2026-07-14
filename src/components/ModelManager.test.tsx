@@ -223,10 +223,10 @@ describe("model status badge text", () => {
       const markup = renderModel(status);
 
       expect(markup).toMatch(
-        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${label}</span>`),
+        new RegExp(`<span [^>]*data-tone="[^"]+">${label}</span>`),
       );
       expect(markup).not.toMatch(
-        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${status}</span>`),
+        new RegExp(`<span [^>]*data-tone="[^"]+">${status}</span>`),
       );
     },
   );

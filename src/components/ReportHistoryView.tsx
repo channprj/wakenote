@@ -86,7 +86,7 @@ export function ReportHistoryView({
           type="button"
           variant="secondary"
         >
-          <RefreshCw data-icon="inline-start" className={loading ? "transcript-footer__spin" : undefined} />
+          <RefreshCw data-icon="inline-start" className={loading ? "loading-spin" : undefined} />
           Refresh
         </Button>
       </div>
@@ -103,7 +103,7 @@ export function ReportHistoryView({
         <aside aria-label="Generated reports" className="report-history__list">
           {loading && items.length === 0 ? (
             <div className="report-history__empty">
-              <Loader2 className="transcript-footer__spin" /> Loading reports
+              <Loader2 className="loading-spin" /> Loading reports
             </div>
           ) : filteredItems.length === 0 ? (
             <div className="report-history__empty">No reports found</div>
@@ -138,7 +138,7 @@ export function ReportHistoryView({
         <section data-slot="report-detail" aria-label="Report detail" className="report-history__detail">
           {detailLoading ? (
             <div className="report-history__empty">
-              <Loader2 className="transcript-footer__spin" /> Loading report
+              <Loader2 className="loading-spin" /> Loading report
             </div>
           ) : filteredDetail ? (
             <ReportDetail
@@ -190,7 +190,7 @@ function ReportDetail({
           type="button"
           variant="secondary"
         >
-          {downloading ? <Loader2 data-icon="inline-start" className="transcript-footer__spin" /> : <Download data-icon="inline-start" />}
+          {downloading ? <Loader2 data-icon="inline-start" className="loading-spin" /> : <Download data-icon="inline-start" />}
           Download Markdown
         </Button>
       </header>

@@ -1,7 +1,7 @@
 import { AudioWaveform, FolderOpen, Mic, Pause, Settings, Square, XCircle } from "lucide-react";
 import { humanizeTrayState } from "../lib/transcript-history";
 import { trayStateBadgeTone } from "../lib/status-summary";
-import { Badge, Button } from "./ui/primitives";
+import { StatusBadge } from "./ui/status-badge";
 import type { AppSettings, AppStatus } from "../lib/types";
 
 export function openSettingsDisabledReason(): string {
@@ -31,9 +31,9 @@ export function TrayPreview({
           <strong>WakeNote</strong>
           <span>{status.active_microphone}</span>
         </div>
-        <Badge tone={trayStateBadgeTone(status.tray_state)}>
+        <StatusBadge tone={trayStateBadgeTone(status.tray_state)}>
           {humanizeTrayState(status.tray_state)}
-        </Badge>
+        </StatusBadge>
       </header>
       <div className="tray-menu">
         <button disabled title={openSettingsDisabledReason()}>

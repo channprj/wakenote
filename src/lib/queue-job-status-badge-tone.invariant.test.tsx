@@ -18,7 +18,7 @@ import { QueuePanel } from "../components/QueuePanel";
 // Asymmetry note: the <tr> renders `data-tone={rowTone === "neutral" ? undefined : rowTone}`,
 // so when the helper returns "neutral" the attribute is omitted from markup entirely. The
 // invariant test normalizes absence-of-data-tone to "neutral" to compare against the Badge's
-// (always-emitted) ui-badge--<tone> class. This documented JSX contract on QueuePanel.tsx:295
+// (always-emitted) StatusBadge data-tone. This documented JSX contract on QueuePanel.tsx
 // optimizes the DOM for the common "no signal" case while keeping the semantic tone derivable.
 
 function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
@@ -68,8 +68,7 @@ function extractJobRowDataTone(markup: string, status: QueueJobStatus): string {
   // from that tag's attributes (returning "neutral" if the attribute is omitted, per the
   // documented `rowTone === "neutral" ? undefined : rowTone` JSX contract on QueuePanel.tsx:295).
   // Anchors on the unique StatusBadge data-tone signature so the queue-stats banner label spans
-  // (e.g. `<span>Completed</span>`) don't collide with the Badge text (e.g.
-  // `<span class="ui-badge ui-badge--success">Completed</span>`).
+  // (e.g. `<span>Completed</span>`) don't collide with StatusBadge text.
   const humanized = humanizeQueueJobStatus(status);
   const badgePattern = new RegExp(
     `<span[^>]*data-tone="[a-z]+"[^>]*>${humanized}<\\/span>`,

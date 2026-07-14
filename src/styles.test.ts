@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 // @ts-ignore Vitest runs this CSS source assertion in Node; app tsconfig omits Node types.
 import { readFileSync } from "node:fs";
 
-const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const entryCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const tokensCss = readFileSync(new URL("./styles/tokens.css", import.meta.url), "utf8");
 const shellCss = readFileSync(new URL("./styles/shell.css", import.meta.url), "utf8");
+const componentsCss = readFileSync(new URL("./styles/components.css", import.meta.url), "utf8");
 const pagesCss = readFileSync(new URL("./styles/pages.css", import.meta.url), "utf8");
+const splitCss = [tokensCss, shellCss, componentsCss, pagesCss].join("\n");
+const css = splitCss;
 
 describe("model row styling", () => {
   it("does not add a thicker selected-state left border", () => {
@@ -16,17 +20,13 @@ describe("model row styling", () => {
   });
 });
 
-describe("live transcription footer styling", () => {
-  it("renders the left timestamp label as plain gray no-wrap text", () => {
-    const statusRule = cssRule(".transcript-footer__status");
-    const finalStatusRule = cssRule(
-      '.transcript-footer__list li[data-status="final"] .transcript-footer__status',
-    );
-
-    expect(statusRule).toContain("background: transparent;");
-    expect(statusRule).toContain("color: var(--muted-foreground);");
-    expect(statusRule).toContain("white-space: nowrap;");
-    expect(finalStatusRule).not.toMatch(/background\s*:/);
+describe("style entrypoint", () => {
+  it("owns imports only and includes every responsibility stylesheet", () => {
+    expect(entryCss).toContain('@import "./styles/tokens.css";');
+    expect(entryCss).toContain('@import "./styles/shell.css";');
+    expect(entryCss).toContain('@import "./styles/components.css";');
+    expect(entryCss).toContain('@import "./styles/pages.css";');
+    expect(entryCss).not.toContain(":root {");
   });
 });
 
@@ -68,10 +68,6 @@ describe("fixed desktop shell styling", () => {
     expect(workspaceRule).toContain("scrollbar-gutter: stable;");
   });
 
-  it("aligns fixed transcript surfaces with the sidebar on desktop", () => {
-    expect(cssRule(".transcript-footer")).toContain("left: var(--sidebar-width);");
-    expect(cssRule(".transcript-player-sheet")).toContain("left: var(--sidebar-width);");
-  });
 });
 
 describe("compact application shell styling", () => {
@@ -90,6 +86,21 @@ describe("compact application shell styling", () => {
   });
 });
 
+describe("compact overflow safety contract", () => {
+  it("keeps every primary content surface inside the supported viewport", () => {
+    expect(cssRule(".app-frame", splitCss)).toContain(
+      "grid-template-columns: var(--sidebar-width) minmax(0, 1fr);",
+    );
+    expect(cssRule(".app-page", splitCss)).toContain("overflow-x: hidden;");
+    expect(cssRule('[data-slot="transcript-text"]', splitCss)).toContain(
+      "overflow-wrap: anywhere;",
+    );
+    expect(cssRule('[data-slot="queue-table"]', splitCss)).toContain(
+      "table-layout: fixed;",
+    );
+  });
+});
+
 describe("capture recorder styling", () => {
   it("renders a bounded symmetric waveform and wraps transcript content", () => {
     const svgRule = cssRule(".recorder-waveform svg", pagesCss);
@@ -105,23 +116,6 @@ describe("capture recorder styling", () => {
     expect(barRule).toContain("transition: y 80ms linear, height 80ms linear, opacity 80ms linear;");
     expect(transcriptRule).toContain("overflow-wrap: anywhere;");
     expect(pagesCss).toContain("@media (prefers-reduced-motion: reduce)");
-  });
-});
-
-describe("narrow shell styling", () => {
-  it("restores document scrolling and full-width fixed transcript surfaces", () => {
-    const narrowCss = cssBlock("@media (max-width: 940px)");
-
-    expect(cssRule("html,\n  body,\n  #root", narrowCss)).toContain("height: auto;");
-    expect(cssRule("body", narrowCss)).toContain("overflow: auto;");
-    expect(cssRule(".app-shell", narrowCss)).toContain("height: auto;");
-    expect(cssRule(".app-shell", narrowCss)).toContain("overflow: visible;");
-    expect(cssRule(".sidebar", narrowCss)).toContain("height: auto;");
-    expect(cssRule(".sidebar", narrowCss)).toContain("overflow-y: visible;");
-    expect(cssRule(".workspace", narrowCss)).toContain("height: auto;");
-    expect(cssRule(".workspace", narrowCss)).toContain("overflow: visible;");
-    expect(cssRule(".transcript-footer", narrowCss)).toContain("left: 0;");
-    expect(cssRule(".transcript-player-sheet", narrowCss)).toContain("left: 0;");
   });
 });
 

@@ -78,14 +78,14 @@ describe("tray preview", () => {
   });
 
   describe.each<[TrayState, string]>([
-    ["idle", "ui-badge--neutral"],
-    ["listening", "ui-badge--primary"],
-    ["recording", "ui-badge--success"],
-    ["transcribing", "ui-badge--warning"],
-    ["paused", "ui-badge--warning"],
-    ["error", "ui-badge--danger"],
-  ])("tray-state Badge tone for %s", (trayState, expectedToneClass) => {
-    it(`derives the ${expectedToneClass} class from the shared trayStateBadgeTone helper`, () => {
+    ["idle", "neutral"],
+    ["listening", "primary"],
+    ["recording", "success"],
+    ["transcribing", "warning"],
+    ["paused", "warning"],
+    ["error", "danger"],
+  ])("tray-state Badge tone for %s", (trayState, expectedTone) => {
+    it(`derives data-tone=${expectedTone} from the shared trayStateBadgeTone helper`, () => {
       const snapshot = mockSnapshot();
       const preview = TrayPreview({
         settings: snapshot.settings,
@@ -96,7 +96,7 @@ describe("tray preview", () => {
       });
       const markup = renderToStaticMarkup(preview);
       expect(markup).toMatch(
-        new RegExp(`<span class="ui-badge ${expectedToneClass}">[^<]*</span>`),
+        new RegExp(`<span [^>]*data-tone="${expectedTone}">[^<]*</span>`),
       );
     });
   });

@@ -1,5 +1,7 @@
 import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
-import { Badge, Button, Progress } from "./ui/primitives";
+import { Button } from "./ui/button";
+import { Progress } from "./ui/progress";
+import { StatusBadge } from "./ui/status-badge";
 import { modelStatusBadgeTone } from "../lib/status-summary";
 import { humanizeModelStatus } from "../lib/transcript-history";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
@@ -186,7 +188,7 @@ export function ModelManager({
                     {model.engine} · {model.provider_runtime} · {formatModelSize(model.size_mb)}
                   </span>
                 </div>
-                <Badge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</Badge>
+                <StatusBadge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</StatusBadge>
               </header>
               <Progress value={progress} />
               <div className="model-row__scores">
@@ -202,7 +204,7 @@ export function ModelManager({
             <div className="model-row__actions">
               <Button
                 type="button"
-                variant={selected ? "secondary" : "primary"}
+                variant={selected ? "secondary" : "default"}
                 size="sm"
                 onClick={() => onPatch({ selected_model: model.id })}
                 disabled={selected ? false : !actions.canSwitch}
@@ -223,7 +225,7 @@ export function ModelManager({
                 }}
                 disabled={!acquire.enabled}
               >
-                <Download />
+                <Download data-icon="solo" />
               </Button>
               <Button
                 type="button"
@@ -233,7 +235,7 @@ export function ModelManager({
                 onClick={() => onVerify(model.id)}
                 disabled={!actions.canVerify}
               >
-                <ShieldCheck />
+                <ShieldCheck data-icon="solo" />
               </Button>
               <Button
                 type="button"
@@ -243,7 +245,7 @@ export function ModelManager({
                 onClick={() => onDownload(model.id)}
                 disabled={!actions.canRetry}
               >
-                <RotateCw />
+                <RotateCw data-icon="solo" />
               </Button>
               <Button
                 type="button"
@@ -253,7 +255,7 @@ export function ModelManager({
                 onClick={() => onCancelDownload(model.id)}
                 disabled={!actions.canCancelDownload}
               >
-                <CircleX />
+                <CircleX data-icon="solo" />
               </Button>
               <Button
                 type="button"
@@ -263,7 +265,7 @@ export function ModelManager({
                 onClick={() => onDelete(model.id)}
                 disabled={selected || !actions.canDelete}
               >
-                <Trash2 />
+                <Trash2 data-icon="solo" />
               </Button>
             </div>
           </article>

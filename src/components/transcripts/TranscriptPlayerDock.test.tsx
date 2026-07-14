@@ -28,7 +28,6 @@ describe("TranscriptPlayerDock", () => {
     expect(markup).toContain("Autoplay next on");
     expect(markup).toContain('title="/tmp/20260715/010203.m4a"');
     expect(markup).toContain('aria-label="Close player"');
-    expect(markup).not.toContain("transcript-player-sheet");
   });
 
   it("renders nothing when the entry has no playable audio", () => {

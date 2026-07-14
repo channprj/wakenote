@@ -73,12 +73,12 @@ describe("level meter", () => {
 
   it("title-cases the tray_state Badge text to match QueuePanel's status badges", () => {
     const inactive = renderLevelMeter(false);
-    expect(inactive).toMatch(/<span class="ui-badge ui-badge--neutral">Idle<\/span>/);
-    expect(inactive).not.toMatch(/<span class="ui-badge[^"]*">idle<\/span>/);
+    expect(inactive).toMatch(/<span [^>]*data-tone="neutral">Idle<\/span>/);
+    expect(inactive).not.toMatch(/<span [^>]*data-tone="neutral">idle<\/span>/);
 
     const active = renderLevelMeter(true);
-    expect(active).toMatch(/<span class="ui-badge ui-badge--primary">Listening<\/span>/);
-    expect(active).not.toMatch(/<span class="ui-badge[^"]*">listening<\/span>/);
+    expect(active).toMatch(/<span [^>]*data-tone="primary">Listening<\/span>/);
+    expect(active).not.toMatch(/<span [^>]*data-tone="primary">listening<\/span>/);
   });
 
   describe.each<[TrayState, string, string]>([
@@ -91,10 +91,10 @@ describe("level meter", () => {
   ])(
     "tones the tray_state Badge via trayStateBadgeTone for every tray_state value",
     (trayState, expectedTone, expectedText) => {
-      it(`renders ui-badge--${expectedTone} for tray_state=${trayState}`, () => {
+      it(`renders data-tone=${expectedTone} for tray_state=${trayState}`, () => {
         const markup = renderLevelMeter(trayState !== "idle", trayState);
         expect(markup).toMatch(
-          new RegExp(`<span class="ui-badge ui-badge--${expectedTone}">${expectedText}</span>`),
+          new RegExp(`<span [^>]*data-tone="${expectedTone}">${expectedText}</span>`),
         );
       });
     },
