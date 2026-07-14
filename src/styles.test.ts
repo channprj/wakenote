@@ -99,6 +99,12 @@ describe("compact overflow safety contract", () => {
       "table-layout: fixed;",
     );
   });
+
+  it("keeps every Activity column participating in the table at the 980px minimum", () => {
+    const activityMinimumCss = cssBlock("@media (max-width: 1020px)", pagesCss);
+
+    expect(activityMinimumCss).not.toContain("display: none;");
+  });
 });
 
 describe("capture recorder styling", () => {
@@ -180,19 +186,19 @@ function cssRule(selector: string, source = css) {
   return source.slice(bodyStart, bodyEnd);
 }
 
-function cssBlock(selector: string) {
-  const start = css.indexOf(`${selector} {`);
+function cssBlock(selector: string, source = css) {
+  const start = source.indexOf(`${selector} {`);
   expect(start, `expected CSS block for ${selector}`).toBeGreaterThanOrEqual(0);
-  const bodyStart = css.indexOf("{", start) + 1;
+  const bodyStart = source.indexOf("{", start) + 1;
   let depth = 1;
 
-  for (let index = bodyStart; index < css.length; index += 1) {
-    if (css[index] === "{") {
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") {
       depth += 1;
-    } else if (css[index] === "}") {
+    } else if (source[index] === "}") {
       depth -= 1;
       if (depth === 0) {
-        return css.slice(bodyStart, index);
+        return source.slice(bodyStart, index);
       }
     }
   }

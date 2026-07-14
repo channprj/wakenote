@@ -715,11 +715,6 @@
 }
 
 @media (max-width: 1020px) {
-  [data-slot="queue-table"] th:nth-child(2),
-  [data-slot="queue-table"] td:nth-child(2) {
-    display: none;
-  }
-
   [data-slot="queue-table"] th:nth-child(3) {
     width: 200px;
   }
