@@ -1,0 +1,11 @@
+:root {
+  --sidebar-width: 188px;
+  --page-gutter: 16px;
+  --page-gap: 12px;
+  --control-compact: 32px;
+  --control-primary: 36px;
+  --row-dense: 38px;
+  --page-header-height: 44px;
+  --status-rail-height: 36px;
+  --radius: 6px;
+}

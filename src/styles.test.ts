@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const shellCss = readFileSync(new URL("./styles/shell.css", import.meta.url), "utf8");
 
 describe("model row styling", () => {
   it("does not add a thicker selected-state left border", () => {
@@ -46,7 +47,7 @@ describe("shadcn semantic theme compatibility", () => {
 
 describe("fixed desktop shell styling", () => {
   it("uses independent desktop scroll regions instead of document scrolling", () => {
-    expect(cssRule(":root")).toContain("--sidebar-width: 232px;");
+    expect(cssRule(":root")).toContain("--sidebar-width: 188px;");
     expect(cssRule("html,\nbody,\n#root")).toContain("height: 100%;");
     expect(cssRule("body")).toContain("overflow: hidden;");
 
@@ -69,6 +70,22 @@ describe("fixed desktop shell styling", () => {
   it("aligns fixed transcript surfaces with the sidebar on desktop", () => {
     expect(cssRule(".transcript-footer")).toContain("left: var(--sidebar-width);");
     expect(cssRule(".transcript-player-sheet")).toContain("left: var(--sidebar-width);");
+  });
+});
+
+describe("compact application shell styling", () => {
+  it("keeps the sidebar fixed while only the page viewport scrolls", () => {
+    const frameRule = cssRule(".app-frame", shellCss);
+    const viewportRule = cssRule(".app-viewport", shellCss);
+    const pageRule = cssRule(".app-page", shellCss);
+
+    expect(frameRule).toContain("grid-template-columns: var(--sidebar-width) minmax(0, 1fr);");
+    expect(frameRule).toContain("height: 100vh;");
+    expect(frameRule).toContain("overflow: hidden;");
+    expect(viewportRule).toContain("grid-template-rows: minmax(0, 1fr) auto;");
+    expect(viewportRule).toContain("overflow: hidden;");
+    expect(pageRule).toContain("overflow-x: hidden;");
+    expect(pageRule).toContain("overflow-y: auto;");
   });
 });
 
