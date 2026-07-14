@@ -37,6 +37,36 @@ export interface SignedWaveformView {
   negative: number[];
 }
 
+export const WAVEFORM_HISTORY_LIMIT = 384;
+
+export function appendWaveformLevels(
+  history: readonly number[],
+  incoming: readonly number[],
+  limit = WAVEFORM_HISTORY_LIMIT,
+): number[] {
+  const safe = incoming
+    .filter(Number.isFinite)
+    .map((level) => Math.max(0, Math.min(1, level)));
+  return [...history, ...safe].slice(-Math.max(1, limit));
+}
+
+export function thresholdAmplitude(dbfs: number): number {
+  return Math.max(0, Math.min(1, (dbfs + 60) / 60));
+}
+
+export function waveformBarCount(width: number): number {
+  const rawCount = Math.floor(width / 6.5);
+  const rhythmicCount = Math.floor(rawCount / 8) * 8;
+  return Math.max(48, Math.min(96, rhythmicCount));
+}
+
+export function decayWaveformLevels(
+  levels: readonly number[],
+  factor = 0.72,
+): number[] {
+  return levels.map((level) => (level * factor < 0.005 ? 0 : level * factor));
+}
+
 /**
  * Down-samples paired signed peaks into a target bar count. Each output bucket
  * holds the maximum positive peak and the minimum negative peak from the
