@@ -1,4 +1,4 @@
-import { Brain, CheckCircle2, Folder, Gauge, Mic } from "lucide-react";
+import { Brain, CircleAlertIcon, Folder, Mic } from "lucide-react";
 import { deriveOnboardingSteps, type OnboardingStepId } from "../lib/onboarding";
 import type { AppSettings, MicrophoneDevice, ModelDescriptor } from "../lib/types";
 
@@ -6,7 +6,7 @@ const stepIcons: Record<OnboardingStepId, typeof Mic> = {
   microphone: Mic,
   save_root: Folder,
   model: Brain,
-  calibration: Gauge,
+  calibration: CircleAlertIcon,
 };
 
 export function Onboarding({
@@ -18,17 +18,23 @@ export function Onboarding({
   models: ModelDescriptor[];
   microphones: MicrophoneDevice[];
 }) {
-  const steps = deriveOnboardingSteps(settings, models, microphones);
+  const blockers = deriveOnboardingSteps(settings, models, microphones).filter(
+    (step) => step.id !== "calibration" && !step.complete,
+  );
+
+  if (blockers.length === 0) {
+    return null;
+  }
 
   return (
     <div className="onboarding-strip">
-      {steps.map((step) => {
+      {blockers.map((step) => {
         const Icon = stepIcons[step.id];
         return (
-          <div key={step.id} data-complete={step.complete}>
+          <div key={step.id} data-complete="false">
             <Icon />
             <span>{step.label}</span>
-            <CheckCircle2 />
+            <CircleAlertIcon />
           </div>
         );
       })}

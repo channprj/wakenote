@@ -8,15 +8,17 @@ export function AppFrame({
   onNavigate,
   children,
   statusRail,
+  theme,
 }: {
   activeRoute: PrimaryRoute;
   queueAttentionCount: number;
   onNavigate: (route: PrimaryRoute) => void;
   children: ReactNode;
   statusRail?: ReactNode;
+  theme?: "light" | "dark";
 }) {
   return (
-    <div className="app-frame">
+    <div className="app-frame" data-theme={theme}>
       <AppSidebar
         activeRoute={activeRoute}
         queueAttentionCount={queueAttentionCount}

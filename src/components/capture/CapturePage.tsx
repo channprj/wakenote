@@ -35,6 +35,7 @@ import { humanizeTrayState } from "@/lib/transcript-history";
 import type { TranscriptEntry } from "@/lib/transcript-log";
 import type { AppSettings, AppSnapshot } from "@/lib/types";
 import { PageHeader } from "@/components/shell/PageHeader";
+import { Onboarding } from "@/components/Onboarding";
 import { LiveTranscriptList } from "./LiveTranscriptList";
 import { QuickCalibration } from "./QuickCalibration";
 import {
@@ -99,6 +100,23 @@ export function CapturePage({
           </Button>
         }
       />
+
+      <Onboarding
+        settings={settings}
+        models={snapshot.models}
+        microphones={microphones}
+      />
+
+      {presentation.warning ? (
+        <Alert
+          data-tone={presentation.warning.tone}
+          variant={presentation.warning.tone === "danger" ? "destructive" : "default"}
+        >
+          <AudioLinesIcon />
+          <AlertTitle>Capture attention required</AlertTitle>
+          <AlertDescription>{presentation.warning.message}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card data-slot="recorder-card" className="recorder-card">
         <CardHeader>

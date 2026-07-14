@@ -1,25 +1,19 @@
-import {
-  Activity,
-  AudioWaveform,
-  Brain,
-  Clock3,
-  Folder,
-  Files,
-  FileAudio,
-  FileText,
-  ListTodo,
-  Mic,
-  RadioTower,
-  Settings2,
-  SlidersHorizontal,
-  X,
-} from "lucide-react";
+import { CircleAlertIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Onboarding } from "./components/Onboarding";
+import { AppPageRouter } from "./components/AppPageRouter";
+import { MeetingTranscriptionPanel } from "./components/MeetingTranscriptionPanel";
+import { QueuePanel } from "./components/QueuePanel";
+import { ReportHistoryPanel } from "./components/ReportHistoryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { TranscriptFooter } from "./components/TranscriptFooter";
-import { Badge } from "./components/ui/primitives";
-import { humanizeTrayState } from "./lib/transcript-history";
+import { TranscriptsPanel } from "./components/TranscriptsPanel";
+import { CapturePage } from "./components/capture/CapturePage";
+import { AppFrame } from "./components/shell/AppFrame";
+import { PageHeader } from "./components/shell/PageHeader";
+import { RecordingStatusRail } from "./components/shell/RecordingStatusRail";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { newestTranscriptTextEntries } from "./lib/live-transcripts";
+import type { PrimaryRoute, SettingsSection } from "./lib/navigation";
 import {
   reduceTranscriptLog,
   type TranscriptEntry,
@@ -57,30 +51,8 @@ import {
   shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./lib/app-state";
-import {
-  captureStatusPresentation,
-  levelCardTone,
-  nextDismissedWarningKey,
-  queueCardTone,
-  runtimeCardTone,
-  trayStateBadgeTone,
-  visibleWarningForDismissedKey,
-} from "./lib/status-summary";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
-import appIcon from "./assets/wakenote-app.png";
-
-const sections = [
-  { id: "general", label: "General", icon: Settings2 },
-  { id: "models", label: "Models", icon: Brain },
-  { id: "recording", label: "Recording", icon: Mic },
-  { id: "storage", label: "Storage", icon: Folder },
-  { id: "meetings", label: "Meetings", icon: FileAudio },
-  { id: "transcripts", label: "Transcripts", icon: Files },
-  { id: "reports", label: "Reports", icon: FileText },
-  { id: "history", label: "History", icon: Clock3 },
-  { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
-];
 
 const launchAutoStartPollWindowMs = 130_000;
 
@@ -109,12 +81,50 @@ function transcriptEntriesFromRecent(
   }));
 }
 
+function legacySettingsSection(section: SettingsSection): string {
+  switch (section) {
+    case "general":
+      return "general";
+    case "audio":
+      return "recording";
+    case "models":
+      return "models";
+    case "storage":
+      return "storage";
+    case "integrations":
+    case "advanced":
+      return "advanced";
+  }
+}
+
+function WorkspacePage({
+  slot,
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  slot: string;
+  eyebrow: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <div data-slot={`${slot}-page`} className="primary-workspace">
+      <PageHeader eyebrow={eyebrow} title={title} description={description} />
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
-  const [activeSection, setActiveSection] = useState("general");
+  const [activeRoute, setActiveRoute] = useState<PrimaryRoute>("capture");
+  const [activeSettingsSection, setActiveSettingsSection] =
+    useState<SettingsSection>("general");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(mockSnapshot());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dismissedWarningKey, setDismissedWarningKey] = useState<string | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
   const launchAutoStartPollUntilMs = useRef(Date.now() + launchAutoStartPollWindowMs);
   const transcriptDispatch = useRef((event: TranscriptEvent) => {
@@ -333,7 +343,6 @@ export default function App() {
     }
   }
 
-  const statusPresentation = captureStatusPresentation(snapshot);
   const themeMode = snapshot.settings.theme_mode === "light" ? "light" : "dark";
 
   useEffect(() => {
@@ -343,116 +352,109 @@ export default function App() {
     document.documentElement.dataset.theme = themeMode;
   }, [themeMode]);
 
-  useEffect(() => {
-    setDismissedWarningKey((current) => nextDismissedWarningKey(statusPresentation.warning, current));
-  }, [statusPresentation.warning?.key]);
-  const visibleWarning = visibleWarningForDismissedKey(statusPresentation.warning, dismissedWarningKey);
-  const footerTranscriptEntries = [
+  const transcriptEntries = [
     ...transcriptEntriesFromRecent(snapshot.recent_transcripts),
     ...transcriptLog,
   ];
+  const latestTranscriptText =
+    newestTranscriptTextEntries(transcriptEntries).at(-1)?.text ?? "";
+  const usableModelIds = new Set(
+    snapshot.models
+      .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
+      .map((model) => model.id),
+  );
+  const canProcessTranscription =
+    !snapshot.settings.pause_all &&
+    snapshot.settings.transcription_enabled &&
+    snapshot.queue.jobs.some(
+      (job) => job.status === "pending" && usableModelIds.has(job.model_id),
+    );
 
-  return (
-    <div className="app-shell" data-theme={themeMode}>
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand__mark">
-            <img src={appIcon} alt="" />
-          </div>
-          <div>
-            <strong>WakeNote</strong>
-          </div>
-        </div>
-        <nav aria-label="Settings sections">
-          {sections.map((section) => {
-            const Icon = section.icon;
-            return (
-              <button
-                key={section.id}
-                type="button"
-                data-active={activeSection === section.id}
-                onClick={() => setActiveSection(section.id)}
-              >
-                <Icon />
-                {section.label}
-              </button>
-            );
-          })}
-        </nav>
-        <footer className="sidebar__footer">{`v${__APP_VERSION__}`}</footer>
-      </aside>
+  function openSettings(section: SettingsSection) {
+    setActiveSettingsSection(section);
+    setActiveRoute("settings");
+  }
 
-      <main className="workspace">
-        <header className="workspace__header">
-          <div className="status-hero" data-tone={statusPresentation.tone}>
-            <div className="status-hero__mark">
-              <RadioTower />
-            </div>
-            <div className="status-hero__copy">
-              <div className="status-strip">
-                <Badge tone={statusPresentation.tone}>{statusPresentation.modeLabel}</Badge>
-                <Badge tone={trayStateBadgeTone(snapshot.status.tray_state)}>
-                  {humanizeTrayState(snapshot.status.tray_state)}
-                </Badge>
-              </div>
-              <h1>{statusPresentation.headline}</h1>
-              <span>{statusPresentation.detail}</span>
-            </div>
-          </div>
-
-          <div className="status-cards" aria-label="Capture status summary">
-            <div
-              data-tone={levelCardTone(
-                snapshot.status.live_input_active,
-                snapshot.status.level.current_dbfs,
-                snapshot.settings.threshold_dbfs,
-              )}
-            >
-              <Activity />
-              <span>Level</span>
-              <strong>{statusPresentation.levelSummary}</strong>
-            </div>
-            <div data-tone={queueCardTone(snapshot.queue, statusPresentation.queueCompletedCount)}>
-              <ListTodo />
-              <span>Queue</span>
-              <strong>{statusPresentation.queueSummary}</strong>
-            </div>
-            <div
-              data-busy={busy}
-              data-tone={runtimeCardTone(
-                snapshot.status.microphone_warning,
-                snapshot.status.runtime_warning,
-              )}
-            >
-              <AudioWaveform />
-              <span>Runtime</span>
-              <strong>{busy ? "Syncing snapshot" : statusPresentation.microphone}</strong>
-            </div>
-          </div>
-        </header>
-
-        {error ? <div className="error-banner">{error}</div> : null}
-        {!error && visibleWarning ? (
-          <div className={`warning-banner warning-banner--${visibleWarning.tone}`}>
-            <span>{visibleWarning.message}</span>
-            <button
-              type="button"
-              aria-label="Dismiss warning"
-              onClick={() => setDismissedWarningKey(visibleWarning.key)}
-            >
-              <X />
-            </button>
-          </div>
-        ) : null}
-
-        <Onboarding
-          settings={snapshot.settings}
+  const pages: Record<PrimaryRoute, ReactNode> = {
+    capture: (
+      <CapturePage
+        snapshot={snapshot}
+        transcriptEntries={transcriptEntries}
+        busy={busy}
+        onStart={() => void runAction(startLiveCapture)}
+        onStop={() => void runAction(stopLiveCapture)}
+        onRefresh={() => void refresh()}
+        onPatch={(patch) => void patchSettings(patch)}
+        onOpenAudioSettings={() => openSettings("audio")}
+      />
+    ),
+    meetings: (
+      <WorkspacePage
+        slot="meetings"
+        eyebrow="Long-form audio"
+        title="Meetings"
+        description="Import, monitor, resume, and review long meeting recordings."
+      >
+        <MeetingTranscriptionPanel />
+      </WorkspacePage>
+    ),
+    transcripts: (
+      <WorkspacePage
+        slot="transcripts"
+        eyebrow="Short captures"
+        title="Transcripts"
+        description="Browse daily voice clips, play audio, and create reports."
+      >
+        <TranscriptsPanel
+          customSources={snapshot.settings.custom_sources}
           models={snapshot.models}
-          microphones={snapshot.microphones}
+          selectedModelId={snapshot.settings.selected_model}
+          autoPlayNext={snapshot.settings.autoplay_next_transcript}
+          openrouterKeyConfigured={snapshot.openrouter_key_configured}
         />
-
+      </WorkspacePage>
+    ),
+    reports: (
+      <WorkspacePage
+        slot="reports"
+        eyebrow="Generated output"
+        title="Reports"
+        description="Review and download LLM-generated transcript reports."
+      >
+        <ReportHistoryPanel />
+      </WorkspacePage>
+    ),
+    activity: (
+      <WorkspacePage
+        slot="activity"
+        eyebrow="Processing queue"
+        title="Activity"
+        description="Track pending, active, completed, and failed transcription jobs."
+      >
+        <QueuePanel
+          queue={snapshot.queue}
+          models={snapshot.models}
+          canProcessTranscription={canProcessTranscription}
+          onImportAudioFiles={() => void runAction(chooseAudioFiles)}
+          onEnqueueBacklog={() =>
+            void runAction(() => enqueueBacklog(snapshot.settings.save_root))
+          }
+          onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
+          onProcessNext={() => void runAction(processNextTranscription)}
+          onRetry={(id) => void runAction(() => retryJob(id))}
+          onSkip={(id) => void runAction(() => skipJob(id))}
+        />
+      </WorkspacePage>
+    ),
+    settings: (
+      <WorkspacePage
+        slot="settings"
+        eyebrow="Application"
+        title="Settings"
+        description="Configure WakeNote capture, models, storage, and integrations."
+      >
         <SettingsPanel
-          activeSection={activeSection}
+          activeSection={legacySettingsSection(activeSettingsSection)}
           snapshot={snapshot}
           onPatch={(patch) => void patchSettings(patch)}
           onRefresh={() => void refresh()}
@@ -476,23 +478,52 @@ export default function App() {
             )
           }
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
-          onEnqueueBacklog={() => void runAction(() => enqueueBacklog(snapshot.settings.save_root))}
+          onEnqueueBacklog={() =>
+            void runAction(() => enqueueBacklog(snapshot.settings.save_root))
+          }
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
           onProcessNextTranscription={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
           onVerifyModel={(modelId) => void runAction(() => verifyModel(modelId))}
           onDownloadModel={(modelId) => void runAction(() => downloadModel(modelId))}
-          onCancelModelDownload={(modelId) => void runAction(() => cancelModelDownload(modelId))}
+          onCancelModelDownload={(modelId) =>
+            void runAction(() => cancelModelDownload(modelId))
+          }
           onDeleteModel={(modelId) => void runAction(() => deleteModel(modelId))}
-          onSaveOpenRouterApiKey={(apiKey) => void runAction(() => saveOpenRouterApiKey(apiKey))}
+          onSaveOpenRouterApiKey={(apiKey) =>
+            void runAction(() => saveOpenRouterApiKey(apiKey))
+          }
           onDeleteOpenRouterApiKey={() => void runAction(deleteOpenRouterApiKey)}
         />
-        <TranscriptFooter
-          entries={footerTranscriptEntries}
-          liveActive={snapshot.status.live_input_active}
-        />
-      </main>
-    </div>
+      </WorkspacePage>
+    ),
+  };
+
+  return (
+    <AppFrame
+      activeRoute={activeRoute}
+      queueAttentionCount={snapshot.queue.failed_count}
+      onNavigate={setActiveRoute}
+      theme={themeMode}
+      statusRail={
+        activeRoute === "capture" ? undefined : (
+          <RecordingStatusRail
+            liveActive={snapshot.status.live_input_active}
+            latestText={latestTranscriptText}
+            onReturnToCapture={() => setActiveRoute("capture")}
+          />
+        )
+      }
+    >
+      {error ? (
+        <Alert variant="destructive" className="mb-2.5">
+          <CircleAlertIcon />
+          <AlertTitle>WakeNote could not complete the last action</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <AppPageRouter route={activeRoute} pages={pages} />
+    </AppFrame>
   );
 }
