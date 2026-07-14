@@ -51,6 +51,41 @@ function renderHistory(
 }
 
 describe("ReportHistoryView", () => {
+  it("renders compact rows and a long-value-safe detail", () => {
+    const longModel = "provider/model-with-a-very-long-version-and-configuration-name";
+    const item = historyItem({ model: longModel });
+    const markup = renderHistory(item, {
+      item,
+      content: "긴 리포트 본문과 unbroken_identifier_that_must_wrap_safely",
+    });
+
+    expect(markup).toContain('data-slot="report-row"');
+    expect(markup).toContain(`title="${longModel}"`);
+    expect(markup).toContain('data-slot="report-detail"');
+    expect(markup).not.toContain("error-banner");
+  });
+
+  it("uses an Alert instead of the legacy global error banner", () => {
+    const item = historyItem();
+    const markup = renderToStaticMarkup(
+      <ReportHistoryView
+        detail={null}
+        detailLoading={false}
+        downloadingId={null}
+        error="OpenRouter history is unavailable"
+        items={[item]}
+        loading={false}
+        selectedId={item.report_id}
+        onDownload={vi.fn()}
+        onRefresh={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).not.toContain("error-banner");
+  });
+
   it("shows token breakdown, provider cost, completion state, and Markdown download", () => {
     const markup = renderHistory(historyItem());
 

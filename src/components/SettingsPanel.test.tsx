@@ -740,7 +740,9 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toContain('title="/Users/me/Documents/WakeNote/20260510/010203.m4a"');
-    expect(markup).toMatch(/<td><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a><\/td>/);
+    expect(markup).toMatch(
+      /<td class="queue-job__audio"><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a><small [^>]*>\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a<\/small><\/td>/,
+    );
     expect(markup).not.toMatch(/<td[^>]*>\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a</);
     // The Audio cell now uses YYYY-MM-DD to match the day-group row format;
     // the raw 20260510/ prefix must never reach the visible cell text.
@@ -771,7 +773,7 @@ describe("settings panel", () => {
       'href="file:///Users/me/Documents/WakeNote/20260510/010203.m4a"',
     );
     expect(markup).toMatch(
-      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a">\s*2026-05-10\/01:02:03\.m4a\s*<\/a>/,
+      /<a [^>]*href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a"[^>]*title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.m4a"[^>]*>\s*2026-05-10\/01:02:03\.m4a\s*<\/a>/,
     );
   });
 
@@ -833,10 +835,10 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<td title="model whisper-small is missing on disk"[^>]*>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>\s*<\/td>/,
+      /<td class="queue-job__status">\s*<a [^>]*>\s*<span [^>]*data-tone="danger">Failed<\/span>\s*<\/a><span class="queue-job__error overflow-wrap-anywhere" title="model whisper-small is missing on disk">model whisper-small is missing on disk<\/span>\s*<\/td>/,
     );
     expect(markup).toMatch(
-      /<td>\s*<a [^>]*>\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/a>\s*<\/td>/,
+      /<td class="queue-job__status">\s*<a [^>]*>\s*<span [^>]*data-tone="success">Completed<\/span>\s*<\/a>\s*<\/td>/,
     );
   });
 
@@ -876,15 +878,15 @@ describe("settings panel", () => {
 
     // Completed → links to .txt sidecar with raw path as hover tooltip.
     expect(markup).toMatch(
-      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt">\s*<span class="ui-badge ui-badge--success[^"]*">Completed<\/span>\s*<\/a>/,
+      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010203\.txt">\s*<span [^>]*data-tone="success">Completed<\/span>\s*<\/a>/,
     );
     // Failed → links to .error.txt sidecar; the row's existing error tooltip stays on the td.
     expect(markup).toMatch(
-      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt">\s*<span class="ui-badge ui-badge--danger[^"]*">Failed<\/span>\s*<\/a>/,
+      /<a href="file:\/\/\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt" title="\/Users\/me\/Documents\/WakeNote\/20260510\/010204\.error\.txt">\s*<span [^>]*data-tone="danger">Failed<\/span>\s*<\/a>/,
     );
     // Pending → no sidecar yet, so the badge renders unwrapped.
     expect(markup).toMatch(
-      /<td>\s*<span class="ui-badge ui-badge--neutral[^"]*">Pending<\/span>\s*<\/td>/,
+      /<td class="queue-job__status">\s*<span [^>]*data-tone="neutral">Pending<\/span>\s*<\/td>/,
     );
   });
 
@@ -916,10 +918,10 @@ describe("settings panel", () => {
 
     for (const { status, label } of statuses) {
       expect(markup).toMatch(
-        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${label}</span>`),
+        new RegExp(`<span [^>]*data-tone="[^"]+">${label}</span>`),
       );
       expect(markup).not.toMatch(
-        new RegExp(`<span class="ui-badge ui-badge--[^"]+">${status}</span>`),
+        new RegExp(`<span [^>]*data-tone="[^"]+">${status}</span>`),
       );
     }
   });
@@ -1408,7 +1410,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>3<\/strong>/,
+      /<div data-slot="queue-summary" class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>3<\/strong>/,
     );
     expect(markup).toMatch(/<span>Pending<\/span>\s*<strong>1<\/strong>/);
   });
@@ -1434,7 +1436,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>0<\/strong>/,
+      /<div data-slot="queue-summary" class="queue-stats">[\s\S]*?<span>Completed<\/span>\s*<strong>0<\/strong>/,
     );
   });
 
@@ -1708,7 +1710,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div class="queue-stats">[\s\S]*?<span>Cancelled<\/span>\s*<strong>2<\/strong>/,
+      /<div data-slot="queue-summary" class="queue-stats">[\s\S]*?<span>Cancelled<\/span>\s*<strong>2<\/strong>/,
     );
   });
 
@@ -1835,7 +1837,7 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<div class="queue-stats">[\s\S]*?<span>Skipped<\/span>\s*<strong>2<\/strong>/,
+      /<div data-slot="queue-summary" class="queue-stats">[\s\S]*?<span>Skipped<\/span>\s*<strong>2<\/strong>/,
     );
   });
 
@@ -1969,19 +1971,19 @@ describe("settings panel", () => {
     const markup = renderSettingsPanel(snapshot, "history");
 
     expect(markup).toMatch(
-      /<tr data-tone="primary"><td><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a><\/td>/,
+      /<tr data-tone="primary"><td class="queue-job__audio"><a [^>]*>2026-05-10\/01:02:03\.m4a<\/a>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="danger"><td><a [^>]*>2026-05-10\/02:03:04\.m4a<\/a><\/td>/,
+      /<tr data-tone="danger"><td class="queue-job__audio"><a [^>]*>2026-05-10\/02:03:04\.m4a<\/a>/,
     );
     expect(markup).toMatch(
-      /<tr data-tone="success"><td><a [^>]*>2026-05-10\/03:04:05\.m4a<\/a><\/td>/,
+      /<tr data-tone="success"><td class="queue-job__audio"><a [^>]*>2026-05-10\/03:04:05\.m4a<\/a>/,
     );
     // Pending rows stay untoned (neutral) so they don't compete with actionable
     // rows for visual attention; assert the tr opens with just the React key
     // markup and no data-tone attribute precedes the Audio cell.
     expect(markup).toMatch(
-      /<tr><td><a [^>]*>2026-05-10\/04:05:06\.m4a<\/a><\/td>/,
+      /<tr><td class="queue-job__audio"><a [^>]*>2026-05-10\/04:05:06\.m4a<\/a>/,
     );
   });
 

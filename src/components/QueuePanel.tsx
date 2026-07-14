@@ -1,6 +1,7 @@
 import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
 import { Fragment } from "react";
-import { Badge, Button } from "./ui/primitives";
+import { Button } from "./ui/button";
+import { StatusBadge } from "./ui/status-badge";
 import { formatModelLabel } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
@@ -115,7 +116,7 @@ export function QueuePanel({
 
   return (
     <div className="queue-panel">
-      <div className="queue-stats">
+      <div data-slot="queue-summary" className="queue-stats">
         {statsBanner.map(({ status, label, count, title }) => (
           <div
             key={status}
@@ -138,7 +139,6 @@ export function QueuePanel({
         </Button>
         <Button
           type="button"
-          variant="primary"
           onClick={onProcessNext}
           disabled={!toolbarActions.canProcessNext}
           title={processNextReason ?? undefined}
@@ -157,8 +157,8 @@ export function QueuePanel({
           Cancel Current
         </Button>
       </div>
-      <div className="table-wrap">
-        <table>
+      <div className="table-wrap queue-table-wrap">
+        <table data-slot="queue-table">
           <thead>
             <tr>
               <th>Audio</th>
@@ -197,17 +197,18 @@ export function QueuePanel({
                     const rowTone = queueJobStatusBadgeTone(job.status);
                     const sidecarPath = queueJobSidecarPath(job.audio_path, job.status);
                     const statusBadge = (
-                      <Badge tone={queueJobStatusBadgeTone(job.status)}>{humanizeQueueJobStatus(job.status)}</Badge>
+                      <StatusBadge tone={queueJobStatusBadgeTone(job.status)}>{humanizeQueueJobStatus(job.status)}</StatusBadge>
                     );
                     return (
                       <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
-                        <td>
-                          <a href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
+                        <td className="queue-job__audio">
+                          <a className="truncate" href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
                             {formatAudioPathLabel(job.audio_path)}
                           </a>
+                          <small className="queue-job__path" title={job.audio_path}>{job.audio_path}</small>
                         </td>
-                        <td title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
-                        <td title={job.error ?? undefined}>
+                        <td className="queue-job__model" title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
+                        <td className="queue-job__status">
                           {sidecarPath ? (
                             <a href={fileUrlFromPath(sidecarPath)} title={sidecarPath}>
                               {statusBadge}
@@ -215,8 +216,13 @@ export function QueuePanel({
                           ) : (
                             statusBadge
                           )}
+                          {job.error ? (
+                            <span className="queue-job__error overflow-wrap-anywhere" title={job.error}>
+                              {job.error}
+                            </span>
+                          ) : null}
                         </td>
-                        <td>
+                        <td className="queue-job__actions-cell">
                           <div className="row-actions">
                             <Button
                               type="button"
@@ -226,7 +232,7 @@ export function QueuePanel({
                               onClick={() => onRetry(job.id)}
                               disabled={!actions.canRetry}
                             >
-                              <RotateCw />
+                              <RotateCw data-icon="solo" />
                             </Button>
                             <Button
                               type="button"
@@ -236,7 +242,7 @@ export function QueuePanel({
                               onClick={() => onSkip(job.id)}
                               disabled={!actions.canSkip}
                             >
-                              <SkipForward />
+                              <SkipForward data-icon="solo" />
                             </Button>
                           </div>
                         </td>

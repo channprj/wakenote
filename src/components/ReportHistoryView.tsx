@@ -13,7 +13,10 @@ import type {
   LlmReportHistoryItem,
   LlmReportKind,
 } from "../lib/types";
-import { Badge, Button } from "./ui/primitives";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Button } from "./ui/button";
+import { StatusBadge } from "./ui/status-badge";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 type ReportFilter = "all" | LlmReportKind;
 
@@ -52,33 +55,29 @@ export function ReportHistoryView({
       ? detail
       : null;
 
+  function changeFilter(value: string) {
+    const nextFilter = value as ReportFilter;
+    setFilter(nextFilter);
+    if (nextFilter !== "all" && detail?.item.kind !== nextFilter) {
+      const firstMatch = items.find((item) => item.kind === nextFilter);
+      if (firstMatch) onSelect(firstMatch.report_id);
+    }
+  }
+
   return (
     <div className="report-history">
       <div className="report-history__toolbar">
-        <div aria-label="Report type filter" className="report-history__filters" role="tablist">
-          {([
-            ["all", "All"],
-            ["summary", "Summaries"],
-            ["detailed_report", "Detailed reports"],
-          ] as const).map(([value, label]) => (
-            <button
-              aria-selected={filter === value}
-              data-active={filter === value}
-              key={value}
-              onClick={() => {
-                setFilter(value);
-                if (value !== "all" && detail?.item.kind !== value) {
-                  const firstMatch = items.find((item) => item.kind === value);
-                  if (firstMatch) onSelect(firstMatch.report_id);
-                }
-              }}
-              role="tab"
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Tabs value={filter} onValueChange={changeFilter}>
+          <TabsList aria-label="Report type filter" className="report-history__filters" variant="line">
+            {([
+              ["all", "All"],
+              ["summary", "Summaries"],
+              ["detailed_report", "Detailed reports"],
+            ] as const).map(([value, label]) => (
+              <TabsTrigger key={value} value={value}>{label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <Button
           aria-label="Refresh report history"
           disabled={loading}
@@ -87,12 +86,18 @@ export function ReportHistoryView({
           type="button"
           variant="secondary"
         >
-          <RefreshCw className={loading ? "transcript-footer__spin" : undefined} />
+          <RefreshCw data-icon="inline-start" className={loading ? "transcript-footer__spin" : undefined} />
           Refresh
         </Button>
       </div>
 
-      {error ? <div className="error-banner report-history__error">{error}</div> : null}
+      {error ? (
+        <Alert variant="destructive" className="report-history__error">
+          <AlertCircle />
+          <AlertTitle>Report history unavailable</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="report-history__layout">
         <aside aria-label="Generated reports" className="report-history__list">
@@ -105,6 +110,7 @@ export function ReportHistoryView({
           ) : (
             filteredItems.map((item) => (
               <button
+                data-slot="report-row"
                 aria-current={selectedId === item.report_id ? "true" : undefined}
                 className="report-history__row"
                 data-selected={selectedId === item.report_id}
@@ -129,7 +135,7 @@ export function ReportHistoryView({
           )}
         </aside>
 
-        <section aria-label="Report detail" className="report-history__detail">
+        <section data-slot="report-detail" aria-label="Report detail" className="report-history__detail">
           {detailLoading ? (
             <div className="report-history__empty">
               <Loader2 className="transcript-footer__spin" /> Loading report
@@ -164,14 +170,14 @@ function ReportDetail({
       <header className="report-history__detail-header">
         <div>
           <div className="report-history__badges">
-            <Badge tone={item.kind === "summary" ? "neutral" : "primary"}>
+            <StatusBadge tone={item.kind === "summary" ? "neutral" : "primary"}>
               {reportKindLabel(item.kind)}
-            </Badge>
-            {item.legacy ? <Badge tone="warning">Legacy report</Badge> : null}
+            </StatusBadge>
+            {item.legacy ? <StatusBadge tone="warning">Legacy report</StatusBadge> : null}
             {item.success_criteria_met === true ? (
-              <Badge tone="success"><CheckCircle2 /> Success criteria met</Badge>
+              <StatusBadge tone="success"><CheckCircle2 data-icon="inline-start" /> Success criteria met</StatusBadge>
             ) : item.success_criteria_met === false ? (
-              <Badge tone="warning"><AlertCircle /> Maximum iterations reached</Badge>
+              <StatusBadge tone="warning"><AlertCircle data-icon="inline-start" /> Maximum iterations reached</StatusBadge>
             ) : null}
           </div>
           <h3>{item.file_name}</h3>
@@ -184,13 +190,13 @@ function ReportDetail({
           type="button"
           variant="secondary"
         >
-          {downloading ? <Loader2 className="transcript-footer__spin" /> : <Download />}
+          {downloading ? <Loader2 data-icon="inline-start" className="transcript-footer__spin" /> : <Download data-icon="inline-start" />}
           Download Markdown
         </Button>
       </header>
 
       <dl className="report-history__metadata">
-        <Metadata label="Model" value={item.model ?? "Not recorded"} />
+        <Metadata label="Model" value={item.model ?? "Not recorded"} title={item.model ?? undefined} />
         <Metadata
           label="Iterations"
           value={
@@ -231,8 +237,8 @@ function ReportDetail({
   );
 }
 
-function Metadata({ label, value }: { label: string; value: string }) {
-  return <div><dt>{label}</dt><dd>{value}</dd></div>;
+function Metadata({ label, value, title }: { label: string; value: string; title?: string }) {
+  return <div><dt>{label}</dt><dd title={title}>{value}</dd></div>;
 }
 
 function UsageValue({ label, value }: { label: string; value: number | null }) {
