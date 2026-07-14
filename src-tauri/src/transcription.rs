@@ -20,6 +20,14 @@ const MIN_TRANSCRIBABLE_SAMPLES: usize = WHISPER_SAMPLE_RATE / 2;
 const MIN_TRANSCRIBABLE_RMS: f32 = 0.003;
 const MAX_NO_SPEECH_PROBABILITY: f32 = 0.75;
 const MIN_AVERAGE_TOKEN_PROBABILITY: f32 = 0.20;
+const MIN_DEGENERATE_TOKEN_COUNT: usize = 12;
+const MIN_REPEATED_TOKEN_RUN: usize = 6;
+const MIN_REPEATED_NGRAM_OCCURRENCES: usize = 3;
+const MAX_REPEATED_NGRAM_WIDTH: usize = 8;
+const MIN_REPEATED_NGRAM_COVERAGE_PERCENT: usize = 60;
+const MIN_BRACKET_GROUPS: usize = 4;
+const MIN_BRACKET_COVERAGE_PERCENT: usize = 50;
+const MAX_LOW_DIVERSITY_PERCENT: usize = 35;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
@@ -73,6 +81,31 @@ pub enum TranscriptionJobStatus {
 pub struct TranscriptionJobOutcome {
     pub id: u64,
     pub status: TranscriptionJobStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptArtifactReason {
+    WrappedPhrase,
+    BroadcastNewsSignoff,
+    CommonHallucination,
+    RepeatedTokenRun,
+    DominantRepeatedNgram,
+    BracketFlood,
+    CompoundSignals,
+}
+
+impl TranscriptArtifactReason {
+    fn code(self) -> &'static str {
+        match self {
+            Self::WrappedPhrase => "wrapped-phrase",
+            Self::BroadcastNewsSignoff => "broadcast-news-signoff",
+            Self::CommonHallucination => "common-hallucination",
+            Self::RepeatedTokenRun => "repeated-token-run",
+            Self::DominantRepeatedNgram => "dominant-repeated-ngram",
+            Self::BracketFlood => "bracket-flood",
+            Self::CompoundSignals => "compound-signals",
+        }
+    }
 }
 
 impl TranscriptionJobOutcome {
@@ -148,12 +181,20 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             Ok(transcript) => {
                 let suppress_artifacts = self.suppress_low_confidence_transcripts
                     && should_apply_artifact_suppression(&chunk);
-                let transcript =
-                    if suppress_artifacts && should_suppress_transcript_artifact(&transcript) {
+                let transcript = if suppress_artifacts {
+                    if let Some(reason) = transcript_artifact_reason(&transcript) {
+                        eprintln!(
+                            "[wakenote] transcription: suppressed artifact reason={} path={}",
+                            reason.code(),
+                            job.audio_path.display()
+                        );
                         String::new()
                     } else {
                         transcript
-                    };
+                    }
+                } else {
+                    transcript
+                };
                 TranscriptionSidecar::write_success(&chunk, &transcript)?;
                 Ok(TranscriptionJobOutcome::completed(job.id))
             }
@@ -199,39 +240,213 @@ fn chunk_is_system_audio(chunk: &RecordedChunk) -> bool {
 }
 
 pub fn should_suppress_transcript_artifact(text: &str) -> bool {
+    transcript_artifact_reason(text).is_some()
+}
+
+pub fn transcript_artifact_reason(text: &str) -> Option<TranscriptArtifactReason> {
     let normalized = normalize_transcript_whitespace(text);
     if normalized.is_empty() {
-        return false;
+        return None;
     }
 
     if let Some(inner) = single_wrapped_phrase(&normalized) {
         let inner = inner.trim();
-        if inner.is_empty() {
-            return false;
+        if !inner.is_empty() && (inner.chars().count() <= 30 || contains_non_speech_marker(inner)) {
+            return Some(TranscriptArtifactReason::WrappedPhrase);
         }
-        if inner.chars().count() <= 30 {
-            return true;
-        }
-        return contains_non_speech_marker(inner);
     }
 
     let lowercase = normalized.to_lowercase();
     let compact = normalized.split_whitespace().collect::<String>();
     let compact_lowercase = compact.to_lowercase();
     if is_broadcast_news_signoff(&normalized, &lowercase) {
-        return true;
+        return Some(TranscriptArtifactReason::BroadcastNewsSignoff);
     }
-    let common_hallucinations = [
-        "thanks for watching",
-        "thank you for watching",
-        "시청해주셔서감사합니다",
-        "시청해 주셔서 감사합니다",
-        "끝까지시청해주셔서감사합니다",
-    ];
+    if is_common_hallucination(&lowercase, &compact_lowercase) {
+        return Some(TranscriptArtifactReason::CommonHallucination);
+    }
 
-    common_hallucinations
+    let tokens = transcript_artifact_tokens(&lowercase);
+    if has_repeated_token_run(&tokens) {
+        return Some(TranscriptArtifactReason::RepeatedTokenRun);
+    }
+    if has_dominant_repeated_ngram(&tokens) {
+        return Some(TranscriptArtifactReason::DominantRepeatedNgram);
+    }
+    if has_bracket_flood(&normalized) {
+        return Some(TranscriptArtifactReason::BracketFlood);
+    }
+
+    let weak_signals = usize::from(normalized.contains('\u{fffd}'))
+        + usize::from(contains_known_artifact_fragment(
+            &lowercase,
+            &compact_lowercase,
+        ))
+        + usize::from(has_low_token_diversity(&tokens));
+    if weak_signals >= 2 {
+        return Some(TranscriptArtifactReason::CompoundSignals);
+    }
+
+    None
+}
+
+const COMMON_HALLUCINATIONS: [&str; 5] = [
+    "thanks for watching",
+    "thank you for watching",
+    "시청해주셔서감사합니다",
+    "시청해 주셔서 감사합니다",
+    "끝까지시청해주셔서감사합니다",
+];
+
+fn is_common_hallucination(lowercase: &str, compact_lowercase: &str) -> bool {
+    COMMON_HALLUCINATIONS
         .iter()
         .any(|marker| lowercase == *marker || compact_lowercase == marker.replace(' ', ""))
+}
+
+fn transcript_artifact_tokens(lowercase: &str) -> Vec<String> {
+    lowercase
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn has_repeated_token_run(tokens: &[String]) -> bool {
+    tokens
+        .windows(MIN_REPEATED_TOKEN_RUN)
+        .any(|window| window.iter().all(|token| token == &window[0]))
+}
+
+fn has_dominant_repeated_ngram(tokens: &[String]) -> bool {
+    if tokens.len() < MIN_DEGENERATE_TOKEN_COUNT {
+        return false;
+    }
+
+    for width in 2..=MAX_REPEATED_NGRAM_WIDTH.min(tokens.len()) {
+        let mut occurrences = std::collections::HashMap::<&[String], usize>::new();
+        for ngram in tokens.windows(width) {
+            *occurrences.entry(ngram).or_default() += 1;
+        }
+        if occurrences.values().any(|count| {
+            *count >= MIN_REPEATED_NGRAM_OCCURRENCES
+                && count.saturating_mul(width).saturating_mul(100)
+                    >= tokens
+                        .len()
+                        .saturating_mul(MIN_REPEATED_NGRAM_COVERAGE_PERCENT)
+        }) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn has_bracket_flood(text: &str) -> bool {
+    let mut spans = balanced_wrapped_group_spans(text);
+    if spans.len() < MIN_BRACKET_GROUPS {
+        return false;
+    }
+
+    spans.sort_unstable_by_key(|span| span.0);
+    let mut merged_spans: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in spans {
+        if let Some((_, merged_end)) = merged_spans.last_mut()
+            && start <= *merged_end
+        {
+            *merged_end = (*merged_end).max(end);
+            continue;
+        }
+        merged_spans.push((start, end));
+    }
+
+    let non_space_characters = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .count();
+    let covered_characters = merged_spans
+        .iter()
+        .map(|(start, end)| {
+            text[*start..*end]
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .count()
+        })
+        .sum::<usize>();
+
+    non_space_characters > 0
+        && covered_characters.saturating_mul(100)
+            >= non_space_characters.saturating_mul(MIN_BRACKET_COVERAGE_PERCENT)
+}
+
+fn balanced_wrapped_group_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut stack = Vec::new();
+    let mut spans = Vec::new();
+
+    for (index, character) in text.char_indices() {
+        if let Some(close) = matching_close_bracket(character) {
+            stack.push((close, index));
+            continue;
+        }
+        if !is_close_bracket(character) {
+            continue;
+        }
+
+        match stack.last().copied() {
+            Some((expected, start)) if expected == character => {
+                stack.pop();
+                spans.push((start, index + character.len_utf8()));
+            }
+            _ => stack.clear(),
+        }
+    }
+
+    spans
+}
+
+fn matching_close_bracket(character: char) -> Option<char> {
+    match character {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '（' => Some('）'),
+        '【' => Some('】'),
+        _ => None,
+    }
+}
+
+fn is_close_bracket(character: char) -> bool {
+    matches!(character, ')' | ']' | '}' | '）' | '】')
+}
+
+fn contains_known_artifact_fragment(lowercase: &str, compact_lowercase: &str) -> bool {
+    const BROADCAST_FRAGMENTS: [&str; 6] = [
+        "mbc 뉴스",
+        "kbs 뉴스",
+        "sbs 뉴스",
+        "ytn 뉴스",
+        "jtbc 뉴스",
+        "뉴스 ",
+    ];
+
+    BROADCAST_FRAGMENTS.iter().any(|marker| {
+        lowercase.contains(marker) || compact_lowercase.contains(&marker.replace(' ', ""))
+    }) || COMMON_HALLUCINATIONS.iter().any(|marker| {
+        lowercase.contains(marker) || compact_lowercase.contains(&marker.replace(' ', ""))
+    })
+}
+
+fn has_low_token_diversity(tokens: &[String]) -> bool {
+    if tokens.len() < MIN_DEGENERATE_TOKEN_COUNT {
+        return false;
+    }
+
+    let unique_tokens = tokens
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    unique_tokens.saturating_mul(100) <= tokens.len().saturating_mul(MAX_LOW_DIVERSITY_PERCENT)
 }
 
 fn is_broadcast_news_signoff(normalized: &str, lowercase: &str) -> bool {
