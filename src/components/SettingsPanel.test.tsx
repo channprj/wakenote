@@ -5,13 +5,15 @@ import {
   SettingsPanel,
   addMicrophonePriority,
   confirmSaveRootDisabledReason,
-  derivePriorityList,
   removeMicrophonePriority,
   reorderMicrophonePriority,
-  startLiveCaptureDisabledReason,
-  stopLiveCaptureDisabledReason,
   vadGateDisabledReason,
 } from "./SettingsPanel";
+import {
+  derivePriorityList,
+  startLiveCaptureDisabledReason,
+  stopLiveCaptureDisabledReason,
+} from "../lib/capture-controls";
 import { customSourceText, parseCustomSourceInput } from "./SystemAudioSettings";
 import type {
   AppSnapshot,

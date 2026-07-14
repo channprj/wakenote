@@ -199,6 +199,25 @@
   gap: 6px;
 }
 
+.recording-status-rail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: var(--status-rail-height);
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 2px 10px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 88%, transparent);
+  box-shadow: 0 -8px 22px color-mix(in oklch, black 12%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.recording-status-rail > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
 @media (max-width: 760px) {
   .page-header {
     grid-template-columns: minmax(0, 1fr);
@@ -206,5 +225,14 @@
 
   .page-header__actions {
     flex-wrap: wrap;
+  }
+
+  .recording-status-rail {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .recording-status-rail > button {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
 }

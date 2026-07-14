@@ -16,10 +16,14 @@ import {
 } from "../lib/recording-settings";
 import { modelStatusBadgeTone } from "../lib/status-summary";
 import { fileUrlFromPath } from "../lib/transcript-history";
+import {
+  derivePriorityList,
+  startLiveCaptureDisabledReason,
+  stopLiveCaptureDisabledReason,
+} from "../lib/capture-controls";
 import type {
   AppSnapshot,
   AppSettings,
-  AppStatus,
   MicrophoneDevice,
   MicrophonePriorityEntry,
 } from "../lib/types";
@@ -49,31 +53,6 @@ export function renderSaveRoot(saveRoot: string) {
       {saveRoot}
     </a>
   );
-}
-
-function isLiveInputStreamErrored(status: Pick<AppStatus, "runtime_warning">): boolean {
-  return Boolean(status.runtime_warning?.startsWith("Live input stream error:"));
-}
-
-export function startLiveCaptureDisabledReason(
-  settings: Pick<AppSettings, "pause_all" | "recording_enabled">,
-  status: Pick<AppStatus, "live_input_active" | "runtime_warning">,
-  canStartWithMicrophone: boolean,
-): string | null {
-  if (status.live_input_active && !isLiveInputStreamErrored(status)) {
-    return "Input is already running";
-  }
-  if (settings.pause_all) return "All capture is paused";
-  if (!settings.recording_enabled) return "Recording is disabled";
-  if (!canStartWithMicrophone) return "No microphone available";
-  return null;
-}
-
-export function stopLiveCaptureDisabledReason(
-  status: Pick<AppStatus, "live_input_active">,
-): string | null {
-  if (!status.live_input_active) return "Input is not running";
-  return null;
 }
 
 export function confirmSaveRootDisabledReason(
@@ -906,29 +885,6 @@ function formatChunkDuration(value: number) {
   }
 
   return `${Math.round(value / 1_000)} sec`;
-}
-
-export function derivePriorityList(
-  settings: Pick<
-    AppSettings,
-    "microphone_priority" | "selected_microphone" | "selected_microphone_label"
-  >,
-): MicrophonePriorityEntry[] {
-  const fromBackend = settings.microphone_priority ?? [];
-  const legacyTop: MicrophonePriorityEntry = {
-    id: settings.selected_microphone,
-    label: settings.selected_microphone_label,
-  };
-  if (fromBackend.length === 0) {
-    return [legacyTop];
-  }
-  if (fromBackend[0]?.id === legacyTop.id) {
-    return fromBackend;
-  }
-  return [
-    legacyTop,
-    ...fromBackend.filter((entry) => entry.id !== legacyTop.id),
-  ];
 }
 
 export function reorderMicrophonePriority(

@@ -6,6 +6,7 @@ import {
   formatLocalTimestamp,
 } from "../lib/transcript-history";
 import type { TranscriptEntry, TranscriptEntryStatus } from "../lib/transcript-log";
+import { newestTranscriptTextEntries } from "../lib/live-transcripts";
 
 const statusLabel: Record<TranscriptEntryStatus, string> = {
   listening: "Listening",
@@ -22,8 +23,6 @@ const statusIcon: Record<TranscriptEntryStatus, ReactElement> = {
   final: <CheckCircle2 aria-hidden />,
   failed: <AlertCircle aria-hidden />,
 };
-
-const RECENT_TRANSCRIPT_LIMIT = 3;
 
 export function TranscriptFooter({
   entries,
@@ -108,36 +107,6 @@ function textForEntry(entry: TranscriptEntry, now: Date): string {
   }
 
   return appendRecentAge(entry.text, entry.recorded_at || entry.started_at, now);
-}
-
-function newestTranscriptTextEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  const seen = new Set<string>();
-  const visibleEntries: TranscriptEntry[] = [];
-
-  for (const entry of [...entries].reverse()) {
-    if (entry.status === "failed") {
-      continue;
-    }
-
-    const text = entry.text.trim();
-    if (!text) {
-      continue;
-    }
-
-    const key = entry.audio_path ?? text;
-    if (seen.has(key) || seen.has(text)) {
-      continue;
-    }
-
-    seen.add(key);
-    seen.add(text);
-    visibleEntries.push(entry);
-    if (visibleEntries.length === RECENT_TRANSCRIPT_LIMIT) {
-      break;
-    }
-  }
-
-  return visibleEntries.reverse();
 }
 
 export function scrollTranscriptListToBottom(

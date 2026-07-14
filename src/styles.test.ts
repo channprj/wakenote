@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const shellCss = readFileSync(new URL("./styles/shell.css", import.meta.url), "utf8");
+const pagesCss = readFileSync(new URL("./styles/pages.css", import.meta.url), "utf8");
 
 describe("model row styling", () => {
   it("does not add a thicker selected-state left border", () => {
@@ -86,6 +87,24 @@ describe("compact application shell styling", () => {
     expect(viewportRule).toContain("overflow: hidden;");
     expect(pageRule).toContain("overflow-x: hidden;");
     expect(pageRule).toContain("overflow-y: auto;");
+  });
+});
+
+describe("capture recorder styling", () => {
+  it("renders a bounded symmetric waveform and wraps transcript content", () => {
+    const svgRule = cssRule(".recorder-waveform svg", pagesCss);
+    const barRule = cssRule(".recorder-waveform__bar", pagesCss);
+    const transcriptRule = cssRule(
+      '[data-slot="live-transcript-list"] [data-slot="transcript-text"]',
+      pagesCss,
+    );
+
+    expect(svgRule).toContain("height: 132px;");
+    expect(svgRule).toContain("overflow: hidden;");
+    expect(barRule).toContain("fill: currentColor;");
+    expect(barRule).toContain("transition: y 80ms linear, height 80ms linear, opacity 80ms linear;");
+    expect(transcriptRule).toContain("overflow-wrap: anywhere;");
+    expect(pagesCss).toContain("@media (prefers-reduced-motion: reduce)");
   });
 });
 
