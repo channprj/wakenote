@@ -22,9 +22,25 @@ describe("live transcription footer styling", () => {
     );
 
     expect(statusRule).toContain("background: transparent;");
-    expect(statusRule).toContain("color: var(--muted);");
+    expect(statusRule).toContain("color: var(--muted-foreground);");
     expect(statusRule).toContain("white-space: nowrap;");
     expect(finalStatusRule).not.toMatch(/background\s*:/);
+  });
+});
+
+describe("shadcn semantic theme compatibility", () => {
+  it("keeps the default dark recorder palette and an explicit light palette", () => {
+    const rootRule = cssRule(":root");
+    const lightRule = cssRule(":root[data-theme=\"light\"],\n[data-theme=\"light\"]");
+
+    expect(rootRule).toContain("--background: #0b0d10;");
+    expect(rootRule).toContain("--card: #15191f;");
+    expect(rootRule).toContain("--primary: #60a5fa;");
+    expect(rootRule).toContain("--muted: #1d232b;");
+    expect(rootRule).toContain("--muted-foreground: #9aa7b8;");
+    expect(lightRule).toContain("--background: #f8fafc;");
+    expect(lightRule).toContain("--card: #ffffff;");
+    expect(lightRule).toContain("--muted: #f1f5f9;");
   });
 });
 
