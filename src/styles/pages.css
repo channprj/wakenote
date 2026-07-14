@@ -348,6 +348,124 @@
   gap: 6px;
 }
 
+.meeting-panel,
+.meeting-active-list,
+.meeting-list,
+.meeting-progress-row,
+.meeting-progress-row [data-slot="card-content"],
+.meeting-detail {
+  min-width: 0;
+}
+
+.meeting-active-list {
+  display: grid;
+  gap: 6px;
+}
+
+.meeting-active-list h2 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.meeting-progress-row {
+  gap: 5px;
+}
+
+.meeting-progress-row [data-slot="card-header"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.meeting-progress-row [data-slot="card-title"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meeting-progress-row [data-slot="card-content"] {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.meeting-progress-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
+
+.meeting-progress-row [data-slot="card-footer"] {
+  min-width: 0;
+}
+
+.meeting-progress-row__preview {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-row {
+  min-height: var(--row-height);
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+}
+
+.meeting-row__main,
+.meeting-row__title {
+  min-width: 0;
+}
+
+.meeting-row__title {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.meeting-row__meta {
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-empty {
+  min-height: 132px;
+}
+
+.meeting-empty small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 450;
+}
+
+.meeting-detail__head,
+.meeting-detail__title {
+  min-width: 0;
+}
+
+.meeting-detail__transcript {
+  max-height: none;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 900px) {
   .settings-grid {
     grid-template-columns: minmax(0, 1fr);

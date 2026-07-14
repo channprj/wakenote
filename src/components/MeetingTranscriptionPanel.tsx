@@ -1,14 +1,3 @@
-import {
-  AlertCircle,
-  ChevronLeft,
-  Copy,
-  FileAudio,
-  FolderOpen,
-  Loader2,
-  RotateCcw,
-  Trash2,
-  Upload,
-} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelMeeting,
@@ -20,15 +9,7 @@ import {
   openTranscriptFolder,
   resumeMeeting,
 } from "../lib/tauri-client";
-import {
-  canResumeMeeting,
-  formatClock,
-  formatEta,
-  isMeetingActive,
-  meetingStatusLabel,
-  meetingStatusTone,
-  progressPercent,
-} from "../lib/meeting-progress";
+import { isMeetingActive } from "../lib/meeting-progress";
 import type {
   MeetingDetail,
   MeetingFinishedPayload,
@@ -36,12 +17,7 @@ import type {
   MeetingSegmentPayload,
   MeetingSummary,
 } from "../lib/types";
-import { Badge, Button, Progress } from "./ui/primitives";
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
-}
+import { MeetingTranscriptionView } from "./meetings/MeetingTranscriptionView";
 
 export function MeetingTranscriptionPanel() {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
@@ -51,7 +27,6 @@ export function MeetingTranscriptionPanel() {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
@@ -167,7 +142,6 @@ export function MeetingTranscriptionPanel() {
     async (id: string) => {
       try {
         await deleteMeeting(id);
-        setConfirmDeleteId(null);
         if (selectedIdRef.current === id) {
           setSelectedId(null);
           setDetail(null);
@@ -188,223 +162,29 @@ export function MeetingTranscriptionPanel() {
     }
   }, []);
 
-  if (selectedId && detail) {
-    return (
-      <MeetingDetailView
-        detail={detail}
-        confirmingDelete={confirmDeleteId === selectedId}
-        onBack={() => {
-          setSelectedId(null);
-          setDetail(null);
-          setConfirmDeleteId(null);
-        }}
-        onResume={() => onResume(selectedId)}
-        onCopy={() => onCopy(detail.transcript)}
-        onOpenFolder={() => void openTranscriptFolder(detail.audio_path)}
-        onRequestDelete={() => setConfirmDeleteId(selectedId)}
-        onCancelDelete={() => setConfirmDeleteId(null)}
-        onConfirmDelete={() => onDelete(selectedId)}
-      />
-    );
-  }
-
   const active = meetings.filter((meeting) => isMeetingActive(meeting.status));
   const past = meetings.filter((meeting) => !isMeetingActive(meeting.status));
 
   return (
-    <div className="meeting-panel">
-      <div className="meeting-panel__toolbar">
-        <Button onClick={onImport} disabled={busy}>
-          {busy ? <Loader2 data-icon="inline-start" className="meeting-spin" /> : <Upload data-icon="inline-start" />}
-          Select meeting file (1–2 hours)
-        </Button>
-        <span className="meeting-panel__hint">Transcribes long recordings segment by segment · No speaker separation</span>
-      </div>
-
-      {error ? (
-        <p className="meeting-error" role="alert">
-          <AlertCircle data-icon="inline-start" />
-          {error}
-        </p>
-      ) : null}
-
-      {active.map((meeting) => (
-        <MeetingProgressCard
-          key={meeting.id}
-          meeting={meeting}
-          live={progressById[meeting.id]}
-          previewText={liveTextById[meeting.id] ?? ""}
-          onCancel={() => onCancel(meeting.id)}
-        />
-      ))}
-
-      <div className="meeting-list">
-        <p className="meeting-list__title">Past meetings</p>
-        {past.length === 0 ? (
-          <div className="meeting-empty">
-            <FileAudio aria-hidden />
-            <span>No meetings transcribed yet.</span>
-          </div>
-        ) : (
-          <ul>
-            {past.map((meeting) => (
-              <li key={meeting.id}>
-                <button type="button" className="meeting-row" onClick={() => openDetail(meeting.id)}>
-                  <span className="meeting-row__main">
-                    <span className="meeting-row__title">{meeting.title}</span>
-                    <span className="meeting-row__meta">
-                      {formatClock(meeting.duration_ms)} · {formatDate(meeting.created_at)}
-                    </span>
-                  </span>
-                  <Badge tone={meetingStatusTone(meeting.status)}>
-                    {meetingStatusLabel(meeting.status)}
-                  </Badge>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MeetingProgressCard({
-  meeting,
-  live,
-  previewText,
-  onCancel,
-}: {
-  meeting: MeetingSummary;
-  live: MeetingProgressPayload | undefined;
-  previewText: string;
-  onCancel: () => void;
-}) {
-  const processed = live?.processed_ms ?? meeting.progress.processed_ms;
-  const duration = live?.duration_ms ?? meeting.duration_ms;
-  const segDone = live?.segments_done ?? meeting.progress.segments_done;
-  const segTotal = live?.segments_total ?? meeting.progress.segments_total;
-  const elapsed = live?.elapsed_ms ?? meeting.progress.elapsed_ms;
-  const eta = live?.eta_ms ?? 0;
-  const percent = progressPercent(processed, duration);
-
-  return (
-    <div className="meeting-card">
-      <div className="meeting-card__head">
-        <span className="meeting-card__title">
-          <Loader2 data-icon="inline-start" className="meeting-spin" />
-          {meeting.title}
-        </span>
-        <Button variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-      <Progress value={percent} />
-      <div className="meeting-card__meta">
-        <span>{percent}%</span>
-        <span>
-          Segment {segDone}/{segTotal || "?"}
-        </span>
-        <span>Elapsed {formatClock(elapsed)}</span>
-        <span>Remaining {formatEta(eta)}</span>
-      </div>
-      {previewText ? (
-        <div className="meeting-card__preview" aria-label="Live transcription preview">
-          {previewText}
-        </div>
-      ) : (
-        <div className="meeting-card__preview meeting-card__preview--empty">
-          Transcribing the first segment…
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MeetingDetailView({
-  detail,
-  confirmingDelete,
-  onBack,
-  onResume,
-  onCopy,
-  onOpenFolder,
-  onRequestDelete,
-  onCancelDelete,
-  onConfirmDelete,
-}: {
-  detail: MeetingDetail;
-  confirmingDelete: boolean;
-  onBack: () => void;
-  onResume: () => void;
-  onCopy: () => void;
-  onOpenFolder: () => void;
-  onRequestDelete: () => void;
-  onCancelDelete: () => void;
-  onConfirmDelete: () => void;
-}) {
-  const { record, transcript } = detail;
-  return (
-    <div className="meeting-detail">
-      <div className="meeting-detail__head">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ChevronLeft data-icon="inline-start" />
-          List
-        </Button>
-        <span className="meeting-detail__title">{record.title}</span>
-        <Badge tone={meetingStatusTone(record.status)}>{meetingStatusLabel(record.status)}</Badge>
-      </div>
-
-      <div className="meeting-detail__meta">
-        <span>{formatClock(record.duration_ms)}</span>
-        <span>{record.model_id}</span>
-        <span>{formatDate(record.created_at)}</span>
-        <span>
-          Segment {record.progress.segments_done}/{record.progress.segments_total}
-        </span>
-      </div>
-
-      {record.error ? (
-        <p className="meeting-error" role="alert">
-          <AlertCircle data-icon="inline-start" />
-          {record.error}
-        </p>
-      ) : null}
-
-      <div className="meeting-detail__actions">
-        {canResumeMeeting(record.status) ? (
-          <Button variant="secondary" size="sm" onClick={onResume}>
-            <RotateCcw data-icon="inline-start" />
-            Resume transcription
-          </Button>
-        ) : null}
-        <Button variant="secondary" size="sm" onClick={onCopy} disabled={!transcript}>
-          <Copy data-icon="inline-start" />
-          Copy
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onOpenFolder}>
-          <FolderOpen data-icon="inline-start" />
-          Open folder
-        </Button>
-        {confirmingDelete ? (
-          <>
-            <Button variant="danger" size="sm" onClick={onConfirmDelete}>
-              Confirm delete
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onCancelDelete}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="ghost" size="sm" onClick={onRequestDelete}>
-            <Trash2 data-icon="inline-start" />
-            Delete
-          </Button>
-        )}
-      </div>
-
-      <div className="meeting-detail__transcript">
-        {transcript ? transcript : <em>No transcript content.</em>}
-      </div>
-    </div>
+    <MeetingTranscriptionView
+      active={active}
+      past={past}
+      selected={selectedId ? detail : null}
+      progressById={progressById}
+      liveTextById={liveTextById}
+      busy={busy}
+      error={error}
+      onImport={() => void onImport()}
+      onOpen={(id) => void openDetail(id)}
+      onBack={() => {
+        setSelectedId(null);
+        setDetail(null);
+      }}
+      onCancel={(id) => void onCancel(id)}
+      onResume={(id) => void onResume(id)}
+      onCopy={(text) => void onCopy(text)}
+      onOpenFolder={(audioPath) => void openTranscriptFolder(audioPath)}
+      onDelete={(id) => void onDelete(id)}
+    />
   );
 }
