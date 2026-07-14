@@ -281,6 +281,7 @@ pub fn transcript_artifact_reason(text: &str) -> Option<TranscriptArtifactReason
         + usize::from(contains_known_artifact_fragment(
             &lowercase,
             &compact_lowercase,
+            &tokens,
         ))
         + usize::from(has_low_token_diversity(&tokens));
     if weak_signals >= 2 {
@@ -324,11 +325,15 @@ fn has_dominant_repeated_ngram(tokens: &[String]) -> bool {
     }
 
     for width in 2..=MAX_REPEATED_NGRAM_WIDTH.min(tokens.len()) {
-        let mut occurrences = std::collections::HashMap::<&[String], usize>::new();
-        for ngram in tokens.windows(width) {
-            *occurrences.entry(ngram).or_default() += 1;
+        let mut occurrences = std::collections::HashMap::<&[String], (usize, usize)>::new();
+        for (start, ngram) in tokens.windows(width).enumerate() {
+            let (count, next_non_overlapping_start) = occurrences.entry(ngram).or_insert((0, 0));
+            if start >= *next_non_overlapping_start {
+                *count = count.saturating_add(1);
+                *next_non_overlapping_start = start.saturating_add(width);
+            }
         }
-        if occurrences.values().any(|count| {
+        if occurrences.values().any(|(count, _)| {
             *count >= MIN_REPEATED_NGRAM_OCCURRENCES
                 && count.saturating_mul(width).saturating_mul(100)
                     >= tokens
@@ -344,20 +349,19 @@ fn has_dominant_repeated_ngram(tokens: &[String]) -> bool {
 
 fn has_bracket_flood(text: &str) -> bool {
     let mut spans = balanced_wrapped_group_spans(text);
-    if spans.len() < MIN_BRACKET_GROUPS {
-        return false;
-    }
-
     spans.sort_unstable_by_key(|span| span.0);
     let mut merged_spans: Vec<(usize, usize)> = Vec::new();
     for (start, end) in spans {
         if let Some((_, merged_end)) = merged_spans.last_mut()
-            && start <= *merged_end
+            && start < *merged_end
         {
             *merged_end = (*merged_end).max(end);
             continue;
         }
         merged_spans.push((start, end));
+    }
+    if merged_spans.len() < MIN_BRACKET_GROUPS {
+        return false;
     }
 
     let non_space_characters = text
@@ -419,21 +423,24 @@ fn is_close_bracket(character: char) -> bool {
     matches!(character, ')' | ']' | '}' | '）' | '】')
 }
 
-fn contains_known_artifact_fragment(lowercase: &str, compact_lowercase: &str) -> bool {
-    const BROADCAST_FRAGMENTS: [&str; 6] = [
-        "mbc 뉴스",
-        "kbs 뉴스",
-        "sbs 뉴스",
-        "ytn 뉴스",
-        "jtbc 뉴스",
-        "뉴스 ",
-    ];
+fn contains_known_artifact_fragment(
+    lowercase: &str,
+    compact_lowercase: &str,
+    tokens: &[String],
+) -> bool {
+    const BROADCASTERS: [&str; 5] = ["mbc", "kbs", "sbs", "ytn", "jtbc"];
+    const COMPACT_BROADCAST_NEWS: [&str; 5] =
+        ["mbc뉴스", "kbs뉴스", "sbs뉴스", "ytn뉴스", "jtbc뉴스"];
 
-    BROADCAST_FRAGMENTS.iter().any(|marker| {
-        lowercase.contains(marker) || compact_lowercase.contains(&marker.replace(' ', ""))
-    }) || COMMON_HALLUCINATIONS.iter().any(|marker| {
-        lowercase.contains(marker) || compact_lowercase.contains(&marker.replace(' ', ""))
-    })
+    tokens
+        .windows(2)
+        .any(|window| BROADCASTERS.contains(&window[0].as_str()) && window[1].as_str() == "뉴스")
+        || tokens
+            .iter()
+            .any(|token| COMPACT_BROADCAST_NEWS.contains(&token.as_str()))
+        || COMMON_HALLUCINATIONS.iter().any(|marker| {
+            lowercase.contains(marker) || compact_lowercase.contains(&marker.replace(' ', ""))
+        })
 }
 
 fn has_low_token_diversity(tokens: &[String]) -> bool {

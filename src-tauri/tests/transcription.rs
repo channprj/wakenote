@@ -302,6 +302,98 @@ fn transcript_artifact_filter_preserves_natural_repetition_and_structured_speech
 }
 
 #[test]
+fn transcript_artifact_filter_preserves_five_identical_tokens() {
+    let transcript = format!("{}하나 둘 셋 넷 다섯 여섯 일곱", "반복 ".repeat(5));
+
+    assert_eq!(transcript_artifact_reason(&transcript), None);
+}
+
+#[test]
+fn transcript_artifact_filter_suppresses_six_identical_tokens_as_a_run() {
+    assert_eq!(
+        transcript_artifact_reason(&"반복 ".repeat(6)),
+        Some(TranscriptArtifactReason::RepeatedTokenRun)
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_suppresses_three_non_overlapping_phrase_occurrences() {
+    let transcript = format!("{}오늘 회의 종료", "하나 둘 셋 ".repeat(3));
+
+    assert_eq!(
+        transcript_artifact_reason(&transcript),
+        Some(TranscriptArtifactReason::DominantRepeatedNgram)
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_preserves_replacement_character_with_newsletter() {
+    assert_eq!(
+        transcript_artifact_reason("해� 뉴스레터 내용을 오늘 회의에서 검토했습니다."),
+        None
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_preserves_replacement_character_with_news_agency() {
+    assert_eq!(
+        transcript_artifact_reason("해� 연합뉴스 기사를 오늘 회의에서 검토했습니다."),
+        None
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_combines_replacement_character_with_broadcaster_news() {
+    assert_eq!(
+        transcript_artifact_reason("해� 오늘 MBC 뉴스 김수근입니다. 내용을 검토했습니다."),
+        Some(TranscriptArtifactReason::CompoundSignals)
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_requires_four_dominant_bracket_groups() {
+    assert_eq!(transcript_artifact_reason("말 [하나] [둘] [셋] 완료"), None);
+    assert_eq!(
+        transcript_artifact_reason("말 [하나] [둘] [셋] [넷] 완료"),
+        Some(TranscriptArtifactReason::BracketFlood)
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_preserves_nested_bracket_spans_as_one_group() {
+    assert_eq!(
+        transcript_artifact_reason(
+            "([one] [two] [three] We discussed a sufficiently long ordinary project timeline and release plan in detail.)"
+        ),
+        None
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_counts_adjacent_bracket_groups_separately() {
+    assert_eq!(
+        transcript_artifact_reason("말 [끝][끝][끝][끝] 완료"),
+        Some(TranscriptArtifactReason::BracketFlood)
+    );
+}
+
+#[test]
+fn transcript_artifact_filter_requires_two_weak_signals() {
+    assert_eq!(
+        transcript_artifact_reason("해� 오늘 회의 내용을 검토했습니다."),
+        None
+    );
+    assert_eq!(
+        transcript_artifact_reason("하 a b 하 c a 하 b c b a c"),
+        None
+    );
+    assert_eq!(
+        transcript_artifact_reason("해� 오늘 MBC 뉴스 내용을 검토했습니다."),
+        Some(TranscriptArtifactReason::CompoundSignals)
+    );
+}
+
+#[test]
 fn transcript_artifact_filter_reports_stable_reasons() {
     assert_eq!(
         transcript_artifact_reason("(웃음)"),
