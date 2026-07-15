@@ -161,6 +161,18 @@ describe("capture recorder styling", () => {
   });
 });
 
+describe("motion accessibility", () => {
+  it("disables nonessential motion when the user requests reduced motion", () => {
+    const reducedMotion = cssBlock(
+      "@media (prefers-reduced-motion: reduce)",
+      componentsCss,
+    );
+
+    expect(reducedMotion).toContain("animation-duration: 0.01ms !important;");
+    expect(reducedMotion).toContain("transition-duration: 0.01ms !important;");
+  });
+});
+
 describe("recording field help styling", () => {
   it("anchors desktop help within the recording control column", () => {
     const popoverRule = cssRule(".ui-field-help__popover");

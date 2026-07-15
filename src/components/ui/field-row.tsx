@@ -24,18 +24,18 @@ export function FieldRow({
     <div
       data-slot="field-row"
       className={cn(
-        "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2",
+        "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[var(--space-3)] py-[var(--space-2)]",
         className,
       )}
     >
       <Field orientation="horizontal" className="min-w-0">
         <FieldContent className="min-w-0 overflow-wrap-anywhere">
-          <FieldTitle className="min-w-0 gap-1.5 text-xs">
+          <FieldTitle className="min-w-0 gap-1.5 text-[length:var(--text-label)] leading-[var(--leading-label)]">
             <span className="min-w-0">{label}</span>
             {help}
           </FieldTitle>
           {description ? (
-            <FieldDescription className="min-w-0 text-[11px] leading-4">
+            <FieldDescription className="min-w-0 text-[length:var(--text-caption)] leading-[var(--leading-caption)]">
               {description}
             </FieldDescription>
           ) : null}

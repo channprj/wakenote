@@ -197,6 +197,17 @@ svg {
   height: 1em;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
