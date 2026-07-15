@@ -717,6 +717,14 @@
   gap: 2px;
 }
 
+.meeting-row,
+.transcript-entry,
+.report-history__row,
+[data-slot="queue-table"] tbody > tr:not(.table-group-row) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--row-dense);
+}
+
 @media (max-width: 979px) {
   .recorder-card [data-slot="card-header"] {
     grid-template-columns: minmax(0, 1fr) auto;

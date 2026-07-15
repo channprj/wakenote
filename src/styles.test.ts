@@ -240,6 +240,20 @@ describe("motion accessibility", () => {
   });
 });
 
+describe("record rendering performance", () => {
+  it("contains offscreen record rows without duplicating their DOM", () => {
+    const rowRule = cssRule(
+      '.meeting-row,\n.transcript-entry,\n.report-history__row,\n[data-slot="queue-table"] tbody > tr:not(.table-group-row)',
+      pagesCss,
+    );
+
+    expect(rowRule).toContain("content-visibility: auto;");
+    expect(rowRule).toContain(
+      "contain-intrinsic-size: auto var(--row-dense);",
+    );
+  });
+});
+
 describe("recording field help styling", () => {
   it("anchors desktop help within the recording control column", () => {
     const popoverRule = cssRule(".ui-field-help__popover");

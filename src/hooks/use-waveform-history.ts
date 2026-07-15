@@ -44,6 +44,47 @@ export function reduceWaveformHistory(
   }
 }
 
+type RequestFrame = (callback: FrameRequestCallback) => number;
+type CancelFrame = (handle: number) => void;
+
+export interface AnimationFrameBatcher<T> {
+  push: (value: T) => void;
+  cancel: () => void;
+}
+
+export function createAnimationFrameBatcher<T>(
+  onFlush: (value: T) => void,
+  requestFrame: RequestFrame,
+  cancelFrame: CancelFrame,
+): AnimationFrameBatcher<T> {
+  let frameHandle: number | null = null;
+  let latestValue: T | undefined;
+
+  return {
+    push(value) {
+      latestValue = value;
+      if (frameHandle !== null) {
+        return;
+      }
+      frameHandle = requestFrame(() => {
+        frameHandle = null;
+        const valueToFlush = latestValue;
+        latestValue = undefined;
+        if (valueToFlush !== undefined) {
+          onFlush(valueToFlush);
+        }
+      });
+    },
+    cancel() {
+      if (frameHandle !== null) {
+        cancelFrame(frameHandle);
+      }
+      frameHandle = null;
+      latestValue = undefined;
+    },
+  };
+}
+
 export function useWaveformHistory(recording: boolean): WaveformHistoryState {
   const [state, dispatch] = useReducer(
     reduceWaveformHistory,
@@ -61,11 +102,16 @@ export function useWaveformHistory(recording: boolean): WaveformHistoryState {
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    const batcher = createAnimationFrameBatcher<number[]>(
+      (levels) => dispatch({ type: "levels", levels }),
+      window.requestAnimationFrame.bind(window),
+      window.cancelAnimationFrame.bind(window),
+    );
 
     void import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen<{ levels: number[] }>("overlay-level", (event) => {
-          dispatch({ type: "levels", levels: event.payload.levels });
+          batcher.push(event.payload.levels);
         }),
       )
       .then((disposeListener) => {
@@ -81,6 +127,7 @@ export function useWaveformHistory(recording: boolean): WaveformHistoryState {
 
     return () => {
       disposed = true;
+      batcher.cancel();
       unlisten?.();
     };
   }, [recording]);

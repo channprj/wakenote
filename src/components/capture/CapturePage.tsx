@@ -133,7 +133,6 @@ export function CapturePage({
         <CardContent>
           <RecorderWaveform
             levels={waveform.levels}
-            width={720}
             currentDbfs={currentDbfs}
             peakDbfs={peakDbfs}
             thresholdDbfs={settings.threshold_dbfs}

@@ -7,7 +7,6 @@ describe("RecorderWaveform", () => {
     const markup = renderToStaticMarkup(
       <RecorderWaveform
         levels={[0, 0.25, 0.75, 1]}
-        width={320}
         currentDbfs={-22}
         peakDbfs={-8}
         thresholdDbfs={-40}
@@ -20,7 +19,8 @@ describe("RecorderWaveform", () => {
     expect(markup).toContain("Peak -8 dBFS");
     expect(markup).toContain("Threshold -40 dBFS");
     expect(markup).toContain('data-state="recording"');
-    expect(markup).toContain('data-bar-count="48"');
+    expect(markup).toContain('viewBox="0 0 720 100"');
+    expect(markup).toContain('data-bar-count="96"');
     expect(markup).toContain('data-level="1"');
     expect(markup).toContain('y="6"');
     expect(markup).toContain('height="88"');
@@ -31,7 +31,6 @@ describe("RecorderWaveform", () => {
     const markup = renderToStaticMarkup(
       <RecorderWaveform
         levels={[]}
-        width={720}
         currentDbfs={-120}
         peakDbfs={-120}
         thresholdDbfs={-40}
@@ -39,6 +38,7 @@ describe("RecorderWaveform", () => {
       />,
     );
 
+    expect(markup).toContain('viewBox="0 0 720 100"');
     expect(markup).toContain('data-bar-count="96"');
     expect(markup.match(/data-level="0"/g)).toHaveLength(96);
     expect(markup).not.toMatch(/data-level="0\.[1-9]/);
