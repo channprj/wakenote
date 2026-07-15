@@ -30,6 +30,40 @@ describe("style entrypoint", () => {
   });
 });
 
+describe("refined compact density tokens", () => {
+  it("defines the approved spacing, type, control, radius, and motion scale", () => {
+    const root = cssRule(":root", tokensCss);
+
+    for (const declaration of [
+      "--space-1: 4px;",
+      "--space-2: 8px;",
+      "--space-3: 12px;",
+      "--space-4: 16px;",
+      "--space-5: 20px;",
+      "--space-6: 24px;",
+      "--text-body: 12px;",
+      "--text-label: 13px;",
+      "--text-subtitle: 15px;",
+      "--text-title: 18px;",
+      "--control-compact: 32px;",
+      "--control-default: 34px;",
+      "--control-primary: 36px;",
+      "--row-dense: 40px;",
+      "--radius-control: 6px;",
+      "--radius-card: 8px;",
+      "--motion-fast: 140ms;",
+    ]) {
+      expect(root).toContain(declaration);
+    }
+  });
+
+  it("keeps layout density aliases in tokens.css only", () => {
+    expect(splitCss.match(/--sidebar-width:/g)).toHaveLength(1);
+    expect(splitCss.match(/--transition:/g)).toHaveLength(1);
+    expect(splitCss.match(/--radius:/g)).toHaveLength(1);
+  });
+});
+
 describe("shadcn semantic theme compatibility", () => {
   it("keeps the default dark recorder palette and an explicit light palette", () => {
     const rootRule = cssRule(":root");
@@ -48,7 +82,9 @@ describe("shadcn semantic theme compatibility", () => {
 
 describe("fixed desktop shell styling", () => {
   it("uses independent desktop scroll regions instead of document scrolling", () => {
-    expect(cssRule(":root")).toContain("--sidebar-width: 188px;");
+    const root = cssRule(":root");
+    expect(root).toContain("--sidebar-width-wide: 188px;");
+    expect(root).toContain("--sidebar-width: var(--sidebar-width-wide);");
     expect(cssRule("html,\nbody,\n#root")).toContain("height: 100%;");
     expect(cssRule("body")).toContain("overflow: hidden;");
 

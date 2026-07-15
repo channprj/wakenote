@@ -1,13 +1,45 @@
 :root {
-  --sidebar-width: 188px;
+  --sidebar-width-wide: 188px;
+  --sidebar-width-compact: 64px;
+  --sidebar-width: var(--sidebar-width-wide);
   --page-gutter: 16px;
   --page-gap: 12px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --text-micro: 10px;
+  --text-caption: 11px;
+  --text-body: 12px;
+  --text-label: 13px;
+  --text-subtitle: 15px;
+  --text-title: 18px;
+
+  --leading-micro: 14px;
+  --leading-caption: 16px;
+  --leading-body: 18px;
+  --leading-label: 18px;
+  --leading-subtitle: 20px;
+  --leading-title: 24px;
+
   --control-compact: 32px;
+  --control-default: 34px;
   --control-primary: 36px;
-  --row-dense: 38px;
+  --row-dense: 40px;
   --page-header-height: 44px;
   --status-rail-height: 36px;
-  --radius: 6px;
+
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius: var(--radius-control);
+
+  --motion-fast: 140ms;
+  --transition: var(--motion-fast) ease;
+
   --background: #0b0d10;
   --card: #15191f;
   --primary: #60a5fa;
