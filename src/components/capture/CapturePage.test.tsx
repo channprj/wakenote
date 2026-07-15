@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
 import type { TranscriptEntry } from "@/lib/transcript-log";
 import type { AppSnapshot } from "@/lib/types";
+import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import { CapturePage } from "./CapturePage";
 
 function renderCapture(
@@ -62,13 +63,13 @@ describe("CapturePage", () => {
     const transcript: TranscriptEntry = {
       chunk_id: 7,
       status: "partial",
-      text: "길이가 매우 긴 한국어 전사도 카드 경계를 벗어나지 않고 전체 내용을 보여줍니다.",
+      text: LONG_CONTENT.korean,
       started_at: "2026-07-15T00:00:00Z",
       recorded_at: "2026-07-15T00:00:00Z",
       audio_path: null,
       error: null,
     };
 
-    expect(renderCapture(snapshot, [transcript])).toContain("길이가 매우 긴 한국어 전사");
+    expect(renderCapture(snapshot, [transcript])).toContain(LONG_CONTENT.korean);
   });
 });

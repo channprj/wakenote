@@ -158,6 +158,16 @@ describe("compact overflow safety contract", () => {
 
     expect(activityMinimumCss).not.toContain("display: none;");
   });
+
+  it("stacks capture and meeting content before the minimum viewport", () => {
+    const compactPages = cssBlock("@media (max-width: 979px)", pagesCss);
+    const narrowPages = cssBlock("@media (max-width: 820px)", pagesCss);
+
+    expect(compactPages).toContain(".meeting-progress-row");
+    expect(compactPages).toContain("overflow-wrap: anywhere;");
+    expect(narrowPages).toContain(".recorder-card__footer");
+    expect(narrowPages).toContain("flex-direction: column;");
+  });
 });
 
 describe("capture recorder styling", () => {

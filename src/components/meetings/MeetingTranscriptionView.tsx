@@ -166,7 +166,10 @@ function MeetingProgressRow({
   return (
     <Card size="sm" className="meeting-progress-row">
       <CardHeader>
-        <CardTitle className="min-w-0 truncate" title={meeting.title}>
+        <CardTitle
+          className="min-w-0 overflow-wrap-anywhere"
+          title={meeting.title}
+        >
           <Loader2Icon data-icon="inline-start" className="meeting-spin" />
           {meeting.title}
         </CardTitle>

@@ -714,6 +714,55 @@
   gap: 2px;
 }
 
+@media (max-width: 979px) {
+  .recorder-card [data-slot="card-header"] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .recorder-card__footer {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  [data-slot="live-transcript-list"] li {
+    grid-template-columns: minmax(96px, 118px) minmax(0, 1fr);
+  }
+
+  .meeting-progress-row [data-slot="card-header"],
+  .meeting-progress-row [data-slot="card-content"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .meeting-progress-row__meta {
+    justify-content: flex-start;
+  }
+
+  .meeting-progress-row__preview,
+  .meeting-row__title,
+  .meeting-row__meta,
+  .meeting-detail__title {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .meeting-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .meeting-detail__head,
+  .meeting-detail__actions {
+    flex-wrap: wrap;
+  }
+
+  .meeting-detail__title {
+    flex: 1 1 240px;
+  }
+}
+
 @media (max-width: 1020px) {
   [data-slot="queue-table"] th:nth-child(3) {
     width: 200px;
@@ -761,7 +810,17 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 820px) {
+  .recorder-card [data-slot="card-header"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recorder-card [data-slot="card-action"] {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
   .recorder-card__footer {
     align-items: stretch;
     flex-direction: column;
@@ -769,7 +828,7 @@
 
   [data-slot="live-transcript-list"] li {
     grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
+    gap: var(--space-1);
   }
 
   .quick-calibration__metrics {

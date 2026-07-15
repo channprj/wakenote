@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MeetingDetail, MeetingProgressPayload, MeetingSummary } from "@/lib/types";
+import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import {
   MeetingTranscriptionView,
   type MeetingTranscriptionViewProps,
@@ -107,6 +108,30 @@ describe("MeetingTranscriptionView", () => {
 
     expect(markup).toContain(`title="${longTitle}"`);
     expect(markup).toContain('class="meeting-row__title"');
+  });
+
+  it("keeps long active and past meeting content available without truncate classes", () => {
+    const active = meeting({
+      id: "meeting-active",
+      status: "processing",
+      title: LONG_CONTENT.korean,
+      model_id: LONG_CONTENT.model,
+    });
+    const markup = renderToStaticMarkup(
+      <MeetingTranscriptionView
+        {...props({
+          active: [active],
+          past: [meeting({ id: "meeting-past", title: LONG_CONTENT.token })],
+          progressById: { [active.id]: liveProgress },
+          liveTextById: { [active.id]: LONG_CONTENT.korean },
+        })}
+      />,
+    );
+
+    expect(markup).toContain(LONG_CONTENT.korean);
+    expect(markup).toContain(LONG_CONTENT.token);
+    expect(markup).toContain("overflow-wrap-anywhere");
+    expect(markup).not.toContain("min-w-0 truncate");
   });
 
   it("keeps completed and interrupted detail actions distinct", () => {
