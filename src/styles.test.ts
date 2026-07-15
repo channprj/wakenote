@@ -168,6 +168,33 @@ describe("compact overflow safety contract", () => {
     expect(narrowPages).toContain(".recorder-card__footer");
     expect(narrowPages).toContain("flex-direction: column;");
   });
+
+  it("reflows transcript rows, player controls, and report history in compact mode", () => {
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+
+    expect(compact).toContain(".transcript-entry");
+    expect(compact).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
+    );
+    expect(compact).toContain(".transcript-player-dock audio");
+    expect(compact).toContain("grid-column: 1 / -1;");
+    expect(compact).toContain(".report-history__layout");
+    expect(compact).toContain("grid-template-columns: minmax(0, 1fr);");
+    expect(cssRule(".transcript-player-dock", pagesCss)).not.toContain(
+      "backdrop-filter",
+    );
+  });
+
+  it("keeps seven transcript day cells shrinkable", () => {
+    const week = cssRule(".transcript-pagination__week");
+
+    expect(week).toContain(
+      "grid-template-columns: repeat(7, minmax(0, 1fr));",
+    );
+    expect(cssRule(".transcript-pagination__day", pagesCss)).toContain(
+      "min-width: 0;",
+    );
+  });
 });
 
 describe("capture recorder styling", () => {

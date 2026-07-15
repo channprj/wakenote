@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { LlmReportHistoryDetail, LlmReportHistoryItem } from "../lib/types";
+import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import { ReportHistoryView } from "./ReportHistoryView";
 
 function historyItem(overrides: Partial<LlmReportHistoryItem> = {}): LlmReportHistoryItem {
@@ -52,17 +53,21 @@ function renderHistory(
 
 describe("ReportHistoryView", () => {
   it("renders compact rows and a long-value-safe detail", () => {
-    const longModel = "provider/model-with-a-very-long-version-and-configuration-name";
-    const item = historyItem({ model: longModel });
+    const item = historyItem({
+      file_name: `${LONG_CONTENT.token}.md`,
+      model: LONG_CONTENT.model,
+    });
     const markup = renderHistory(item, {
       item,
-      content: "긴 리포트 본문과 unbroken_identifier_that_must_wrap_safely",
+      content: `${LONG_CONTENT.korean}\n${LONG_CONTENT.url}`,
     });
 
     expect(markup).toContain('data-slot="report-row"');
-    expect(markup).toContain(`title="${longModel}"`);
+    expect(markup).toContain(`title="${LONG_CONTENT.model}"`);
+    expect(markup).toContain(LONG_CONTENT.token);
+    expect(markup).toContain(LONG_CONTENT.korean);
+    expect(markup).toContain(LONG_CONTENT.url);
     expect(markup).toContain('data-slot="report-detail"');
-    expect(markup).not.toContain("error-banner");
   });
 
   it("uses an Alert instead of the legacy global error banner", () => {

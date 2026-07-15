@@ -6,6 +6,7 @@ import type {
   RecentTranscript,
   TranscriptDay,
 } from "../lib/types";
+import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import {
   TranscriptsView,
   addDays,
@@ -153,6 +154,23 @@ describe("TranscriptsView", () => {
       ]),
     });
     expect(markup.indexOf("morning transcript")).toBeLessThan(markup.indexOf("evening transcript"));
+  });
+
+  it("preserves long transcript text and paths in the compact row structure", () => {
+    const entry = transcript({
+      transcript_path: LONG_CONTENT.path.replace(/\.m4a$/, ".txt"),
+      audio_path: LONG_CONTENT.path,
+      text: LONG_CONTENT.korean,
+    });
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([["2026-05-10", [entry]]]),
+    });
+
+    expect(markup).toContain(LONG_CONTENT.korean);
+    expect(markup).toContain(`title="${entry.transcript_path}"`);
+    expect(markup).toContain("transcript-entry__actions");
   });
 
   it("renders a play button and inline file:// timestamp link for each transcript", () => {

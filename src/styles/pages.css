@@ -495,6 +495,10 @@
   white-space: nowrap;
 }
 
+.transcript-pagination__day {
+  min-width: 0;
+}
+
 .transcript-entry__text {
   overflow-wrap: anywhere;
   word-break: normal;
@@ -513,9 +517,8 @@
   padding: 5px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: color-mix(in oklch, var(--card) 94%, transparent);
+  background: color-mix(in oklch, var(--card) 96%, var(--background));
   box-shadow: 0 -8px 24px rgb(0 0 0 / 14%);
-  backdrop-filter: blur(12px);
 }
 
 .transcript-player-dock__copy {
@@ -761,15 +764,68 @@
   .meeting-detail__title {
     flex: 1 1 240px;
   }
-}
 
-@media (max-width: 1020px) {
-  [data-slot="queue-table"] th:nth-child(3) {
-    width: 200px;
+  .transcript-day > header,
+  .transcript-report-output header {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
-}
 
-@media (max-width: 860px) {
+  .transcript-day__actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .transcript-source-filter {
+    max-width: 100%;
+  }
+
+  .transcript-entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .transcript-entry__timestamp {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .transcript-source-badge {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .transcript-entry__actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .transcript-entry__text {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    overflow-wrap: anywhere;
+  }
+
+  .transcript-entry__play,
+  .transcript-entry__folder {
+    opacity: 1;
+  }
+
+  .transcript-player-dock {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .transcript-player-dock audio,
+  .transcript-player-dock__error {
+    grid-column: 1 / -1;
+  }
+
+  .transcript-report-output__actions {
+    justify-content: flex-start;
+  }
+
   .report-history__layout {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
@@ -780,19 +836,16 @@
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+
+  .report-history__detail-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
 }
 
-@media (max-width: 780px) {
-  .transcript-player-dock {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .transcript-player-dock audio {
-    grid-column: 1 / -1;
-  }
-
-  .transcript-player-dock [data-slot="badge"] {
-    display: none;
+@media (max-width: 1020px) {
+  [data-slot="queue-table"] th:nth-child(3) {
+    width: 200px;
   }
 }
 
