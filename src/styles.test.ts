@@ -195,6 +195,19 @@ describe("compact overflow safety contract", () => {
       "min-width: 0;",
     );
   });
+
+  it("turns Activity rows into labeled cards and stacks Settings controls", () => {
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+    const narrow = cssBlock("@media (max-width: 820px)", pagesCss);
+
+    expect(compact).toContain('[data-slot="queue-table"] tbody > tr');
+    expect(compact).toContain("content: attr(data-label);");
+    expect(compact).toContain(".settings-grid");
+    expect(compact).toContain("scroll-padding-inline: var(--space-2);");
+    expect(narrow).toContain('[data-slot="field-row"]');
+    expect(narrow).toContain(".settings-slider");
+    expect(narrow).toContain("grid-template-columns: minmax(0, 1fr);");
+  });
 });
 
 describe("capture recorder styling", () => {

@@ -201,14 +201,20 @@ export function QueuePanel({
                     );
                     return (
                       <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
-                        <td className="queue-job__audio">
+                        <td className="queue-job__audio" data-label="Audio">
                           <a className="truncate" href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
                             {formatAudioPathLabel(job.audio_path)}
                           </a>
                           <small className="queue-job__path" title={job.audio_path}>{job.audio_path}</small>
                         </td>
-                        <td className="queue-job__model" title={job.model_id}>{formatModelLabel(job.model_id, models)}</td>
-                        <td className="queue-job__status">
+                        <td
+                          className="queue-job__model"
+                          data-label="Model"
+                          title={job.model_id}
+                        >
+                          {formatModelLabel(job.model_id, models)}
+                        </td>
+                        <td className="queue-job__status" data-label="Status">
                           {sidecarPath ? (
                             <a href={fileUrlFromPath(sidecarPath)} title={sidecarPath}>
                               {statusBadge}
@@ -222,7 +228,7 @@ export function QueuePanel({
                             </span>
                           ) : null}
                         </td>
-                        <td className="queue-job__actions-cell">
+                        <td className="queue-job__actions-cell" data-label="Actions">
                           <div className="row-actions">
                             <Button
                               type="button"

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
@@ -21,6 +22,15 @@ export function SettingsPage({
   snapshot: AppSnapshot;
   actions: SettingsActions;
 }) {
+  const activeTabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [section]);
+
   return (
     <div data-slot="settings-page" className="settings-page">
       <PageHeader
@@ -35,7 +45,12 @@ export function SettingsPage({
         <div className="settings-tabs-scroll">
           <TabsList aria-label="Settings sections" className="max-w-full" variant="line">
             {SETTINGS_SECTIONS.map((item) => (
-              <TabsTrigger key={item.id} value={item.id} className="shrink-0 px-2.5">
+              <TabsTrigger
+                ref={section === item.id ? activeTabRef : undefined}
+                key={item.id}
+                value={item.id}
+                className="shrink-0 px-2.5"
+              >
                 {item.label}
               </TabsTrigger>
             ))}

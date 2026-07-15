@@ -15,7 +15,11 @@ class TestResizeObserver {
 
 globalThis.ResizeObserver = TestResizeObserver as typeof ResizeObserver;
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+});
 
 function makeActions(): SettingsActions {
   return {
@@ -35,6 +39,28 @@ function makeActions(): SettingsActions {
 }
 
 describe("SettingsPage interactions", () => {
+  it("keeps a controlled active tab visible inside the compact tab scroller", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    render(
+      <SettingsPage
+        section="advanced"
+        onSectionChange={() => {}}
+        snapshot={mockSnapshot()}
+        actions={makeActions()}
+      />,
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "nearest",
+      inline: "nearest",
+    });
+  });
+
   it("reports settings tab changes through the controlled section contract", async () => {
     const onSectionChange = vi.fn();
     render(

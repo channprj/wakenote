@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { QueueSnapshot } from "@/lib/types";
+import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import { QueuePanel } from "./QueuePanel";
 
 function renderQueue(queue: QueueSnapshot) {
@@ -20,21 +21,30 @@ function renderQueue(queue: QueueSnapshot) {
 }
 
 describe("QueuePanel compact layout", () => {
-  it("preserves full long paths and wraps long errors", () => {
-    const audioPath = `/Volumes/990EVO+/workspace/chann/wakenote/${"nested/".repeat(15)}clip.m4a`;
-    const error = `Runtime stream failed: ${"device-disconnected/".repeat(12)}`;
+  it("preserves long values and labels every compact record field", () => {
     const markup = renderQueue({
-      jobs: [{ id: 9, audio_path: audioPath, model_id: "model/long-name", status: "failed", error }],
+      jobs: [
+        {
+          id: 9,
+          audio_path: LONG_CONTENT.path,
+          model_id: LONG_CONTENT.model,
+          status: "failed",
+          error: LONG_CONTENT.error,
+        },
+      ],
       pending_count: 0,
       running_count: 0,
       failed_count: 1,
     });
 
+    for (const label of ["Audio", "Model", "Status", "Actions"]) {
+      expect(markup).toContain(`data-label="${label}"`);
+    }
     expect(markup).toContain('data-slot="queue-summary"');
     expect(markup).toContain('data-slot="queue-table"');
-    expect(markup).toContain(`title="${audioPath}"`);
+    expect(markup).toContain(`title="${LONG_CONTENT.path}"`);
     expect(markup).toContain("overflow-wrap-anywhere");
-    expect(markup).toContain(error);
+    expect(markup).toContain(LONG_CONTENT.error);
   });
 
   it("does not leak danger tone into a clean queue", () => {
