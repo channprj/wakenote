@@ -35,4 +35,27 @@ describe("AppSidebar", () => {
     );
     expect(markup.match(/data-tone="danger"/g)).toHaveLength(1);
   });
+
+  it("keeps every icon-rail destination named and caps large attention counts", () => {
+    const markup = renderToStaticMarkup(
+      <AppSidebar
+        activeRoute="capture"
+        queueAttentionCount={120}
+        onNavigate={() => {}}
+      />,
+    );
+
+    for (const label of [
+      "Capture",
+      "Meetings",
+      "Transcripts",
+      "Reports",
+      "Activity",
+      "Settings",
+    ]) {
+      expect(markup).toContain(`aria-label="${label}"`);
+    }
+    expect(markup).toContain(">99+</span>");
+    expect(markup).not.toContain(">120</span>");
+  });
 });

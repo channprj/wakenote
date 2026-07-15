@@ -142,7 +142,7 @@
   min-width: 0;
   min-height: var(--page-header-height);
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   margin-bottom: var(--page-gap);
 }
 
@@ -179,17 +179,17 @@
 
 .page-header h1 {
   flex: 0 1 auto;
-  font-size: 17px;
+  font-size: var(--text-title);
   font-weight: 650;
   letter-spacing: -0.015em;
-  line-height: 22px;
+  line-height: var(--leading-title);
 }
 
 .page-header p {
   min-width: 0;
   color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
 }
 
 .page-header__actions {
@@ -205,25 +205,85 @@
   min-width: 0;
   min-height: var(--status-rail-height);
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 2px 8px 2px 10px;
   border-top: 1px solid var(--border);
-  background: color-mix(in oklch, var(--background) 88%, transparent);
+  background: color-mix(in oklch, var(--background) 96%, var(--card));
   box-shadow: 0 -8px 22px color-mix(in oklch, black 12%, transparent);
-  backdrop-filter: blur(14px);
 }
 
 .recording-status-rail > span {
+  overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 979px) {
+  :root {
+    --sidebar-width: var(--sidebar-width-compact);
+    --page-gutter: var(--space-3);
+  }
+
+  .app-sidebar {
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2);
+  }
+
+  .app-sidebar__brand {
+    width: 100%;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .app-sidebar__brand-copy,
+  .app-sidebar__nav-label,
+  .app-sidebar__version {
+    display: none;
+  }
+
+  .app-sidebar__nav,
+  .app-sidebar__utility {
+    width: 100%;
+  }
+
+  .app-sidebar__nav-item {
+    position: relative;
+    width: 100%;
+    height: var(--control-primary);
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .app-sidebar__nav-item [data-icon="inline-start"] {
+    margin: 0;
+  }
+
+  .app-sidebar__nav-item [data-slot="badge"] {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 18px;
+    margin: 0;
+    justify-content: center;
+    padding-inline: 4px;
+  }
+
   .page-header {
     grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .page-header__title-row {
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
   }
 
   .page-header__actions {
+    min-width: 0;
     flex-wrap: wrap;
   }
 

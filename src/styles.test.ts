@@ -57,10 +57,11 @@ describe("refined compact density tokens", () => {
     }
   });
 
-  it("keeps layout density aliases in tokens.css only", () => {
-    expect(splitCss.match(/--sidebar-width:/g)).toHaveLength(1);
-    expect(splitCss.match(/--transition:/g)).toHaveLength(1);
-    expect(splitCss.match(/--radius:/g)).toHaveLength(1);
+  it("keeps base layout aliases out of the component theme", () => {
+    expect(tokensCss.match(/--sidebar-width:/g)).toHaveLength(1);
+    expect(tokensCss.match(/--transition:/g)).toHaveLength(1);
+    expect(tokensCss.match(/--radius:/g)).toHaveLength(1);
+    expect(componentsCss).not.toMatch(/--sidebar-width:|--transition:|--radius:/);
   });
 });
 
@@ -119,6 +120,22 @@ describe("compact application shell styling", () => {
     expect(viewportRule).toContain("overflow: hidden;");
     expect(pageRule).toContain("overflow-x: hidden;");
     expect(pageRule).toContain("overflow-y: auto;");
+  });
+
+  it("switches to a 64px icon rail below the wide boundary", () => {
+    const compact = cssBlock("@media (max-width: 979px)", shellCss);
+
+    expect(compact).toContain("--sidebar-width: var(--sidebar-width-compact);");
+    expect(compact).toContain(".app-sidebar__brand-copy");
+    expect(compact).toContain(".app-sidebar__nav-label");
+    expect(compact).toContain("display: none;");
+    expect(compact).toContain("grid-template-columns: minmax(0, 1fr);");
+  });
+
+  it("does not use a resize-expensive backdrop filter in the status rail", () => {
+    expect(cssRule(".recording-status-rail", shellCss)).not.toContain(
+      "backdrop-filter",
+    );
   });
 });
 
