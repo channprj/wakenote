@@ -60,6 +60,12 @@ export function IntegrationsSettings({
         <SettingSelect
           label="Floating overlay position"
           value={settings.floating_overlay_position}
+          disabled={!settings.show_floating_overlay}
+          title={
+            settings.show_floating_overlay
+              ? "Choose where the floating overlay appears."
+              : "Enable the floating overlay before choosing its position."
+          }
           options={[
             { value: "off", label: "Off" },
             { value: "top", label: "Top" },

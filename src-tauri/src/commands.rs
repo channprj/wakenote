@@ -1288,7 +1288,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::Started {
                         chunk_id,
                         started_at,
-                        overlay_position: self.settings.floating_overlay_position,
+                        overlay_position: self.settings.effective_floating_overlay_position(),
                     });
                 }
                 CaptureControllerEvent::LiveSamplesReady {
@@ -1337,7 +1337,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::Committed {
                         chunk_id,
                         audio_path: chunk.audio_path.clone(),
-                        overlay_position: self.settings.floating_overlay_position,
+                        overlay_position: self.settings.effective_floating_overlay_position(),
                         will_transcribe: self.should_process_transcriptions(),
                     });
                 }
@@ -1735,7 +1735,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::Started {
                         chunk_id,
                         started_at,
-                        overlay_position: self.settings.floating_overlay_position,
+                        overlay_position: self.settings.effective_floating_overlay_position(),
                     });
                 }
                 CaptureControllerEvent::LiveSamplesReady {
@@ -1775,7 +1775,7 @@ impl AppBackend {
                     self.emit_live_event(LiveTranscriptEvent::Committed {
                         chunk_id,
                         audio_path: chunk.audio_path.clone(),
-                        overlay_position: self.settings.floating_overlay_position,
+                        overlay_position: self.settings.effective_floating_overlay_position(),
                         will_transcribe: self.should_process_transcriptions(),
                     });
                 }

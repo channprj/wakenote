@@ -122,4 +122,21 @@ describe("SettingsPage interactions", () => {
     );
     expect(actions.onPatch).toHaveBeenCalledWith({ auto_transcript_input_enabled: true });
   });
+
+  it("disables the floating overlay position when the overlay is hidden", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.show_floating_overlay = false;
+
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={makeActions()}
+      />,
+    );
+
+    const position = screen.getByRole("combobox", { name: "Floating overlay position" });
+    expect((position as HTMLButtonElement).disabled).toBe(true);
+  });
 });

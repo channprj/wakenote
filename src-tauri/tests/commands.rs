@@ -616,7 +616,7 @@ fn backend_uses_frame_capture_time_for_recording_filename() {
 }
 
 #[test]
-fn backend_live_events_include_overlay_context_without_runtime_backend_lookup() {
+fn backend_live_events_hide_overlay_context_when_the_overlay_is_disabled() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");
     write_ready_local_model(&model_directory, "whisper-medium");
@@ -625,6 +625,7 @@ fn backend_live_events_include_overlay_context_without_runtime_backend_lookup() 
         save_root: Some(tmp.path().to_string_lossy().to_string()),
         audio_format: Some(AudioFormat::Wav),
         model_directory: Some(model_directory.to_string_lossy().to_string()),
+        show_floating_overlay: Some(false),
         floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
         transcription_enabled: Some(true),
         ..SettingsPatch::default()
@@ -661,13 +662,10 @@ fn backend_live_events_include_overlay_context_without_runtime_backend_lookup() 
         _ => None,
     });
 
-    assert_eq!(
-        started_overlay_position,
-        Some(FloatingOverlayPosition::Bottom)
-    );
+    assert_eq!(started_overlay_position, Some(FloatingOverlayPosition::Off));
     assert_eq!(
         committed_overlay_context,
-        Some((FloatingOverlayPosition::Bottom, true))
+        Some((FloatingOverlayPosition::Off, true))
     );
 }
 

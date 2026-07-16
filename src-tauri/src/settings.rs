@@ -873,6 +873,14 @@ impl AppSettings {
         }
     }
 
+    pub fn effective_floating_overlay_position(&self) -> FloatingOverlayPosition {
+        if self.show_floating_overlay {
+            self.floating_overlay_position
+        } else {
+            FloatingOverlayPosition::Off
+        }
+    }
+
     pub fn floating_overlay_caption_style(&self) -> FloatingOverlayCaptionStyle {
         FloatingOverlayCaptionStyle {
             font_size_px: self.floating_overlay_font_size_px,

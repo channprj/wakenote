@@ -577,7 +577,7 @@ fn update_settings(
         (
             launch_at_login_action_for_patch(&settings, &patch),
             live_capture_runtime_action_for_patch(&settings, &patch),
-            settings.floating_overlay_position,
+            settings.effective_floating_overlay_position(),
             settings.floating_overlay_caption_style(),
             settings.model_directory.clone(),
             settings.show_dock_icon,
@@ -630,7 +630,7 @@ fn update_settings(
         transcription_state.inner().clone(),
     );
 
-    if prior_position != settings.floating_overlay_position
+    if prior_position != settings.effective_floating_overlay_position()
         || prior_caption_style != settings.floating_overlay_caption_style()
     {
         apply_overlay_settings_change(&app, &settings);
@@ -642,7 +642,7 @@ fn update_settings(
 fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
     if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
         let snapshot = caption_state.lock().ok().map(|mut runtime| {
-            runtime.set_position(settings.floating_overlay_position);
+            runtime.set_position(settings.effective_floating_overlay_position());
             runtime.set_style(settings.floating_overlay_caption_style());
             runtime.snapshot()
         });
@@ -2619,7 +2619,7 @@ fn wire_live_transcription(
                         .map(|backend| {
                             let settings = backend.settings();
                             (
-                                settings.floating_overlay_position,
+                                settings.effective_floating_overlay_position(),
                                 settings.floating_overlay_caption_style(),
                             )
                         })
@@ -2998,7 +2998,7 @@ fn emit_outcome_to_frontend(
                             chunk_id,
                             audio_path.to_path_buf(),
                             &text,
-                            settings_for_log.floating_overlay_position,
+                            settings_for_log.effective_floating_overlay_position(),
                             settings_for_log.floating_overlay_caption_style(),
                         ) {
                             Some(runtime.snapshot())
