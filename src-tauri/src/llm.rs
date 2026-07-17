@@ -59,6 +59,7 @@ pub enum LlmProgressStage {
     Completed,
     MaxIterationsReached,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
