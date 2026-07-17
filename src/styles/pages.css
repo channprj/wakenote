@@ -779,8 +779,7 @@
     flex: 1 1 240px;
   }
 
-  .transcript-day > header,
-  .transcript-report-output header {
+  .transcript-day > header {
     align-items: flex-start;
     flex-wrap: wrap;
   }
@@ -834,10 +833,6 @@
   .transcript-player-dock audio,
   .transcript-player-dock__error {
     grid-column: 1 / -1;
-  }
-
-  .transcript-report-output__actions {
-    justify-content: flex-start;
   }
 
   .report-history__layout {

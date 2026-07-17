@@ -31,7 +31,6 @@ import type {
   MeetingSummary,
   MeetingDetail,
   LlmGenerateRequest,
-  LlmGenerateResponse,
   LlmProgressEvent,
   LlmReportHistoryDetail,
   LlmReportHistoryItem,
@@ -762,102 +761,6 @@ export async function subscribeLlmReportRuns(
     "llm-report-run-updated",
     (event) => onRun(event.payload),
   );
-}
-
-export async function generateTranscriptReport(
-  request: LlmGenerateRequest,
-  onProgress?: (progress: LlmProgressEvent) => void,
-): Promise<LlmGenerateResponse> {
-  const settings = browserSnapshot.settings ?? defaultSettings();
-  const runId = request.run_id?.trim() || nextLlmReportRunId();
-  const requestWithRunId = { ...request, run_id: runId };
-  if (!isTauriRuntime()) {
-    if (!browserOpenRouterApiKey) {
-      throw new Error("OpenRouter API key is not configured");
-    }
-    const label = request.kind === "summary" ? "Summary" : "Detailed report";
-    const progress = (stage: LlmProgressEvent["stage"], message: string) =>
-      onProgress?.({
-        run_id: runId,
-        stage,
-        iteration: stage === "preparing" ? 0 : 1,
-        max_iterations: settings.llm_max_iterations,
-        message,
-        detail: null,
-      });
-    progress("preparing", "Preparing transcript context");
-    progress("generating", "Drafting report");
-    progress("evaluating", "Checking success criteria");
-    progress("saving", "Saving report");
-    progress("completed", "Success criteria met");
-    const content = `# ${label}\n\nGenerated from ${request.transcripts.length} transcript${request.transcripts.length === 1 ? "" : "s"}.`;
-    const promptTokens = Math.max(
-      1,
-      Math.round(request.transcripts.reduce((total, transcript) => total + transcript.text.length, 0) / 4),
-    );
-    const completionTokens = Math.max(1, Math.round(content.length / 4));
-    const usage = {
-      request_count: 2,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: promptTokens + completionTokens,
-      cost: Number(((promptTokens + completionTokens) * 0.000001).toFixed(6)),
-    };
-    const reportId = `browser-${Date.now()}-${browserLlmReportRunSequence}-${request.kind}`;
-    const fileName = `${reportId}.md`;
-    const reportPath = `${settings.save_root}/reports/${fileName}`;
-    const response: LlmGenerateResponse = {
-      run_id: runId,
-      content,
-      iterations_used: 1,
-      max_iterations: settings.llm_max_iterations,
-      success_criteria_met: true,
-      completion_reason: "success_criteria_met",
-      quality_feedback: "Browser preview completed its simulated quality check.",
-      model: settings.openrouter_model,
-      report_id: reportId,
-      usage,
-      report_path: reportPath,
-    };
-    browserLlmReportHistory.unshift({
-      item: {
-        report_id: reportId,
-        kind: request.kind,
-        created_at: new Date().toISOString(),
-        file_name: fileName,
-        report_path: reportPath,
-        model: settings.openrouter_model,
-        iterations_used: 1,
-        max_iterations: settings.llm_max_iterations,
-        success_criteria_met: true,
-        completion_reason: "success_criteria_met",
-        quality_feedback: response.quality_feedback,
-        selected_count: request.transcripts.length,
-        date_range: browserReportDateRange(request.transcripts),
-        usage,
-        legacy: false,
-      },
-      content,
-    });
-    return response;
-  }
-
-  let unlisten: (() => void) | undefined;
-  if (onProgress) {
-    const { listen } = await import("@tauri-apps/api/event");
-    unlisten = await listen<LlmProgressEvent>("llm-report-progress", (event) => {
-      if (event.payload.run_id === runId) {
-        onProgress(event.payload);
-      }
-    });
-  }
-  try {
-    return await invoke<LlmGenerateResponse>("generate_transcript_report", {
-      request: requestWithRunId,
-    });
-  } finally {
-    unlisten?.();
-  }
 }
 
 export async function listLlmReportHistory(): Promise<LlmReportHistoryItem[]> {

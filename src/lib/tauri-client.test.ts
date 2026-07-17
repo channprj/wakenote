@@ -12,7 +12,6 @@ import {
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
-  generateTranscriptReport,
   listLlmReportHistory,
   listLlmReportRuns,
   loadLlmReportHistoryDetail,
@@ -100,13 +99,14 @@ describe("tauri live capture client", () => {
     expect(dark.settings.theme_mode).toBe("dark");
   });
 
-  it("tracks browser fallback OpenRouter key state and generated reports", async () => {
+  it("tracks browser fallback OpenRouter key state and completed durable runs", async () => {
+    vi.useFakeTimers();
     await deleteOpenRouterApiKey();
     const missing = await loadSnapshot();
     expect(missing.openrouter_key_configured).toBe(false);
 
     await expect(
-      generateTranscriptReport({
+      startLlmReport({
         kind: "summary",
         transcripts: [
           {
@@ -124,40 +124,38 @@ describe("tauri live capture client", () => {
     const saved = await saveOpenRouterApiKey(" sk-or-browser ");
     expect(saved.openrouter_key_configured).toBe(true);
 
-    const progressStages: string[] = [];
-    const report = await generateTranscriptReport(
-      {
-        kind: "summary",
-        transcripts: [
-          {
-            transcript_path: "/tmp/WakeNote/20260713/100000.txt",
-            audio_path: null,
-            recorded_at: "2026-07-13T10:00:00+09:00",
-            text: "browser summary source",
-            source: "microphone",
-            source_label: null,
-          },
-        ],
-      },
-      (progress) => progressStages.push(progress.stage),
-    );
+    const started = await startLlmReport({
+      kind: "summary",
+      transcripts: [
+        {
+          transcript_path: "/tmp/WakeNote/20260713/100000.txt",
+          audio_path: null,
+          recorded_at: "2026-07-13T10:00:00+09:00",
+          text: "browser summary source",
+          source: "microphone",
+          source_label: null,
+        },
+      ],
+    });
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
 
-    expect(report.model).toBe("z-ai/glm-5.2");
-    expect(report.iterations_used).toBe(1);
-    expect(report.success_criteria_met).toBe(true);
-    expect(report.report_path).toContain("/reports/");
-    expect(report.usage.total_tokens).toBeGreaterThan(0);
+    const completed = (await listLlmReportRuns()).find(
+      (run) => run.run_id === started.run_id,
+    );
+    expect(completed).toMatchObject({
+      status: "completed",
+      model: "z-ai/glm-5.2",
+      success_criteria_met: true,
+    });
+    expect(completed?.report_path).toContain("/reports/");
+    expect(completed?.usage?.total_tokens).toBeGreaterThan(0);
     const history = await listLlmReportHistory();
-    expect(history[0].report_id).toBe(report.report_id);
-    const detail = await loadLlmReportHistoryDetail(report.report_id);
-    expect(detail.content).toBe(report.content);
-    expect(progressStages).toEqual([
-      "preparing",
-      "generating",
-      "evaluating",
-      "saving",
-      "completed",
-    ]);
+    expect(history[0].report_id).toBe(completed?.report_id);
+    const detail = await loadLlmReportHistoryDetail(
+      completed?.report_id ?? "",
+    );
+    expect(detail.content).toContain("# Summary");
   });
 
   it("cancels browser report work without publishing history and retries it", async () => {

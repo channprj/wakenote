@@ -202,7 +202,6 @@ const EVENT_SOURCE_CAPTURE_ERROR: &str = "source-capture-error";
 const EVENT_MEETING_PROGRESS: &str = "meeting-progress";
 const EVENT_MEETING_SEGMENT: &str = "meeting-segment-committed";
 const EVENT_MEETING_FINISHED: &str = "meeting-finished";
-const EVENT_LLM_REPORT_PROGRESS: &str = "llm-report-progress";
 const EVENT_LLM_REPORT_RUN_UPDATED: &str = "llm-report-run-updated";
 /// How often the watcher re-enumerates windows while the feature is enabled.
 const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
@@ -1437,31 +1436,6 @@ async fn retry_llm_report(
         cancellation,
     );
     Ok(snapshot)
-}
-
-#[tauri::command]
-async fn generate_transcript_report(
-    app: AppHandle,
-    state: State<'_, BackendState>,
-    request: wakenote::llm::LlmGenerateRequest,
-) -> Result<wakenote::llm::LlmGenerateResponse, String> {
-    let (settings, api_key) = {
-        let backend = state.lock().map_err(|error| error.to_string())?;
-        let api_key = backend
-            .load_openrouter_api_key()?
-            .ok_or_else(|| "OpenRouter API key is not configured".to_string())?;
-        (backend.settings(), api_key)
-    };
-
-    wakenote::llm::generate_transcript_report_with_progress(
-        &settings,
-        &api_key,
-        request,
-        |progress| {
-            let _ = app.emit(EVENT_LLM_REPORT_PROGRESS, progress);
-        },
-    )
-    .await
 }
 
 #[tauri::command]
@@ -4087,7 +4061,6 @@ fn main() {
             list_llm_report_runs,
             cancel_llm_report,
             retry_llm_report,
-            generate_transcript_report,
             list_llm_report_history,
             load_llm_report_history_detail,
             export_llm_report,

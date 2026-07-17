@@ -275,86 +275,21 @@ describe("tauri runtime client snapshots", () => {
     expect(unlisten).toHaveBeenCalledOnce();
   });
 
-  it("subscribes before report generation and forwards progress for the active run", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    let progressHandler: ((event: { payload: unknown }) => void) | undefined;
-    const unlisten = vi.fn();
-    mocks.listen.mockImplementation(
-      async (_eventName: string, handler: (event: { payload: unknown }) => void) => {
-        progressHandler = handler;
-        return unlisten;
-      },
-    );
-    mocks.invoke.mockImplementation((command: string, args?: unknown) => {
-      if (command !== "generate_transcript_report") {
-        return mockInvoke(command);
-      }
-      const request = (args as { request: { run_id: string } }).request;
-      progressHandler?.({
-        payload: {
-          run_id: "another-run",
-          stage: "generating",
-          iteration: 1,
-          max_iterations: 3,
-          message: "Ignore this run",
-          detail: null,
-        },
-      });
-      progressHandler?.({
-        payload: {
-          run_id: request.run_id,
-          stage: "evaluating",
-          iteration: 1,
-          max_iterations: 3,
-          message: "Checking success criteria",
-          detail: null,
-        },
-      });
-      return Promise.resolve({
-        run_id: request.run_id,
-        content: "report",
-        iterations_used: 1,
-        max_iterations: 3,
-        success_criteria_met: true,
-        completion_reason: "success_criteria_met",
-        quality_feedback: "Complete.",
-        model: "z-ai/glm-5.2",
-        report_id: "20260713-100000-summary",
-        usage: {
-          request_count: 2,
-          prompt_tokens: 180,
-          completion_tokens: 60,
-          total_tokens: 240,
-          cost: 0.0015,
-        },
-        report_path: "/tmp/report.md",
-      });
+  it("does not invoke the legacy blocking report command", async () => {
+    (globalThis as { window?: unknown }).window = {
+      __TAURI_INTERNALS__: {},
+    };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { startLlmReport } = await import("./tauri-client");
+
+    await startLlmReport({
+      kind: "summary",
+      transcripts: [],
     });
-    const { generateTranscriptReport } = await import("./tauri-client");
-    const messages: string[] = [];
 
-    const result = await generateTranscriptReport(
-      {
-        kind: "summary",
-        transcripts: [
-          {
-            transcript_path: "/tmp/WakeNote/20260713/100000.txt",
-            audio_path: null,
-            recorded_at: "2026-07-13T10:00:00+09:00",
-            text: "report me",
-          },
-        ],
-      },
-      (progress) => messages.push(progress.message),
-    );
-
-    expect(mocks.listen).toHaveBeenCalledWith(
-      "llm-report-progress",
-      expect.any(Function),
-    );
-    expect(messages).toEqual(["Checking success criteria"]);
-    expect(result.success_criteria_met).toBe(true);
-    expect(unlisten).toHaveBeenCalledOnce();
+    expect(
+      mocks.invoke.mock.calls.map(([command]) => command),
+    ).not.toContain("generate_transcript_report");
   });
 
   it("lists and loads persisted LLM report history through Tauri commands", async () => {

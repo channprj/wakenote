@@ -224,20 +224,6 @@ export interface LlmProgressEvent {
   detail?: string | null;
 }
 
-export interface LlmGenerateResponse {
-  run_id: string;
-  content: string;
-  iterations_used: number;
-  max_iterations: number;
-  success_criteria_met: boolean;
-  completion_reason: LlmCompletionReason;
-  quality_feedback: string;
-  model: string;
-  report_id: string;
-  usage: LlmUsageTotals;
-  report_path?: string | null;
-}
-
 export type LlmReportRunStatus =
   | "queued"
   | "running"

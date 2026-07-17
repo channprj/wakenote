@@ -412,16 +412,6 @@ pub fn parse_quality_evaluation(content: &str) -> Result<QualityEvaluation, Stri
     Ok(evaluation)
 }
 
-pub async fn generate_transcript_report_with_client<C: OpenRouterClient>(
-    settings: &AppSettings,
-    api_key: &str,
-    request: LlmGenerateRequest,
-    client: &C,
-) -> Result<LlmGenerateResponse, String> {
-    generate_transcript_report_with_client_and_progress(settings, api_key, request, client, |_| {})
-        .await
-}
-
 pub async fn generate_transcript_report_with_client_and_progress<C, F>(
     settings: &AppSettings,
     api_key: &str,
@@ -683,39 +673,6 @@ where
         );
     }
     result
-}
-
-pub async fn generate_transcript_report(
-    settings: &AppSettings,
-    api_key: &str,
-    request: LlmGenerateRequest,
-) -> Result<LlmGenerateResponse, String> {
-    generate_transcript_report_with_client(
-        settings,
-        api_key,
-        request,
-        &ReqwestOpenRouterClient::default(),
-    )
-    .await
-}
-
-pub async fn generate_transcript_report_with_progress<F>(
-    settings: &AppSettings,
-    api_key: &str,
-    request: LlmGenerateRequest,
-    on_progress: F,
-) -> Result<LlmGenerateResponse, String>
-where
-    F: Fn(LlmProgressEvent),
-{
-    generate_transcript_report_with_client_and_progress(
-        settings,
-        api_key,
-        request,
-        &ReqwestOpenRouterClient::default(),
-        on_progress,
-    )
-    .await
 }
 
 fn generation_prompt(report_instructions: &str, transcript_data: &str) -> String {
