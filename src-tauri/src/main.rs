@@ -37,6 +37,7 @@ use wakenote::live_capture::{
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
+use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore};
 use wakenote::overlay;
@@ -49,9 +50,9 @@ use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, TrayClickAction, expand_user_path, launch_at_login_action_for_patch,
-    live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
-    resolve_auto_prompt,
+    SettingsPatch, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_start_on_launch, resolve_auto_prompt,
 };
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
@@ -85,6 +86,7 @@ type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 /// Tracks the single in-flight long-form meeting job and its cancel flag.
 /// Only one meeting transcribes at a time (one shared GPU context).
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
+type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 
 #[derive(Default)]
@@ -201,6 +203,7 @@ const EVENT_MEETING_PROGRESS: &str = "meeting-progress";
 const EVENT_MEETING_SEGMENT: &str = "meeting-segment-committed";
 const EVENT_MEETING_FINISHED: &str = "meeting-finished";
 const EVENT_LLM_REPORT_PROGRESS: &str = "llm-report-progress";
+const EVENT_LLM_REPORT_RUN_UPDATED: &str = "llm-report-run-updated";
 /// How often the watcher re-enumerates windows while the feature is enabled.
 const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -1187,6 +1190,253 @@ async fn rebuild_transcript_day_index(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+fn llm_now() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn llm_settings_and_key(backend_state: &BackendState) -> Result<(AppSettings, String), String> {
+    let backend = backend_state.lock().map_err(|error| error.to_string())?;
+    let api_key = backend
+        .load_openrouter_api_key()?
+        .ok_or_else(|| "OpenRouter API key is not configured".to_string())?;
+    Ok((backend.settings(), api_key))
+}
+
+fn emit_llm_run_update(app: &AppHandle, snapshot: &LlmReportRunSnapshot) {
+    let _ = app.emit(EVENT_LLM_REPORT_RUN_UPDATED, snapshot.clone());
+}
+
+fn emit_terminal_run_result(
+    app: &AppHandle,
+    result: Result<Option<LlmReportRunSnapshot>, String>,
+    context: &str,
+) {
+    match result {
+        Ok(Some(snapshot)) => emit_llm_run_update(app, &snapshot),
+        Ok(None) => {}
+        Err(error) => eprintln!("[llm-report] {context}: {error}"),
+    }
+}
+
+fn spawn_registered_llm_report_run(
+    app: AppHandle,
+    run_state: LlmRunState,
+    settings: AppSettings,
+    api_key: String,
+    snapshot: LlmReportRunSnapshot,
+    request: wakenote::llm::LlmGenerateRequest,
+    cancellation: tokio_util::sync::CancellationToken,
+) {
+    let store = LlmRunStore::new(expand_user_path(&settings.save_root));
+    tauri::async_runtime::spawn(async move {
+        let progress_app = app.clone();
+        let progress_state = run_state.clone();
+        let progress_store = store.clone();
+        let result = wakenote::llm::generate_transcript_report_with_client_progress_and_cancel(
+            &settings,
+            &api_key,
+            request,
+            &wakenote::llm::ReqwestOpenRouterClient::default(),
+            &cancellation,
+            move |event| {
+                let update = progress_state
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .progress(&progress_store, event, &llm_now())?;
+                if let Some(update) = update {
+                    emit_llm_run_update(&progress_app, &update);
+                }
+                Ok(())
+            },
+        )
+        .await;
+
+        if cancellation.is_cancelled() {
+            if let Ok(response) = &result
+                && let Some(report_path) = &response.report_path
+            {
+                wakenote::llm::remove_persisted_report(report_path);
+            }
+            let cancelled = run_state
+                .lock()
+                .map_err(|error| error.to_string())
+                .and_then(|mut runtime| {
+                    runtime.finish_cancelled(&store, &snapshot.run_id, &llm_now())
+                });
+            emit_terminal_run_result(&app, cancelled, "could not persist cancellation");
+            return;
+        }
+
+        match result {
+            Ok(response) => {
+                let report_path = response.report_path.clone();
+                let completion = run_state
+                    .lock()
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut runtime| {
+                        runtime.complete(&store, &snapshot.run_id, &response, &llm_now())
+                    });
+                match completion {
+                    Ok(Some(completed)) => {
+                        emit_llm_run_update(&app, &completed);
+                    }
+                    Ok(None) => {
+                        if let Some(report_path) = report_path {
+                            wakenote::llm::remove_persisted_report(&report_path);
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(report_path) = report_path {
+                            wakenote::llm::remove_persisted_report(&report_path);
+                        }
+                        let failed = run_state
+                            .lock()
+                            .map_err(|lock_error| lock_error.to_string())
+                            .and_then(|mut runtime| {
+                                runtime.fail(&store, &snapshot.run_id, &error, &llm_now())
+                            });
+                        emit_terminal_run_result(&app, failed, "completion persistence failed");
+                    }
+                }
+            }
+            Err(wakenote::llm::LlmGenerateError::Cancelled) => {
+                let cancelled = run_state
+                    .lock()
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut runtime| {
+                        runtime.finish_cancelled(&store, &snapshot.run_id, &llm_now())
+                    });
+                emit_terminal_run_result(&app, cancelled, "could not persist cancellation");
+            }
+            Err(wakenote::llm::LlmGenerateError::Failed(error)) => {
+                let failed = run_state
+                    .lock()
+                    .map_err(|lock_error| lock_error.to_string())
+                    .and_then(|mut runtime| {
+                        runtime.fail(&store, &snapshot.run_id, &error, &llm_now())
+                    });
+                emit_terminal_run_result(&app, failed, "could not persist failure");
+            }
+        }
+    });
+}
+
+#[tauri::command]
+async fn start_llm_report(
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    run_state: State<'_, LlmRunState>,
+    request: wakenote::llm::LlmGenerateRequest,
+) -> Result<LlmReportRunSnapshot, String> {
+    let (settings, api_key) = llm_settings_and_key(backend_state.inner())?;
+    let store = LlmRunStore::new(expand_user_path(&settings.save_root));
+    let max_iterations = clamp_llm_max_iterations(settings.llm_max_iterations);
+    let (snapshot, private_request, cancellation) = {
+        let mut runtime = run_state.lock().map_err(|error| error.to_string())?;
+        let snapshot = runtime.start(
+            &store,
+            request,
+            None,
+            &settings.openrouter_model,
+            max_iterations,
+            &llm_now(),
+        )?;
+        let private_request = store.load(&snapshot.run_id)?.request;
+        let cancellation = runtime
+            .active()
+            .filter(|active| active.run_id == snapshot.run_id)
+            .ok_or_else(|| "Report run did not become active".to_string())?
+            .cancellation;
+        (snapshot, private_request, cancellation)
+    };
+    emit_llm_run_update(&app, &snapshot);
+    spawn_registered_llm_report_run(
+        app,
+        run_state.inner().clone(),
+        settings,
+        api_key,
+        snapshot.clone(),
+        private_request,
+        cancellation,
+    );
+    Ok(snapshot)
+}
+
+#[tauri::command]
+async fn list_llm_report_runs(
+    backend_state: State<'_, BackendState>,
+) -> Result<Vec<LlmReportRunSnapshot>, String> {
+    let save_root = {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+    LlmRunStore::new(save_root).list().map(|records| {
+        records
+            .into_iter()
+            .map(|record| record.snapshot())
+            .collect()
+    })
+}
+
+#[tauri::command]
+async fn cancel_llm_report(
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    run_state: State<'_, LlmRunState>,
+    run_id: String,
+) -> Result<LlmReportRunSnapshot, String> {
+    let save_root = {
+        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        expand_user_path(backend.settings().save_root)
+    };
+    let snapshot = run_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .request_cancel(&LlmRunStore::new(save_root), &run_id, &llm_now())?;
+    emit_llm_run_update(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+async fn retry_llm_report(
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    run_state: State<'_, LlmRunState>,
+    run_id: String,
+) -> Result<LlmReportRunSnapshot, String> {
+    let (settings, api_key) = llm_settings_and_key(backend_state.inner())?;
+    let store = LlmRunStore::new(expand_user_path(&settings.save_root));
+    let max_iterations = clamp_llm_max_iterations(settings.llm_max_iterations);
+    let (snapshot, private_request, cancellation) = {
+        let mut runtime = run_state.lock().map_err(|error| error.to_string())?;
+        let snapshot = runtime.retry(
+            &store,
+            &run_id,
+            &settings.openrouter_model,
+            max_iterations,
+            &llm_now(),
+        )?;
+        let private_request = store.load(&snapshot.run_id)?.request;
+        let cancellation = runtime
+            .active()
+            .filter(|active| active.run_id == snapshot.run_id)
+            .ok_or_else(|| "Report run did not become active".to_string())?
+            .cancellation;
+        (snapshot, private_request, cancellation)
+    };
+    emit_llm_run_update(&app, &snapshot);
+    spawn_registered_llm_report_run(
+        app,
+        run_state.inner().clone(),
+        settings,
+        api_key,
+        snapshot.clone(),
+        private_request,
+        cancellation,
+    );
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -3650,8 +3900,20 @@ fn main() {
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
             let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
+            let llm_run_state: LlmRunState =
+                Arc::new(Mutex::new(LlmRunRuntime::default()));
             let input_monitor_state: InputMonitorState =
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
+            let llm_store = LlmRunStore::new(expand_user_path(
+                &initial_settings_for_runtime.save_root,
+            ));
+            if let Err(error) =
+                llm_store.recover_interrupted(&llm_now())
+            {
+                eprintln!(
+                    "[llm-report] could not recover interrupted runs: {error}"
+                );
+            }
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
@@ -3664,6 +3926,7 @@ fn main() {
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
+            app.manage(llm_run_state);
 
             spawn_source_watcher(
                 app.handle().clone(),
@@ -3820,6 +4083,10 @@ fn main() {
             transcript_days,
             transcripts_for_day,
             rebuild_transcript_day_index,
+            start_llm_report,
+            list_llm_report_runs,
+            cancel_llm_report,
+            retry_llm_report,
             generate_transcript_report,
             list_llm_report_history,
             load_llm_report_history_detail,

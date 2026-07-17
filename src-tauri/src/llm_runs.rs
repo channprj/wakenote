@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_util::sync::CancellationToken;
 
 use crate::llm::{
-    LlmCompletionReason, LlmGenerateRequest, LlmProgressEvent, LlmProgressStage, LlmReportKind,
-    LlmUsageTotals, format_transcripts_for_llm,
+    LlmCompletionReason, LlmGenerateRequest, LlmGenerateResponse, LlmProgressEvent,
+    LlmProgressStage, LlmReportKind, LlmUsageTotals, format_transcripts_for_llm,
 };
 
 const INTERRUPTED_ERROR: &str = "WakeNote closed before this report finished";
@@ -180,6 +180,38 @@ impl LlmReportRunRecord {
             "Report generation failed",
             Some(error.into()),
         );
+        self.touch(now);
+    }
+
+    pub fn mark_completed(&mut self, response: &LlmGenerateResponse, now: &str) {
+        if self.snapshot.status.is_terminal() {
+            return;
+        }
+        let (stage, message) = match response.completion_reason {
+            LlmCompletionReason::SuccessCriteriaMet => {
+                (LlmProgressStage::Completed, "Success criteria met")
+            }
+            LlmCompletionReason::MaxIterationsReached => (
+                LlmProgressStage::MaxIterationsReached,
+                "Maximum iterations reached; saved the latest draft",
+            ),
+        };
+        self.snapshot.status = LlmReportRunStatus::Completed;
+        self.snapshot.stage = Some(stage);
+        self.snapshot.iteration = response.iterations_used;
+        self.snapshot.max_iterations = response.max_iterations;
+        self.snapshot.message = message.into();
+        self.snapshot.detail = Some(response.quality_feedback.clone());
+        self.snapshot.error = None;
+        self.snapshot.model = response.model.clone();
+        self.snapshot.report_id = Some(response.report_id.clone());
+        self.snapshot.report_path = response.report_path.clone();
+        self.snapshot.completion_reason = Some(response.completion_reason);
+        self.snapshot.success_criteria_met = Some(response.success_criteria_met);
+        self.snapshot.quality_feedback = Some(response.quality_feedback.clone());
+        self.snapshot.usage = Some(response.usage.clone());
+        self.snapshot.finished_at = Some(now.into());
+        self.append_terminal_progress(stage, message, Some(response.quality_feedback.clone()));
         self.touch(now);
     }
 
@@ -365,11 +397,41 @@ impl LlmRunRuntime {
             return Ok(None);
         }
         let mut record = store.load(run_id)?;
+        if record.snapshot.status == LlmReportRunStatus::Stopping {
+            record.mark_cancelled(now);
+            store.write(&record)?;
+            self.clear_active(run_id);
+            return Ok(Some(record.snapshot()));
+        }
         if record.snapshot.status.is_terminal() {
             self.clear_active(run_id);
             return Ok(None);
         }
         record.mark_failed(error, now);
+        store.write(&record)?;
+        self.clear_active(run_id);
+        Ok(Some(record.snapshot()))
+    }
+
+    pub fn complete(
+        &mut self,
+        store: &LlmRunStore,
+        run_id: &str,
+        response: &LlmGenerateResponse,
+        now: &str,
+    ) -> Result<Option<LlmReportRunSnapshot>, String> {
+        if !self.matches_active(run_id) {
+            return Ok(None);
+        }
+        let mut record = store.load(run_id)?;
+        if record.snapshot.status == LlmReportRunStatus::Stopping {
+            return Ok(None);
+        }
+        if record.snapshot.status.is_terminal() {
+            self.clear_active(run_id);
+            return Ok(None);
+        }
+        record.mark_completed(response, now);
         store.write(&record)?;
         self.clear_active(run_id);
         Ok(Some(record.snapshot()))

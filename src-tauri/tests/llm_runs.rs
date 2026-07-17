@@ -1,5 +1,8 @@
 use wakenote::commands::RecentTranscript;
-use wakenote::llm::{LlmGenerateRequest, LlmProgressEvent, LlmProgressStage, LlmReportKind};
+use wakenote::llm::{
+    LlmCompletionReason, LlmGenerateRequest, LlmGenerateResponse, LlmProgressEvent,
+    LlmProgressStage, LlmReportKind, LlmUsageTotals,
+};
 use wakenote::llm_runs::{LlmReportRunRecord, LlmReportRunStatus, LlmRunRuntime, LlmRunStore};
 use wakenote::recorder::ChunkSource;
 
@@ -15,6 +18,28 @@ fn request() -> LlmGenerateRequest {
             source_label: None,
         }],
         run_id: None,
+    }
+}
+
+fn successful_response(run_id: &str) -> LlmGenerateResponse {
+    LlmGenerateResponse {
+        run_id: run_id.into(),
+        content: "completed body".into(),
+        iterations_used: 1,
+        max_iterations: 3,
+        success_criteria_met: true,
+        completion_reason: LlmCompletionReason::SuccessCriteriaMet,
+        quality_feedback: "Complete".into(),
+        model: "z-ai/glm-5.2".into(),
+        report_id: "completed-report".into(),
+        usage: LlmUsageTotals {
+            request_count: 2,
+            prompt_tokens: Some(10),
+            completion_tokens: Some(5),
+            total_tokens: Some(15),
+            cost: Some(0.001),
+        },
+        report_path: Some("/tmp/completed-report.md".into()),
     }
 }
 
@@ -254,5 +279,154 @@ fn retry_clones_exact_input_under_a_new_linked_run() {
     assert_eq!(
         retry_record.request.run_id.as_deref(),
         Some(retry.run_id.as_str())
+    );
+}
+
+#[test]
+fn cancelled_run_rejects_late_completion() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = LlmRunStore::new(temp.path());
+    let mut runtime = LlmRunRuntime::default();
+    let started = runtime
+        .start(
+            &store,
+            request(),
+            None,
+            "z-ai/glm-5.2",
+            3,
+            "2026-07-18T00:00:00Z",
+        )
+        .unwrap();
+    runtime
+        .request_cancel(&store, &started.run_id, "2026-07-18T00:00:01Z")
+        .unwrap();
+    runtime
+        .finish_cancelled(&store, &started.run_id, "2026-07-18T00:00:01Z")
+        .unwrap();
+
+    let accepted = runtime
+        .complete(
+            &store,
+            &started.run_id,
+            &successful_response(&started.run_id),
+            "2026-07-18T00:00:02Z",
+        )
+        .unwrap();
+
+    assert!(accepted.is_none());
+    assert_eq!(
+        store.load(&started.run_id).unwrap().snapshot.status,
+        LlmReportRunStatus::Cancelled
+    );
+}
+
+#[test]
+fn stopping_run_rejects_completion_until_cancelled_cleanup_finishes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = LlmRunStore::new(temp.path());
+    let mut runtime = LlmRunRuntime::default();
+    let started = runtime
+        .start(
+            &store,
+            request(),
+            None,
+            "z-ai/glm-5.2",
+            3,
+            "2026-07-18T00:00:00Z",
+        )
+        .unwrap();
+    let stopping = runtime
+        .request_cancel(&store, &started.run_id, "2026-07-18T00:00:01Z")
+        .unwrap();
+
+    let completion = runtime
+        .complete(
+            &store,
+            &started.run_id,
+            &successful_response(&started.run_id),
+            "2026-07-18T00:00:02Z",
+        )
+        .unwrap();
+
+    assert!(completion.is_none());
+    assert_eq!(stopping.status, LlmReportRunStatus::Stopping);
+    assert_eq!(
+        store.load(&started.run_id).unwrap().snapshot.status,
+        LlmReportRunStatus::Stopping
+    );
+    let cancelled = runtime
+        .finish_cancelled(&store, &started.run_id, "2026-07-18T00:00:03Z")
+        .unwrap()
+        .unwrap();
+    assert_eq!(cancelled.status, LlmReportRunStatus::Cancelled);
+}
+
+#[test]
+fn stopping_run_converts_a_late_failure_to_cancelled() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = LlmRunStore::new(temp.path());
+    let mut runtime = LlmRunRuntime::default();
+    let started = runtime
+        .start(
+            &store,
+            request(),
+            None,
+            "z-ai/glm-5.2",
+            3,
+            "2026-07-18T00:00:00Z",
+        )
+        .unwrap();
+    runtime
+        .request_cancel(&store, &started.run_id, "2026-07-18T00:00:01Z")
+        .unwrap();
+
+    let terminal = runtime
+        .fail(
+            &store,
+            &started.run_id,
+            "HTTP closed while stopping",
+            "2026-07-18T00:00:02Z",
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(terminal.status, LlmReportRunStatus::Cancelled);
+    assert!(runtime.active().is_none());
+}
+
+#[test]
+fn completed_run_rejects_late_cancellation() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = LlmRunStore::new(temp.path());
+    let mut runtime = LlmRunRuntime::default();
+    let started = runtime
+        .start(
+            &store,
+            request(),
+            None,
+            "z-ai/glm-5.2",
+            3,
+            "2026-07-18T00:00:00Z",
+        )
+        .unwrap();
+    let completed = runtime
+        .complete(
+            &store,
+            &started.run_id,
+            &successful_response(&started.run_id),
+            "2026-07-18T00:00:01Z",
+        )
+        .unwrap()
+        .unwrap();
+
+    let late_cancel = runtime
+        .request_cancel(&store, &started.run_id, "2026-07-18T00:00:02Z")
+        .unwrap();
+
+    assert_eq!(completed.status, LlmReportRunStatus::Completed);
+    assert_eq!(late_cancel.status, LlmReportRunStatus::Completed);
+    assert_eq!(
+        store.load(&started.run_id).unwrap().snapshot.status,
+        LlmReportRunStatus::Completed
     );
 }
