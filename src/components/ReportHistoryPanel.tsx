@@ -1,73 +1,169 @@
-import { useCallback, useEffect, useState } from "react";
 import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
+import {
+  combineReportEntries,
+  type ReportListEntry,
+} from "../lib/llm-report-runs";
+import {
+  cancelLlmReport,
   downloadLlmReport,
   listLlmReportHistory,
   loadLlmReportHistoryDetail,
+  retryLlmReport,
 } from "../lib/tauri-client";
-import type { LlmReportHistoryDetail, LlmReportHistoryItem } from "../lib/types";
+import type {
+  LlmReportHistoryDetail,
+  LlmReportHistoryItem,
+  LlmReportRunSnapshot,
+} from "../lib/types";
 import { ReportHistoryView } from "./ReportHistoryView";
 
 interface ReportHistorySelection {
-  selectedId: string | null;
+  selectedKey: string | null;
   detailReloadRevision: number;
 }
 
-export function historySelectionAfterRefresh(
+export function reportSelectionAfterRefresh(
   current: ReportHistorySelection,
-  items: readonly LlmReportHistoryItem[],
+  entries: readonly ReportListEntry[],
 ): ReportHistorySelection {
-  const selectedId =
-    current.selectedId && items.some((item) => item.report_id === current.selectedId)
-      ? current.selectedId
-      : items[0]?.report_id ?? null;
+  let selectedKey = current.selectedKey;
+  if (
+    selectedKey &&
+    !entries.some((entry) => entry.key === selectedKey)
+  ) {
+    const selectedRunId = selectedKey.startsWith("run:")
+      ? selectedKey.slice("run:".length)
+      : null;
+    selectedKey = selectedRunId
+      ? entries.find(
+          (entry) => entry.sourceRun?.run_id === selectedRunId,
+        )?.key ?? null
+      : null;
+  }
   return {
-    selectedId,
+    selectedKey: selectedKey ?? entries[0]?.key ?? null,
     detailReloadRevision: current.detailReloadRevision + 1,
   };
 }
 
 export function ReportHistoryPanel() {
+  const {
+    runs,
+    loading: runsLoading,
+    error: runsError,
+    refresh: refreshRuns,
+  } = useLlmReportRuns();
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
   const [items, setItems] = useState<LlmReportHistoryItem[]>([]);
   const [selection, setSelection] = useState<ReportHistorySelection>({
-    selectedId: null,
+    selectedKey: null,
     detailReloadRevision: 0,
   });
-  const [detail, setDetail] = useState<LlmReportHistoryDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState<LlmReportHistoryDetail | null>(
+    null,
+  );
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(
+    null,
+  );
+  const [actionPendingRunId, setActionPendingRunId] = useState<
+    string | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
+  const completedRevisions = useRef(new Map<string, number>());
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const entries = useMemo(
+    () => combineReportEntries(runs, items),
+    [items, runs],
+  );
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryLoading(true);
     setError(null);
     try {
       const nextItems = await listLlmReportHistory();
       setItems(nextItems);
-      setSelection((current) => historySelectionAfterRefresh(current, nextItems));
+      const nextEntries = combineReportEntries(
+        runsRef.current,
+        nextItems,
+      );
+      setSelection((current) =>
+        reportSelectionAfterRefresh(current, nextEntries),
+      );
       if (nextItems.length === 0) {
         setDetail(null);
       }
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
-      setLoading(false);
+      setHistoryLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  const refresh = useCallback(async () => {
+    await Promise.all([refreshHistory(), refreshRuns()]);
+  }, [refreshHistory, refreshRuns]);
 
   useEffect(() => {
-    if (!selection.selectedId) {
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  useEffect(() => {
+    setSelection((current) => {
+      if (
+        current.selectedKey &&
+        entries.some((entry) => entry.key === current.selectedKey)
+      ) {
+        return current;
+      }
+      return reportSelectionAfterRefresh(current, entries);
+    });
+  }, [entries]);
+
+  useEffect(() => {
+    let shouldRefresh = false;
+    for (const run of runs) {
+      if (run.status !== "completed" || !run.report_id) {
+        continue;
+      }
+      const handledRevision = completedRevisions.current.get(run.run_id);
+      if (
+        handledRevision === undefined ||
+        run.revision > handledRevision
+      ) {
+        completedRevisions.current.set(run.run_id, run.revision);
+        shouldRefresh = true;
+      }
+    }
+    if (shouldRefresh) {
+      void refreshHistory();
+    }
+  }, [refreshHistory, runs]);
+
+  const selectedReportId =
+    selection.selectedKey?.startsWith("report:")
+      ? selection.selectedKey.slice("report:".length)
+      : null;
+
+  useEffect(() => {
+    if (!selectedReportId) {
       setDetail(null);
+      setDetailLoading(false);
       return;
     }
     let cancelled = false;
     setDetailLoading(true);
     setError(null);
-    void loadLlmReportHistoryDetail(selection.selectedId)
+    void loadLlmReportHistoryDetail(selectedReportId)
       .then((nextDetail) => {
         if (!cancelled) setDetail(nextDetail);
       })
@@ -80,34 +176,72 @@ export function ReportHistoryPanel() {
     return () => {
       cancelled = true;
     };
-  }, [selection.selectedId, selection.detailReloadRevision]);
+  }, [selectedReportId, selection.detailReloadRevision]);
 
-  const download = useCallback(async (reportId: string, fileName: string) => {
-    setDownloadingId(reportId);
+  const download = useCallback(
+    async (reportId: string, fileName: string) => {
+      setDownloadingId(reportId);
+      setError(null);
+      try {
+        await downloadLlmReport(reportId, fileName);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      } finally {
+        setDownloadingId(null);
+      }
+    },
+    [],
+  );
+
+  const cancel = useCallback(async (runId: string) => {
+    setActionPendingRunId(runId);
     setError(null);
     try {
-      await downloadLlmReport(reportId, fileName);
+      await cancelLlmReport(runId);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
-      setDownloadingId(null);
+      setActionPendingRunId(null);
+    }
+  }, []);
+
+  const retry = useCallback(async (runId: string) => {
+    setActionPendingRunId(runId);
+    setError(null);
+    try {
+      const nextRun = await retryLlmReport(runId);
+      setSelection((current) => ({
+        selectedKey: `run:${nextRun.run_id}`,
+        detailReloadRevision: current.detailReloadRevision,
+      }));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setActionPendingRunId(null);
     }
   }, []);
 
   return (
     <ReportHistoryView
+      actionPendingRunId={actionPendingRunId}
       detail={detail}
       detailLoading={detailLoading}
       downloadingId={downloadingId}
-      error={error}
-      items={items}
-      loading={loading}
-      selectedId={selection.selectedId}
-      onDownload={(reportId, fileName) => void download(reportId, fileName)}
+      entries={entries}
+      error={error ?? runsError}
+      loading={historyLoading || runsLoading}
+      selectedKey={selection.selectedKey}
+      onCancel={(runId) => void cancel(runId)}
+      onDownload={(reportId, fileName) =>
+        void download(reportId, fileName)
+      }
       onRefresh={() => void refresh()}
-      onSelect={(selectedId) =>
+      onRetry={(runId) => void retry(runId)}
+      onSelect={(selectedKey) =>
         setSelection((current) =>
-          current.selectedId === selectedId ? current : { ...current, selectedId },
+          current.selectedKey === selectedKey
+            ? current
+            : { ...current, selectedKey },
         )
       }
     />

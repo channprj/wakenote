@@ -628,6 +628,12 @@
   overflow-wrap: anywhere;
 }
 
+.report-run-detail,
+.report-run-detail__timeline,
+.report-run-detail__timeline-item {
+  min-width: 0;
+}
+
 [data-slot="queue-summary"],
 .queue-table-wrap,
 [data-slot="queue-table"],
@@ -848,6 +854,20 @@
   .report-history__detail-header {
     align-items: flex-start;
     flex-wrap: wrap;
+  }
+
+  .report-history__detail-actions {
+    justify-content: flex-start;
+  }
+
+  .report-run-detail__timeline-item {
+    grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  }
+
+  .report-run-detail__timeline-item > span,
+  .report-run-detail__timeline-item > p {
+    grid-column: 2;
+    white-space: normal;
   }
 
   [data-slot="queue-summary"] {
