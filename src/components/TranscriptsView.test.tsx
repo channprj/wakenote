@@ -1,8 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type {
-  LlmGenerateResponse,
-  LlmProgressEvent,
+  LlmReportRunSnapshot,
   RecentTranscript,
   TranscriptDay,
 } from "../lib/types";
@@ -33,6 +32,50 @@ function transcript(overrides: Partial<RecentTranscript>): RecentTranscript {
   };
 }
 
+function reportRun(
+  overrides: Partial<LlmReportRunSnapshot> = {},
+): LlmReportRunSnapshot {
+  const run: LlmReportRunSnapshot = {
+    run_id: "run-transcripts-1",
+    parent_run_id: null,
+    revision: 2,
+    status: "running",
+    stage: "generating",
+    kind: "summary",
+    created_at: "2026-07-18T00:00:00Z",
+    updated_at: "2026-07-18T00:00:01Z",
+    started_at: "2026-07-18T00:00:01Z",
+    finished_at: null,
+    iteration: 1,
+    max_iterations: 3,
+    message: "Drafting report",
+    detail: null,
+    error: null,
+    progress: [],
+    model: "z-ai/glm-5.2",
+    selected_count: 1,
+    date_range: "2026-07-18",
+    report_id: null,
+    report_path: null,
+    completion_reason: null,
+    success_criteria_met: null,
+    quality_feedback: null,
+    usage: null,
+    ...overrides,
+  };
+  return {
+    ...run,
+    progress: overrides.progress ?? [{
+      run_id: run.run_id,
+      stage: run.stage ?? "preparing",
+      iteration: run.iteration,
+      max_iterations: run.max_iterations,
+      message: run.message,
+      detail: run.detail,
+    }],
+  };
+}
+
 function view(props: {
   today?: Date;
   days?: TranscriptDay[];
@@ -46,10 +89,8 @@ function view(props: {
   onRegenerate?: (entries: readonly RecentTranscript[], modelId?: string) => void;
   onGenerateReport?: (entries: readonly RecentTranscript[], kind: "summary" | "detailed_report") => void;
   openrouterKeyConfigured?: boolean;
-  reportGenerating?: boolean;
-  reportProgress?: LlmProgressEvent[];
-  reportResult?: LlmGenerateResponse | null;
-  onDownloadReport?: (reportId: string, fileName: string) => void;
+  reportRun?: LlmReportRunSnapshot | null;
+  onOpenReports?: () => void;
   onOpenFolder?: (entry: RecentTranscript) => void;
 }) {
   return renderToStaticMarkup(
@@ -65,10 +106,8 @@ function view(props: {
       onRegenerate={props.onRegenerate}
       onGenerateReport={props.onGenerateReport}
       openrouterKeyConfigured={props.openrouterKeyConfigured}
-      reportGenerating={props.reportGenerating}
-      reportProgress={props.reportProgress}
-      reportResult={props.reportResult}
-      onDownloadReport={props.onDownloadReport}
+      reportRun={props.reportRun}
+      onOpenReports={props.onOpenReports}
       onOpenFolder={props.onOpenFolder}
       today={props.today}
     />,
@@ -555,78 +594,38 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("Save an OpenRouter API key in Advanced settings first");
   });
 
-  it("shows live agent stages and quality feedback while a report is running", () => {
+  it("shows a durable run notice with Open Reports", () => {
+    const run = reportRun({
+      status: "running",
+      stage: "generating",
+      message: "Drafting report",
+    });
     const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      reportGenerating: true,
-      reportProgress: [
-        {
-          run_id: "report-run-1",
-          stage: "generating",
-          iteration: 1,
-          max_iterations: 5,
-          message: "Drafting report",
-          detail: null,
-        },
-        {
-          run_id: "report-run-1",
-          stage: "evaluating",
-          iteration: 1,
-          max_iterations: 5,
-          message: "Checking success criteria",
-          detail: "Action items are missing.",
-        },
-      ],
+      reportRun: run,
+      onOpenReports: () => undefined,
     });
 
-    expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain("Drafting report");
-    expect(markup).toContain("Checking success criteria");
-    expect(markup).toContain("Action items are missing.");
-    expect(markup).toContain("Iteration 1 of 5");
+    expect(markup).toContain('aria-label="Open Reports"');
+    expect(markup).not.toContain('aria-label="Report generation progress"');
   });
 
-  it("distinguishes success from reaching the maximum iteration limit", () => {
+  it("disables new report requests while a durable run is active", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
-      reportProgress: [
-        {
-          run_id: "report-run-1",
-          stage: "max_iterations_reached",
-          iteration: 3,
-          max_iterations: 3,
-          message: "Maximum iterations reached; saved the latest draft",
-          detail: "Evidence notes are still incomplete.",
-        },
-      ],
-      reportResult: {
-        run_id: "report-run-1",
-        content: "best available report",
-        iterations_used: 3,
-        max_iterations: 3,
-        success_criteria_met: false,
-        completion_reason: "max_iterations_reached",
-        quality_feedback: "Evidence notes are still incomplete.",
-        model: "z-ai/glm-5.2",
-        report_id: "20260713-100000-detailed-report",
-        usage: {
-          request_count: 6,
-          prompt_tokens: 1200,
-          completion_tokens: 400,
-          total_tokens: 1600,
-          cost: 0.0125,
-        },
-        report_path: "/tmp/reports/report.md",
-      },
-      onDownloadReport: () => undefined,
+      days: [{ day: "2026-05-10", count: 1 }],
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
+      ]),
+      openrouterKeyConfigured: true,
+      reportRun: reportRun({ status: "running" }),
+      onGenerateReport: () => undefined,
     });
 
-    expect(markup).toContain("Maximum iterations reached");
-    expect(markup).toContain("3 of 3 iterations");
-    expect(markup).toContain("Evidence notes are still incomplete.");
-    expect(markup).not.toContain("Success criteria met");
-    expect(markup).toContain('data-current-stage="max_iterations_reached"');
-    expect(markup).toContain('aria-label="Download generated report as Markdown"');
+    expect(markup).toMatch(
+      /aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/,
+    );
+    expect(markup).toContain("A report is already running");
   });
 
   it("disables the reload button while the active day is loading", () => {

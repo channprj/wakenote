@@ -395,6 +395,7 @@ export default function App() {
           selectedModelId={snapshot.settings.selected_model}
           autoPlayNext={snapshot.settings.autoplay_next_transcript}
           openrouterKeyConfigured={snapshot.openrouter_key_configured}
+          onOpenReports={() => setActiveRoute("reports")}
         />
       </WorkspacePage>
     ),

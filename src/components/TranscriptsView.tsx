@@ -1,21 +1,15 @@
 import {
-  AlertCircle,
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Download,
   FileText,
   FolderOpen,
-  Loader2,
   Mic,
   MonitorSpeaker,
   Pause,
   Play,
   RotateCw,
-  Save,
-  Search,
-  Sparkles,
   Video,
   Youtube,
 } from "lucide-react";
@@ -31,11 +25,10 @@ import {
   transcriptSourceLabel,
 } from "../lib/transcript-history";
 import { formatModelLabel } from "../lib/models";
+import { isActiveLlmReportRun } from "../lib/llm-report-runs";
 import type {
-  LlmGenerateResponse,
-  LlmProgressEvent,
-  LlmProgressStage,
   LlmReportKind,
+  LlmReportRunSnapshot,
   ModelDescriptor,
   RecentTranscript,
   TranscriptDay,
@@ -44,7 +37,7 @@ import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
 
-type CopyToastKind = "all" | "selected" | "report";
+type CopyToastKind = "all" | "selected";
 type DragMode = "select" | "deselect";
 type RegenerationModel = Pick<ModelDescriptor, "id" | "display_name" | "status">;
 
@@ -132,15 +125,12 @@ export function TranscriptsView({
   onRegenerate,
   onOpenFolder,
   onGenerateReport,
-  onDownloadReport,
+  onOpenReports,
   onReload,
   autoPlayNext = false,
   openrouterKeyConfigured = false,
-  reportGenerating = false,
-  reportDownloading = false,
   reportError = null,
-  reportProgress = [],
-  reportResult = null,
+  reportRun = null,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
   today = new Date(),
@@ -161,15 +151,12 @@ export function TranscriptsView({
     entries: readonly RecentTranscript[],
     kind: LlmReportKind,
   ) => void | Promise<void>;
-  onDownloadReport?: (reportId: string, fileName: string) => void | Promise<void>;
+  onOpenReports?: () => void;
   onReload?: (day: string) => void;
   autoPlayNext?: boolean;
   openrouterKeyConfigured?: boolean;
-  reportGenerating?: boolean;
-  reportDownloading?: boolean;
   reportError?: string | null;
-  reportProgress?: readonly LlmProgressEvent[];
-  reportResult?: LlmGenerateResponse | null;
+  reportRun?: LlmReportRunSnapshot | null;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
   today?: Date;
@@ -203,8 +190,6 @@ export function TranscriptsView({
   const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const lastSelectionAnchorRef = useRef<string | null>(null);
-  const latestReportProgress = reportProgress[reportProgress.length - 1];
-
   const effectiveActiveDay = activeDay ?? todayDay;
 
   const activeEntries = useMemo(() => {
@@ -378,10 +363,8 @@ export function TranscriptsView({
     try {
       await navigator.clipboard.writeText(text);
       setCopyToast(kind);
-      if (kind !== "report") {
-        setSelectedPaths(new Set());
-        lastSelectionAnchorRef.current = null;
-      }
+      setSelectedPaths(new Set());
+      lastSelectionAnchorRef.current = null;
       window.setTimeout(() => setCopyToast(null), 1500);
     } catch {
       // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
@@ -406,12 +389,15 @@ export function TranscriptsView({
 
   const handleGenerateReport = useCallback(
     (entries: readonly RecentTranscript[], kind: LlmReportKind) => {
-      if (!openrouterKeyConfigured || reportGenerating) {
+      if (
+        !openrouterKeyConfigured ||
+        (reportRun && isActiveLlmReportRun(reportRun))
+      ) {
         return;
       }
       void onGenerateReport?.(entries, kind);
     },
-    [onGenerateReport, openrouterKeyConfigured, reportGenerating],
+    [onGenerateReport, openrouterKeyConfigured, reportRun],
   );
 
   const handleClearSelection = useCallback(() => {
@@ -507,8 +493,8 @@ export function TranscriptsView({
   const canGenerateReports = Boolean(onGenerateReport) && hasEntries;
   const reportDisabledReason = !openrouterKeyConfigured
     ? "Save an OpenRouter API key in Advanced settings first"
-    : reportGenerating
-      ? "Generating report"
+    : reportRun && isActiveLlmReportRun(reportRun)
+      ? "A report is already running"
       : undefined;
 
   useEffect(() => {
@@ -763,122 +749,38 @@ export function TranscriptsView({
           </div>
         )}
         {reportError ? (
-          <div className="warning-banner warning-banner--danger transcript-report-status">
+          <div className="warning-banner warning-banner--danger transcript-report-error">
             {reportError}
           </div>
         ) : null}
-        {reportGenerating || reportProgress.length > 0 ? (
+        {reportRun ? (
           <section
-            aria-label="Report generation progress"
             aria-live="polite"
-            className="transcript-report-progress"
-            data-current-stage={latestReportProgress?.stage ?? "preparing"}
+            className="transcript-report-status"
+            data-status={reportRun.status}
           >
-            <header>
-              {reportGenerating ? (
-                <Loader2 aria-hidden="true" className="loading-spin" />
-              ) : latestReportProgress ? (
-                <ReportProgressIcon stage={latestReportProgress.stage} />
-              ) : (
-                <Check aria-hidden="true" />
-              )}
-              <strong>
-                {latestReportProgress?.message ?? "Starting report agent"}
-              </strong>
-            </header>
-            <ol>
-              {reportProgress.map((progress, index) => (
-                <li
-                  data-stage={progress.stage}
-                  key={`${progress.run_id}-${progress.stage}-${progress.iteration}-${index}`}
-                >
-                  <ReportProgressIcon stage={progress.stage} />
-                  <div>
-                    <span>{progress.message}</span>
-                    {progress.iteration > 0 ? (
-                      <small>
-                        Iteration {progress.iteration} of {progress.max_iterations}
-                      </small>
-                    ) : null}
-                    {progress.detail ? <p>{progress.detail}</p> : null}
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <div>
+              <strong>{reportRun.message}</strong>
+              <span>
+                {reportRun.kind === "summary"
+                  ? "Summary"
+                  : "Detailed report"}
+                {" · "}
+                {reportRun.iteration > 0
+                  ? `Iteration ${reportRun.iteration} of ${reportRun.max_iterations}`
+                  : "Preparing"}
+              </span>
+            </div>
+            <Button
+              aria-label="Open Reports"
+              onClick={onOpenReports}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              Open Reports
+            </Button>
           </section>
-        ) : null}
-        {reportResult ? (
-          <div
-            className="transcript-report-output"
-            data-completion-reason={reportResult.completion_reason}
-          >
-            <header>
-              <div>
-                <strong>
-                  {reportResult.success_criteria_met
-                    ? "Success criteria met"
-                    : "Maximum iterations reached"}
-                </strong>
-                <span>
-                  {reportResult.model} · {reportResult.iterations_used} of{" "}
-                  {reportResult.max_iterations} iterations
-                </span>
-                {reportResult.report_path ? (
-                  <a
-                    href={fileUrlFromPath(reportResult.report_path)}
-                    title={reportResult.report_path}
-                  >
-                    {reportResult.report_path}
-                  </a>
-                ) : null}
-              </div>
-              <div className="transcript-report-output__actions">
-                {onDownloadReport ? (
-                  <Button
-                    aria-label="Download generated report as Markdown"
-                    disabled={reportDownloading}
-                    onClick={() =>
-                      void onDownloadReport(
-                        reportResult.report_id,
-                        reportFileName(reportResult),
-                      )
-                    }
-                    size="sm"
-                    type="button"
-                    variant="secondary"
-                  >
-                    {reportDownloading ? (
-                      <Loader2 className="loading-spin" />
-                    ) : (
-                      <Download />
-                    )}
-                    Markdown
-                  </Button>
-                ) : null}
-                <Button
-                  aria-label="Copy generated report"
-                  onClick={() => void writeToClipboard(reportResult.content, "report")}
-                  size="sm"
-                  type="button"
-                  variant="secondary"
-                >
-                  {copyToast === "report" ? (
-                    <>
-                      <Check /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy /> Copy
-                    </>
-                  )}
-                </Button>
-              </div>
-            </header>
-            <p className="transcript-report-output__feedback">
-              {reportResult.quality_feedback}
-            </p>
-            <pre>{reportResult.content}</pre>
-          </div>
         ) : null}
         {playingTranscript?.audio_path ? (
           <TranscriptPlayerDock
@@ -927,27 +829,6 @@ export function TranscriptsView({
       ) : null}
     </div>
   );
-}
-
-function reportFileName(report: LlmGenerateResponse): string {
-  const fileName = report.report_path?.split(/[\\/]/).pop();
-  return fileName || `${report.report_id}.md`;
-}
-
-function ReportProgressIcon({ stage }: { stage: LlmProgressStage }) {
-  if (stage === "failed" || stage === "max_iterations_reached") {
-    return <AlertCircle aria-hidden="true" />;
-  }
-  if (stage === "completed") {
-    return <Check aria-hidden="true" />;
-  }
-  if (stage === "evaluating") {
-    return <Search aria-hidden="true" />;
-  }
-  if (stage === "saving") {
-    return <Save aria-hidden="true" />;
-  }
-  return <Sparkles aria-hidden="true" />;
 }
 
 function TranscriptEntryRow({

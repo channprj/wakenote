@@ -1961,6 +1961,61 @@ tr:last-child td {
 }
 
 .transcript-report-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  padding: 9px 10px;
+}
+
+.transcript-report-status > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.transcript-report-status strong,
+.transcript-report-status span {
+  overflow-wrap: anywhere;
+}
+
+.transcript-report-status strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.transcript-report-status span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.transcript-report-status[data-status="queued"],
+.transcript-report-status[data-status="running"] {
+  border-color: color-mix(in oklch, var(--primary) 34%, var(--line));
+  background: color-mix(in oklch, var(--primary) 6%, var(--surface));
+}
+
+.transcript-report-status[data-status="stopping"],
+.transcript-report-status[data-status="cancelled"] {
+  border-color: color-mix(in oklch, var(--warning) 38%, var(--line));
+  background: color-mix(in oklch, var(--warning) 7%, var(--surface));
+}
+
+.transcript-report-status[data-status="failed"] {
+  border-color: color-mix(in oklch, var(--destructive) 38%, var(--line));
+  background: color-mix(in oklch, var(--destructive) 6%, var(--surface));
+}
+
+.transcript-report-status[data-status="completed"] {
+  border-color: color-mix(in oklch, var(--success) 38%, var(--line));
+  background: color-mix(in oklch, var(--success) 6%, var(--surface));
+}
+
+.transcript-report-error {
   margin-top: 10px;
 }
 
@@ -2723,6 +2778,15 @@ code {
   .report-history__detail-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .transcript-report-status {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .transcript-report-status > button {
+    align-self: flex-start;
   }
 
   .report-history__filters {

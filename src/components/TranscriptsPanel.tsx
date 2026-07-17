@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
 import {
-  downloadLlmReport,
-  generateTranscriptReport,
   loadTranscriptDays,
   loadTranscriptsForDay,
   openTranscriptFolder,
   rebuildTranscriptDayIndex,
   regenerateTranscript,
+  startLlmReport,
 } from "../lib/tauri-client";
 import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
 import type {
   CustomSourceEntry,
-  LlmGenerateResponse,
-  LlmProgressEvent,
   LlmReportKind,
   ModelDescriptor,
   RecentTranscript,
@@ -26,24 +24,26 @@ export function TranscriptsPanel({
   selectedModelId = "",
   autoPlayNext = false,
   openrouterKeyConfigured = false,
+  onOpenReports,
 }: {
   customSources?: readonly CustomSourceEntry[];
   models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
   selectedModelId?: string;
   autoPlayNext?: boolean;
   openrouterKeyConfigured?: boolean;
+  onOpenReports?: () => void;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
     () => new Map(),
   );
   const [loadingDay, setLoadingDay] = useState<string | null>(null);
-  const [reportResult, setReportResult] = useState<LlmGenerateResponse | null>(null);
+  const { activeRun, runs } = useLlmReportRuns();
+  const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
-  const [reportGenerating, setReportGenerating] = useState(false);
-  const [reportDownloading, setReportDownloading] = useState(false);
-  const [reportProgress, setReportProgress] = useState<LlmProgressEvent[]>([]);
   const requestedRef = useRef<Set<string>>(new Set());
+  const startedRun = runs.find((run) => run.run_id === startedRunId);
+  const visibleRun = activeRun ?? startedRun ?? null;
 
   const refreshDays = useCallback(async () => {
     try {
@@ -145,41 +145,19 @@ export function TranscriptsPanel({
       if (entries.length === 0) {
         return;
       }
-      setReportGenerating(true);
       setReportError(null);
-      setReportResult(null);
-      setReportProgress([]);
       try {
-        const result = await generateTranscriptReport(
-          {
-            kind,
-            transcripts: [...entries],
-          },
-          (progress) => {
-            setReportProgress((current) => [...current, progress]);
-          },
-        );
-        setReportResult(result);
+        const run = await startLlmReport({
+          kind,
+          transcripts: [...entries],
+        });
+        setStartedRunId(run.run_id);
       } catch (error) {
         setReportError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setReportGenerating(false);
       }
     },
     [],
   );
-
-  const downloadReport = useCallback(async (reportId: string, fileName: string) => {
-    setReportDownloading(true);
-    setReportError(null);
-    try {
-      await downloadLlmReport(reportId, fileName);
-    } catch (error) {
-      setReportError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setReportDownloading(false);
-    }
-  }, []);
 
   useEffect(() => {
     void refreshDays();
@@ -236,15 +214,12 @@ export function TranscriptsPanel({
       sourceLabels={sourceLabelsFromCustomSources(customSources)}
       autoPlayNext={autoPlayNext}
       openrouterKeyConfigured={openrouterKeyConfigured}
-      reportGenerating={reportGenerating}
-      reportDownloading={reportDownloading}
       reportError={reportError}
-      reportProgress={reportProgress}
-      reportResult={reportResult}
-      onDownloadReport={(reportId, fileName) => void downloadReport(reportId, fileName)}
+      reportRun={visibleRun}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
       onGenerateReport={generateReport}
+      onOpenReports={onOpenReports}
       onRegenerate={regenerateEntries}
       onReload={reloadDay}
     />
