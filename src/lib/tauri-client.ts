@@ -35,6 +35,7 @@ import type {
   LlmProgressEvent,
   LlmReportHistoryDetail,
   LlmReportHistoryItem,
+  LlmReportRunSnapshot,
   OpenRouterKeyStatus,
 } from "./types";
 
@@ -56,6 +57,16 @@ let browserDetectedSource: SourcePayload | null = null;
 let browserOpenRouterApiKey: string | null = null;
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
+interface BrowserLlmReportRunRecord {
+  snapshot: LlmReportRunSnapshot;
+  request: LlmGenerateRequest;
+  timer: ReturnType<typeof setTimeout> | null;
+  nextStage: number;
+}
+const browserLlmReportRuns = new Map<string, BrowserLlmReportRunRecord>();
+const browserLlmReportRunListeners = new Set<
+  (snapshot: LlmReportRunSnapshot) => void
+>();
 const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
 const defaultRecentTranscriptLimit = 50;
 
@@ -394,6 +405,363 @@ export async function deleteOpenRouterApiKey(): Promise<AppSnapshot> {
 
   await invoke<OpenRouterKeyStatus>("delete_openrouter_api_key");
   return loadSnapshot();
+}
+
+const browserLlmProgressStages: ReadonlyArray<{
+  stage: LlmProgressEvent["stage"];
+  message: string;
+}> = [
+  { stage: "preparing", message: "Preparing transcript context" },
+  { stage: "generating", message: "Drafting report" },
+  { stage: "evaluating", message: "Checking success criteria" },
+  { stage: "saving", message: "Saving report" },
+];
+
+function copyLlmGenerateRequest(request: LlmGenerateRequest): LlmGenerateRequest {
+  return {
+    ...request,
+    transcripts: request.transcripts.map((transcript) => ({ ...transcript })),
+  };
+}
+
+function copyLlmReportRunSnapshot(
+  snapshot: LlmReportRunSnapshot,
+): LlmReportRunSnapshot {
+  return {
+    ...snapshot,
+    progress: snapshot.progress.map((event) => ({ ...event })),
+    usage: snapshot.usage ? { ...snapshot.usage } : null,
+  };
+}
+
+function publishBrowserLlmReportRun(record: BrowserLlmReportRunRecord) {
+  const snapshot = copyLlmReportRunSnapshot(record.snapshot);
+  for (const listener of browserLlmReportRunListeners) {
+    listener(snapshot);
+  }
+}
+
+function activeBrowserLlmReportRun(): BrowserLlmReportRunRecord | undefined {
+  return [...browserLlmReportRuns.values()].find((record) =>
+    ["queued", "running", "stopping"].includes(record.snapshot.status),
+  );
+}
+
+function browserLlmProgressEvent(
+  record: BrowserLlmReportRunRecord,
+  stage: LlmProgressEvent["stage"],
+  message: string,
+  detail: string | null = null,
+): LlmProgressEvent {
+  return {
+    run_id: record.snapshot.run_id,
+    stage,
+    iteration: stage === "preparing" ? 0 : 1,
+    max_iterations: record.snapshot.max_iterations,
+    message,
+    detail,
+  };
+}
+
+function updateBrowserLlmRun(
+  record: BrowserLlmReportRunRecord,
+  updates: Partial<LlmReportRunSnapshot>,
+  progress?: LlmProgressEvent,
+) {
+  const now = new Date().toISOString();
+  record.snapshot = {
+    ...record.snapshot,
+    ...updates,
+    revision: record.snapshot.revision + 1,
+    updated_at: now,
+    progress: progress
+      ? [...record.snapshot.progress, progress]
+      : record.snapshot.progress,
+  };
+  publishBrowserLlmReportRun(record);
+}
+
+function completeBrowserLlmReportRun(record: BrowserLlmReportRunRecord) {
+  if (record.snapshot.status !== "running") {
+    return;
+  }
+  const settings = browserSnapshot.settings ?? defaultSettings();
+  const label =
+    record.request.kind === "summary" ? "Summary" : "Detailed report";
+  const content = `# ${label}\n\nGenerated from ${record.request.transcripts.length} transcript${record.request.transcripts.length === 1 ? "" : "s"}.`;
+  const promptTokens = Math.max(
+    1,
+    Math.round(
+      record.request.transcripts.reduce(
+        (total, transcript) => total + transcript.text.length,
+        0,
+      ) / 4,
+    ),
+  );
+  const completionTokens = Math.max(1, Math.round(content.length / 4));
+  const usage = {
+    request_count: 2,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens,
+    cost: Number(
+      ((promptTokens + completionTokens) * 0.000001).toFixed(6),
+    ),
+  };
+  const reportId = `browser-${Date.now()}-${browserLlmReportRunSequence}-${record.request.kind}`;
+  const fileName = `${reportId}.md`;
+  const reportPath = `${settings.save_root}/reports/${fileName}`;
+  const qualityFeedback =
+    "Browser preview completed its simulated quality check.";
+  const progress = browserLlmProgressEvent(
+    record,
+    "completed",
+    "Success criteria met",
+    qualityFeedback,
+  );
+  updateBrowserLlmRun(
+    record,
+    {
+      status: "completed",
+      stage: "completed",
+      iteration: 1,
+      message: progress.message,
+      detail: qualityFeedback,
+      finished_at: new Date().toISOString(),
+      report_id: reportId,
+      report_path: reportPath,
+      completion_reason: "success_criteria_met",
+      success_criteria_met: true,
+      quality_feedback: qualityFeedback,
+      usage,
+    },
+    progress,
+  );
+  record.timer = null;
+  browserLlmReportHistory.unshift({
+    item: {
+      report_id: reportId,
+      kind: record.request.kind,
+      created_at: record.snapshot.created_at,
+      file_name: fileName,
+      report_path: reportPath,
+      model: record.snapshot.model,
+      iterations_used: 1,
+      max_iterations: record.snapshot.max_iterations,
+      success_criteria_met: true,
+      completion_reason: "success_criteria_met",
+      quality_feedback: qualityFeedback,
+      selected_count: record.snapshot.selected_count,
+      date_range: record.snapshot.date_range || null,
+      usage,
+      legacy: false,
+    },
+    content,
+  });
+}
+
+function advanceBrowserLlmReportRun(runId: string) {
+  const record = browserLlmReportRuns.get(runId);
+  if (!record || !["queued", "running"].includes(record.snapshot.status)) {
+    return;
+  }
+  const stage = browserLlmProgressStages[record.nextStage];
+  if (!stage) {
+    completeBrowserLlmReportRun(record);
+    return;
+  }
+  const progress = browserLlmProgressEvent(
+    record,
+    stage.stage,
+    stage.message,
+  );
+  updateBrowserLlmRun(
+    record,
+    {
+      status: "running",
+      stage: stage.stage,
+      started_at:
+        record.snapshot.started_at ?? new Date().toISOString(),
+      iteration: progress.iteration,
+      message: stage.message,
+      detail: null,
+    },
+    progress,
+  );
+  record.nextStage += 1;
+  record.timer = setTimeout(
+    () => advanceBrowserLlmReportRun(runId),
+    10,
+  );
+}
+
+function createBrowserLlmReportRun(
+  request: LlmGenerateRequest,
+  parentRunId: string | null,
+): LlmReportRunSnapshot {
+  if (!browserOpenRouterApiKey) {
+    throw new Error("OpenRouter API key is not configured");
+  }
+  if (request.transcripts.length === 0) {
+    throw new Error("Select at least one transcript");
+  }
+  const active = activeBrowserLlmReportRun();
+  if (active) {
+    throw new Error(
+      `Report run ${active.snapshot.run_id} is already active`,
+    );
+  }
+  const settings = browserSnapshot.settings ?? defaultSettings();
+  const runId = nextLlmReportRunId();
+  const now = new Date().toISOString();
+  const privateRequest = copyLlmGenerateRequest({
+    ...request,
+    run_id: runId,
+  });
+  const record: BrowserLlmReportRunRecord = {
+    snapshot: {
+      run_id: runId,
+      parent_run_id: parentRunId,
+      revision: 1,
+      status: "queued",
+      stage: null,
+      kind: privateRequest.kind,
+      created_at: now,
+      updated_at: now,
+      started_at: null,
+      finished_at: null,
+      iteration: 0,
+      max_iterations: settings.llm_max_iterations,
+      message: "Queued for report generation",
+      detail: null,
+      error: null,
+      progress: [],
+      model: settings.openrouter_model,
+      selected_count: privateRequest.transcripts.length,
+      date_range:
+        browserReportDateRange(privateRequest.transcripts) ?? "",
+      report_id: null,
+      report_path: null,
+      completion_reason: null,
+      success_criteria_met: null,
+      quality_feedback: null,
+      usage: null,
+    },
+    request: privateRequest,
+    timer: null,
+    nextStage: 0,
+  };
+  browserLlmReportRuns.set(runId, record);
+  publishBrowserLlmReportRun(record);
+  record.timer = setTimeout(
+    () => advanceBrowserLlmReportRun(runId),
+    10,
+  );
+  return copyLlmReportRunSnapshot(record.snapshot);
+}
+
+export async function startLlmReport(
+  request: LlmGenerateRequest,
+): Promise<LlmReportRunSnapshot> {
+  if (!isTauriRuntime()) {
+    return createBrowserLlmReportRun(request, null);
+  }
+  return invoke<LlmReportRunSnapshot>("start_llm_report", { request });
+}
+
+export async function listLlmReportRuns(): Promise<
+  LlmReportRunSnapshot[]
+> {
+  if (!isTauriRuntime()) {
+    return [...browserLlmReportRuns.values()]
+      .map((record) => copyLlmReportRunSnapshot(record.snapshot))
+      .sort((left, right) =>
+        right.created_at.localeCompare(left.created_at),
+      );
+  }
+  return invoke<LlmReportRunSnapshot[]>("list_llm_report_runs");
+}
+
+export async function cancelLlmReport(
+  runId: string,
+): Promise<LlmReportRunSnapshot> {
+  if (isTauriRuntime()) {
+    return invoke<LlmReportRunSnapshot>("cancel_llm_report", { runId });
+  }
+  const record = browserLlmReportRuns.get(runId);
+  if (!record) {
+    throw new Error(`Report run not found: ${runId}`);
+  }
+  if (!["queued", "running"].includes(record.snapshot.status)) {
+    throw new Error(`Report run ${runId} is not active`);
+  }
+  if (record.timer) {
+    clearTimeout(record.timer);
+    record.timer = null;
+  }
+  updateBrowserLlmRun(record, {
+    status: "stopping",
+    message: "Stopping report generation",
+    detail: null,
+  });
+  const stopping = copyLlmReportRunSnapshot(record.snapshot);
+  record.timer = setTimeout(() => {
+    if (record.snapshot.status !== "stopping") {
+      return;
+    }
+    const progress = browserLlmProgressEvent(
+      record,
+      "cancelled",
+      "Report generation cancelled",
+    );
+    updateBrowserLlmRun(
+      record,
+      {
+        status: "cancelled",
+        stage: "cancelled",
+        message: progress.message,
+        detail: null,
+        error: null,
+        finished_at: new Date().toISOString(),
+      },
+      progress,
+    );
+    record.timer = null;
+  }, 0);
+  return stopping;
+}
+
+export async function retryLlmReport(
+  runId: string,
+): Promise<LlmReportRunSnapshot> {
+  if (isTauriRuntime()) {
+    return invoke<LlmReportRunSnapshot>("retry_llm_report", { runId });
+  }
+  const source = browserLlmReportRuns.get(runId);
+  if (!source) {
+    throw new Error(`Report run not found: ${runId}`);
+  }
+  if (!["cancelled", "failed", "completed"].includes(source.snapshot.status)) {
+    throw new Error(`Report run ${runId} is not finished`);
+  }
+  return createBrowserLlmReportRun(
+    copyLlmGenerateRequest(source.request),
+    runId,
+  );
+}
+
+export async function subscribeLlmReportRuns(
+  onRun: (snapshot: LlmReportRunSnapshot) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    browserLlmReportRunListeners.add(onRun);
+    return () => browserLlmReportRunListeners.delete(onRun);
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<LlmReportRunSnapshot>(
+    "llm-report-run-updated",
+    (event) => onRun(event.payload),
+  );
 }
 
 export async function generateTranscriptReport(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { defaultLevelSnapshot, mockSnapshot } from "./app-state";
 import {
   chooseSaveRoot,
@@ -6,6 +6,7 @@ import {
   cancelCurrentOperation,
   cancelModelDownload,
   cancelCurrentTranscription,
+  cancelLlmReport,
   deleteModel,
   deleteOpenRouterApiKey,
   downloadModel,
@@ -13,6 +14,7 @@ import {
   enqueueAudioFiles,
   generateTranscriptReport,
   listLlmReportHistory,
+  listLlmReportRuns,
   loadLlmReportHistoryDetail,
   loadSnapshot,
   loadTranscriptDays,
@@ -21,13 +23,16 @@ import {
   regenerateTranscript,
   openTranscriptFolder,
   retryJob,
+  retryLlmReport,
   saveOpenRouterApiKey,
   saveSettingsPatch,
   skipJob,
   startLiveCapture,
+  startLlmReport,
   stopLiveCapture,
   startSourceCapture,
   stopSourceCapture,
+  subscribeLlmReportRuns,
   loadRecognizedSources,
   loadSourceCaptureStatus,
   verifyModel,
@@ -153,6 +158,57 @@ describe("tauri live capture client", () => {
       "saving",
       "completed",
     ]);
+  });
+
+  it("cancels browser report work without publishing history and retries it", async () => {
+    vi.useFakeTimers();
+    await saveOpenRouterApiKey("sk-or-browser");
+    const historyBefore = await listLlmReportHistory();
+    const statuses: string[] = [];
+    const unsubscribe = await subscribeLlmReportRuns((run) => {
+      statuses.push(run.status);
+    });
+    const request = {
+      kind: "summary" as const,
+      transcripts: [{
+        transcript_path: "/tmp/source.txt",
+        audio_path: null,
+        recorded_at: "2026-07-18T09:00:00+09:00",
+        text: "source",
+        source: "microphone" as const,
+        source_label: null,
+      }],
+    };
+
+    const first = await startLlmReport(request);
+    await expect(startLlmReport(request)).rejects.toThrow(
+      first.run_id,
+    );
+    await vi.advanceTimersByTimeAsync(20);
+    const stopping = await cancelLlmReport(first.run_id);
+    expect(stopping.status).toBe("stopping");
+    await vi.runAllTimersAsync();
+
+    const cancelled = (await listLlmReportRuns()).find(
+      (run) => run.run_id === first.run_id,
+    );
+    expect(cancelled?.status).toBe("cancelled");
+    expect(await listLlmReportHistory()).toHaveLength(
+      historyBefore.length,
+    );
+
+    const retry = await retryLlmReport(first.run_id);
+    expect(retry.parent_run_id).toBe(first.run_id);
+    expect(retry.run_id).not.toBe(first.run_id);
+    await cancelLlmReport(retry.run_id);
+    await vi.runAllTimersAsync();
+    unsubscribe();
+    vi.useRealTimers();
+
+    expect(statuses).toContain("queued");
+    expect(statuses).toContain("running");
+    expect(statuses).toContain("stopping");
+    expect(statuses).toContain("cancelled");
   });
 
   it("simulates live browser fallback level snapshots while input is active", async () => {

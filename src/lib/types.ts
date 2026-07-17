@@ -206,7 +206,8 @@ export type LlmProgressStage =
   | "saving"
   | "completed"
   | "max_iterations_reached"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface LlmGenerateRequest {
   kind: LlmReportKind;
@@ -235,6 +236,42 @@ export interface LlmGenerateResponse {
   report_id: string;
   usage: LlmUsageTotals;
   report_path?: string | null;
+}
+
+export type LlmReportRunStatus =
+  | "queued"
+  | "running"
+  | "stopping"
+  | "cancelled"
+  | "failed"
+  | "completed";
+
+export interface LlmReportRunSnapshot {
+  run_id: string;
+  parent_run_id: string | null;
+  revision: number;
+  status: LlmReportRunStatus;
+  stage: LlmProgressStage | null;
+  kind: LlmReportKind;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  iteration: number;
+  max_iterations: number;
+  message: string;
+  detail: string | null;
+  error: string | null;
+  progress: LlmProgressEvent[];
+  model: string;
+  selected_count: number;
+  date_range: string;
+  report_id: string | null;
+  report_path: string | null;
+  completion_reason: LlmCompletionReason | null;
+  success_criteria_met: boolean | null;
+  quality_feedback: string | null;
+  usage: LlmUsageTotals | null;
 }
 
 export interface LlmUsageTotals {

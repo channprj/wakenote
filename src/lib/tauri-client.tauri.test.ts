@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultPermissions, defaultSettings, emptyQueue, mockModels } from "./app-state";
-import type { AppStatus, QueueSnapshot, RecentTranscript } from "./types";
+import type {
+  AppStatus,
+  LlmReportRunSnapshot,
+  QueueSnapshot,
+  RecentTranscript,
+} from "./types";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -41,6 +46,39 @@ const status: AppStatus = {
   queue,
 };
 
+function reportRun(
+  overrides: Partial<LlmReportRunSnapshot> = {},
+): LlmReportRunSnapshot {
+  return {
+    run_id: "run-1",
+    parent_run_id: null,
+    revision: 1,
+    status: "queued",
+    stage: null,
+    kind: "summary",
+    created_at: "2026-07-18T00:00:00Z",
+    updated_at: "2026-07-18T00:00:00Z",
+    started_at: null,
+    finished_at: null,
+    iteration: 0,
+    max_iterations: 3,
+    message: "Queued for report generation",
+    detail: null,
+    error: null,
+    progress: [],
+    model: "z-ai/glm-5.2",
+    selected_count: 1,
+    date_range: "2026-07-18",
+    report_id: null,
+    report_path: null,
+    completion_reason: null,
+    success_criteria_met: null,
+    quality_feedback: null,
+    usage: null,
+    ...overrides,
+  };
+}
+
 function mockInvoke(command: string) {
   switch (command) {
     case "get_settings":
@@ -79,6 +117,21 @@ function mockInvoke(command: string) {
           text: "rebuilt transcript",
         },
       ] satisfies RecentTranscript[]);
+    case "start_llm_report":
+      return Promise.resolve(reportRun());
+    case "list_llm_report_runs":
+      return Promise.resolve([reportRun()]);
+    case "cancel_llm_report":
+      return Promise.resolve(reportRun({
+        revision: 2,
+        status: "stopping",
+        message: "Stopping report generation",
+      }));
+    case "retry_llm_report":
+      return Promise.resolve(reportRun({
+        run_id: "run-2",
+        parent_run_id: "run-1",
+      }));
     default:
       return Promise.reject(new Error(`unexpected invoke command: ${command}`));
   }
@@ -156,6 +209,70 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("open_transcript_folder", {
       path: "/tmp/WakeNote/20260611/024304-spotify.m4a",
     });
+  });
+
+  it("uses durable report run commands and forwards revisioned events", async () => {
+    (globalThis as { window?: unknown }).window = {
+      __TAURI_INTERNALS__: {},
+    };
+    let runHandler:
+      | ((event: { payload: LlmReportRunSnapshot }) => void)
+      | undefined;
+    const unlisten = vi.fn();
+    mocks.invoke.mockImplementation(mockInvoke);
+    mocks.listen.mockImplementation(
+      async (
+        eventName: string,
+        handler: (event: { payload: LlmReportRunSnapshot }) => void,
+      ) => {
+        expect(eventName).toBe("llm-report-run-updated");
+        runHandler = handler;
+        return unlisten;
+      },
+    );
+    const {
+      cancelLlmReport,
+      listLlmReportRuns,
+      retryLlmReport,
+      startLlmReport,
+      subscribeLlmReportRuns,
+    } = await import("./tauri-client");
+    const request = {
+      kind: "summary" as const,
+      transcripts: [],
+    };
+    const updates: LlmReportRunSnapshot[] = [];
+
+    const started = await startLlmReport(request);
+    const listed = await listLlmReportRuns();
+    const stopping = await cancelLlmReport(started.run_id);
+    const retry = await retryLlmReport(started.run_id);
+    const stopListening = await subscribeLlmReportRuns((run) =>
+      updates.push(run),
+    );
+    runHandler?.({
+      payload: reportRun({
+        revision: 3,
+        status: "cancelled",
+        stage: "cancelled",
+      }),
+    });
+    stopListening();
+
+    expect(listed).toHaveLength(1);
+    expect(stopping.status).toBe("stopping");
+    expect(retry.parent_run_id).toBe(started.run_id);
+    expect(updates[0].revision).toBe(3);
+    expect(mocks.invoke).toHaveBeenCalledWith("start_llm_report", {
+      request,
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_llm_report", {
+      runId: "run-1",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("retry_llm_report", {
+      runId: "run-1",
+    });
+    expect(unlisten).toHaveBeenCalledOnce();
   });
 
   it("subscribes before report generation and forwards progress for the active run", async () => {
