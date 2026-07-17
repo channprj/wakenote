@@ -34,6 +34,9 @@ thiserror = "2"
 ureq = "2"
 whisper-rs = { version = "0.16", default-features = false }
 tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Pin sherpa-onnx to v1.13.3, which adds multilingual Nemotron 3.5 streaming ASR
 # (PR #3671: the model needs a per-stream language `prompt_index` the bundled

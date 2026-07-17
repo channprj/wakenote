@@ -1,12 +1,16 @@
+use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use wakenote::commands::RecentTranscript;
 use wakenote::llm::{
-    LlmCompletionReason, LlmGenerateRequest, LlmProgressStage, LlmReportHistoryItem, LlmReportKind,
-    OpenRouterClient, build_openrouter_request_body, build_openrouter_request_body_with_system,
-    export_llm_report, format_transcripts_for_llm,
-    generate_transcript_report_with_client_and_progress, list_llm_report_history,
+    LlmCompletionReason, LlmGenerateError, LlmGenerateRequest, LlmProgressStage,
+    LlmReportHistoryItem, LlmReportKind, OpenRouterClient, build_openrouter_request_body,
+    build_openrouter_request_body_with_system, export_llm_report, format_transcripts_for_llm,
+    generate_transcript_report_with_client_and_progress,
+    generate_transcript_report_with_client_progress_and_cancel, list_llm_report_history,
     load_llm_report_history_detail, parse_openrouter_chat_content, parse_openrouter_chat_response,
     parse_quality_evaluation, render_prompt_template,
 };
@@ -176,8 +180,9 @@ impl ScriptedClient {
     }
 }
 
+#[async_trait]
 impl OpenRouterClient for ScriptedClient {
-    fn chat(&self, _api_key: &str, body: serde_json::Value) -> Result<String, String> {
+    async fn chat(&self, _api_key: &str, body: serde_json::Value) -> Result<String, String> {
         let prompt = body["messages"]
             .as_array()
             .and_then(|messages| messages.last())
@@ -229,6 +234,127 @@ fn generation_settings(save_root: &std::path::Path, max_iterations: u8) -> AppSe
     settings
 }
 
+#[derive(Clone)]
+struct PendingClient {
+    dropped: Arc<AtomicBool>,
+}
+
+struct DropSignal(Arc<AtomicBool>);
+
+impl Drop for DropSignal {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+#[async_trait]
+impl OpenRouterClient for PendingClient {
+    async fn chat(&self, _api_key: &str, _body: serde_json::Value) -> Result<String, String> {
+        let _signal = DropSignal(self.dropped.clone());
+        std::future::pending::<Result<String, String>>().await
+    }
+}
+
+struct UnexpectedClient;
+
+#[async_trait]
+impl OpenRouterClient for UnexpectedClient {
+    async fn chat(&self, _api_key: &str, _body: serde_json::Value) -> Result<String, String> {
+        panic!("HTTP must not start after run progress persistence fails");
+    }
+}
+
+#[tokio::test]
+async fn progress_persistence_failure_stops_before_http() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = generation_settings(temp.path(), 3);
+    let cancellation = CancellationToken::new();
+
+    let error = generate_transcript_report_with_client_progress_and_cancel(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::Summary),
+        &UnexpectedClient,
+        &cancellation,
+        |_| Err("Could not persist report run progress".into()),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        LlmGenerateError::Failed("Could not persist report run progress".into())
+    );
+    assert!(!temp.path().join("reports").exists());
+}
+
+#[tokio::test]
+async fn cancellation_drops_the_in_flight_http_future_without_saving() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = generation_settings(temp.path(), 3);
+    let dropped = Arc::new(AtomicBool::new(false));
+    let client = PendingClient {
+        dropped: dropped.clone(),
+    };
+    let cancellation = CancellationToken::new();
+    let cancellation_for_task = cancellation.clone();
+
+    let task = tokio::spawn(async move {
+        generate_transcript_report_with_client_progress_and_cancel(
+            &settings,
+            "sk-or-test",
+            generation_request(LlmReportKind::Summary),
+            &client,
+            &cancellation_for_task,
+            |_| Ok(()),
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    cancellation.cancel();
+
+    let error = task.await.unwrap().unwrap_err();
+
+    assert_eq!(error, LlmGenerateError::Cancelled);
+    assert!(dropped.load(Ordering::Acquire));
+    assert!(!temp.path().join("reports").exists());
+}
+
+#[tokio::test]
+async fn cancellation_during_completion_event_removes_persisted_report() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = generation_settings(temp.path(), 1);
+    let client = ScriptedClient::new([
+        "complete draft",
+        r#"{"success":true,"feedback":"Complete."}"#,
+    ]);
+    let cancellation = CancellationToken::new();
+    let cancellation_from_progress = cancellation.clone();
+
+    let error = generate_transcript_report_with_client_progress_and_cancel(
+        &settings,
+        "sk-or-test",
+        generation_request(LlmReportKind::Summary),
+        &client,
+        &cancellation,
+        move |event| {
+            if event.stage == LlmProgressStage::Completed {
+                cancellation_from_progress.cancel();
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error, LlmGenerateError::Cancelled);
+    assert!(
+        list_llm_report_history(temp.path().to_str().unwrap())
+            .unwrap()
+            .is_empty()
+    );
+}
+
 fn generation_request(kind: LlmReportKind) -> LlmGenerateRequest {
     LlmGenerateRequest {
         kind,
@@ -241,8 +367,8 @@ fn generation_request(kind: LlmReportKind) -> LlmGenerateRequest {
     }
 }
 
-#[test]
-fn generation_stops_after_the_first_successful_quality_evaluation() {
+#[tokio::test]
+async fn generation_stops_after_the_first_successful_quality_evaluation() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 30);
     let client = ScriptedClient::new([
@@ -259,6 +385,7 @@ fn generation_stops_after_the_first_successful_quality_evaluation() {
         &client,
         move |event| progress_events.lock().expect("lock").push(event),
     )
+    .await
     .unwrap();
 
     assert_eq!(result.content, "first complete draft");
@@ -287,8 +414,8 @@ fn generation_stops_after_the_first_successful_quality_evaluation() {
     );
 }
 
-#[test]
-fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
+#[tokio::test]
+async fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 30);
     let client = ScriptedClient::from_raw([
@@ -308,6 +435,7 @@ fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
         &client,
         |_| {},
     )
+    .await
     .unwrap();
 
     assert_eq!(result.usage.request_count, 2);
@@ -317,8 +445,8 @@ fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
     assert_eq!(result.usage.cost, Some(0.0015));
 }
 
-#[test]
-fn generation_refines_with_quality_feedback_and_stops_when_the_second_draft_passes() {
+#[tokio::test]
+async fn generation_refines_with_quality_feedback_and_stops_when_the_second_draft_passes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 5);
     let client = ScriptedClient::new([
@@ -335,6 +463,7 @@ fn generation_refines_with_quality_feedback_and_stops_when_the_second_draft_pass
         &client,
         |_| {},
     )
+    .await
     .unwrap();
 
     assert_eq!(result.content, "complete revised draft");
@@ -364,8 +493,8 @@ fn generation_refines_with_quality_feedback_and_stops_when_the_second_draft_pass
     );
 }
 
-#[test]
-fn generation_returns_the_latest_draft_with_an_explicit_incomplete_status_at_the_limit() {
+#[tokio::test]
+async fn generation_returns_the_latest_draft_with_an_explicit_incomplete_status_at_the_limit() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 2);
     let client = ScriptedClient::new([
@@ -384,6 +513,7 @@ fn generation_returns_the_latest_draft_with_an_explicit_incomplete_status_at_the
         &client,
         move |event| progress_events.lock().expect("lock").push(event),
     )
+    .await
     .unwrap();
 
     assert_eq!(result.content, "draft two");
@@ -416,8 +546,8 @@ fn quality_evaluation_parser_accepts_a_json_code_fence() {
     assert_eq!(evaluation.feedback, "Add evidence notes.");
 }
 
-#[test]
-fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_a_report() {
+#[tokio::test]
+async fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_a_report() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 3);
     let client = ScriptedClient::new(["draft", "not json"]);
@@ -431,6 +561,7 @@ fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_a_repo
         &client,
         move |event| progress_events.lock().expect("lock").push(event),
     )
+    .await
     .unwrap_err();
 
     assert!(error.contains("Quality evaluator did not return a JSON object"));
@@ -441,8 +572,8 @@ fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_a_repo
     assert!(!tmp.path().join("reports").exists());
 }
 
-#[test]
-fn generation_persists_markdown_report_under_save_root() {
+#[tokio::test]
+async fn generation_persists_markdown_report_under_save_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 1);
     let client = ScriptedClient::new(["persist me", r#"{"success":true,"feedback":"Complete."}"#]);
@@ -454,6 +585,7 @@ fn generation_persists_markdown_report_under_save_root() {
         &client,
         |_| {},
     )
+    .await
     .unwrap();
     let report_path = result.report_path.expect("report path");
 
@@ -462,8 +594,8 @@ fn generation_persists_markdown_report_under_save_root() {
     assert_eq!(std::fs::read_to_string(report_path).unwrap(), "persist me");
 }
 
-#[test]
-fn generated_report_is_available_as_history_detail_with_metadata() {
+#[tokio::test]
+async fn generated_report_is_available_as_history_detail_with_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 1);
     let client = ScriptedClient::from_raw([
@@ -483,6 +615,7 @@ fn generated_report_is_available_as_history_detail_with_metadata() {
         &client,
         |_| {},
     )
+    .await
     .unwrap();
 
     let history = list_llm_report_history(tmp.path().to_str().unwrap()).unwrap();

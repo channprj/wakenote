@@ -1203,18 +1203,15 @@ async fn generate_transcript_report(
         (backend.settings(), api_key)
     };
 
-    tauri::async_runtime::spawn_blocking(move || {
-        wakenote::llm::generate_transcript_report_with_progress(
-            &settings,
-            &api_key,
-            request,
-            |progress| {
-                let _ = app.emit(EVENT_LLM_REPORT_PROGRESS, progress);
-            },
-        )
-    })
+    wakenote::llm::generate_transcript_report_with_progress(
+        &settings,
+        &api_key,
+        request,
+        |progress| {
+            let _ = app.emit(EVENT_LLM_REPORT_PROGRESS, progress);
+        },
+    )
     .await
-    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

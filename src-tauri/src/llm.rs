@@ -1,7 +1,10 @@
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::commands::RecentTranscript;
 use crate::settings::{AppSettings, expand_user_path};
@@ -216,33 +219,67 @@ struct ReportMetadata {
     usage: LlmUsageTotals,
 }
 
-pub trait OpenRouterClient {
-    fn chat(&self, api_key: &str, body: serde_json::Value) -> Result<String, String>;
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum LlmGenerateError {
+    #[error("report generation cancelled")]
+    Cancelled,
+    #[error("{0}")]
+    Failed(String),
 }
 
-pub struct UreqOpenRouterClient;
+#[async_trait]
+pub trait OpenRouterClient: Send + Sync {
+    async fn chat(&self, api_key: &str, body: serde_json::Value) -> Result<String, String>;
+}
 
-impl OpenRouterClient for UreqOpenRouterClient {
-    fn chat(&self, api_key: &str, body: serde_json::Value) -> Result<String, String> {
-        ureq::post(OPENROUTER_CHAT_COMPLETIONS_URL)
-            .set("Authorization", &format!("Bearer {api_key}"))
-            .set("Content-Type", "application/json")
-            .set("HTTP-Referer", "https://github.com/channprj/sagwan")
-            .set("X-Title", "WakeNote")
-            .send_string(&body.to_string())
-            .map_err(openrouter_error_body)?
-            .into_string()
-            .map_err(|error| error.to_string())
+pub struct ReqwestOpenRouterClient {
+    client: reqwest::Client,
+}
+
+impl Default for ReqwestOpenRouterClient {
+    fn default() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
     }
 }
 
-fn openrouter_error_body(error: ureq::Error) -> String {
-    match error {
-        ureq::Error::Status(code, response) => response
-            .into_string()
-            .map(|body| format!("OpenRouter request failed with HTTP {code}: {body}"))
-            .unwrap_or_else(|_| format!("OpenRouter request failed with HTTP {code}")),
-        ureq::Error::Transport(error) => error.to_string(),
+#[async_trait]
+impl OpenRouterClient for ReqwestOpenRouterClient {
+    async fn chat(&self, api_key: &str, body: serde_json::Value) -> Result<String, String> {
+        let response = self
+            .client
+            .post(OPENROUTER_CHAT_COMPLETIONS_URL)
+            .bearer_auth(api_key)
+            .header("HTTP-Referer", "https://github.com/channprj/wakenote")
+            .header("X-Title", "WakeNote")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        let status = response.status();
+        let body = response.text().await.map_err(|error| error.to_string())?;
+        if !status.is_success() {
+            return Err(format!(
+                "OpenRouter request failed with HTTP {}: {}",
+                status.as_u16(),
+                body
+            ));
+        }
+        Ok(body)
+    }
+}
+
+async fn chat_or_cancel<C: OpenRouterClient>(
+    client: &C,
+    cancellation: &CancellationToken,
+    api_key: &str,
+    body: serde_json::Value,
+) -> Result<String, LlmGenerateError> {
+    tokio::select! {
+        _ = cancellation.cancelled() => Err(LlmGenerateError::Cancelled),
+        result = client.chat(api_key, body) => result
+            .map_err(LlmGenerateError::Failed),
     }
 }
 
@@ -375,16 +412,17 @@ pub fn parse_quality_evaluation(content: &str) -> Result<QualityEvaluation, Stri
     Ok(evaluation)
 }
 
-pub fn generate_transcript_report_with_client<C: OpenRouterClient>(
+pub async fn generate_transcript_report_with_client<C: OpenRouterClient>(
     settings: &AppSettings,
     api_key: &str,
     request: LlmGenerateRequest,
     client: &C,
 ) -> Result<LlmGenerateResponse, String> {
     generate_transcript_report_with_client_and_progress(settings, api_key, request, client, |_| {})
+        .await
 }
 
-pub fn generate_transcript_report_with_client_and_progress<C, F>(
+pub async fn generate_transcript_report_with_client_and_progress<C, F>(
     settings: &AppSettings,
     api_key: &str,
     request: LlmGenerateRequest,
@@ -395,10 +433,41 @@ where
     C: OpenRouterClient,
     F: Fn(LlmProgressEvent),
 {
+    let cancellation = CancellationToken::new();
+    generate_transcript_report_with_client_progress_and_cancel(
+        settings,
+        api_key,
+        request,
+        client,
+        &cancellation,
+        |event| {
+            on_progress(event);
+            Ok(())
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+pub async fn generate_transcript_report_with_client_progress_and_cancel<C, F>(
+    settings: &AppSettings,
+    api_key: &str,
+    request: LlmGenerateRequest,
+    client: &C,
+    cancellation: &CancellationToken,
+    on_progress: F,
+) -> Result<LlmGenerateResponse, LlmGenerateError>
+where
+    C: OpenRouterClient,
+    F: Fn(LlmProgressEvent) -> Result<(), String>,
+{
     let max_iterations = crate::settings::clamp_llm_max_iterations(settings.llm_max_iterations);
     let run_id = report_run_id(request.run_id.as_deref());
     let mut current_iteration = 0;
-    let result = (|| {
+    let result = async {
+        if cancellation.is_cancelled() {
+            return Err(LlmGenerateError::Cancelled);
+        }
         emit_progress(
             &on_progress,
             &run_id,
@@ -407,9 +476,11 @@ where
             max_iterations,
             "Preparing transcript context",
             None,
-        );
+        )?;
         if request.transcripts.is_empty() {
-            return Err("Select at least one transcript".to_string());
+            return Err(LlmGenerateError::Failed(
+                "Select at least one transcript".into(),
+            ));
         }
         let context = format_transcripts_for_llm(&request.transcripts);
         let template = match request.kind {
@@ -463,15 +534,20 @@ where
                 max_iterations,
                 message,
                 (iteration > 1).then(|| evaluation.feedback.clone()),
-            );
-            let response = parse_openrouter_chat_response(&client.chat(
+            )?;
+            let response_body = chat_or_cancel(
+                client,
+                cancellation,
                 api_key,
                 build_openrouter_request_body_with_system(
                     &settings.openrouter_model,
                     system_prompt,
                     &prompt,
                 ),
-            )?)?;
+            )
+            .await?;
+            let response =
+                parse_openrouter_chat_response(&response_body).map_err(LlmGenerateError::Failed)?;
             usage.record(response.usage);
             content = response.content;
             iterations_used = iteration;
@@ -484,8 +560,10 @@ where
                 max_iterations,
                 "Checking success criteria",
                 None,
-            );
-            let evaluation_response = parse_openrouter_chat_response(&client.chat(
+            )?;
+            let evaluation_body = chat_or_cancel(
+                client,
+                cancellation,
                 api_key,
                 build_openrouter_request_body_with_system(
                     &settings.openrouter_model,
@@ -496,9 +574,13 @@ where
                         &content,
                     ),
                 ),
-            )?)?;
+            )
+            .await?;
+            let evaluation_response = parse_openrouter_chat_response(&evaluation_body)
+                .map_err(LlmGenerateError::Failed)?;
             usage.record(evaluation_response.usage);
-            evaluation = parse_quality_evaluation(&evaluation_response.content)?;
+            evaluation = parse_quality_evaluation(&evaluation_response.content)
+                .map_err(LlmGenerateError::Failed)?;
             if evaluation.success {
                 break;
             }
@@ -518,6 +600,9 @@ where
             )
         };
         let usage = usage.finish();
+        if cancellation.is_cancelled() {
+            return Err(LlmGenerateError::Cancelled);
+        }
         emit_progress(
             &on_progress,
             &run_id,
@@ -526,7 +611,10 @@ where
             max_iterations,
             "Saving report",
             Some(evaluation.feedback.clone()),
-        );
+        )?;
+        if cancellation.is_cancelled() {
+            return Err(LlmGenerateError::Cancelled);
+        }
         let history_item = persist_report(
             &settings.save_root,
             request.kind,
@@ -542,8 +630,14 @@ where
                 date_range: context.date_range,
                 usage: usage.clone(),
             },
-        )?;
-        emit_progress(
+        )
+        .map_err(LlmGenerateError::Failed)?;
+        let report_path = history_item.report_path.clone();
+        if cancellation.is_cancelled() {
+            remove_persisted_report(&report_path);
+            return Err(LlmGenerateError::Cancelled);
+        }
+        let completion_progress = emit_progress(
             &on_progress,
             &run_id,
             completion_stage,
@@ -552,6 +646,14 @@ where
             completion_message,
             Some(evaluation.feedback.clone()),
         );
+        if cancellation.is_cancelled() {
+            remove_persisted_report(&report_path);
+            return Err(LlmGenerateError::Cancelled);
+        }
+        if let Err(error) = completion_progress {
+            remove_persisted_report(&report_path);
+            return Err(error);
+        }
 
         Ok(LlmGenerateResponse {
             run_id: run_id.clone(),
@@ -564,12 +666,13 @@ where
             model: settings.openrouter_model.clone(),
             report_id: history_item.report_id,
             usage,
-            report_path: Some(history_item.report_path),
+            report_path: Some(report_path),
         })
-    })();
+    }
+    .await;
 
-    if let Err(error) = &result {
-        emit_progress(
+    if let Err(LlmGenerateError::Failed(error)) = &result {
+        let _ = emit_progress(
             &on_progress,
             &run_id,
             LlmProgressStage::Failed,
@@ -582,15 +685,21 @@ where
     result
 }
 
-pub fn generate_transcript_report(
+pub async fn generate_transcript_report(
     settings: &AppSettings,
     api_key: &str,
     request: LlmGenerateRequest,
 ) -> Result<LlmGenerateResponse, String> {
-    generate_transcript_report_with_client(settings, api_key, request, &UreqOpenRouterClient)
+    generate_transcript_report_with_client(
+        settings,
+        api_key,
+        request,
+        &ReqwestOpenRouterClient::default(),
+    )
+    .await
 }
 
-pub fn generate_transcript_report_with_progress<F>(
+pub async fn generate_transcript_report_with_progress<F>(
     settings: &AppSettings,
     api_key: &str,
     request: LlmGenerateRequest,
@@ -603,9 +712,10 @@ where
         settings,
         api_key,
         request,
-        &UreqOpenRouterClient,
+        &ReqwestOpenRouterClient::default(),
         on_progress,
     )
+    .await
 }
 
 fn generation_prompt(report_instructions: &str, transcript_data: &str) -> String {
@@ -668,8 +778,9 @@ fn emit_progress<F>(
     max_iterations: u8,
     message: &str,
     detail: Option<String>,
-) where
-    F: Fn(LlmProgressEvent),
+) -> Result<(), LlmGenerateError>
+where
+    F: Fn(LlmProgressEvent) -> Result<(), String>,
 {
     on_progress(LlmProgressEvent {
         run_id: run_id.to_string(),
@@ -678,7 +789,16 @@ fn emit_progress<F>(
         max_iterations,
         message: message.to_string(),
         detail,
-    });
+    })
+    .map_err(LlmGenerateError::Failed)
+}
+
+pub fn remove_persisted_report(report_path: &str) {
+    let path = Path::new(report_path);
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("json"));
+    let _ = std::fs::remove_file(path.with_extension("md.tmp"));
+    let _ = std::fs::remove_file(path.with_extension("json.tmp"));
 }
 
 fn persist_report(
