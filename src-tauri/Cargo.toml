@@ -33,6 +33,7 @@ tauri-plugin-notification = "2"
 thiserror = "2"
 ureq = "2"
 whisper-rs = { version = "0.16", default-features = false }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Pin sherpa-onnx to v1.13.3, which adds multilingual Nemotron 3.5 streaming ASR
 # (PR #3671: the model needs a per-stream language `prompt_index` the bundled

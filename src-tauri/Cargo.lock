@@ -4429,6 +4429,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -4873,6 +4874,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio-util",
  "ureq",
  "whisper-rs",
 ]

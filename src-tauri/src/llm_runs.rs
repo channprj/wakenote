@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio_util::sync::CancellationToken;
 
 use crate::llm::{
     LlmCompletionReason, LlmGenerateRequest, LlmProgressEvent, LlmProgressStage, LlmReportKind,
@@ -8,6 +10,7 @@ use crate::llm::{
 };
 
 const INTERRUPTED_ERROR: &str = "WakeNote closed before this report finished";
+static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,6 +120,51 @@ impl LlmReportRunRecord {
         self.touch(now);
     }
 
+    pub fn apply_progress(&mut self, event: LlmProgressEvent, now: &str) {
+        if self.snapshot.status.is_terminal()
+            || self.snapshot.status == LlmReportRunStatus::Stopping
+        {
+            return;
+        }
+        self.snapshot.stage = Some(event.stage);
+        self.snapshot.iteration = event.iteration;
+        self.snapshot.max_iterations = event.max_iterations;
+        self.snapshot.message = event.message.clone();
+        self.snapshot.detail = event.detail.clone();
+        self.snapshot.progress.push(event);
+        self.touch(now);
+    }
+
+    pub fn mark_stopping(&mut self, now: &str) {
+        if self.snapshot.status.is_terminal()
+            || self.snapshot.status == LlmReportRunStatus::Stopping
+        {
+            return;
+        }
+        self.snapshot.status = LlmReportRunStatus::Stopping;
+        self.snapshot.message = "Stopping report generation".into();
+        self.snapshot.detail = None;
+        self.touch(now);
+    }
+
+    pub fn mark_cancelled(&mut self, now: &str) {
+        if self.snapshot.status.is_terminal() {
+            return;
+        }
+        self.snapshot.status = LlmReportRunStatus::Cancelled;
+        self.snapshot.stage = Some(LlmProgressStage::Cancelled);
+        self.snapshot.message = "Report generation cancelled".into();
+        self.snapshot.detail = None;
+        self.snapshot.error = None;
+        self.snapshot.finished_at = Some(now.into());
+        self.append_terminal_progress(
+            LlmProgressStage::Cancelled,
+            "Report generation cancelled",
+            None,
+        );
+        self.touch(now);
+    }
+
     pub fn mark_failed(&mut self, error: &str, now: &str) {
         if self.snapshot.status.is_terminal() {
             return;
@@ -162,6 +210,181 @@ impl LlmReportRunRecord {
     fn touch(&mut self, now: &str) {
         self.snapshot.revision = self.snapshot.revision.saturating_add(1);
         self.snapshot.updated_at = now.into();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveLlmRun {
+    pub run_id: String,
+    pub cancellation: CancellationToken,
+}
+
+#[derive(Debug, Default)]
+pub struct LlmRunRuntime {
+    active: Option<ActiveLlmRun>,
+}
+
+impl LlmRunRuntime {
+    pub fn active(&self) -> Option<ActiveLlmRun> {
+        self.active.clone()
+    }
+
+    pub fn start(
+        &mut self,
+        store: &LlmRunStore,
+        mut request: LlmGenerateRequest,
+        parent_run_id: Option<String>,
+        model: &str,
+        max_iterations: u8,
+        now: &str,
+    ) -> Result<LlmReportRunSnapshot, String> {
+        if let Some(active) = &self.active {
+            return Err(format!("Report run {} is already active", active.run_id));
+        }
+        if request.transcripts.is_empty() {
+            return Err("Select at least one transcript".into());
+        }
+        let run_id = next_run_id();
+        request.run_id = Some(run_id.clone());
+        let record = LlmReportRunRecord::queued(
+            run_id.clone(),
+            parent_run_id,
+            request,
+            model.into(),
+            max_iterations,
+            now.into(),
+        );
+        store.write(&record)?;
+        self.active = Some(ActiveLlmRun {
+            run_id,
+            cancellation: CancellationToken::new(),
+        });
+        Ok(record.snapshot())
+    }
+
+    pub fn retry(
+        &mut self,
+        store: &LlmRunStore,
+        source_run_id: &str,
+        model: &str,
+        max_iterations: u8,
+        now: &str,
+    ) -> Result<LlmReportRunSnapshot, String> {
+        if let Some(active) = &self.active {
+            return Err(format!("Report run {} is already active", active.run_id));
+        }
+        let source = store.load(source_run_id)?;
+        if !source.snapshot.status.is_terminal() {
+            return Err(format!("Report run {source_run_id} is not retryable"));
+        }
+        self.start(
+            store,
+            source.request,
+            Some(source_run_id.into()),
+            model,
+            max_iterations,
+            now,
+        )
+    }
+
+    pub fn progress(
+        &mut self,
+        store: &LlmRunStore,
+        event: LlmProgressEvent,
+        now: &str,
+    ) -> Result<Option<LlmReportRunSnapshot>, String> {
+        if !self.matches_active(&event.run_id) {
+            return Ok(None);
+        }
+        let mut record = store.load(&event.run_id)?;
+        if record.snapshot.status.is_terminal()
+            || record.snapshot.status == LlmReportRunStatus::Stopping
+        {
+            return Ok(None);
+        }
+        if record.snapshot.status == LlmReportRunStatus::Queued {
+            record.mark_running(now);
+        }
+        record.apply_progress(event, now);
+        store.write(&record)?;
+        Ok(Some(record.snapshot()))
+    }
+
+    pub fn request_cancel(
+        &mut self,
+        store: &LlmRunStore,
+        run_id: &str,
+        now: &str,
+    ) -> Result<LlmReportRunSnapshot, String> {
+        let mut record = store.load(run_id)?;
+        if record.snapshot.status.is_terminal()
+            || record.snapshot.status == LlmReportRunStatus::Stopping
+        {
+            return Ok(record.snapshot());
+        }
+        let active = self
+            .active
+            .as_ref()
+            .filter(|active| active.run_id == run_id)
+            .ok_or_else(|| format!("Report run {run_id} is not active"))?;
+        let cancellation = active.cancellation.clone();
+        record.mark_stopping(now);
+        store.write(&record)?;
+        cancellation.cancel();
+        Ok(record.snapshot())
+    }
+
+    pub fn finish_cancelled(
+        &mut self,
+        store: &LlmRunStore,
+        run_id: &str,
+        now: &str,
+    ) -> Result<Option<LlmReportRunSnapshot>, String> {
+        if !self.matches_active(run_id) {
+            return Ok(None);
+        }
+        let mut record = store.load(run_id)?;
+        if record.snapshot.status.is_terminal() {
+            self.clear_active(run_id);
+            return Ok(Some(record.snapshot()));
+        }
+        record.mark_cancelled(now);
+        store.write(&record)?;
+        self.clear_active(run_id);
+        Ok(Some(record.snapshot()))
+    }
+
+    pub fn fail(
+        &mut self,
+        store: &LlmRunStore,
+        run_id: &str,
+        error: &str,
+        now: &str,
+    ) -> Result<Option<LlmReportRunSnapshot>, String> {
+        if !self.matches_active(run_id) {
+            return Ok(None);
+        }
+        let mut record = store.load(run_id)?;
+        if record.snapshot.status.is_terminal() {
+            self.clear_active(run_id);
+            return Ok(None);
+        }
+        record.mark_failed(error, now);
+        store.write(&record)?;
+        self.clear_active(run_id);
+        Ok(Some(record.snapshot()))
+    }
+
+    fn matches_active(&self, run_id: &str) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.run_id == run_id)
+    }
+
+    fn clear_active(&mut self, run_id: &str) {
+        if self.matches_active(run_id) {
+            self.active = None;
+        }
     }
 }
 
@@ -260,4 +483,12 @@ fn validate_run_id(run_id: &str) -> Result<(), String> {
     } else {
         Err(format!("Invalid report run id: {run_id}"))
     }
+}
+
+fn next_run_id() -> String {
+    let sequence = RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "llm-report-{}-{sequence}",
+        chrono::Utc::now().timestamp_millis()
+    )
 }
