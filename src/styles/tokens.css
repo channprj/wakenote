@@ -30,6 +30,14 @@
   --control-default: 34px;
   --control-primary: 36px;
   --row-dense: 40px;
+  --size-selection-control: 16px;
+  --size-icon-sm: 14px;
+  --size-icon-md: 16px;
+  --badge-height: 20px;
+  --switch-width: 32px;
+  --switch-height: 18px;
+  --switch-width-sm: 24px;
+  --switch-height-sm: 14px;
   --page-header-height: 44px;
   --status-rail-height: 36px;
 
