@@ -183,6 +183,29 @@ export interface QueueSnapshot {
   failed_count: number;
 }
 
+export type ListVisibilityKind =
+  | "meeting"
+  | "transcript"
+  | "report_run"
+  | "legacy_report";
+
+export interface ListVisibilityTarget {
+  kind: ListVisibilityKind;
+  id: string;
+}
+
+export interface SetListVisibilityRequest {
+  targets: ListVisibilityTarget[];
+  hidden: boolean;
+}
+
+export interface ListVisibilityState {
+  meetings: string[];
+  transcripts: string[];
+  report_runs: string[];
+  legacy_reports: string[];
+}
+
 export interface RecentTranscript {
   transcript_path: string;
   audio_path: string | null;

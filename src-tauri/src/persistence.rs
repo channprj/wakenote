@@ -86,6 +86,8 @@ pub enum PersistenceError {
     InvalidListVisibilityTarget,
     #[error("unsupported list visibility version {0}")]
     UnsupportedListVisibilityVersion(u32),
+    #[error("app persistence is unavailable")]
+    PersistenceUnavailable,
 }
 
 impl AppPersistence {

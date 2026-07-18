@@ -46,6 +46,7 @@ use wakenote::overlay_caption::{
     OverlayCaptionRuntime, OverlayCaptionSnapshot,
 };
 use wakenote::permissions::{self, AppPermissions};
+use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
@@ -452,6 +453,25 @@ struct OpenRouterKeyStatus {
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.settings())
+}
+
+#[tauri::command]
+fn load_list_visibility(state: State<'_, BackendState>) -> Result<ListVisibilityState, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend
+        .load_list_visibility()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_list_visibility(
+    state: State<'_, BackendState>,
+    request: SetListVisibilityRequest,
+) -> Result<ListVisibilityState, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend
+        .set_list_visibility(request)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -4033,6 +4053,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            load_list_visibility,
+            set_list_visibility,
             openrouter_key_status,
             save_openrouter_api_key,
             delete_openrouter_api_key,

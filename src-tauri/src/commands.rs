@@ -19,7 +19,9 @@ use crate::debug_log::append_debug_log;
 use crate::live_capture::AudioFrame;
 use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
-use crate::persistence::{AppPersistence, PersistenceError};
+use crate::persistence::{
+    AppPersistence, ListVisibilityState, PersistenceError, SetListVisibilityRequest,
+};
 use crate::queue::{
     BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
     is_importable_audio_path,
@@ -634,6 +636,25 @@ impl AppBackend {
 
     fn save_root_path(&self) -> PathBuf {
         expand_user_path(&self.settings.save_root)
+    }
+
+    pub fn load_list_visibility(&self) -> Result<ListVisibilityState, PersistenceError> {
+        let persistence = self
+            .persistence
+            .as_ref()
+            .ok_or(PersistenceError::PersistenceUnavailable)?;
+        persistence.load_list_visibility(&self.save_root_path())
+    }
+
+    pub fn set_list_visibility(
+        &self,
+        request: SetListVisibilityRequest,
+    ) -> Result<ListVisibilityState, PersistenceError> {
+        let persistence = self
+            .persistence
+            .as_ref()
+            .ok_or(PersistenceError::PersistenceUnavailable)?;
+        persistence.set_list_visibility(&self.save_root_path(), &request)
     }
 
     fn model_directory_path(&self) -> PathBuf {

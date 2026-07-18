@@ -243,6 +243,48 @@ fn backend_loaded_from_dir_persists_settings_and_queue_mutations() {
     assert_eq!(reloaded.queue_snapshot().pending_count, 1);
 }
 
+#[test]
+fn backend_list_visibility_follows_the_current_save_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app_data = tmp.path().join("app-data");
+    let first_root = tmp.path().join("first-save-root");
+    let second_root = tmp.path().join("second-save-root");
+    let mut backend = AppBackend::load_from_dir(&app_data).expect("load backend");
+    backend.update_settings(SettingsPatch {
+        save_root: Some(first_root.to_string_lossy().into_owned()),
+        ..SettingsPatch::default()
+    });
+
+    backend
+        .set_list_visibility(SetListVisibilityRequest {
+            targets: vec![ListVisibilityTarget {
+                kind: ListVisibilityKind::Meeting,
+                id: "meeting-1".to_string(),
+            }],
+            hidden: true,
+        })
+        .expect("hide meeting");
+    assert!(
+        backend
+            .load_list_visibility()
+            .expect("first root visibility")
+            .meetings
+            .contains("meeting-1")
+    );
+
+    backend.update_settings(SettingsPatch {
+        save_root: Some(second_root.to_string_lossy().into_owned()),
+        ..SettingsPatch::default()
+    });
+    assert!(
+        backend
+            .load_list_visibility()
+            .expect("second root visibility")
+            .meetings
+            .is_empty()
+    );
+}
+
 fn visibility_target(kind: ListVisibilityKind, id: &str) -> ListVisibilityTarget {
     ListVisibilityTarget {
         kind,

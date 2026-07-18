@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { formatLocalTimestamp } from "./transcript-history";
 import {
+  applyListVisibilityRequest,
+  emptyListVisibilityState,
+} from "./list-visibility";
+import {
   defaultSettings,
   defaultLevelSnapshot,
   deriveProductMode,
@@ -36,6 +40,8 @@ import type {
   LlmReportHistoryItem,
   LlmReportRunSnapshot,
   OpenRouterKeyStatus,
+  ListVisibilityState,
+  SetListVisibilityRequest,
 } from "./types";
 
 declare global {
@@ -54,6 +60,7 @@ let browserCaptureSessionTranscriptionRequested = false;
 let browserSourceCapturing = false;
 let browserDetectedSource: SourcePayload | null = null;
 let browserOpenRouterApiKey: string | null = null;
+let browserListVisibility = emptyListVisibilityState();
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
 interface BrowserLlmReportRunRecord {
@@ -75,6 +82,31 @@ function permissionSnapshotFromBrowser(): AppPermissions {
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+}
+
+export async function loadListVisibility(): Promise<ListVisibilityState> {
+  if (!isTauriRuntime()) {
+    return {
+      meetings: [...browserListVisibility.meetings],
+      transcripts: [...browserListVisibility.transcripts],
+      report_runs: [...browserListVisibility.report_runs],
+      legacy_reports: [...browserListVisibility.legacy_reports],
+    };
+  }
+  return invoke<ListVisibilityState>("load_list_visibility");
+}
+
+export async function setListVisibility(
+  request: SetListVisibilityRequest,
+): Promise<ListVisibilityState> {
+  if (!isTauriRuntime()) {
+    browserListVisibility = applyListVisibilityRequest(
+      browserListVisibility,
+      request,
+    );
+    return loadListVisibility();
+  }
+  return invoke<ListVisibilityState>("set_list_visibility", { request });
 }
 
 function queueFromJobs(jobs: QueueJob[]): QueueSnapshot {
