@@ -1,33 +1,26 @@
 import {
   ChevronLeftIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   FileAudioIcon,
   FolderOpenIcon,
   Loader2Icon,
   RotateCcwIcon,
-  Trash2Icon,
   UploadIcon,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardContent,
   CardFooter,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
+import {
+  ListVisibilityToolbar,
+  type ListVisibilityMode,
+} from "@/components/ListVisibilityToolbar";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
@@ -52,6 +45,12 @@ export interface MeetingTranscriptionViewProps {
   liveTextById: Record<string, string>;
   busy: boolean;
   error: string | null;
+  visibilityMode: ListVisibilityMode;
+  visibleCount: number;
+  hiddenCount: number;
+  selectedMeetingIds: string[];
+  visibilityMutating: boolean;
+  visibilityStatus: string;
   onImport: () => void;
   onOpen: (id: string) => void;
   onBack: () => void;
@@ -59,7 +58,12 @@ export interface MeetingTranscriptionViewProps {
   onResume: (id: string) => void;
   onCopy: (text: string) => void;
   onOpenFolder: (audioPath: string) => void;
-  onDelete: (id: string) => void;
+  onVisibilityModeChange: (mode: ListVisibilityMode) => void;
+  onMeetingSelectionChange: (id: string, selected: boolean) => void;
+  onSelectAllMeetings: () => void;
+  onClearMeetingSelection: () => void;
+  onApplyMeetingSelection: () => void;
+  onSetMeetingHidden: (id: string, hidden: boolean) => void;
 }
 
 export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
@@ -83,6 +87,20 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
         </span>
       </div>
 
+      <ListVisibilityToolbar
+        mode={props.visibilityMode}
+        visibleCount={props.visibleCount}
+        hiddenCount={props.hiddenCount}
+        selectedCount={props.selectedMeetingIds.length}
+        totalInMode={props.active.length + props.past.length}
+        mutating={props.visibilityMutating}
+        statusMessage={props.visibilityStatus}
+        onModeChange={props.onVisibilityModeChange}
+        onSelectAll={props.onSelectAllMeetings}
+        onClearSelection={props.onClearMeetingSelection}
+        onApplySelection={props.onApplyMeetingSelection}
+      />
+
       {props.error ? (
         <Alert variant="destructive">
           <FileAudioIcon />
@@ -100,6 +118,16 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
               meeting={meeting}
               live={props.progressById[meeting.id]}
               previewText={props.liveTextById[meeting.id] ?? ""}
+              selected={props.selectedMeetingIds.includes(meeting.id)}
+              visibilityMode={props.visibilityMode}
+              visibilityMutating={props.visibilityMutating}
+              onOpen={() => props.onOpen(meeting.id)}
+              onSelectionChange={(selected) =>
+                props.onMeetingSelectionChange(meeting.id, selected)
+              }
+              onSetHidden={(hidden) =>
+                props.onSetMeetingHidden(meeting.id, hidden)
+              }
               onCancel={() => props.onCancel(meeting.id)}
             />
           ))}
@@ -107,23 +135,46 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
       ) : null}
 
       <section className="meeting-list" aria-labelledby="past-meetings-title">
-        <h2 id="past-meetings-title" className="meeting-list__title">Past meetings</h2>
+        <h2 id="past-meetings-title" className="meeting-list__title">
+          {props.visibilityMode === "hidden"
+            ? "Hidden meetings"
+            : "Past meetings"}
+        </h2>
         {props.past.length === 0 ? (
           <div className="meeting-empty">
             <FileAudioIcon aria-hidden="true" />
-            <span>No meetings transcribed yet.</span>
-            <small>Import a long recording to keep it separate from short transcripts.</small>
+            <span>
+              {props.visibilityMode === "hidden"
+                ? "No hidden meetings."
+                : "No meetings transcribed yet."}
+            </span>
+            <small>
+              {props.visibilityMode === "hidden"
+                ? "Hidden meetings keep every source file on disk."
+                : "Import a long recording to keep it separate from short transcripts."}
+            </small>
           </div>
         ) : (
           <ul>
             {props.past.map((meeting) => (
-              <li key={meeting.id}>
+              <li key={meeting.id} className="meeting-row">
+                <Checkbox
+                  checked={props.selectedMeetingIds.includes(meeting.id)}
+                  disabled={props.visibilityMutating}
+                  aria-label={`Select ${meeting.title}`}
+                  onCheckedChange={(checked) =>
+                    props.onMeetingSelectionChange(
+                      meeting.id,
+                      checked === true,
+                    )
+                  }
+                />
                 <button
                   type="button"
-                  className="meeting-row"
+                  className="meeting-row__main"
                   onClick={() => props.onOpen(meeting.id)}
                 >
-                  <span className="meeting-row__main">
+                  <span className="meeting-row__content">
                     <span className="meeting-row__title" title={meeting.title}>
                       {meeting.title}
                     </span>
@@ -131,10 +182,30 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
                       {formatClock(meeting.duration_ms)} · {formatDate(meeting.created_at)} · {meeting.model_id}
                     </span>
                   </span>
-                  <StatusBadge tone={meetingStatusTone(meeting.status)}>
-                    {meetingStatusLabel(meeting.status)}
-                  </StatusBadge>
                 </button>
+                <StatusBadge tone={meetingStatusTone(meeting.status)}>
+                  {meetingStatusLabel(meeting.status)}
+                </StatusBadge>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={props.visibilityMutating}
+                  aria-label={`${props.visibilityMode === "visible" ? "Hide" : "Restore"} ${meeting.title}`}
+                  onClick={() =>
+                    props.onSetMeetingHidden(
+                      meeting.id,
+                      props.visibilityMode === "visible",
+                    )
+                  }
+                >
+                  {props.visibilityMode === "visible" ? (
+                    <EyeOffIcon aria-hidden="true" />
+                  ) : (
+                    <EyeIcon aria-hidden="true" />
+                  )}
+                  {props.visibilityMode === "visible" ? "Hide" : "Restore"}
+                </Button>
               </li>
             ))}
           </ul>
@@ -148,11 +219,23 @@ function MeetingProgressRow({
   meeting,
   live,
   previewText,
+  selected,
+  visibilityMode,
+  visibilityMutating,
+  onOpen,
+  onSelectionChange,
+  onSetHidden,
   onCancel,
 }: {
   meeting: MeetingSummary;
   live?: MeetingProgressPayload;
   previewText: string;
+  selected: boolean;
+  visibilityMode: ListVisibilityMode;
+  visibilityMutating: boolean;
+  onOpen: () => void;
+  onSelectionChange: (selected: boolean) => void;
+  onSetHidden: (hidden: boolean) => void;
   onCancel: () => void;
 }) {
   const processed = live?.processed_ms ?? meeting.progress.processed_ms;
@@ -165,16 +248,41 @@ function MeetingProgressRow({
 
   return (
     <Card size="sm" className="meeting-progress-row">
-      <CardHeader>
-        <CardTitle
-          className="min-w-0 overflow-wrap-anywhere"
+      <div className="meeting-progress-row__head">
+        <Checkbox
+          checked={selected}
+          disabled={visibilityMutating}
+          aria-label={`Select ${meeting.title}`}
+          onCheckedChange={(checked) =>
+            onSelectionChange(checked === true)
+          }
+        />
+        <button
+          type="button"
+          className="meeting-progress-row__title min-w-0 overflow-wrap-anywhere"
           title={meeting.title}
+          onClick={onOpen}
         >
           <Loader2Icon data-icon="inline-start" className="meeting-spin" />
           {meeting.title}
-        </CardTitle>
+        </button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={visibilityMutating}
+          aria-label={`${visibilityMode === "visible" ? "Hide" : "Restore"} ${meeting.title}`}
+          onClick={() => onSetHidden(visibilityMode === "visible")}
+        >
+          {visibilityMode === "visible" ? (
+            <EyeOffIcon aria-hidden="true" />
+          ) : (
+            <EyeIcon aria-hidden="true" />
+          )}
+          {visibilityMode === "visible" ? "Hide" : "Restore"}
+        </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
-      </CardHeader>
+      </div>
       <CardContent>
         <Progress value={percent} aria-label={`${percent}% complete`} />
         <div className="meeting-progress-row__meta">
@@ -200,7 +308,10 @@ function MeetingDetailView({
   onResume,
   onCopy,
   onOpenFolder,
-  onDelete,
+  visibilityMode,
+  visibilityMutating,
+  visibilityStatus,
+  onSetMeetingHidden,
 }: MeetingTranscriptionViewProps & { detail: MeetingDetail }) {
   const { record, transcript, audio_path: audioPath } = detail;
 
@@ -253,29 +364,32 @@ function MeetingDetailView({
           <FolderOpenIcon data-icon="inline-start" />
           Open Folder
         </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button type="button" size="sm" variant="ghost">
-              <Trash2Icon data-icon="inline-start" />
-              Delete
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent size="sm">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this meeting?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The imported audio, progress, and transcript for “{record.title}” will be removed.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep meeting</AlertDialogCancel>
-              <AlertDialogAction variant="destructive" onClick={() => onDelete(record.id)}>
-                Delete meeting
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={visibilityMutating}
+          onClick={() =>
+            onSetMeetingHidden(
+              record.id,
+              visibilityMode === "visible",
+            )
+          }
+        >
+          {visibilityMode === "visible" ? (
+            <EyeOffIcon data-icon="inline-start" />
+          ) : (
+            <EyeIcon data-icon="inline-start" />
+          )}
+          {visibilityMode === "visible"
+            ? "Hide from list"
+            : "Restore to list"}
+        </Button>
       </div>
+
+      <span role="status" aria-live="polite" className="sr-only">
+        {visibilityStatus}
+      </span>
 
       <article className="meeting-detail__transcript">
         {transcript || <em>No transcript content.</em>}

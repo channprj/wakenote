@@ -70,6 +70,12 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
     liveTextById: {},
     busy: false,
     error: null,
+    visibilityMode: "visible",
+    visibleCount: 0,
+    hiddenCount: 0,
+    selectedMeetingIds: [],
+    visibilityMutating: false,
+    visibilityStatus: "",
     onImport: vi.fn(),
     onOpen: vi.fn(),
     onBack: vi.fn(),
@@ -77,7 +83,12 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
     onResume: vi.fn(),
     onCopy: vi.fn(),
     onOpenFolder: vi.fn(),
-    onDelete: vi.fn(),
+    onVisibilityModeChange: vi.fn(),
+    onMeetingSelectionChange: vi.fn(),
+    onSelectAllMeetings: vi.fn(),
+    onClearMeetingSelection: vi.fn(),
+    onApplyMeetingSelection: vi.fn(),
+    onSetMeetingHidden: vi.fn(),
     ...overrides,
   };
 }
@@ -150,15 +161,112 @@ describe("MeetingTranscriptionView", () => {
     expect(interrupted).toContain("Model stopped");
   });
 
-  it("requires AlertDialog confirmation before deleting", async () => {
-    const onDelete = vi.fn();
-    render(<MeetingTranscriptionView {...props({ selected: detail(), onDelete })} />);
+  it("defaults to Visible and applies one bulk hide action", async () => {
+    const onApplyMeetingSelection = vi.fn();
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          past: [
+            meeting({ id: "meeting-1" }),
+            meeting({ id: "meeting-2" }),
+          ],
+          visibleCount: 2,
+          hiddenCount: 1,
+          selectedMeetingIds: ["meeting-1", "meeting-2"],
+          onApplyMeetingSelection,
+        })}
+      />,
+    );
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(onDelete).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(
+      screen.getByRole("tab", { name: /Visible2/ }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Hide selected" }),
+    );
+    expect(onApplyMeetingSelection).toHaveBeenCalledOnce();
+  });
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete meeting" }));
-    expect(onDelete).toHaveBeenCalledWith("meeting-1");
+  it("restores hidden meetings through one batch action", async () => {
+    const onApplyMeetingSelection = vi.fn();
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          past: [meeting()],
+          visibilityMode: "hidden",
+          visibleCount: 2,
+          hiddenCount: 1,
+          selectedMeetingIds: ["meeting-1"],
+          onApplyMeetingSelection,
+        })}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Restore selected" }),
+    );
+    expect(onApplyMeetingSelection).toHaveBeenCalledOnce();
+  });
+
+  it("hides an active meeting without cancelling its work", async () => {
+    const onCancel = vi.fn();
+    const onSetMeetingHidden = vi.fn();
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          active: [
+            meeting({
+              id: "meeting-active",
+              status: "processing",
+            }),
+          ],
+          visibleCount: 1,
+          onCancel,
+          onSetMeetingHidden,
+        })}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Hide Weekly product review",
+      }),
+    );
+    expect(onSetMeetingHidden).toHaveBeenCalledWith(
+      "meeting-active",
+      true,
+    );
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("replaces destructive deletion with reversible detail visibility", async () => {
+    const onSetMeetingHidden = vi.fn();
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          selected: detail(),
+          visibleCount: 1,
+          onSetMeetingHidden,
+          visibilityStatus:
+            "Hidden from list · Files remain on disk",
+        })}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Delete/ }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Hide from list" }),
+    );
+    expect(onSetMeetingHidden).toHaveBeenCalledWith(
+      "meeting-1",
+      true,
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "Files remain on disk",
+    );
   });
 });

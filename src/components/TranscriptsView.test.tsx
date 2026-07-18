@@ -19,6 +19,7 @@ import {
   transcriptPlaybackStateAfterToggle,
   transcriptRegenerationTargetsForContextMenu,
   transcriptSourceFilterOptions,
+  transcriptVisibilityTargetsForContextMenu,
   weekStartFor,
 } from "./TranscriptsView";
 
@@ -92,6 +93,17 @@ function view(props: {
   reportRun?: LlmReportRunSnapshot | null;
   onOpenReports?: () => void;
   onOpenFolder?: (entry: RecentTranscript) => void;
+  visibilityMode?: "visible" | "hidden";
+  visibleCountByDay?: Map<string, number>;
+  hiddenCountByDay?: Map<string, number>;
+  visibilityMutating?: boolean;
+  visibilityStatus?: string;
+  visibilityError?: string | null;
+  onVisibilityModeChange?: (mode: "visible" | "hidden") => void;
+  onSetTranscriptsHidden?: (
+    entries: readonly RecentTranscript[],
+    hidden: boolean,
+  ) => boolean | Promise<boolean>;
 }) {
   return renderToStaticMarkup(
     <TranscriptsView
@@ -109,6 +121,14 @@ function view(props: {
       reportRun={props.reportRun}
       onOpenReports={props.onOpenReports}
       onOpenFolder={props.onOpenFolder}
+      visibilityMode={props.visibilityMode}
+      visibleCountByDay={props.visibleCountByDay}
+      hiddenCountByDay={props.hiddenCountByDay}
+      visibilityMutating={props.visibilityMutating}
+      visibilityStatus={props.visibilityStatus}
+      visibilityError={props.visibilityError}
+      onVisibilityModeChange={props.onVisibilityModeChange}
+      onSetTranscriptsHidden={props.onSetTranscriptsHidden}
       today={props.today}
     />,
   );
@@ -193,6 +213,38 @@ describe("TranscriptsView", () => {
       ]),
     });
     expect(markup.indexOf("morning transcript")).toBeLessThan(markup.indexOf("evening transcript"));
+  });
+
+  it("shows Visible and Hidden counts without treating hidden rows as iCloud gaps", () => {
+    const day = "2026-05-10";
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day, count: 2 }],
+      entriesByDay: new Map([
+        [day, [transcript({ text: "visible transcript" })]],
+      ]),
+      visibleCountByDay: new Map([[day, 1]]),
+      hiddenCountByDay: new Map([[day, 1]]),
+      onSetTranscriptsHidden: () => true,
+    });
+
+    expect(markup).toContain("Visible");
+    expect(markup).toContain("Hidden");
+    expect(markup).toContain('aria-label="Select transcript 2026-05-10 01:02:03"');
+    expect(markup).not.toContain("more in iCloud");
+  });
+
+  it("explains that an empty Hidden day preserves files", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      visibilityMode: "hidden",
+      hiddenCountByDay: new Map([["2026-05-10", 0]]),
+    });
+
+    expect(markup).toContain(
+      "No hidden transcripts for this day · Files remain on disk",
+    );
+    expect(markup).toContain("Restore selected");
   });
 
   it("preserves long transcript text and paths in the compact row structure", () => {
@@ -429,6 +481,26 @@ describe("TranscriptsView", () => {
       "/tmp/WakeNote/20260510/010203.txt",
       "/tmp/WakeNote/20260510/010204.txt",
     ]);
+  });
+
+  it("keeps every selected transcript as a context visibility target", () => {
+    const entries = [
+      transcript({
+        transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+      }),
+      transcript({
+        transcript_path: "/tmp/WakeNote/20260510/010204.txt",
+        audio_path: null,
+      }),
+    ];
+
+    expect(
+      transcriptVisibilityTargetsForContextMenu(
+        entries[0],
+        entries,
+        new Set(entries.map((entry) => entry.transcript_path)),
+      ),
+    ).toEqual(entries);
   });
 
   it("uses only the right-clicked row as regeneration target outside the selection", () => {

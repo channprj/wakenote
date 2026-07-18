@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
+import { useListVisibility } from "../hooks/use-list-visibility";
+import { projectListItems } from "../lib/list-visibility";
 import {
   loadTranscriptDays,
   loadTranscriptsForDay,
@@ -41,9 +49,42 @@ export function TranscriptsPanel({
   const { activeRun, runs } = useLlmReportRuns();
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [visibilityMode, setVisibilityMode] =
+    useState<"visible" | "hidden">("visible");
+  const visibility = useListVisibility();
   const requestedRef = useRef<Set<string>>(new Set());
   const startedRun = runs.find((run) => run.run_id === startedRunId);
   const visibleRun = activeRun ?? startedRun ?? null;
+
+  const projectedEntries = useMemo(() => {
+    const visible = new Map<string, RecentTranscript[]>();
+    const hidden = new Map<string, RecentTranscript[]>();
+    for (const [day, entries] of entriesByDay) {
+      const projection = projectListItems(
+        entries,
+        visibility.state,
+        (entry) => ({
+          kind: "transcript",
+          id: entry.transcript_path,
+        }),
+      );
+      visible.set(day, projection.visible);
+      hidden.set(day, projection.hidden);
+    }
+    return { visible, hidden };
+  }, [entriesByDay, visibility.state]);
+
+  const visibilityCounts = useMemo(() => {
+    const visible = new Map<string, number>();
+    const hidden = new Map<string, number>();
+    for (const [day, entries] of projectedEntries.visible) {
+      visible.set(day, entries.length);
+    }
+    for (const [day, entries] of projectedEntries.hidden) {
+      hidden.set(day, entries.length);
+    }
+    return { visible, hidden };
+  }, [projectedEntries]);
 
   const refreshDays = useCallback(async () => {
     try {
@@ -207,7 +248,19 @@ export function TranscriptsPanel({
   return (
     <TranscriptsView
       days={days}
-      entriesByDay={entriesByDay}
+      entriesByDay={
+        visibilityMode === "visible"
+          ? projectedEntries.visible
+          : projectedEntries.hidden
+      }
+      visibleCountByDay={visibilityCounts.visible}
+      hiddenCountByDay={visibilityCounts.hidden}
+      visibilityMode={visibilityMode}
+      visibilityMutating={
+        visibility.loading || visibility.mutating
+      }
+      visibilityStatus={visibility.announcement}
+      visibilityError={visibility.error}
       loadingDay={loadingDay}
       models={models}
       selectedModelId={selectedModelId}
@@ -222,6 +275,16 @@ export function TranscriptsPanel({
       onOpenReports={onOpenReports}
       onRegenerate={regenerateEntries}
       onReload={reloadDay}
+      onVisibilityModeChange={setVisibilityMode}
+      onSetTranscriptsHidden={(entries, hidden) =>
+        visibility.setTargetsHidden(
+          entries.map((entry) => ({
+            kind: "transcript",
+            id: entry.transcript_path,
+          })),
+          hidden,
+        )
+      }
     />
   );
 }

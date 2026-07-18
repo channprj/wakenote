@@ -2,12 +2,19 @@ import {
   AlertCircle,
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   Loader2,
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ReportListEntry } from "../lib/llm-report-runs";
 import { formatLocalTimestamp } from "../lib/transcript-history";
 import type {
@@ -15,8 +22,13 @@ import type {
   LlmReportKind,
   LlmReportRunSnapshot,
 } from "../lib/types";
+import {
+  ListVisibilityToolbar,
+  type ListVisibilityMode,
+} from "./ListVisibilityToolbar";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { StatusBadge } from "./ui/status-badge";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import {
@@ -41,6 +53,13 @@ export function ReportHistoryView({
   onDownload,
   onCancel,
   onRetry,
+  visibilityMode = "visible",
+  visibleCount,
+  hiddenCount = 0,
+  visibilityMutating = false,
+  visibilityStatus = "",
+  onVisibilityModeChange,
+  onSetEntriesHidden,
 }: {
   entries: readonly ReportListEntry[];
   selectedKey: string | null;
@@ -55,8 +74,20 @@ export function ReportHistoryView({
   onDownload: (reportId: string, fileName: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
+  visibilityMode?: ListVisibilityMode;
+  visibleCount?: number;
+  hiddenCount?: number;
+  visibilityMutating?: boolean;
+  visibilityStatus?: string;
+  onVisibilityModeChange?: (mode: ListVisibilityMode) => void;
+  onSetEntriesHidden?: (
+    entries: readonly ReportListEntry[],
+    hidden: boolean,
+  ) => boolean | Promise<boolean>;
 }) {
   const [filter, setFilter] = useState<ReportFilter>("all");
+  const [selectedVisibilityKeys, setSelectedVisibilityKeys] =
+    useState<Set<string>>(new Set());
   const filteredEntries = useMemo(
     () =>
       entries.filter(
@@ -72,6 +103,50 @@ export function ReportHistoryView({
     (filter === "all" || detail.item.kind === filter)
       ? detail
       : null;
+  const selectedVisibilityEntries = useMemo(
+    () =>
+      filteredEntries.filter((entry) =>
+        selectedVisibilityKeys.has(entry.key),
+      ),
+    [filteredEntries, selectedVisibilityKeys],
+  );
+
+  useEffect(() => {
+    const availableKeys = new Set<string>(
+      filteredEntries.map((entry) => entry.key),
+    );
+    setSelectedVisibilityKeys((current) => {
+      const next = new Set(
+        [...current].filter((key) => availableKeys.has(key)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [filteredEntries, visibilityMode]);
+
+  const clearVisibilitySelection = useCallback(() => {
+    setSelectedVisibilityKeys(new Set());
+  }, []);
+
+  const applyEntryVisibility = useCallback(
+    async (targets: readonly ReportListEntry[]) => {
+      if (!onSetEntriesHidden || targets.length === 0) {
+        return false;
+      }
+      const succeeded = await onSetEntriesHidden(
+        targets,
+        visibilityMode === "visible",
+      );
+      if (succeeded) {
+        clearVisibilitySelection();
+      }
+      return succeeded;
+    },
+    [
+      clearVisibilitySelection,
+      onSetEntriesHidden,
+      visibilityMode,
+    ],
+  );
 
   function changeFilter(value: string) {
     const nextFilter = value as ReportFilter;
@@ -123,6 +198,36 @@ export function ReportHistoryView({
         </Button>
       </div>
 
+      <ListVisibilityToolbar
+        mode={visibilityMode}
+        visibleCount={
+          visibleCount ??
+          (visibilityMode === "visible" ? entries.length : 0)
+        }
+        hiddenCount={
+          visibilityMode === "hidden"
+            ? Math.max(hiddenCount, entries.length)
+            : hiddenCount
+        }
+        selectedCount={selectedVisibilityEntries.length}
+        totalInMode={filteredEntries.length}
+        mutating={visibilityMutating}
+        statusMessage={visibilityStatus}
+        onModeChange={(mode) => {
+          clearVisibilitySelection();
+          onVisibilityModeChange?.(mode);
+        }}
+        onSelectAll={() =>
+          setSelectedVisibilityKeys(
+            new Set(filteredEntries.map((entry) => entry.key)),
+          )
+        }
+        onClearSelection={clearVisibilitySelection}
+        onApplySelection={() =>
+          void applyEntryVisibility(selectedVisibilityEntries)
+        }
+      />
+
       {error ? (
         <Alert variant="destructive" className="report-history__error">
           <AlertCircle />
@@ -138,14 +243,37 @@ export function ReportHistoryView({
               <Loader2 className="loading-spin" /> Loading reports
             </div>
           ) : filteredEntries.length === 0 ? (
-            <div className="report-history__empty">No reports found</div>
+            <div className="report-history__empty">
+              {visibilityMode === "hidden"
+                ? "No hidden reports · Files remain on disk"
+                : "No reports found"}
+            </div>
           ) : (
             filteredEntries.map((entry) => (
               <ReportEntryRow
                 entry={entry}
                 key={entry.key}
                 selected={selectedKey === entry.key}
+                visibilitySelected={selectedVisibilityKeys.has(
+                  entry.key,
+                )}
+                visibilityMode={visibilityMode}
+                visibilityMutating={visibilityMutating}
                 onSelect={onSelect}
+                onVisibilitySelectionChange={(key, selected) =>
+                  setSelectedVisibilityKeys((current) => {
+                    const next = new Set(current);
+                    if (selected) {
+                      next.add(key);
+                    } else {
+                      next.delete(key);
+                    }
+                    return next;
+                  })
+                }
+                onSetHidden={(target) =>
+                  void applyEntryVisibility([target])
+                }
               />
             ))
           )}
@@ -194,62 +322,111 @@ export function ReportHistoryView({
 function ReportEntryRow({
   entry,
   selected,
+  visibilitySelected,
+  visibilityMode,
+  visibilityMutating,
   onSelect,
+  onVisibilitySelectionChange,
+  onSetHidden,
 }: {
   entry: ReportListEntry;
   selected: boolean;
+  visibilitySelected: boolean;
+  visibilityMode: ListVisibilityMode;
+  visibilityMutating: boolean;
   onSelect: (entryKey: string) => void;
+  onVisibilitySelectionChange: (
+    entryKey: string,
+    selected: boolean,
+  ) => void;
+  onSetHidden: (entry: ReportListEntry) => void;
 }) {
   const run = entry.run;
   const report = entry.report;
+  const kindLabel = reportKindLabel(entry.kind);
+  const rowLabel =
+    entry.kind === "summary" ? "Summary report" : "Detailed report";
   return (
-    <button
+    <div
       data-slot="report-row"
       data-kind={run ? "run" : "report"}
       data-status={run?.status}
       aria-current={selected ? "true" : undefined}
       className="report-history__row"
       data-selected={selected}
-      onClick={() => onSelect(entry.key)}
-      type="button"
     >
-      <span className="report-history__row-icon">
-        {run && ["queued", "running", "stopping"].includes(run.status) ? (
-          <Loader2 className="loading-spin" />
+      <Checkbox
+        checked={visibilitySelected}
+        disabled={visibilityMutating}
+        aria-label={`Select ${rowLabel}`}
+        onCheckedChange={(checked) =>
+          onVisibilitySelectionChange(
+            entry.key,
+            checked === true,
+          )
+        }
+      />
+      <button
+        type="button"
+        className="report-history__row-select"
+        onClick={() => onSelect(entry.key)}
+      >
+        <span className="report-history__row-icon">
+          {run &&
+          ["queued", "running", "stopping"].includes(run.status) ? (
+            <Loader2 className="loading-spin" />
+          ) : (
+            <FileText />
+          )}
+        </span>
+        <span className="report-history__row-main">
+          <strong>{kindLabel}</strong>
+          <small>
+            {formatLocalTimestamp(entry.createdAt) ||
+              entry.createdAt}
+          </small>
+          <span>{run?.message ?? report?.file_name}</span>
+        </span>
+        <span className="report-history__row-usage">
+          {run ? (
+            <>
+              <StatusBadge tone={runStatusTone(run)}>
+                {runStatusLabels[run.status]}
+              </StatusBadge>
+              <small>
+                {run.stage
+                  ? progressStageLabels[run.stage]
+                  : "Waiting"}
+                {run.iteration > 0
+                  ? ` · ${run.iteration}/${run.max_iterations}`
+                  : ""}
+              </small>
+            </>
+          ) : (
+            <>
+              {report?.usage?.total_tokens == null
+                ? "Tokens unavailable"
+                : `${formatTokens(report.usage.total_tokens)} tokens`}
+              <small>{formatCost(report?.usage?.cost ?? null)}</small>
+            </>
+          )}
+        </span>
+      </button>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        disabled={visibilityMutating}
+        aria-label={`${visibilityMode === "visible" ? "Hide" : "Restore"} ${rowLabel}`}
+        onClick={() => onSetHidden(entry)}
+      >
+        {visibilityMode === "visible" ? (
+          <EyeOff aria-hidden="true" />
         ) : (
-          <FileText />
+          <Eye aria-hidden="true" />
         )}
-      </span>
-      <span className="report-history__row-main">
-        <strong>{reportKindLabel(entry.kind)}</strong>
-        <small>
-          {formatLocalTimestamp(entry.createdAt) || entry.createdAt}
-        </small>
-        <span>{run?.message ?? report?.file_name}</span>
-      </span>
-      <span className="report-history__row-usage">
-        {run ? (
-          <>
-            <StatusBadge tone={runStatusTone(run)}>
-              {runStatusLabels[run.status]}
-            </StatusBadge>
-            <small>
-              {run.stage ? progressStageLabels[run.stage] : "Waiting"}
-              {run.iteration > 0
-                ? ` · ${run.iteration}/${run.max_iterations}`
-                : ""}
-            </small>
-          </>
-        ) : (
-          <>
-            {report?.usage?.total_tokens == null
-              ? "Tokens unavailable"
-              : `${formatTokens(report.usage.total_tokens)} tokens`}
-            <small>{formatCost(report?.usage?.cost ?? null)}</small>
-          </>
-        )}
-      </span>
-    </button>
+      </Button>
+    </div>
   );
 }
 

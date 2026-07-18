@@ -725,17 +725,6 @@ pub fn meeting_detail(save_root: &Path, id: &str) -> Result<MeetingDetail, Strin
     })
 }
 
-pub fn delete_meeting(save_root: &Path, id: &str) -> Result<(), String> {
-    if !is_valid_meeting_id(id) {
-        return Err("invalid meeting id".to_string());
-    }
-    let dir = meeting_dir(save_root, id);
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// Rewrite orphaned `processing` meetings (their worker thread died with the
 /// app) to `failed` so the UI offers Resume. Called once on startup.
 pub fn reconcile_interrupted(save_root: &Path) {

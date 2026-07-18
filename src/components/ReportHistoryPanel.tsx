@@ -6,6 +6,11 @@ import {
   useState,
 } from "react";
 import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
+import { useListVisibility } from "../hooks/use-list-visibility";
+import {
+  projectListItems,
+  reportListVisibilityTarget,
+} from "../lib/list-visibility";
 import {
   combineReportEntries,
   type ReportListEntry,
@@ -60,8 +65,6 @@ export function ReportHistoryPanel() {
     error: runsError,
     refresh: refreshRuns,
   } = useLlmReportRuns();
-  const runsRef = useRef(runs);
-  runsRef.current = runs;
   const [items, setItems] = useState<LlmReportHistoryItem[]>([]);
   const [selection, setSelection] = useState<ReportHistorySelection>({
     selectedKey: null,
@@ -79,12 +82,29 @@ export function ReportHistoryPanel() {
     string | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [visibilityMode, setVisibilityMode] = useState<
+    "visible" | "hidden"
+  >("visible");
+  const visibility = useListVisibility();
   const completedRevisions = useRef(new Map<string, number>());
 
-  const entries = useMemo(
+  const allEntries = useMemo(
     () => combineReportEntries(runs, items),
     [items, runs],
   );
+  const projectedEntries = useMemo(
+    () =>
+      projectListItems(
+        allEntries,
+        visibility.state,
+        reportListVisibilityTarget,
+      ),
+    [allEntries, visibility.state],
+  );
+  const entries =
+    visibilityMode === "visible"
+      ? projectedEntries.visible
+      : projectedEntries.hidden;
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -92,13 +112,6 @@ export function ReportHistoryPanel() {
     try {
       const nextItems = await listLlmReportHistory();
       setItems(nextItems);
-      const nextEntries = combineReportEntries(
-        runsRef.current,
-        nextItems,
-      );
-      setSelection((current) =>
-        reportSelectionAfterRefresh(current, nextEntries),
-      );
       if (nextItems.length === 0) {
         setDetail(null);
       }
@@ -228,15 +241,29 @@ export function ReportHistoryPanel() {
       detailLoading={detailLoading}
       downloadingId={downloadingId}
       entries={entries}
-      error={error ?? runsError}
+      error={error ?? runsError ?? visibility.error}
       loading={historyLoading || runsLoading}
       selectedKey={selection.selectedKey}
+      visibilityMode={visibilityMode}
+      visibleCount={projectedEntries.visible.length}
+      hiddenCount={projectedEntries.hidden.length}
+      visibilityMutating={
+        visibility.loading || visibility.mutating
+      }
+      visibilityStatus={visibility.announcement}
       onCancel={(runId) => void cancel(runId)}
       onDownload={(reportId, fileName) =>
         void download(reportId, fileName)
       }
       onRefresh={() => void refresh()}
       onRetry={(runId) => void retry(runId)}
+      onVisibilityModeChange={setVisibilityMode}
+      onSetEntriesHidden={(selectedEntries, hidden) =>
+        visibility.setTargetsHidden(
+          selectedEntries.map(reportListVisibilityTarget),
+          hidden,
+        )
+      }
       onSelect={(selectedKey) =>
         setSelection((current) =>
           current.selectedKey === selectedKey

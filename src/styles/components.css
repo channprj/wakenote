@@ -1444,16 +1444,16 @@ svg {
 }
 
 .meeting-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-2);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   background: var(--surface);
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transition: border-color var(--transition), background var(--transition);
 }
@@ -1464,6 +1464,17 @@ svg {
 }
 
 .meeting-row__main {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.meeting-row__content {
   display: grid;
   gap: 2px;
   min-width: 0;
@@ -2092,16 +2103,28 @@ tr:last-child td {
 
 .report-history__row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   width: 100%;
   min-height: 76px;
-  border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
   color: var(--text);
   padding: 10px;
+  text-align: left;
+}
+
+.report-history__row-select {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
   text-align: left;
   cursor: pointer;
 }
@@ -2425,7 +2448,7 @@ tr:last-child td {
   text-align: left;
 }
 
-.transcript-context-menu__item {
+.transcript-context-menu__item--has-submenu {
   cursor: default;
 }
 

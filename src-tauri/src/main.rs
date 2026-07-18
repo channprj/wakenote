@@ -1835,23 +1835,6 @@ fn resume_meeting(
 }
 
 #[tauri::command]
-fn delete_meeting(
-    state: State<'_, BackendState>,
-    meeting_state: State<'_, MeetingState>,
-    id: String,
-) -> Result<(), String> {
-    {
-        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-        if runtime.current.as_deref() == Some(id.as_str()) {
-            return Err(
-                "Cannot delete a meeting that is being processed. Cancel it first.".to_string(),
-            );
-        }
-    }
-    wakenote::meeting::delete_meeting(&meeting_save_root(&state)?, &id)
-}
-
-#[tauri::command]
 fn start_live_capture(
     app: AppHandle,
     backend_state: State<'_, BackendState>,
@@ -4109,8 +4092,7 @@ fn main() {
             import_and_start_meeting,
             meeting_detail,
             cancel_meeting,
-            resume_meeting,
-            delete_meeting
+            resume_meeting
         ])
         .build(tauri::generate_context!())
         .expect("failed to build WakeNote")

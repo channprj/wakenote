@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   cancelMeeting,
-  deleteMeeting,
   importAndStartMeeting,
   isTauriRuntime,
   listMeetings,
@@ -9,15 +14,28 @@ import {
   openTranscriptFolder,
   resumeMeeting,
 } from "../lib/tauri-client";
+import { useListVisibility } from "../hooks/use-list-visibility";
+import { projectListItems } from "../lib/list-visibility";
 import { isMeetingActive } from "../lib/meeting-progress";
 import type {
+  ListVisibilityTarget,
   MeetingDetail,
   MeetingFinishedPayload,
   MeetingProgressPayload,
   MeetingSegmentPayload,
   MeetingSummary,
 } from "../lib/types";
+import type { ListVisibilityMode } from "./ListVisibilityToolbar";
 import { MeetingTranscriptionView } from "./meetings/MeetingTranscriptionView";
+
+function meetingVisibilityTarget(
+  meeting: MeetingSummary,
+): ListVisibilityTarget {
+  return {
+    kind: "meeting",
+    id: meeting.id,
+  };
+}
 
 export function MeetingTranscriptionPanel() {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
@@ -27,6 +45,12 @@ export function MeetingTranscriptionPanel() {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [visibilityMode, setVisibilityMode] =
+    useState<ListVisibilityMode>("visible");
+  const [selectedMeetingIds, setSelectedMeetingIds] = useState<
+    Set<string>
+  >(new Set());
+  const visibility = useListVisibility();
 
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
@@ -138,22 +162,6 @@ export function MeetingTranscriptionPanel() {
     [refreshMeetings],
   );
 
-  const onDelete = useCallback(
-    async (id: string) => {
-      try {
-        await deleteMeeting(id);
-        if (selectedIdRef.current === id) {
-          setSelectedId(null);
-          setDetail(null);
-        }
-        await refreshMeetings();
-      } catch (cause) {
-        setError(String(cause));
-      }
-    },
-    [refreshMeetings],
-  );
-
   const onCopy = useCallback(async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -162,8 +170,86 @@ export function MeetingTranscriptionPanel() {
     }
   }, []);
 
-  const active = meetings.filter((meeting) => isMeetingActive(meeting.status));
-  const past = meetings.filter((meeting) => !isMeetingActive(meeting.status));
+  const projectedMeetings = useMemo(
+    () =>
+      projectListItems(
+        meetings,
+        visibility.state,
+        meetingVisibilityTarget,
+      ),
+    [meetings, visibility.state],
+  );
+  const displayedMeetings =
+    visibilityMode === "visible"
+      ? projectedMeetings.visible
+      : projectedMeetings.hidden;
+  const active = displayedMeetings.filter((meeting) =>
+    isMeetingActive(meeting.status),
+  );
+  const past = displayedMeetings.filter(
+    (meeting) => !isMeetingActive(meeting.status),
+  );
+
+  useEffect(() => {
+    const displayedIds = new Set(
+      displayedMeetings.map((meeting) => meeting.id),
+    );
+    setSelectedMeetingIds((current) => {
+      const next = new Set(
+        [...current].filter((id) => displayedIds.has(id)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [displayedMeetings]);
+
+  const changeVisibilityMode = useCallback(
+    (mode: ListVisibilityMode) => {
+      setVisibilityMode(mode);
+      setSelectedMeetingIds(new Set());
+      setSelectedId(null);
+      setDetail(null);
+    },
+    [],
+  );
+
+  const changeMeetingSelection = useCallback(
+    (id: string, selected: boolean) => {
+      setSelectedMeetingIds((current) => {
+        const next = new Set(current);
+        if (selected) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const applyMeetingVisibility = useCallback(
+    async (ids: string[], hidden: boolean) => {
+      const succeeded = await visibility.setTargetsHidden(
+        ids.map((id) => ({
+          kind: "meeting" as const,
+          id,
+        })),
+        hidden,
+      );
+      if (!succeeded) {
+        return;
+      }
+      setSelectedMeetingIds(new Set());
+      if (
+        selectedIdRef.current &&
+        ids.includes(selectedIdRef.current)
+      ) {
+        setSelectedId(null);
+        setDetail(null);
+      }
+    },
+    [visibility.setTargetsHidden],
+  );
 
   return (
     <MeetingTranscriptionView
@@ -173,7 +259,15 @@ export function MeetingTranscriptionPanel() {
       progressById={progressById}
       liveTextById={liveTextById}
       busy={busy}
-      error={error}
+      error={error ?? visibility.error}
+      visibilityMode={visibilityMode}
+      visibleCount={projectedMeetings.visible.length}
+      hiddenCount={projectedMeetings.hidden.length}
+      selectedMeetingIds={[...selectedMeetingIds]}
+      visibilityMutating={
+        visibility.loading || visibility.mutating
+      }
+      visibilityStatus={visibility.announcement}
       onImport={() => void onImport()}
       onOpen={(id) => void openDetail(id)}
       onBack={() => {
@@ -184,7 +278,25 @@ export function MeetingTranscriptionPanel() {
       onResume={(id) => void onResume(id)}
       onCopy={(text) => void onCopy(text)}
       onOpenFolder={(audioPath) => void openTranscriptFolder(audioPath)}
-      onDelete={(id) => void onDelete(id)}
+      onVisibilityModeChange={changeVisibilityMode}
+      onMeetingSelectionChange={changeMeetingSelection}
+      onSelectAllMeetings={() =>
+        setSelectedMeetingIds(
+          new Set(displayedMeetings.map((meeting) => meeting.id)),
+        )
+      }
+      onClearMeetingSelection={() =>
+        setSelectedMeetingIds(new Set())
+      }
+      onApplyMeetingSelection={() =>
+        void applyMeetingVisibility(
+          [...selectedMeetingIds],
+          visibilityMode === "visible",
+        )
+      }
+      onSetMeetingHidden={(id, hidden) =>
+        void applyMeetingVisibility([id], hidden)
+      }
     />
   );
 }

@@ -1737,10 +1737,3 @@ export async function cancelMeeting(id: string): Promise<void> {
 export async function resumeMeeting(id: string): Promise<MeetingSummary> {
   return invoke<MeetingSummary>("resume_meeting", { id });
 }
-
-export async function deleteMeeting(id: string): Promise<void> {
-  if (!isTauriRuntime()) {
-    return;
-  }
-  await invoke("delete_meeting", { id });
-}
