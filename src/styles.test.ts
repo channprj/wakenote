@@ -65,6 +65,69 @@ describe("refined compact density tokens", () => {
   });
 });
 
+describe("active interface density contract", () => {
+  const activeSelector =
+    /(?:\.app-sidebar|\.page-header|\.recording-status-rail|\.recorder-|\.live-transcript|\.quick-calibration|\.settings-|\.ui-field|\.meeting-|\.transcript-|\.report-history|\.report-run|\.queue-|\.toolbar|\[data-slot="(?:live-transcript|queue-|field-row))/;
+  const densityControlSelector =
+    /(?:button|__row|\.meeting-row|\.transcript-entry|__autoplay|__play|__folder|source-badge|context-menu__item|ui-field-help__trigger|settings-priority-list\s+li)/;
+  const activeRules = [shellCss, componentsCss, pagesCss]
+    .flatMap(flatCssRules)
+    .filter(({ selector }) => activeSelector.test(selector));
+
+  it("uses typography tokens throughout active screens", () => {
+    const violations = activeRules.flatMap(({ selector, body }) => {
+      const declarations = cssDeclarations(body)
+        .filter(
+          ({ property, value }) =>
+            (property === "font-size" ||
+              property === "line-height") &&
+            !value.includes("var(") ||
+            property === "font" &&
+              /\d+(?:px|rem)/.test(value),
+        )
+        .map(({ property, value }) => `${property}: ${value};`);
+      return declarations.map(
+        (declaration) => `${selector.trim()} -> ${declaration}`,
+      );
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("uses shared height tokens for active rows and controls", () => {
+    const violations = activeRules
+      .filter(({ selector }) =>
+        densityControlSelector.test(selector),
+      )
+      .flatMap(({ selector, body }) =>
+        cssDeclarations(body)
+          .filter(
+            ({ property, value }) =>
+              (property === "height" ||
+                property === "min-height") &&
+              /\d+(?:\.\d+)?px/.test(value) &&
+              !value.includes("var("),
+          )
+          .map(
+            ({ property, value }) =>
+              `${selector.trim()} -> ${property}: ${value};`,
+          ),
+      );
+
+    expect(violations).toEqual([]);
+  });
+
+  it("does not reset token-backed control typography with a font shorthand", () => {
+    const nativeControlRule = cssRule(
+      "button,\ninput,\nselect",
+      componentsCss,
+    );
+
+    expect(nativeControlRule).toContain("font-family: inherit;");
+    expect(nativeControlRule).not.toContain("font: inherit;");
+  });
+});
+
 describe("shadcn semantic theme compatibility", () => {
   it("keeps the default dark recorder palette and an explicit light palette", () => {
     const rootRule = cssRule(":root");
@@ -303,7 +366,7 @@ describe("transcript archive density", () => {
     expect(entryRule).toContain("border-radius: 0;");
     expect(selectedRule).toContain("border-left-color: var(--primary);");
     expect(selectedRule).not.toContain("box-shadow");
-    expect(textRule).toContain("line-height: 1.28;");
+    expect(textRule).toContain("line-height: var(--leading-body);");
   });
 });
 
@@ -333,4 +396,25 @@ function cssBlock(selector: string, source = css) {
   }
 
   throw new Error(`Unclosed CSS block for ${selector}`);
+}
+
+function flatCssRules(source: string) {
+  return [...source.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+    ([, selector, body]) => ({ selector, body }),
+  );
+}
+
+function cssDeclarations(body: string) {
+  return body
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .flatMap((declaration) => {
+      const separator = declaration.indexOf(":");
+      if (separator < 0) return [];
+      return [{
+        property: declaration.slice(0, separator).trim(),
+        value: declaration.slice(separator + 1).trim(),
+      }];
+    });
 }

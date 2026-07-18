@@ -58,9 +58,9 @@
 .app-sidebar__brand-copy strong {
   overflow: hidden;
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--text-label);
   font-weight: 650;
-  line-height: 16px;
+  line-height: var(--leading-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -68,8 +68,8 @@
 .app-sidebar__brand-copy small {
   overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 10px;
-  line-height: 12px;
+  font-size: var(--text-micro);
+  line-height: var(--leading-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -112,9 +112,9 @@
 .app-sidebar__version {
   padding: 0 7px;
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--text-micro);
   font-variant-numeric: tabular-nums;
-  line-height: 16px;
+  line-height: var(--leading-micro);
 }
 
 .app-viewport {
@@ -159,10 +159,10 @@
 
 .page-header__eyebrow {
   color: var(--muted-foreground);
-  font-size: 10px;
+  font-size: var(--text-micro);
   font-weight: 650;
   letter-spacing: 0.08em;
-  line-height: 12px;
+  line-height: var(--leading-micro);
   text-transform: uppercase;
 }
 
