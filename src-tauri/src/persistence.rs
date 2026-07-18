@@ -1,5 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::queue::{COMPLETED_JOB_HISTORY_LIMIT, QueueJobStatus, TranscriptionQueue};
@@ -15,6 +17,63 @@ struct OpenRouterSecrets {
     api_key: String,
 }
 
+const LIST_VISIBILITY_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListVisibilityKind {
+    Meeting,
+    Transcript,
+    ReportRun,
+    LegacyReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListVisibilityTarget {
+    pub kind: ListVisibilityKind,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetListVisibilityRequest {
+    pub targets: Vec<ListVisibilityTarget>,
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListVisibilityState {
+    pub meetings: BTreeSet<String>,
+    pub transcripts: BTreeSet<String>,
+    pub report_runs: BTreeSet<String>,
+    pub legacy_reports: BTreeSet<String>,
+}
+
+impl ListVisibilityState {
+    fn ids_mut(&mut self, kind: &ListVisibilityKind) -> &mut BTreeSet<String> {
+        match kind {
+            ListVisibilityKind::Meeting => &mut self.meetings,
+            ListVisibilityKind::Transcript => &mut self.transcripts,
+            ListVisibilityKind::ReportRun => &mut self.report_runs,
+            ListVisibilityKind::LegacyReport => &mut self.legacy_reports,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ListVisibilityRegistry {
+    version: u32,
+    roots: BTreeMap<String, ListVisibilityState>,
+}
+
+impl Default for ListVisibilityRegistry {
+    fn default() -> Self {
+        Self {
+            version: LIST_VISIBILITY_VERSION,
+            roots: BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum PersistenceError {
     #[error("io error: {0}")]
@@ -23,6 +82,10 @@ pub enum PersistenceError {
     Json(#[from] serde_json::Error),
     #[error("invalid secret: {0}")]
     InvalidSecret(String),
+    #[error("list visibility target id cannot be blank")]
+    InvalidListVisibilityTarget,
+    #[error("unsupported list visibility version {0}")]
+    UnsupportedListVisibilityVersion(u32),
 }
 
 impl AppPersistence {
@@ -101,6 +164,58 @@ impl AppPersistence {
         write_json_atomic(&self.queue_path(), &persisted)
     }
 
+    pub fn load_list_visibility(
+        &self,
+        save_root: &Path,
+    ) -> Result<ListVisibilityState, PersistenceError> {
+        let registry = self.load_list_visibility_registry()?;
+        let key = normalize_save_root(save_root)?;
+        Ok(registry.roots.get(&key).cloned().unwrap_or_default())
+    }
+
+    pub fn set_list_visibility(
+        &self,
+        save_root: &Path,
+        request: &SetListVisibilityRequest,
+    ) -> Result<ListVisibilityState, PersistenceError> {
+        if request
+            .targets
+            .iter()
+            .any(|target| target.id.trim().is_empty())
+        {
+            return Err(PersistenceError::InvalidListVisibilityTarget);
+        }
+
+        let key = normalize_save_root(save_root)?;
+        let mut registry = self.load_list_visibility_registry()?;
+        let state = registry.roots.entry(key).or_default();
+        for target in &request.targets {
+            let ids = state.ids_mut(&target.kind);
+            if request.hidden {
+                ids.insert(target.id.clone());
+            } else {
+                ids.remove(&target.id);
+            }
+        }
+        let state = state.clone();
+        write_json_atomic(&self.list_visibility_path(), &registry)?;
+        Ok(state)
+    }
+
+    fn load_list_visibility_registry(&self) -> Result<ListVisibilityRegistry, PersistenceError> {
+        let Some(registry) =
+            read_json_if_exists::<ListVisibilityRegistry>(&self.list_visibility_path())?
+        else {
+            return Ok(ListVisibilityRegistry::default());
+        };
+        if registry.version != LIST_VISIBILITY_VERSION {
+            return Err(PersistenceError::UnsupportedListVisibilityVersion(
+                registry.version,
+            ));
+        }
+        Ok(registry)
+    }
+
     fn settings_path(&self) -> PathBuf {
         self.root.join("settings.json")
     }
@@ -112,6 +227,45 @@ impl AppPersistence {
     fn openrouter_secrets_path(&self) -> PathBuf {
         self.root.join("openrouter-secrets.json")
     }
+
+    fn list_visibility_path(&self) -> PathBuf {
+        self.root.join("list-visibility.json")
+    }
+}
+
+fn normalize_save_root(path: &Path) -> Result<String, PersistenceError> {
+    let expanded = expand_leading_tilde(path);
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()?.join(expanded)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    Ok(normalized.to_string_lossy().into_owned())
+}
+
+fn expand_leading_tilde(path: &Path) -> PathBuf {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return path.to_path_buf();
+    };
+    if path == Path::new("~") {
+        return home;
+    }
+    let Ok(rest) = path.strip_prefix("~") else {
+        return path.to_path_buf();
+    };
+    home.join(rest)
 }
 
 fn read_json_if_exists<T: serde::de::DeserializeOwned>(

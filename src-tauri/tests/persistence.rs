@@ -1,5 +1,7 @@
 use wakenote::commands::AppBackend;
-use wakenote::persistence::AppPersistence;
+use wakenote::persistence::{
+    AppPersistence, ListVisibilityKind, ListVisibilityTarget, SetListVisibilityRequest,
+};
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch, ThemeMode};
 
@@ -239,4 +241,214 @@ fn backend_loaded_from_dir_persists_settings_and_queue_mutations() {
     assert!(!reloaded.settings().transcription_enabled);
     assert_eq!(reloaded.settings().threshold_dbfs, -42.0);
     assert_eq!(reloaded.queue_snapshot().pending_count, 1);
+}
+
+fn visibility_target(kind: ListVisibilityKind, id: &str) -> ListVisibilityTarget {
+    ListVisibilityTarget {
+        kind,
+        id: id.to_string(),
+    }
+}
+
+#[test]
+fn list_visibility_is_scoped_by_save_root_and_restorable() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path().join("app-data"));
+    let first_root = tmp.path().join("first-save-root");
+    let second_root = tmp.path().join("second-save-root");
+    let meeting = visibility_target(ListVisibilityKind::Meeting, "meeting-1");
+
+    store
+        .set_list_visibility(
+            &first_root,
+            &SetListVisibilityRequest {
+                targets: vec![meeting.clone()],
+                hidden: true,
+            },
+        )
+        .expect("hide meeting");
+
+    assert!(
+        store
+            .load_list_visibility(&first_root)
+            .expect("first root visibility")
+            .meetings
+            .contains("meeting-1")
+    );
+    assert!(
+        store
+            .load_list_visibility(&second_root)
+            .expect("second root visibility")
+            .meetings
+            .is_empty()
+    );
+
+    store
+        .set_list_visibility(
+            &first_root,
+            &SetListVisibilityRequest {
+                targets: vec![meeting],
+                hidden: false,
+            },
+        )
+        .expect("restore meeting");
+
+    assert!(
+        store
+            .load_list_visibility(&first_root)
+            .expect("restored visibility")
+            .meetings
+            .is_empty()
+    );
+}
+
+#[test]
+fn list_visibility_commits_mixed_targets_together_and_deduplicates() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path().join("app-data"));
+    let save_root = tmp.path().join("save-root");
+    let meeting = visibility_target(ListVisibilityKind::Meeting, "meeting-1");
+    let request = SetListVisibilityRequest {
+        targets: vec![
+            meeting.clone(),
+            meeting,
+            visibility_target(
+                ListVisibilityKind::Transcript,
+                "/save/2026-07-18/transcript.txt",
+            ),
+            visibility_target(ListVisibilityKind::ReportRun, "run-1"),
+            visibility_target(ListVisibilityKind::LegacyReport, "report-1"),
+        ],
+        hidden: true,
+    };
+
+    let hidden = store
+        .set_list_visibility(&save_root, &request)
+        .expect("hide mixed targets");
+
+    assert_eq!(hidden.meetings.len(), 1);
+    assert!(hidden.meetings.contains("meeting-1"));
+    assert!(
+        hidden
+            .transcripts
+            .contains("/save/2026-07-18/transcript.txt")
+    );
+    assert!(hidden.report_runs.contains("run-1"));
+    assert!(hidden.legacy_reports.contains("report-1"));
+
+    let restored = store
+        .set_list_visibility(
+            &save_root,
+            &SetListVisibilityRequest {
+                targets: request.targets,
+                hidden: false,
+            },
+        )
+        .expect("restore mixed targets");
+
+    assert_eq!(restored, Default::default());
+}
+
+#[test]
+fn list_visibility_rejects_blank_targets_without_changing_registry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app_data = tmp.path().join("app-data");
+    let store = AppPersistence::new(&app_data);
+    let save_root = tmp.path().join("save-root");
+
+    let error = store
+        .set_list_visibility(
+            &save_root,
+            &SetListVisibilityRequest {
+                targets: vec![
+                    visibility_target(ListVisibilityKind::Meeting, "meeting-1"),
+                    visibility_target(ListVisibilityKind::Transcript, "   "),
+                ],
+                hidden: true,
+            },
+        )
+        .expect_err("blank target must fail");
+
+    assert!(error.to_string().contains("cannot be blank"));
+    assert!(!app_data.join("list-visibility.json").exists());
+}
+
+#[test]
+fn list_visibility_normalizes_tilde_and_relative_segments() {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app_data = tmp.path().join("app-data");
+    let store = AppPersistence::new(&app_data);
+
+    store
+        .set_list_visibility(
+            std::path::Path::new("~/WakeNote/../WakeNote/recordings"),
+            &SetListVisibilityRequest {
+                targets: vec![visibility_target(ListVisibilityKind::Meeting, "meeting-1")],
+                hidden: true,
+            },
+        )
+        .expect("hide under tilde root");
+
+    let registry: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(app_data.join("list-visibility.json")).expect("visibility registry"),
+    )
+    .expect("registry json");
+    let expected = home
+        .join("WakeNote/recordings")
+        .to_string_lossy()
+        .into_owned();
+
+    assert!(
+        registry["roots"]
+            .as_object()
+            .expect("root map")
+            .contains_key(&expected)
+    );
+}
+
+#[test]
+fn list_visibility_corrupt_registry_fails_open_without_rewriting() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app_data = tmp.path().join("app-data");
+    std::fs::create_dir_all(&app_data).expect("app data dir");
+    let registry_path = app_data.join("list-visibility.json");
+    let corrupt = b"{not-json";
+    std::fs::write(&registry_path, corrupt).expect("corrupt registry");
+    let store = AppPersistence::new(app_data);
+
+    assert!(
+        store
+            .load_list_visibility(tmp.path().join("save-root").as_path())
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(registry_path).expect("registry remains"),
+        corrupt
+    );
+}
+
+#[test]
+fn list_visibility_rejects_unsupported_registry_version() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app_data = tmp.path().join("app-data");
+    std::fs::create_dir_all(&app_data).expect("app data dir");
+    std::fs::write(
+        app_data.join("list-visibility.json"),
+        r#"{"version":2,"roots":{}}"#,
+    )
+    .expect("future registry");
+    let store = AppPersistence::new(app_data);
+
+    let error = store
+        .load_list_visibility(tmp.path().join("save-root").as_path())
+        .expect_err("future version must fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported list visibility version 2")
+    );
 }
