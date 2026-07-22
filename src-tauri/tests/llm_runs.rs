@@ -100,6 +100,47 @@ fn recovery_marks_non_terminal_records_failed_and_retryable() {
 }
 
 #[test]
+fn delayed_startup_recovery_skips_runs_updated_after_launch_cutoff() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = LlmRunStore::new(temp.path());
+    let mut old = LlmReportRunRecord::queued(
+        "llm-report-before-launch".into(),
+        None,
+        request(),
+        "z-ai/glm-5.2".into(),
+        3,
+        "2026-07-18T00:00:00Z".into(),
+    );
+    old.mark_running("2026-07-18T00:01:00Z");
+    store.write(&old).unwrap();
+    let mut fresh = LlmReportRunRecord::queued(
+        "llm-report-after-launch".into(),
+        None,
+        request(),
+        "z-ai/glm-5.2".into(),
+        3,
+        "2026-07-18T00:06:00Z".into(),
+    );
+    fresh.mark_running("2026-07-18T00:07:00Z");
+    store.write(&fresh).unwrap();
+
+    let recovered = store
+        .recover_interrupted_before("2026-07-18T00:10:00Z", "2026-07-18T00:05:00Z")
+        .unwrap();
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].run_id, "llm-report-before-launch");
+    assert_eq!(
+        store
+            .load("llm-report-after-launch")
+            .unwrap()
+            .snapshot
+            .status,
+        LlmReportRunStatus::Running
+    );
+}
+
+#[test]
 fn run_store_rejects_path_traversal_ids() {
     let temp = tempfile::tempdir().unwrap();
     let store = LlmRunStore::new(temp.path());

@@ -159,6 +159,12 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
     }
 }
 
+impl<B: AudioInputBackend> AudioStreamHandle for LiveCaptureRuntime<B> {
+    fn runtime_error(&self) -> Option<String> {
+        LiveCaptureRuntime::runtime_error(self)
+    }
+}
+
 impl FrameDispatcher {
     fn new(
         on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,

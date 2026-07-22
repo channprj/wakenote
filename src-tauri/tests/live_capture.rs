@@ -205,6 +205,24 @@ fn live_capture_runtime_reports_stream_runtime_errors() {
 }
 
 #[test]
+fn boxed_live_capture_runtime_forwards_stream_runtime_errors() {
+    let input = FakeInput::default();
+    let backend_handle = input.clone();
+    let mut runtime = LiveCaptureRuntime::new(input);
+
+    runtime
+        .start(AudioInputConfig::default(), |_| {})
+        .expect("start");
+    let runtime_handle: Box<dyn AudioStreamHandle> = Box::new(runtime);
+    backend_handle.set_runtime_error("screen capture stream stopped");
+
+    assert_eq!(
+        runtime_handle.runtime_error().as_deref(),
+        Some("screen capture stream stopped")
+    );
+}
+
+#[test]
 fn live_capture_runtime_restarts_after_stream_runtime_error() {
     let input = FakeInput::default();
     let handle = input.clone();

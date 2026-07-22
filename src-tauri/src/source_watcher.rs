@@ -44,19 +44,62 @@ pub enum SourceTransition {
     Unchanged,
 }
 
-/// First window (in enumeration order) that maps to a recognized source.
+/// Prefer the first auto-capture-enabled source, then fall back to the first
+/// recognized window so disabled sources remain available for manual capture.
 fn first_candidate(
     windows: &[WindowSnapshot],
     sources: &[SourceDefinition],
 ) -> Option<DetectedSource> {
+    let mut fallback = None;
+    for window in windows {
+        let Some(source) = match_window_source(window, sources) else {
+            continue;
+        };
+        let detected = detected_source(window, source);
+        if source.default_auto_prompt {
+            return Some(detected);
+        }
+        fallback.get_or_insert(detected);
+    }
+    fallback
+}
+
+fn first_auto_capture_candidate(
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+) -> Option<DetectedSource> {
     windows.iter().find_map(|window| {
-        match_window_source(window, sources).map(|source| DetectedSource {
-            source_id: source.id.clone(),
-            label: source.label.clone(),
-            app_name: window.app_name.clone(),
-            pid: window.pid,
-        })
+        let source = match_window_source(window, sources)?;
+        source
+            .default_auto_prompt
+            .then(|| detected_source(window, source))
     })
+}
+
+fn detected_source(window: &WindowSnapshot, source: &SourceDefinition) -> DetectedSource {
+    DetectedSource {
+        source_id: source.id.clone(),
+        label: source.label.clone(),
+        app_name: window.app_name.clone(),
+        pid: window.pid,
+    }
+}
+
+fn auto_capture_replacement(
+    active: &DetectedSource,
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+) -> Option<DetectedSource> {
+    let active_auto_capture = sources
+        .iter()
+        .find(|source| source.id == active.source_id)
+        .map(|source| source.default_auto_prompt)
+        .unwrap_or(false);
+    if active_auto_capture {
+        return None;
+    }
+    first_auto_capture_candidate(windows, sources)
+        .filter(|candidate| candidate.source_id != active.source_id)
 }
 
 /// Is the currently-active source still represented by one of the windows?
@@ -96,6 +139,9 @@ pub fn compute_source_transition(
         },
         Some(active) => {
             if source_still_present(active, windows, sources) {
+                if let Some(candidate) = auto_capture_replacement(active, windows, sources) {
+                    return SourceTransition::Detected(candidate);
+                }
                 SourceTransition::Unchanged
             } else {
                 SourceTransition::Ended(active.clone())
@@ -114,6 +160,24 @@ pub fn compute_source_transition_with_missing_grace(
     missing_polls: u8,
     required_missing_polls: u8,
 ) -> (SourceTransition, u8) {
+    compute_source_transition_with_missing_grace_and_auto_preemption(
+        previous,
+        windows,
+        sources,
+        missing_polls,
+        required_missing_polls,
+        false,
+    )
+}
+
+pub fn compute_source_transition_with_missing_grace_and_auto_preemption(
+    previous: Option<&DetectedSource>,
+    windows: &[WindowSnapshot],
+    sources: &[SourceDefinition],
+    missing_polls: u8,
+    required_missing_polls: u8,
+    allow_auto_preemption: bool,
+) -> (SourceTransition, u8) {
     match previous {
         None => match first_candidate(windows, sources) {
             Some(detected) => (SourceTransition::Detected(detected), 0),
@@ -121,6 +185,11 @@ pub fn compute_source_transition_with_missing_grace(
         },
         Some(active) => {
             if source_still_present(active, windows, sources) {
+                if allow_auto_preemption
+                    && let Some(candidate) = auto_capture_replacement(active, windows, sources)
+                {
+                    return (SourceTransition::Detected(candidate), 0);
+                }
                 return (SourceTransition::Unchanged, 0);
             }
 
@@ -304,6 +373,103 @@ mod tests {
             SourceTransition::Detected(d) => assert_eq!(d.source_id, "youtube"),
             other => panic!("expected Detected(youtube), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn idle_prefers_auto_capture_enabled_source_over_earlier_disabled_source() {
+        let mut sources = sources();
+        for source in &mut sources {
+            source.default_auto_prompt = source.id == "meet";
+        }
+        let windows = [
+            window("Lo-fi - YouTube", "Google Chrome", 10),
+            window("Standup - Google Meet", "Google Chrome", 10),
+        ];
+
+        match compute_source_transition(None, &windows, &sources) {
+            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "meet"),
+            other => panic!("expected Detected(meet), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn idle_falls_back_to_first_source_when_none_auto_capture() {
+        let mut sources = sources();
+        for source in &mut sources {
+            source.default_auto_prompt = false;
+        }
+        let windows = [
+            window("Lo-fi - YouTube", "Google Chrome", 10),
+            window("Standup - Google Meet", "Google Chrome", 10),
+        ];
+
+        match compute_source_transition(None, &windows, &sources) {
+            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "youtube"),
+            other => panic!("expected Detected(youtube), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_auto_disabled_source_yields_to_auto_capture_candidate() {
+        let active = DetectedSource {
+            source_id: "youtube".into(),
+            label: "YouTube".into(),
+            app_name: "Google Chrome".into(),
+            pid: 10,
+        };
+        let mut sources = sources();
+        for source in &mut sources {
+            source.default_auto_prompt = source.id == "meet";
+        }
+        let windows = [
+            window("Lo-fi - YouTube", "Google Chrome", 10),
+            window("Standup - Google Meet", "Google Chrome", 10),
+        ];
+
+        match compute_source_transition_with_missing_grace_and_auto_preemption(
+            Some(&active),
+            &windows,
+            &sources,
+            0,
+            SOURCE_MISSING_GRACE_POLLS,
+            true,
+        )
+        .0
+        {
+            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "meet"),
+            other => panic!("expected Detected(meet), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn active_manual_capture_stays_sticky_when_an_auto_candidate_appears() {
+        let active = DetectedSource {
+            source_id: "youtube".into(),
+            label: "YouTube".into(),
+            app_name: "Google Chrome".into(),
+            pid: 10,
+        };
+        let mut sources = sources();
+        for source in &mut sources {
+            source.default_auto_prompt = source.id == "meet";
+        }
+        let windows = [
+            window("Lo-fi - YouTube", "Google Chrome", 10),
+            window("Standup - Google Meet", "Google Chrome", 10),
+        ];
+
+        assert_eq!(
+            compute_source_transition_with_missing_grace_and_auto_preemption(
+                Some(&active),
+                &windows,
+                &sources,
+                0,
+                SOURCE_MISSING_GRACE_POLLS,
+                false,
+            )
+            .0,
+            SourceTransition::Unchanged
+        );
     }
 
     #[test]

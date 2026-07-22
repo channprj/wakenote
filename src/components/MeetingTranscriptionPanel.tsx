@@ -15,14 +15,13 @@ import {
   resumeMeeting,
 } from "../lib/tauri-client";
 import { useListVisibility } from "../hooks/use-list-visibility";
+import { subscribeMeetingEvents } from "../lib/meeting-event-subscriptions";
 import { projectListItems } from "../lib/list-visibility";
 import { isMeetingActive } from "../lib/meeting-progress";
 import type {
   ListVisibilityTarget,
   MeetingDetail,
-  MeetingFinishedPayload,
   MeetingProgressPayload,
-  MeetingSegmentPayload,
   MeetingSummary,
 } from "../lib/types";
 import type { ListVisibilityMode } from "./ListVisibilityToolbar";
@@ -74,48 +73,51 @@ export function MeetingTranscriptionPanel() {
   }, []);
 
   useEffect(() => {
-    void refreshMeetings();
     if (!isTauriRuntime()) {
+      void refreshMeetings();
       return;
     }
     let disposed = false;
     const unlisteners: Array<() => void> = [];
     void (async () => {
-      const { listen } = await import("@tauri-apps/api/event");
-      const onProgress = await listen<MeetingProgressPayload>("meeting-progress", (event) => {
-        const payload = event.payload;
-        setProgressById((prev) => ({ ...prev, [payload.id]: payload }));
-      });
-      const onSegment = await listen<MeetingSegmentPayload>(
-        "meeting-segment-committed",
-        (event) => {
-          const payload = event.payload;
-          setLiveTextById((prev) => {
-            const existing = prev[payload.id];
-            const text = existing ? `${existing}\n${payload.text}` : payload.text;
-            return { ...prev, [payload.id]: text.trim() };
-          });
-        },
-      );
-      const onFinished = await listen<MeetingFinishedPayload>("meeting-finished", (event) => {
-        const payload = event.payload;
-        setProgressById((prev) => {
-          const next = { ...prev };
-          delete next[payload.id];
-          return next;
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const nextUnlisteners = await subscribeMeetingEvents(listen, {
+          onProgress: (payload) => {
+            setProgressById((prev) => ({ ...prev, [payload.id]: payload }));
+          },
+          onSegment: (payload) => {
+            setLiveTextById((prev) => {
+              const existing = prev[payload.id];
+              const text = existing ? `${existing}\n${payload.text}` : payload.text;
+              return { ...prev, [payload.id]: text.trim() };
+            });
+          },
+          onFinished: (payload) => {
+            setProgressById((prev) => {
+              const next = { ...prev };
+              delete next[payload.id];
+              return next;
+            });
+            void refreshMeetings();
+            if (selectedIdRef.current === payload.id) {
+              void openDetail(payload.id);
+            }
+          },
         });
-        void refreshMeetings();
-        if (selectedIdRef.current === payload.id) {
-          void openDetail(payload.id);
+        if (disposed) {
+          for (const unlisten of nextUnlisteners) {
+            unlisten();
+          }
+          return;
         }
-      });
-      if (disposed) {
-        onProgress();
-        onSegment();
-        onFinished();
-        return;
+        unlisteners.push(...nextUnlisteners);
+        await refreshMeetings();
+      } catch (cause) {
+        if (!disposed) {
+          setError(String(cause));
+        }
       }
-      unlisteners.push(onProgress, onSegment, onFinished);
     })();
     return () => {
       disposed = true;

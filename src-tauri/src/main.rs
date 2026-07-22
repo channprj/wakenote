@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -20,25 +20,26 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::commands::{
-    AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
-    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrayMenuPresentation,
-    TrayRuntimePresentation, TrayState, UploadedAudio, main_window_close_action,
-    microphone_devices_from_input_devices, open_containing_folder_request, pinned_device_mismatch,
-    recorded_at_for_audio_path, reveal_save_folder_request, tray_icon_image_for_presentation,
-    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    validate_audio_playback_file, with_live_runtime_warning,
+    AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
+    MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
+    TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio,
+    main_window_close_action, microphone_devices_from_input_devices,
+    open_containing_folder_request, pinned_device_mismatch, recorded_at_for_audio_path,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
+    with_live_runtime_warning,
 };
-use wakenote::debug_log::append_debug_log;
+use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
-    AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
-    LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
+    AudioFrame, AudioInputConfig, AudioStreamHandle, CpalAudioInput, LiveCaptureError,
+    LiveCaptureRuntime, ResolvedCpalInputDevice,
 };
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
-use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingSummary};
+use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore};
 use wakenote::overlay;
 use wakenote::overlay_caption::{
@@ -57,7 +58,7 @@ use wakenote::settings::{
 };
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
-    compute_source_transition_with_missing_grace, should_auto_capture_source,
+    compute_source_transition_with_missing_grace_and_auto_preemption, should_auto_capture_source,
     should_defer_source_end_for_recent_audio,
 };
 use wakenote::sources::source_definitions;
@@ -96,6 +97,70 @@ struct MeetingRuntime {
     current: Option<String>,
     /// Cancel flag for the current job, checked between segments.
     cancel: Option<Arc<AtomicBool>>,
+    /// Automatic meeting captures waiting for the shared transcription worker.
+    queued: VecDeque<MeetingJobSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MeetingJobSpec {
+    id: String,
+    save_root: PathBuf,
+    model_directory: PathBuf,
+    model_id: String,
+    suppress_low_confidence: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MeetingJobScheduleOutcome {
+    Started,
+    Queued,
+    AlreadyScheduled,
+}
+
+fn schedule_meeting_job(
+    runtime: &mut MeetingRuntime,
+    job: MeetingJobSpec,
+    queue_if_busy: bool,
+) -> Result<(MeetingJobScheduleOutcome, Option<Arc<AtomicBool>>), String> {
+    if runtime.current.as_deref() == Some(job.id.as_str())
+        || runtime.queued.iter().any(|queued| queued.id == job.id)
+    {
+        return Ok((MeetingJobScheduleOutcome::AlreadyScheduled, None));
+    }
+
+    if let Some(current) = runtime.current.as_ref() {
+        if !queue_if_busy {
+            return Err(format!(
+                "Another meeting ({current}) is being processed. Try again after it finishes."
+            ));
+        }
+        runtime.queued.push_back(job);
+        return Ok((MeetingJobScheduleOutcome::Queued, None));
+    }
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    runtime.current = Some(job.id);
+    runtime.cancel = Some(cancel.clone());
+    Ok((MeetingJobScheduleOutcome::Started, Some(cancel)))
+}
+
+fn complete_meeting_job(
+    runtime: &mut MeetingRuntime,
+    completed_id: &str,
+) -> Option<(MeetingJobSpec, Arc<AtomicBool>)> {
+    if runtime.current.as_deref() != Some(completed_id) {
+        return None;
+    }
+
+    let Some(next_job) = runtime.queued.pop_front() else {
+        runtime.current = None;
+        runtime.cancel = None;
+        return None;
+    };
+    let next_cancel = Arc::new(AtomicBool::new(false));
+    runtime.current = Some(next_job.id.clone());
+    runtime.cancel = Some(next_cancel.clone());
+    Some((next_job, next_cancel))
 }
 
 #[derive(Debug, Clone)]
@@ -179,14 +244,16 @@ impl SourceCaptureStreamStarter for SystemAudioStreamStarter {
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
         let mut input = SystemAudioInput::new();
         input.set_target_app(source.pid, source.app_name.clone());
-        input.start(
+        let mut runtime = LiveCaptureRuntime::new(input);
+        runtime.start(
             AudioInputConfig {
                 device_id: source.source_id.clone(),
                 sample_rate: Some(sample_rate),
                 label_hint: None,
             },
-            on_frame,
-        )
+            move |frame| on_frame(frame),
+        )?;
+        Ok(Box::new(runtime))
     }
 }
 
@@ -863,6 +930,16 @@ fn source_capture_mark_failed(
 
 fn source_capture_mark_idle(lifecycle: &mut SourceCaptureLifecycle) {
     *lifecycle = SourceCaptureLifecycle::Idle;
+}
+
+fn source_capture_recovery_pending(lifecycle: &SourceCaptureLifecycle, source_id: &str) -> bool {
+    matches!(
+        lifecycle,
+        SourceCaptureLifecycle::Failed {
+            source_id: failed_source_id,
+            ..
+        } if failed_source_id == source_id
+    )
 }
 
 fn source_capture_failure_diagnostic(
@@ -1697,57 +1774,96 @@ fn meeting_save_root(state: &State<'_, BackendState>) -> Result<PathBuf, String>
     Ok(expand_user_path(backend.settings().save_root))
 }
 
-/// Spawn the worker thread for one meeting, registering its cancel flag. Errors
-/// if another meeting is already processing (single shared GPU context).
+fn schedule_and_spawn_meeting_job(
+    app: AppHandle,
+    meeting_state: MeetingState,
+    job: MeetingJobSpec,
+    queue_if_busy: bool,
+) -> Result<MeetingJobScheduleOutcome, String> {
+    let (outcome, cancel) = {
+        let mut runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        schedule_meeting_job(&mut runtime, job.clone(), queue_if_busy)?
+    };
+    let Some(cancel) = cancel else {
+        return Ok(outcome);
+    };
+
+    let meeting_state_for_thread = meeting_state.clone();
+    thread::spawn(move || {
+        let mut current_job = job;
+        let mut current_cancel = cancel;
+        loop {
+            let emit = meeting_event_emitter(app.clone());
+            if let Err(error) = wakenote::meeting::run_meeting_job(
+                &current_job.save_root,
+                &current_job.model_directory,
+                &current_job.id,
+                current_job.suppress_low_confidence,
+                current_cancel,
+                emit,
+            ) {
+                eprintln!("[wakenote] meeting job {} error: {error}", current_job.id);
+            }
+
+            let next = meeting_state_for_thread
+                .lock()
+                .ok()
+                .and_then(|mut runtime| complete_meeting_job(&mut runtime, &current_job.id));
+            let Some((next_job, next_cancel)) = next else {
+                break;
+            };
+            append_debug_log(
+                &next_job.save_root,
+                format!(
+                    "[meeting-capture] state=transcribing id={} resumed_from_queue=true",
+                    next_job.id
+                ),
+            );
+            current_job = next_job;
+            current_cancel = next_cancel;
+        }
+    });
+    Ok(outcome)
+}
+
+/// Spawn the worker thread for one user-requested meeting. Errors if another
+/// meeting is already processing (one shared GPU context).
 fn spawn_meeting_job(
     app: AppHandle,
     backend_state: BackendState,
     meeting_state: MeetingState,
     id: String,
 ) -> Result<(), String> {
-    let (save_root, model_directory, suppress_low_confidence) = {
+    let job = {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
-        let settings = backend.settings();
-        (
-            expand_user_path(&settings.save_root),
-            expand_user_path(&settings.model_directory),
-            settings.suppress_low_confidence_transcripts,
-        )
+        meeting_job_spec_from_settings(id, &backend.settings())
     };
-
-    let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-        if let Some(current) = runtime.current.as_ref() {
-            return Err(format!(
-                "Another meeting ({current}) is being processed. Try again after it finishes."
-            ));
+    match schedule_and_spawn_meeting_job(app, meeting_state, job, false)? {
+        MeetingJobScheduleOutcome::Started => Ok(()),
+        MeetingJobScheduleOutcome::Queued | MeetingJobScheduleOutcome::AlreadyScheduled => {
+            Err("meeting job could not be started".to_string())
         }
-        runtime.current = Some(id.clone());
-        runtime.cancel = Some(cancel.clone());
     }
+}
 
-    let emit = meeting_event_emitter(app);
-    let meeting_state_for_thread = meeting_state.clone();
-    thread::spawn(move || {
-        if let Err(error) = wakenote::meeting::run_meeting_job(
-            &save_root,
-            &model_directory,
-            &id,
-            suppress_low_confidence,
-            cancel,
-            emit,
-        ) {
-            eprintln!("[wakenote] meeting job {id} error: {error}");
-        }
-        if let Ok(mut runtime) = meeting_state_for_thread.lock() {
-            if runtime.current.as_deref() == Some(id.as_str()) {
-                runtime.current = None;
-                runtime.cancel = None;
-            }
-        }
-    });
-    Ok(())
+fn meeting_job_spec_from_settings(id: String, settings: &AppSettings) -> MeetingJobSpec {
+    MeetingJobSpec {
+        id,
+        save_root: expand_user_path(&settings.save_root),
+        model_directory: expand_user_path(&settings.model_directory),
+        model_id: settings.selected_model.clone(),
+        suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+    }
+}
+
+fn meeting_job_spec_from_finished(job: FinishedSystemMeetingJob) -> MeetingJobSpec {
+    MeetingJobSpec {
+        id: job.id,
+        save_root: job.save_root,
+        model_directory: job.model_directory,
+        model_id: job.model_id,
+        suppress_low_confidence: job.suppress_low_confidence,
+    }
 }
 
 #[tauri::command]
@@ -2115,6 +2231,26 @@ fn list_recognized_sources(backend_state: State<'_, BackendState>) -> Vec<Recogn
     recognized_source_infos(&settings)
 }
 
+fn source_capture_stream_is_healthy(system_capture_state: &SystemCaptureState) -> bool {
+    system_capture_state
+        .lock()
+        .map(|slot| {
+            slot.as_ref()
+                .map(|stream| stream.runtime_error().is_none())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+/// Remove a ScreenCaptureKit handle that reported an asynchronous terminal
+/// error so the watcher can finalize the session and retry it.
+fn take_source_capture_runtime_error(system_capture_state: &SystemCaptureState) -> Option<String> {
+    let mut slot = system_capture_state.lock().ok()?;
+    let error = slot.as_ref()?.runtime_error()?;
+    slot.take();
+    Some(error)
+}
+
 #[tauri::command]
 fn source_capture_status(
     system_capture_state: State<'_, SystemCaptureState>,
@@ -2124,10 +2260,7 @@ fn source_capture_status(
         .lock()
         .ok()
         .and_then(|slot| slot.as_ref().map(SourcePayload::from));
-    let capturing = system_capture_state
-        .lock()
-        .map(|slot| slot.is_some())
-        .unwrap_or(false);
+    let capturing = source_capture_stream_is_healthy(system_capture_state.inner());
     SourceCaptureStatus {
         detected,
         capturing,
@@ -2171,10 +2304,7 @@ fn attempt_source_capture_start(
     now: Instant,
     screen_recording_status: permissions::PermissionGrantStatus,
 ) -> Result<SourceCaptureAttemptResult, String> {
-    let stream_running = system_capture_state
-        .lock()
-        .map(|slot| slot.is_some())
-        .unwrap_or(false);
+    let stream_running = source_capture_stream_is_healthy(system_capture_state);
     if stream_running {
         if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
             source_capture_mark_running(&mut lifecycle, &source.source_id);
@@ -2465,13 +2595,7 @@ fn stop_source_capture_runtime(
         let meeting_job_actions = drain_finished_system_meeting_job_actions(&mut backend);
         (backend.settings(), status, meeting_job_actions)
     };
-    start_finished_system_meeting_jobs(
-        app,
-        backend_state,
-        meeting_state,
-        meeting_job_actions,
-        &settings,
-    );
+    start_finished_system_meeting_jobs(app, meeting_state, meeting_job_actions);
     update_tray_presentation(app, &settings, &status);
     let payload = detected_source_state
         .lock()
@@ -2505,83 +2629,227 @@ fn emit_source_capture_error(app: &AppHandle, source_id: &str, error: &str) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FinishedSystemMeetingJobAction {
-    Start(String),
-    Pending { id: String, reason: &'static str },
+    Start(MeetingJobSpec),
+    Pending {
+        job: MeetingJobSpec,
+        reason: &'static str,
+    },
+}
+
+struct StartupDocumentRecovery {
+    recovered_llm_runs: Vec<LlmReportRunSnapshot>,
+    reconciled_meetings: Vec<MeetingFinishedEvent>,
+    meeting_actions: Vec<FinishedSystemMeetingJobAction>,
 }
 
 fn drain_finished_system_meeting_job_actions(
     backend: &mut AppBackend,
 ) -> Vec<FinishedSystemMeetingJobAction> {
-    let ids = backend.take_finished_system_meeting_ids();
-    let settings = backend.settings();
-    ids.into_iter()
-        .map(|id| {
-            if !settings.transcription_enabled {
+    let jobs = backend.take_finished_system_meeting_jobs();
+    let transcription_enabled = backend.settings().transcription_enabled;
+    jobs.into_iter()
+        .map(|job| {
+            let job = meeting_job_spec_from_finished(job);
+            if !transcription_enabled {
                 FinishedSystemMeetingJobAction::Pending {
-                    id,
+                    job,
                     reason: "transcription_disabled",
                 }
-            } else if !selected_meeting_model_is_ready(&settings) {
+            } else if !meeting_job_model_is_ready(&job) {
                 FinishedSystemMeetingJobAction::Pending {
-                    id,
+                    job,
                     reason: "model_not_ready",
                 }
             } else {
-                FinishedSystemMeetingJobAction::Start(id)
+                FinishedSystemMeetingJobAction::Start(job)
             }
         })
         .collect()
 }
 
-fn selected_meeting_model_is_ready(settings: &AppSettings) -> bool {
-    expand_user_path(&settings.model_directory)
-        .join(format!("{}.bin", settings.selected_model))
+#[cfg(test)]
+fn pending_meeting_job_actions(settings: &AppSettings) -> Vec<FinishedSystemMeetingJobAction> {
+    pending_meeting_job_actions_with_cutoff(settings, None)
+}
+
+fn pending_meeting_job_actions_before(
+    settings: &AppSettings,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> Vec<FinishedSystemMeetingJobAction> {
+    pending_meeting_job_actions_with_cutoff(settings, Some(cutoff))
+}
+
+fn pending_meeting_job_actions_with_cutoff(
+    settings: &AppSettings,
+    cutoff: Option<chrono::DateTime<chrono::Utc>>,
+) -> Vec<FinishedSystemMeetingJobAction> {
+    let save_root = expand_user_path(&settings.save_root);
+    let model_directory = expand_user_path(&settings.model_directory);
+    let mut meetings = wakenote::meeting::list_meetings(&save_root)
+        .into_iter()
+        .filter(|meeting| meeting.status == wakenote::meeting::MeetingStatus::Pending)
+        .filter(|meeting| {
+            cutoff
+                .as_ref()
+                .map(|cutoff| meeting.created_at <= *cutoff)
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+    meetings.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    meetings
+        .into_iter()
+        .map(|meeting| {
+            let job = MeetingJobSpec {
+                id: meeting.id,
+                save_root: save_root.clone(),
+                model_directory: model_directory.clone(),
+                model_id: meeting.model_id,
+                suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+            };
+            if !settings.transcription_enabled {
+                FinishedSystemMeetingJobAction::Pending {
+                    job,
+                    reason: "transcription_disabled",
+                }
+            } else if !meeting_job_model_is_ready(&job) {
+                FinishedSystemMeetingJobAction::Pending {
+                    job,
+                    reason: "model_not_ready",
+                }
+            } else {
+                FinishedSystemMeetingJobAction::Start(job)
+            }
+        })
+        .collect()
+}
+
+fn spawn_startup_meeting_recovery_worker<T, Scan, Apply>(
+    scan: Scan,
+    apply: Apply,
+) -> thread::JoinHandle<()>
+where
+    T: Send + 'static,
+    Scan: FnOnce() -> T + Send + 'static,
+    Apply: FnOnce(T) + Send + 'static,
+{
+    thread::spawn(move || apply(scan()))
+}
+
+fn spawn_startup_document_recovery(
+    app: AppHandle,
+    meeting_state: MeetingState,
+    settings: AppSettings,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) {
+    let _ = spawn_startup_meeting_recovery_worker(
+        move || {
+            let custom_sources = settings
+                .custom_sources
+                .iter()
+                .map(|source| format!("{}:{}", source.id, source.label))
+                .collect::<Vec<_>>()
+                .join(",");
+            append_runtime_debug_log(
+                &settings,
+                format!(
+                    "[app] launched version={} system_audio_enabled={} custom_sources=[{}]",
+                    env!("CARGO_PKG_VERSION"),
+                    settings.system_audio_enabled,
+                    custom_sources
+                ),
+            );
+
+            let save_root = expand_user_path(&settings.save_root);
+            let llm_store = LlmRunStore::new(save_root.clone());
+            let recovered_llm_runs = llm_store
+                .recover_interrupted_before(&llm_now(), &cutoff.to_rfc3339())
+                .unwrap_or_else(|error| {
+                    eprintln!("[llm-report] could not recover interrupted runs: {error}");
+                    Vec::new()
+                });
+
+            // A previous worker dies with the app. Reconcile it before
+            // discovering pending records so all resumable work is visible.
+            let reconciled_meetings =
+                wakenote::meeting::reconcile_interrupted_before(&save_root, cutoff);
+            let meeting_actions = pending_meeting_job_actions_before(&settings, cutoff);
+            StartupDocumentRecovery {
+                recovered_llm_runs,
+                reconciled_meetings,
+                meeting_actions,
+            }
+        },
+        move |recovery| {
+            for snapshot in recovery.recovered_llm_runs {
+                emit_llm_run_update(&app, &snapshot);
+            }
+            let emit_meeting = meeting_event_emitter(app.clone());
+            for payload in recovery.reconciled_meetings {
+                emit_meeting(MeetingEvent::Finished(payload));
+            }
+            start_finished_system_meeting_jobs(&app, &meeting_state, recovery.meeting_actions);
+        },
+    );
+}
+
+fn meeting_job_model_is_ready(job: &MeetingJobSpec) -> bool {
+    job.model_directory
+        .join(format!("{}.bin", job.model_id))
         .is_file()
 }
 
 fn start_finished_system_meeting_jobs(
     app: &AppHandle,
-    backend_state: &BackendState,
     meeting_state: &MeetingState,
     actions: Vec<FinishedSystemMeetingJobAction>,
-    settings: &AppSettings,
 ) {
     for action in actions {
-        let id = match action {
-            FinishedSystemMeetingJobAction::Start(id) => id,
-            FinishedSystemMeetingJobAction::Pending { id, reason } => {
-                append_runtime_debug_log(
-                    settings,
+        let job = match action {
+            FinishedSystemMeetingJobAction::Start(job) => job,
+            FinishedSystemMeetingJobAction::Pending { job, reason } => {
+                append_debug_log(
+                    &job.save_root,
                     format!(
                         "[meeting-capture] state=pending id={} reason={}",
-                        id, reason
+                        job.id, reason
                     ),
                 );
                 continue;
             }
         };
-        append_runtime_debug_log(
-            settings,
-            format!("[meeting-capture] state=queued id={}", id),
+        append_debug_log(
+            &job.save_root,
+            format!("[meeting-capture] state=queued id={}", job.id),
         );
-        if let Err(error) = spawn_meeting_job(
-            app.clone(),
-            backend_state.clone(),
-            meeting_state.clone(),
-            id.clone(),
-        ) {
-            append_runtime_debug_log(
-                settings,
+        match schedule_and_spawn_meeting_job(app.clone(), meeting_state.clone(), job.clone(), true)
+        {
+            Ok(MeetingJobScheduleOutcome::Started) => append_debug_log(
+                &job.save_root,
+                format!("[meeting-capture] state=transcribing id={}", job.id),
+            ),
+            Ok(MeetingJobScheduleOutcome::Queued) => append_debug_log(
+                &job.save_root,
                 format!(
-                    "[meeting-capture] state=pending id={} reason=worker_unavailable error={}",
-                    id, error
+                    "[meeting-capture] state=queued id={} reason=worker_busy",
+                    job.id
                 ),
-            );
-        } else {
-            append_runtime_debug_log(
-                settings,
-                format!("[meeting-capture] state=transcribing id={}", id),
-            );
+            ),
+            Ok(MeetingJobScheduleOutcome::AlreadyScheduled) => append_debug_log(
+                &job.save_root,
+                format!("[meeting-capture] state=already_scheduled id={}", job.id),
+            ),
+            Err(error) => append_debug_log(
+                &job.save_root,
+                format!(
+                    "[meeting-capture] state=pending id={} reason=schedule_failed error={}",
+                    job.id, error
+                ),
+            ),
         }
     }
 }
@@ -2633,6 +2901,44 @@ fn spawn_source_watcher(
             if !settings.system_audio_enabled {
                 continue;
             }
+
+            if let Some(error) = take_source_capture_runtime_error(&system_capture_state) {
+                let source_id = detected_source_state
+                    .lock()
+                    .ok()
+                    .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()))
+                    .unwrap_or_else(|| "unknown".to_string());
+                append_runtime_debug_log(
+                    &settings,
+                    format!(
+                        "[source-capture] runtime_error source_id={} error={} action=restart",
+                        source_id, error
+                    ),
+                );
+                let stop_result = stop_source_capture_runtime(
+                    &app,
+                    &backend_state,
+                    &system_capture_state,
+                    &source_capture_lifecycle_state,
+                    &detected_source_state,
+                    &meeting_state,
+                );
+                if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
+                    source_capture_mark_failed(&mut lifecycle, &source_id, Instant::now());
+                }
+                emit_source_capture_error(&app, &source_id, &error);
+                kick_transcription_worker_if_needed(
+                    app.clone(),
+                    backend_state.clone(),
+                    transcription_state.clone(),
+                );
+                if let Err(stop_error) = stop_result {
+                    eprintln!(
+                        "[source-watch] runtime-error cleanup failed for {source_id}: {stop_error}"
+                    );
+                }
+                continue;
+            }
             let screen_recording_status =
                 permissions::permission_snapshot().screen_recording.status;
             if !source_watcher_should_enumerate_windows(&settings, screen_recording_status) {
@@ -2640,18 +2946,32 @@ fn spawn_source_watcher(
             }
 
             let windows = enumerate_windows();
-            let source_defs = source_definitions(&settings);
+            let mut source_defs = source_definitions(&settings);
+            for source in &mut source_defs {
+                source.default_auto_prompt = resolve_auto_prompt(&settings, &source.id);
+            }
             let previous = match detected_source_state.lock() {
                 Ok(slot) => slot.clone(),
                 Err(_) => continue,
             };
+            let recovery_pending = previous
+                .as_ref()
+                .and_then(|source| {
+                    source_capture_lifecycle_state.lock().ok().map(|lifecycle| {
+                        source_capture_recovery_pending(&lifecycle, &source.source_id)
+                    })
+                })
+                .unwrap_or(false);
+            let allow_auto_preemption =
+                !source_capture_stream_is_healthy(&system_capture_state) && !recovery_pending;
             let (transition, next_missing_source_polls) =
-                compute_source_transition_with_missing_grace(
+                compute_source_transition_with_missing_grace_and_auto_preemption(
                     previous.as_ref(),
                     &windows,
                     &source_defs,
                     missing_source_polls,
                     SOURCE_MISSING_GRACE_POLLS,
+                    allow_auto_preemption,
                 );
             missing_source_polls = next_missing_source_polls;
             match transition {
@@ -2668,10 +2988,7 @@ fn spawn_source_watcher(
                     );
                     let _ = app.emit(EVENT_SOURCE_DETECTED, SourcePayload::from(&source));
 
-                    let already_capturing = system_capture_state
-                        .lock()
-                        .map(|slot| slot.is_some())
-                        .unwrap_or(false);
+                    let already_capturing = source_capture_stream_is_healthy(&system_capture_state);
                     let auto_capture = resolve_auto_prompt(&settings, &source.source_id);
                     let paused_this_session = source_capture_pause_state
                         .lock()
@@ -2697,10 +3014,7 @@ fn spawn_source_watcher(
                     }
                 }
                 SourceTransition::Ended(source) => {
-                    let capturing = system_capture_state
-                        .lock()
-                        .map(|slot| slot.is_some())
-                        .unwrap_or(false);
+                    let capturing = source_capture_stream_is_healthy(&system_capture_state);
                     let recent_audio = backend_state
                         .lock()
                         .map(|backend| {
@@ -2754,6 +3068,13 @@ fn spawn_source_watcher(
                         ) {
                             eprintln!("[source-watch] auto-stop failed: {error}");
                         }
+                        // Auto-stop can flush a final system chunk after the
+                        // queue worker has gone idle; make that tail job run.
+                        kick_transcription_worker_if_needed(
+                            app.clone(),
+                            backend_state.clone(),
+                            transcription_state.clone(),
+                        );
                     } else if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
                         source_capture_mark_idle(&mut lifecycle);
                     }
@@ -2769,10 +3090,7 @@ fn spawn_source_watcher(
                     let Some(source) = source else {
                         continue;
                     };
-                    let already_capturing = system_capture_state
-                        .lock()
-                        .map(|slot| slot.is_some())
-                        .unwrap_or(false);
+                    let already_capturing = source_capture_stream_is_healthy(&system_capture_state);
                     let auto_capture = resolve_auto_prompt(&settings, &source.source_id);
                     let paused_this_session = source_capture_pause_state
                         .lock()
@@ -2780,7 +3098,7 @@ fn spawn_source_watcher(
                         .unwrap_or(false);
                     if should_auto_capture_source(
                         settings.system_audio_enabled,
-                        auto_capture,
+                        auto_capture || recovery_pending,
                         already_capturing,
                         paused_this_session,
                     ) {
@@ -3852,11 +4170,6 @@ fn main() {
                 .and_then(|dir| AppBackend::load_from_dir(dir).ok())
                 .unwrap_or_default();
             let initial_settings_for_runtime = backend.settings();
-            // Reconcile any meeting left "processing" by a previous run (its
-            // worker thread died with the app) so the UI can offer Resume.
-            wakenote::meeting::reconcile_interrupted(&expand_user_path(
-                &initial_settings_for_runtime.save_root,
-            ));
             let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
             let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
             prepare_main_window_for_launch(
@@ -3881,16 +4194,6 @@ fn main() {
                 Arc::new(Mutex::new(LlmRunRuntime::default()));
             let input_monitor_state: InputMonitorState =
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
-            let llm_store = LlmRunStore::new(expand_user_path(
-                &initial_settings_for_runtime.save_root,
-            ));
-            if let Err(error) =
-                llm_store.recover_interrupted(&llm_now())
-            {
-                eprintln!(
-                    "[llm-report] could not recover interrupted runs: {error}"
-                );
-            }
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
@@ -3904,6 +4207,14 @@ fn main() {
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
             app.manage(llm_run_state);
+
+            let startup_recovery_cutoff = chrono::Utc::now();
+            spawn_startup_document_recovery(
+                app.handle().clone(),
+                meeting_state.clone(),
+                initial_settings_for_runtime.clone(),
+                startup_recovery_cutoff,
+            );
 
             spawn_source_watcher(
                 app.handle().clone(),
@@ -3947,21 +4258,6 @@ fn main() {
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
             if let Some(settings) = initial_settings.as_ref() {
-                let custom_sources = settings
-                    .custom_sources
-                    .iter()
-                    .map(|source| format!("{}:{}", source.id, source.label))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                append_runtime_debug_log(
-                    settings,
-                    format!(
-                        "[app] launched version={} system_audio_enabled={} custom_sources=[{}]",
-                        env!("CARGO_PKG_VERSION"),
-                        settings.system_audio_enabled,
-                        custom_sources
-                    ),
-                );
                 let _ = apply_launch_at_login_preference(app.handle(), settings.launch_at_login);
             }
             app.manage(tray_menu_items);
@@ -4845,6 +5141,28 @@ mod tests {
     }
 
     #[test]
+    fn failed_source_capture_requests_recovery_only_for_the_same_source() {
+        let lifecycle = SourceCaptureLifecycle::Failed {
+            source_id: "youtube".into(),
+            failed_at: Instant::now(),
+            attempts: 1,
+        };
+
+        assert!(source_capture_recovery_pending(&lifecycle, "youtube"));
+        assert!(should_auto_capture_source(
+            true,
+            source_capture_recovery_pending(&lifecycle, "youtube"),
+            false,
+            false,
+        ));
+        assert!(!source_capture_recovery_pending(&lifecycle, "meet"));
+        assert!(!source_capture_recovery_pending(
+            &SourceCaptureLifecycle::Idle,
+            "youtube"
+        ));
+    }
+
+    #[test]
     fn source_capture_failure_diagnostic_includes_permission_and_retry_context() {
         let message = source_capture_failure_diagnostic(
             "meet",
@@ -4862,6 +5180,27 @@ mod tests {
     struct FakeSystemAudioStream;
 
     impl AudioStreamHandle for FakeSystemAudioStream {}
+
+    struct FailedSystemAudioStream;
+
+    impl AudioStreamHandle for FailedSystemAudioStream {
+        fn runtime_error(&self) -> Option<String> {
+            Some("ScreenCaptureKit stream stopped".to_string())
+        }
+    }
+
+    #[test]
+    fn failed_system_audio_stream_is_removed_for_watcher_recovery() {
+        let state: SystemCaptureState =
+            Arc::new(Mutex::new(Some(Box::new(FailedSystemAudioStream))));
+
+        assert!(!source_capture_stream_is_healthy(&state));
+        assert_eq!(
+            take_source_capture_runtime_error(&state).as_deref(),
+            Some("ScreenCaptureKit stream stopped")
+        );
+        assert!(state.lock().expect("stream state").is_none());
+    }
 
     struct FakeSourceCaptureStarter {
         calls: usize,
@@ -5040,12 +5379,14 @@ mod tests {
         let meetings = wakenote::meeting::list_meetings(tmp.path());
         let actions = drain_finished_system_meeting_job_actions(&mut backend);
 
-        assert_eq!(
-            actions,
-            vec![FinishedSystemMeetingJobAction::Start(
-                meetings[0].id.clone()
-            )]
-        );
+        assert_eq!(actions.len(), 1);
+        let FinishedSystemMeetingJobAction::Start(job) = &actions[0] else {
+            panic!("expected start action");
+        };
+        assert_eq!(job.id, meetings[0].id);
+        assert_eq!(job.save_root, tmp.path());
+        assert_eq!(job.model_directory, model_dir);
+        assert_eq!(job.model_id, "whisper-medium");
         assert!(drain_finished_system_meeting_job_actions(&mut backend).is_empty());
     }
 
@@ -5084,18 +5425,262 @@ mod tests {
         let meetings = wakenote::meeting::list_meetings(tmp.path());
         let actions = drain_finished_system_meeting_job_actions(&mut backend);
 
-        assert_eq!(
-            actions,
-            vec![FinishedSystemMeetingJobAction::Pending {
-                id: meetings[0].id.clone(),
-                reason: "model_not_ready",
-            }]
-        );
+        assert_eq!(actions.len(), 1);
+        let FinishedSystemMeetingJobAction::Pending { job, reason } = &actions[0] else {
+            panic!("expected pending action");
+        };
+        assert_eq!(job.id, meetings[0].id);
+        assert_eq!(*reason, "model_not_ready");
         assert_eq!(meetings.len(), 1);
         assert_eq!(
             meetings[0].status,
             wakenote::meeting::MeetingStatus::Pending
         );
+    }
+
+    #[test]
+    fn busy_meeting_worker_queues_auto_capture_and_claims_it_on_completion() {
+        let mut runtime = MeetingRuntime::default();
+        let job = |id: &str| MeetingJobSpec {
+            id: id.into(),
+            save_root: PathBuf::from("/tmp/meetings"),
+            model_directory: PathBuf::from("/tmp/models"),
+            model_id: "whisper-medium".into(),
+            suppress_low_confidence: false,
+        };
+
+        let (first_outcome, first_cancel) = schedule_meeting_job(&mut runtime, job("first"), false)
+            .expect("idle worker accepts first meeting");
+        assert_eq!(first_outcome, MeetingJobScheduleOutcome::Started);
+        assert!(first_cancel.is_some());
+
+        let (second_outcome, second_cancel) =
+            schedule_meeting_job(&mut runtime, job("second"), true)
+                .expect("automatic meeting queues behind busy worker");
+        assert_eq!(second_outcome, MeetingJobScheduleOutcome::Queued);
+        assert!(second_cancel.is_none());
+        assert_eq!(runtime.current.as_deref(), Some("first"));
+
+        let (next_job, next_cancel) = complete_meeting_job(&mut runtime, "first")
+            .expect("queued meeting is claimed when current worker finishes");
+        assert_eq!(next_job.id, "second");
+        assert!(!next_cancel.load(Ordering::Acquire));
+        assert_eq!(runtime.current.as_deref(), Some("second"));
+        assert!(runtime.cancel.is_some());
+
+        assert!(complete_meeting_job(&mut runtime, "second").is_none());
+        assert!(runtime.current.is_none());
+        assert!(runtime.cancel.is_none());
+    }
+
+    #[test]
+    fn queued_meeting_keeps_its_own_capture_configuration() {
+        let mut runtime = MeetingRuntime::default();
+        let first = MeetingJobSpec {
+            id: "first".into(),
+            save_root: PathBuf::from("/tmp/first-root"),
+            model_directory: PathBuf::from("/tmp/first-models"),
+            model_id: "first-model".into(),
+            suppress_low_confidence: false,
+        };
+        let second = MeetingJobSpec {
+            id: "second".into(),
+            save_root: PathBuf::from("/tmp/second-root"),
+            model_directory: PathBuf::from("/tmp/second-models"),
+            model_id: "second-model".into(),
+            suppress_low_confidence: true,
+        };
+
+        schedule_meeting_job(&mut runtime, first, false).expect("start first");
+        schedule_meeting_job(&mut runtime, second, true).expect("queue second");
+
+        let (next, _) = complete_meeting_job(&mut runtime, "first").expect("promote second");
+        assert_eq!(next.id, "second");
+        assert_eq!(next.save_root, PathBuf::from("/tmp/second-root"));
+        assert_eq!(next.model_directory, PathBuf::from("/tmp/second-models"));
+        assert_eq!(next.model_id, "second-model");
+        assert!(next.suppress_low_confidence);
+    }
+
+    #[test]
+    fn automatic_meeting_queue_is_fifo_deduplicated_and_ignores_stale_completion() {
+        let mut runtime = MeetingRuntime::default();
+        let job = |id: &str| MeetingJobSpec {
+            id: id.into(),
+            save_root: PathBuf::from("/tmp/meetings"),
+            model_directory: PathBuf::from("/tmp/models"),
+            model_id: "whisper-medium".into(),
+            suppress_low_confidence: false,
+        };
+
+        schedule_meeting_job(&mut runtime, job("first"), false).expect("start first");
+        schedule_meeting_job(&mut runtime, job("second"), true).expect("queue second");
+        schedule_meeting_job(&mut runtime, job("third"), true).expect("queue third");
+        let (duplicate, cancel) =
+            schedule_meeting_job(&mut runtime, job("second"), true).expect("deduplicate second");
+        assert_eq!(duplicate, MeetingJobScheduleOutcome::AlreadyScheduled);
+        assert!(cancel.is_none());
+        assert_eq!(runtime.queued.len(), 2);
+
+        assert!(complete_meeting_job(&mut runtime, "stale").is_none());
+        assert_eq!(runtime.current.as_deref(), Some("first"));
+
+        let (second, _) = complete_meeting_job(&mut runtime, "first").expect("promote second");
+        assert_eq!(second.id, "second");
+        let (third, _) = complete_meeting_job(&mut runtime, "second").expect("promote third");
+        assert_eq!(third.id, "third");
+    }
+
+    #[test]
+    fn startup_recovery_queues_pending_meetings_oldest_first_using_record_model() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model_dir = tmp.path().join("models");
+        std::fs::create_dir_all(&model_dir).expect("model dir");
+        std::fs::write(model_dir.join("record-model.bin"), b"fake model").expect("model file");
+        let source = tmp.path().join("capture.wav");
+        std::fs::write(&source, b"fake wav").expect("source");
+
+        let older = wakenote::meeting::import_meeting(
+            tmp.path(),
+            &source,
+            "record-model",
+            wakenote::settings::TranscriptionLanguage::Ko,
+            "test",
+            chrono::Local
+                .with_ymd_and_hms(2026, 7, 21, 10, 0, 0)
+                .unwrap(),
+        )
+        .expect("older meeting");
+        let newer = wakenote::meeting::import_meeting(
+            tmp.path(),
+            &source,
+            "record-model",
+            wakenote::settings::TranscriptionLanguage::Ko,
+            "test",
+            chrono::Local
+                .with_ymd_and_hms(2026, 7, 21, 11, 0, 0)
+                .unwrap(),
+        )
+        .expect("newer meeting");
+        let settings = AppSettings {
+            save_root: tmp.path().to_string_lossy().to_string(),
+            model_directory: model_dir.to_string_lossy().to_string(),
+            selected_model: "different-selected-model".into(),
+            transcription_enabled: true,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            pending_meeting_job_actions(&settings),
+            vec![
+                FinishedSystemMeetingJobAction::Start(MeetingJobSpec {
+                    id: older.id,
+                    save_root: tmp.path().to_path_buf(),
+                    model_directory: model_dir.clone(),
+                    model_id: "record-model".into(),
+                    suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+                }),
+                FinishedSystemMeetingJobAction::Start(MeetingJobSpec {
+                    id: newer.id,
+                    save_root: tmp.path().to_path_buf(),
+                    model_directory: model_dir,
+                    model_id: "record-model".into(),
+                    suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn delayed_startup_scan_ignores_pending_meetings_created_after_launch_cutoff() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model_dir = tmp.path().join("models");
+        std::fs::create_dir_all(&model_dir).expect("model dir");
+        std::fs::write(model_dir.join("record-model.bin"), b"fake model").expect("model file");
+        let source = tmp.path().join("capture.wav");
+        std::fs::write(&source, b"fake wav").expect("source");
+
+        let before_launch = wakenote::meeting::import_meeting(
+            tmp.path(),
+            &source,
+            "record-model",
+            wakenote::settings::TranscriptionLanguage::Ko,
+            "test",
+            chrono::Local
+                .with_ymd_and_hms(2026, 7, 21, 10, 0, 0)
+                .unwrap(),
+        )
+        .expect("meeting before launch");
+        wakenote::meeting::import_meeting(
+            tmp.path(),
+            &source,
+            "record-model",
+            wakenote::settings::TranscriptionLanguage::Ko,
+            "test",
+            chrono::Local
+                .with_ymd_and_hms(2026, 7, 21, 11, 0, 0)
+                .unwrap(),
+        )
+        .expect("meeting after launch");
+        let settings = AppSettings {
+            save_root: tmp.path().to_string_lossy().to_string(),
+            model_directory: model_dir.to_string_lossy().to_string(),
+            transcription_enabled: true,
+            ..AppSettings::default()
+        };
+
+        let actions = pending_meeting_job_actions_before(
+            &settings,
+            chrono::Utc.with_ymd_and_hms(2026, 7, 21, 1, 30, 0).unwrap(),
+        );
+
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0],
+            FinishedSystemMeetingJobAction::Start(job) if job.id == before_launch.id
+        ));
+    }
+
+    #[test]
+    fn startup_meeting_recovery_does_not_block_the_launch_thread() {
+        let (scan_started_tx, scan_started_rx) = mpsc::channel();
+        let (release_scan_tx, release_scan_rx) = mpsc::channel();
+        let (caller_returned_tx, caller_returned_rx) = mpsc::channel();
+        let (actions_applied_tx, actions_applied_rx) = mpsc::channel();
+
+        let caller = thread::spawn(move || {
+            let worker = spawn_startup_meeting_recovery_worker(
+                move || {
+                    scan_started_tx.send(()).expect("announce blocked scan");
+                    release_scan_rx.recv().expect("release blocked scan");
+                    vec!["pending-meeting"]
+                },
+                move |actions| {
+                    actions_applied_tx
+                        .send(actions)
+                        .expect("publish recovered actions");
+                },
+            );
+            caller_returned_tx
+                .send(worker)
+                .expect("announce caller return");
+        });
+
+        scan_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("recovery scan started");
+        let returned = caller_returned_rx.recv_timeout(Duration::from_millis(100));
+        release_scan_tx.send(()).expect("release recovery scan");
+
+        let worker = returned.expect("launch caller returned while scan remained blocked");
+        assert_eq!(
+            actions_applied_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("recovered actions applied"),
+            vec!["pending-meeting"]
+        );
+        worker.join().expect("recovery worker completed");
+        caller.join().expect("caller completed");
     }
 
     #[test]

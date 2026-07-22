@@ -726,29 +726,58 @@ pub fn meeting_detail(save_root: &Path, id: &str) -> Result<MeetingDetail, Strin
 }
 
 /// Rewrite orphaned `processing` meetings (their worker thread died with the
-/// app) to `failed` so the UI offers Resume. Called once on startup.
+/// app) to `failed` so the UI offers Resume. Pending jobs remain pending so the
+/// startup scheduler can resume work that was queued behind another meeting.
 pub fn reconcile_interrupted(save_root: &Path) {
+    let _ = reconcile_interrupted_with_cutoff(save_root, None);
+}
+
+/// Rewrite only orphaned meetings that were already processing at `cutoff`.
+///
+/// Startup recovery runs on a background thread because the meetings directory
+/// can be gated by macOS privacy prompts. The cutoff prevents that delayed scan
+/// from failing work that started after this app launch.
+pub fn reconcile_interrupted_before(
+    save_root: &Path,
+    cutoff: DateTime<Utc>,
+) -> Vec<MeetingFinishedEvent> {
+    reconcile_interrupted_with_cutoff(save_root, Some(cutoff))
+}
+
+fn reconcile_interrupted_with_cutoff(
+    save_root: &Path,
+    cutoff: Option<DateTime<Utc>>,
+) -> Vec<MeetingFinishedEvent> {
     let Ok(entries) = fs::read_dir(meetings_root(save_root)) else {
-        return;
+        return Vec::new();
     };
+    let mut reconciled = Vec::new();
     for entry in entries.flatten() {
         if !entry.path().is_dir() {
             continue;
         }
         let path = record_path(&entry.path());
         if let Ok(mut record) = MeetingRecord::load(&path) {
-            if matches!(
-                record.status,
-                MeetingStatus::Processing | MeetingStatus::Pending
-            ) {
+            let existed_at_cutoff = cutoff
+                .as_ref()
+                .map(|cutoff| record.updated_at <= *cutoff)
+                .unwrap_or(true);
+            if record.status == MeetingStatus::Processing && existed_at_cutoff {
                 record.status = MeetingStatus::Failed;
-                record.error =
-                    Some("Interrupted because the app was closed (resumable)".to_string());
+                let error = "Interrupted because the app was closed (resumable)".to_string();
+                record.error = Some(error.clone());
                 record.touch();
-                let _ = record.save_atomic(&path);
+                if record.save_atomic(&path).is_ok() {
+                    reconciled.push(MeetingFinishedEvent {
+                        id: record.id,
+                        status: record.status,
+                        error: Some(error),
+                    });
+                }
             }
         }
     }
+    reconciled
 }
 
 fn finish_failed(
@@ -1181,6 +1210,95 @@ mod tests {
         assert_eq!(record, parsed);
         // status serializes snake_case for the frontend.
         assert!(json.contains("\"status\":\"pending\""));
+    }
+
+    #[test]
+    fn reconcile_preserves_pending_jobs_but_marks_processing_jobs_failed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pending_dir = meeting_dir(tmp.path(), "20260614-143000-pending");
+        let processing_dir = meeting_dir(tmp.path(), "20260614-143001-processing");
+        fs::create_dir_all(&pending_dir).expect("pending dir");
+        fs::create_dir_all(&processing_dir).expect("processing dir");
+
+        let mut pending = sample_record();
+        pending.id = "20260614-143000-pending".into();
+        pending.status = MeetingStatus::Pending;
+        pending
+            .save_atomic(&record_path(&pending_dir))
+            .expect("save pending");
+
+        let mut processing = sample_record();
+        processing.id = "20260614-143001-processing".into();
+        processing.status = MeetingStatus::Processing;
+        processing
+            .save_atomic(&record_path(&processing_dir))
+            .expect("save processing");
+
+        reconcile_interrupted(tmp.path());
+
+        let pending = MeetingRecord::load(&record_path(&pending_dir)).expect("load pending");
+        let processing =
+            MeetingRecord::load(&record_path(&processing_dir)).expect("load processing");
+        assert_eq!(pending.status, MeetingStatus::Pending);
+        assert_eq!(pending.error, None);
+        assert_eq!(processing.status, MeetingStatus::Failed);
+        assert!(
+            processing
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Interrupted"))
+        );
+    }
+
+    #[test]
+    fn delayed_reconcile_skips_processing_meetings_updated_after_launch_cutoff() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let old_dir = meeting_dir(tmp.path(), "20260614-143000-old");
+        let fresh_dir = meeting_dir(tmp.path(), "20260614-143001-fresh");
+        fs::create_dir_all(&old_dir).expect("old dir");
+        fs::create_dir_all(&fresh_dir).expect("fresh dir");
+
+        let mut old = sample_record();
+        old.id = "20260614-143000-old".into();
+        old.status = MeetingStatus::Processing;
+        old.updated_at = Utc.with_ymd_and_hms(2026, 6, 14, 5, 30, 0).unwrap();
+        old.save_atomic(&record_path(&old_dir)).expect("save old");
+
+        let mut fresh = sample_record();
+        fresh.id = "20260614-143001-fresh".into();
+        fresh.status = MeetingStatus::Processing;
+        fresh.updated_at = Utc.with_ymd_and_hms(2026, 6, 14, 5, 40, 0).unwrap();
+        fresh
+            .save_atomic(&record_path(&fresh_dir))
+            .expect("save fresh");
+
+        let reconciled = reconcile_interrupted_before(
+            tmp.path(),
+            Utc.with_ymd_and_hms(2026, 6, 14, 5, 35, 0).unwrap(),
+        );
+
+        assert_eq!(reconciled.len(), 1);
+        assert_eq!(reconciled[0].id, old.id);
+        assert_eq!(reconciled[0].status, MeetingStatus::Failed);
+        assert!(
+            reconciled[0]
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Interrupted"))
+        );
+
+        assert_eq!(
+            MeetingRecord::load(&record_path(&old_dir))
+                .expect("load old")
+                .status,
+            MeetingStatus::Failed
+        );
+        assert_eq!(
+            MeetingRecord::load(&record_path(&fresh_dir))
+                .expect("load fresh")
+                .status,
+            MeetingStatus::Processing
+        );
     }
 
     fn sample_record() -> MeetingRecord {

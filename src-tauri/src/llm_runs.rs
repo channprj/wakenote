@@ -524,6 +524,38 @@ impl LlmRunStore {
         Ok(recovered)
     }
 
+    /// Recover only runs that were already active at `cutoff`.
+    ///
+    /// The startup scan can be delayed by filesystem privacy prompts. Comparing
+    /// the persisted update time prevents it from failing a run started after
+    /// this process launched. Records with malformed timestamps are left alone
+    /// because their age cannot be established safely.
+    pub fn recover_interrupted_before(
+        &self,
+        now: &str,
+        cutoff: &str,
+    ) -> Result<Vec<LlmReportRunSnapshot>, String> {
+        let cutoff = chrono::DateTime::parse_from_rfc3339(cutoff)
+            .map_err(|error| format!("Invalid recovery cutoff: {error}"))?;
+        let mut recovered = Vec::new();
+        for mut record in self.list()? {
+            if record.snapshot.status.is_terminal() {
+                continue;
+            }
+            let Ok(updated_at) = chrono::DateTime::parse_from_rfc3339(&record.snapshot.updated_at)
+            else {
+                continue;
+            };
+            if updated_at > cutoff {
+                continue;
+            }
+            record.mark_failed(INTERRUPTED_ERROR, now);
+            self.write(&record)?;
+            recovered.push(record.snapshot());
+        }
+        Ok(recovered)
+    }
+
     fn record_path(&self, run_id: &str) -> PathBuf {
         self.runs_dir.join(format!("{run_id}.json"))
     }
