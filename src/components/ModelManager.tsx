@@ -167,7 +167,11 @@ export function ModelManager({
   onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
-  const masonryRef = useMasonryGrid<HTMLDivElement>(models.length);
+  const modelIdentity = JSON.stringify(models.map((model) => model.id));
+  const masonryRef = useMasonryGrid<HTMLDivElement>(
+    models.length,
+    modelIdentity,
+  );
   const maxColumns = Math.max(1, Math.min(models.length, 3));
 
   return (

@@ -88,8 +88,15 @@ function createGrid(...heights: number[]): {
   return { grid, items };
 }
 
-function MasonryFixture({ itemCount = 2 }: { itemCount?: number }) {
-  const ref = useMasonryGrid<HTMLDivElement>(itemCount);
+function MasonryFixture({
+  itemIds = ["1", "2"],
+}: {
+  itemIds?: string[];
+}) {
+  const ref = useMasonryGrid<HTMLDivElement>(
+    itemIds.length,
+    JSON.stringify(itemIds),
+  );
   const style = {
     "--masonry-row-size": "4px",
     rowGap: "12px",
@@ -97,8 +104,9 @@ function MasonryFixture({ itemCount = 2 }: { itemCount?: number }) {
 
   return (
     <div data-testid="grid" ref={ref} style={style}>
-      <div data-testid="item-1" />
-      <div data-testid="item-2" />
+      {itemIds.map((itemId) => (
+        <div key={itemId} data-testid={`item-${itemId}`} />
+      ))}
     </div>
   );
 }
@@ -255,6 +263,51 @@ describe("useMasonryGrid", () => {
     expect(animationFrames.cancel).toHaveBeenCalledOnce();
     expect(animationFrames.callbacks.size).toBe(0);
     expect(grid.dataset.masonryReady).toBeUndefined();
+  });
+
+  it("rebinds and remeasures replaced children when item identity changes at the same count", () => {
+    const { getByTestId, rerender } = render(
+      <MasonryFixture itemIds={["alpha", "beta"]} />,
+    );
+    const grid = getByTestId("grid");
+    const originalItems = [
+      getByTestId("item-alpha"),
+      getByTestId("item-beta"),
+    ];
+    setHeight(originalItems[0], 100);
+    setHeight(originalItems[1], 52);
+
+    act(() => animationFrames.flush());
+
+    expect(grid.dataset.masonryReady).toBe("true");
+    expect(originalItems[0].style.gridRowEnd).toBe("span 7");
+    expect(originalItems[1].style.gridRowEnd).toBe("span 4");
+
+    const originalObserver = ControlledResizeObserver.instances[0];
+    rerender(<MasonryFixture itemIds={["gamma", "delta"]} />);
+
+    const replacementItems = [
+      getByTestId("item-gamma"),
+      getByTestId("item-delta"),
+    ];
+    setHeight(replacementItems[0], 84);
+    setHeight(replacementItems[1], 116);
+
+    expect(grid.dataset.masonryReady).toBeUndefined();
+    expect(originalObserver.disconnect).toHaveBeenCalledOnce();
+    expect(ControlledResizeObserver.instances).toHaveLength(2);
+    expect(ControlledResizeObserver.instances[1].observe).toHaveBeenCalledWith(
+      replacementItems[0],
+    );
+    expect(ControlledResizeObserver.instances[1].observe).toHaveBeenCalledWith(
+      replacementItems[1],
+    );
+
+    act(() => animationFrames.flush());
+
+    expect(grid.dataset.masonryReady).toBe("true");
+    expect(replacementItems[0].style.gridRowEnd).toBe("span 6");
+    expect(replacementItems[1].style.gridRowEnd).toBe("span 8");
   });
 
   it("leaves the ordinary-grid fallback untouched without ResizeObserver", () => {

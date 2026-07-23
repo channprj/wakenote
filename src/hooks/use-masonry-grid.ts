@@ -94,6 +94,7 @@ export function measureMasonryGrid(grid: HTMLElement): boolean {
 
 export function useMasonryGrid<T extends HTMLElement>(
   itemCount: number,
+  invalidationKey?: string,
 ): RefObject<T | null> {
   const gridRef = useRef<T | null>(null);
 
@@ -133,7 +134,7 @@ export function useMasonryGrid<T extends HTMLElement>(
       }
       resetMasonryGrid(grid);
     };
-  }, [itemCount]);
+  }, [itemCount, invalidationKey]);
 
   return gridRef;
 }
