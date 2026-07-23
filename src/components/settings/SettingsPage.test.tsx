@@ -79,3 +79,15 @@ describe("SettingsPage ownership", () => {
     expect(markup).not.toContain("Library");
   });
 });
+
+describe("SettingsPage balanced masonry", () => {
+  it.each([
+    ["general", "2"],
+    ["advanced", "2"],
+    ["storage", "3"],
+    ["integrations", "3"],
+    ["audio", "3"],
+  ] as const)("caps the %s grid by its rendered card count", (section, maxColumns) => {
+    expect(renderSection(section)).toContain(`data-max-columns="${maxColumns}"`);
+  });
+});

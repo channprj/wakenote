@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 import {
   Card,
   CardContent,
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { useMasonryGrid } from "@/hooks/use-masonry-grid";
 
 export function SettingsCard({
   title,
@@ -166,5 +167,18 @@ export function SettingSlider({
 }
 
 export function SettingsGrid({ children }: { children: ReactNode }) {
-  return <div className="settings-grid">{children}</div>;
+  const itemCount = Children.toArray(children).length;
+  const maxColumns = Math.max(1, Math.min(itemCount, 3));
+  const gridRef = useMasonryGrid<HTMLDivElement>(itemCount);
+
+  return (
+    <div
+      ref={gridRef}
+      className="settings-grid"
+      data-slot="settings-grid"
+      data-max-columns={maxColumns}
+    >
+      {children}
+    </div>
+  );
 }

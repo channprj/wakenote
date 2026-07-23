@@ -202,6 +202,50 @@ describe("compact application shell styling", () => {
   });
 });
 
+describe("balanced Settings masonry", () => {
+  it("uses a safe one-column fallback before measurement", () => {
+    const gridRule = cssRule(".settings-grid", pagesCss);
+
+    expect(gridRule).toContain("--masonry-row-size: 4px;");
+    expect(gridRule).toContain("grid-template-columns: minmax(0, 1fr);");
+  });
+
+  it("densely packs measured cards on masonry rows", () => {
+    const measuredRule = cssRule(
+      '.settings-grid[data-masonry-ready="true"]',
+      pagesCss,
+    );
+
+    expect(measuredRule).toContain("grid-auto-flow: dense;");
+    expect(measuredRule).toContain(
+      "grid-auto-rows: var(--masonry-row-size);",
+    );
+  });
+
+  it("sizes shared Settings grids from their section container", () => {
+    const sectionRule = cssRule(".settings-section", pagesCss);
+    const twoColumn = cssBlock(
+      "@container settings-section (min-width: 680px)",
+      pagesCss,
+    );
+    const threeColumn = cssBlock(
+      "@container settings-section (min-width: 1040px)",
+      pagesCss,
+    );
+
+    expect(sectionRule).toContain("container: settings-section / inline-size;");
+    expect(twoColumn).toContain('.settings-grid[data-max-columns="2"]');
+    expect(twoColumn).toContain('.settings-grid[data-max-columns="3"]');
+    expect(twoColumn).toContain(
+      "grid-template-columns: repeat(2, minmax(0, 1fr));",
+    );
+    expect(threeColumn).toContain('.settings-grid[data-max-columns="3"]');
+    expect(threeColumn).toContain(
+      "grid-template-columns: repeat(3, minmax(0, 1fr));",
+    );
+  });
+});
+
 describe("compact overflow safety contract", () => {
   it("keeps every primary content surface inside the supported viewport", () => {
     expect(cssRule(".app-frame", splitCss)).toContain(
@@ -265,7 +309,12 @@ describe("compact overflow safety contract", () => {
 
     expect(compact).toContain('[data-slot="queue-table"] tbody > tr');
     expect(compact).toContain("content: attr(data-label);");
-    expect(compact).toContain(".settings-grid");
+    expect(compact).not.toContain(".settings-grid");
+    expect(compact).toContain(".settings-inline-control");
+    expect(compact).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto;",
+    );
+    expect(compact).toContain(".settings-inline-control > :first-child");
     expect(compact).toContain("scroll-padding-inline: var(--space-2);");
     expect(narrow).toContain('[data-slot="field-row"]');
     expect(narrow).toContain(".settings-slider");
