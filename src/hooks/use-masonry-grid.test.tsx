@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render } from "@testing-library/react";
-import type { CSSProperties } from "react";
+import { useLayoutEffect, type CSSProperties } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   masonryRowSpan,
@@ -90,17 +90,24 @@ function createGrid(...heights: number[]): {
 
 function MasonryFixture({
   itemIds = ["1", "2"],
+  onLayoutRead,
 }: {
   itemIds?: string[];
+  onLayoutRead?: (masonryReady: string | undefined) => void;
 }) {
+  const itemIdentity = JSON.stringify(itemIds);
   const ref = useMasonryGrid<HTMLDivElement>(
     itemIds.length,
-    JSON.stringify(itemIds),
+    itemIdentity,
   );
   const style = {
     "--masonry-row-size": "4px",
     rowGap: "12px",
   } as CSSProperties;
+
+  useLayoutEffect(() => {
+    onLayoutRead?.(ref.current?.dataset.masonryReady);
+  }, [itemIdentity, onLayoutRead, ref]);
 
   return (
     <div data-testid="grid" ref={ref} style={style}>
@@ -299,8 +306,12 @@ describe("useMasonryGrid", () => {
   });
 
   it("rebinds and remeasures replaced children when item identity changes at the same count", () => {
+    const layoutReadiness = vi.fn();
     const { getByTestId, rerender } = render(
-      <MasonryFixture itemIds={["alpha", "beta"]} />,
+      <MasonryFixture
+        itemIds={["alpha", "beta"]}
+        onLayoutRead={layoutReadiness}
+      />,
     );
     const grid = getByTestId("grid");
     const originalItems = [
@@ -317,7 +328,13 @@ describe("useMasonryGrid", () => {
     expect(originalItems[1].style.gridRowEnd).toBe("span 4");
 
     const originalObserver = ControlledResizeObserver.instances[0];
-    rerender(<MasonryFixture itemIds={["gamma", "delta"]} />);
+    layoutReadiness.mockClear();
+    rerender(
+      <MasonryFixture
+        itemIds={["gamma", "delta"]}
+        onLayoutRead={layoutReadiness}
+      />,
+    );
 
     const replacementItems = [
       getByTestId("item-gamma"),
@@ -326,6 +343,8 @@ describe("useMasonryGrid", () => {
     setHeight(replacementItems[0], 84);
     setHeight(replacementItems[1], 116);
 
+    expect(layoutReadiness).toHaveBeenCalledOnce();
+    expect(layoutReadiness).toHaveBeenCalledWith(undefined);
     expect(grid.dataset.masonryReady).toBeUndefined();
     expect(originalObserver.disconnect).toHaveBeenCalledOnce();
     expect(ControlledResizeObserver.instances).toHaveLength(2);

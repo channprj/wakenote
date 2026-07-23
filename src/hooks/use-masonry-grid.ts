@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { RefObject } from "react";
 
 function directItems(grid: HTMLElement): HTMLElement[] {
@@ -98,7 +98,7 @@ export function useMasonryGrid<T extends HTMLElement>(
 ): RefObject<T | null> {
   const gridRef = useRef<T | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const grid = gridRef.current;
     if (
       !grid ||
