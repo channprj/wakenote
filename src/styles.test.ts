@@ -222,7 +222,7 @@ describe("balanced Settings masonry", () => {
     );
   });
 
-  it("sizes shared Settings grids from their section container", () => {
+  it("only expands measured Settings grids from their section container", () => {
     const sectionRule = cssRule(".settings-section", pagesCss);
     const twoColumn = cssBlock(
       "@container settings-section (min-width: 680px)",
@@ -232,17 +232,24 @@ describe("balanced Settings masonry", () => {
       "@container settings-section (min-width: 1040px)",
       pagesCss,
     );
+    const twoColumnRule = cssRule(
+      '.settings-grid[data-masonry-ready="true"][data-max-columns="2"],\n  .settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
+      twoColumn,
+    );
+    const threeColumnRule = cssRule(
+      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
+      threeColumn,
+    );
 
     expect(sectionRule).toContain("container: settings-section / inline-size;");
-    expect(twoColumn).toContain('.settings-grid[data-max-columns="2"]');
-    expect(twoColumn).toContain('.settings-grid[data-max-columns="3"]');
-    expect(twoColumn).toContain(
+    expect(twoColumnRule).toContain(
       "grid-template-columns: repeat(2, minmax(0, 1fr));",
     );
-    expect(threeColumn).toContain('.settings-grid[data-max-columns="3"]');
-    expect(threeColumn).toContain(
+    expect(threeColumnRule).toContain(
       "grid-template-columns: repeat(3, minmax(0, 1fr));",
     );
+    expect(twoColumn).not.toContain('.settings-grid[data-max-columns=');
+    expect(threeColumn).not.toContain('.settings-grid[data-max-columns=');
   });
 });
 

@@ -240,14 +240,14 @@
 }
 
 @container settings-section (min-width: 680px) {
-  .settings-grid[data-max-columns="2"],
-  .settings-grid[data-max-columns="3"] {
+  .settings-grid[data-masonry-ready="true"][data-max-columns="2"],
+  .settings-grid[data-masonry-ready="true"][data-max-columns="3"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @container settings-section (min-width: 1040px) {
-  .settings-grid[data-max-columns="3"] {
+  .settings-grid[data-masonry-ready="true"][data-max-columns="3"] {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
