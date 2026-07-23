@@ -253,7 +253,29 @@ describe("balanced Settings masonry", () => {
     expect(threeColumn).not.toContain('.settings-grid[data-max-columns=');
   });
 
-  it("reflows controls and system-audio content inside narrow cards", () => {
+  it("keeps system-audio content globally shrinkable", () => {
+    const narrowCardStart = pagesCss.indexOf(
+      "@container settings-card (max-width: 360px)",
+    );
+    expect(narrowCardStart).toBeGreaterThan(0);
+    const globalCardCss = pagesCss.slice(0, narrowCardStart);
+    const shrinkableRule = cssRule(
+      ".system-audio-settings,\n.system-audio-banner",
+      globalCardCss,
+    );
+    const bannerContentRule = cssRule(
+      ".system-audio-banner > span",
+      globalCardCss,
+    );
+
+    expect(shrinkableRule).toContain("min-width: 0;");
+    expect(bannerContentRule).toContain("min-width: 0;");
+    expect(bannerContentRule).toContain("flex: 1 1 180px;");
+    expect(bannerContentRule).toContain("overflow-wrap: anywhere;");
+    expect(bannerContentRule).toContain("white-space: normal;");
+  });
+
+  it("keeps only responsive alignment and wrapping inside narrow cards", () => {
     const cardRule = cssRule(".settings-card", pagesCss);
     const narrowCard = cssBlock(
       "@container settings-card (max-width: 360px)",
@@ -265,10 +287,6 @@ describe("balanced Settings masonry", () => {
       narrowCard,
     );
     const bannerRule = cssRule(".system-audio-banner", narrowCard);
-    const bannerContentRule = cssRule(
-      ".system-audio-banner > span",
-      narrowCard,
-    );
 
     expect(cardRule).toContain("container: settings-card / inline-size;");
     expect(inlineRule).toContain(
@@ -277,9 +295,10 @@ describe("balanced Settings masonry", () => {
     expect(firstChildRule).toContain("grid-column: 1 / -1;");
     expect(bannerRule).toContain("align-items: flex-start;");
     expect(bannerRule).toContain("flex-wrap: wrap;");
-    expect(bannerContentRule).toContain("min-width: 0;");
-    expect(bannerContentRule).toContain("overflow-wrap: anywhere;");
-    expect(bannerContentRule).toContain("white-space: normal;");
+    expect(bannerRule).not.toContain("min-width:");
+    expect(bannerRule).not.toContain("white-space:");
+    expect(narrowCard).not.toContain(".system-audio-settings");
+    expect(narrowCard).not.toContain(".system-audio-banner > span");
   });
 
   it("stacks Model files above the model collection without width overflow", () => {

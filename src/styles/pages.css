@@ -294,6 +294,18 @@
   gap: 6px;
 }
 
+.system-audio-settings,
+.system-audio-banner {
+  min-width: 0;
+}
+
+.system-audio-banner > span {
+  min-width: 0;
+  flex: 1 1 180px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 @container settings-card (max-width: 360px) {
   .settings-inline-control {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -303,22 +315,9 @@
     grid-column: 1 / -1;
   }
 
-  .system-audio-settings {
-    min-width: 0;
-  }
-
   .system-audio-banner {
-    min-width: 0;
     align-items: flex-start;
     flex-wrap: wrap;
-    white-space: normal;
-  }
-
-  .system-audio-banner > span {
-    min-width: 0;
-    flex: 1 1 180px;
-    overflow-wrap: anywhere;
-    white-space: normal;
   }
 }
 
