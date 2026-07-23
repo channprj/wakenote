@@ -7,7 +7,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { formatModelLabel } from "@/lib/models";
 import { modelStatusBadgeTone } from "@/lib/status-summary";
 import type { AppSnapshot } from "@/lib/types";
-import { SettingsCard, SettingsGrid } from "./settings-controls";
+import { SettingsCard } from "./settings-controls";
 import type { SettingsActions } from "./types";
 
 export function ModelsSettings({
@@ -22,42 +22,44 @@ export function ModelsSettings({
     models.find((model) => model.id === settings.selected_model)?.status ?? "";
 
   return (
-    <SettingsGrid>
-      <SettingsCard title="Model files" description="Local speech recognition runtime.">
-        <Field orientation="responsive" className="settings-row">
-          <FieldContent>
-            <FieldLabel>Model Directory</FieldLabel>
-            <FieldDescription className="overflow-wrap-anywhere">
-              Store downloaded model files in this folder.
-            </FieldDescription>
-          </FieldContent>
-          <div className="settings-inline-control">
-            <Input
-              aria-label="Model Directory"
-              value={settings.model_directory}
-              title={settings.model_directory}
-              onChange={(event) =>
-                actions.onPatch({ model_directory: event.currentTarget.value })
-              }
-            />
-            <Button type="button" size="sm" variant="outline" onClick={actions.onChooseModelDirectory}>
-              <FolderOpenIcon data-icon="inline-start" />
-              Choose Folder
-            </Button>
-          </div>
-        </Field>
-        <Field orientation="horizontal" className="settings-row">
-          <FieldContent>
-            <FieldLabel>Selected model</FieldLabel>
-            <FieldDescription>
-              The active model used for new transcription jobs.
-            </FieldDescription>
-          </FieldContent>
-          <StatusBadge tone={modelStatusBadgeTone(selectedStatus)}>
-            {formatModelLabel(settings.selected_model, models)}
-          </StatusBadge>
-        </Field>
-      </SettingsCard>
+    <div className="models-settings">
+      <div data-slot="model-files-card">
+        <SettingsCard title="Model files" description="Local speech recognition runtime.">
+          <Field orientation="responsive" className="settings-row">
+            <FieldContent>
+              <FieldLabel>Model Directory</FieldLabel>
+              <FieldDescription className="overflow-wrap-anywhere">
+                Store downloaded model files in this folder.
+              </FieldDescription>
+            </FieldContent>
+            <div className="settings-inline-control">
+              <Input
+                aria-label="Model Directory"
+                value={settings.model_directory}
+                title={settings.model_directory}
+                onChange={(event) =>
+                  actions.onPatch({ model_directory: event.currentTarget.value })
+                }
+              />
+              <Button type="button" size="sm" variant="outline" onClick={actions.onChooseModelDirectory}>
+                <FolderOpenIcon data-icon="inline-start" />
+                Choose Folder
+              </Button>
+            </div>
+          </Field>
+          <Field orientation="horizontal" className="settings-row">
+            <FieldContent>
+              <FieldLabel>Selected model</FieldLabel>
+              <FieldDescription>
+                The active model used for new transcription jobs.
+              </FieldDescription>
+            </FieldContent>
+            <StatusBadge tone={modelStatusBadgeTone(selectedStatus)}>
+              {formatModelLabel(settings.selected_model, models)}
+            </StatusBadge>
+          </Field>
+        </SettingsCard>
+      </div>
 
       <ModelManager
         models={models}
@@ -68,6 +70,6 @@ export function ModelsSettings({
         onCancelDownload={actions.onCancelModelDownload}
         onDelete={actions.onDeleteModel}
       />
-    </SettingsGrid>
+    </div>
   );
 }

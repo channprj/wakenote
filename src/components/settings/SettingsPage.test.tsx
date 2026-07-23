@@ -90,4 +90,14 @@ describe("SettingsPage balanced masonry", () => {
   ] as const)("caps the %s grid by its rendered card count", (section, maxColumns) => {
     expect(renderSection(section)).toContain(`data-max-columns="${maxColumns}"`);
   });
+
+  it("places Model files before a separate model-card grid", () => {
+    const markup = renderSection("models");
+    const files = markup.indexOf('data-slot="model-files-card"');
+    const models = markup.indexOf('data-slot="model-card-grid"');
+
+    expect(markup).toContain('class="models-settings"');
+    expect(files).toBeGreaterThan(-1);
+    expect(models).toBeGreaterThan(files);
+  });
 });

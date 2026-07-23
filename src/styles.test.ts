@@ -232,24 +232,145 @@ describe("balanced Settings masonry", () => {
       "@container settings-section (min-width: 1040px)",
       pagesCss,
     );
-    const twoColumnRule = cssRule(
-      '.settings-grid[data-masonry-ready="true"][data-max-columns="2"],\n  .settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
-      twoColumn,
-    );
-    const threeColumnRule = cssRule(
-      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
-      threeColumn,
-    );
 
     expect(sectionRule).toContain("container: settings-section / inline-size;");
-    expect(twoColumnRule).toContain(
+    expect(twoColumn).toContain(
+      '.settings-grid[data-masonry-ready="true"][data-max-columns="2"]',
+    );
+    expect(twoColumn).toContain(
+      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
+    );
+    expect(twoColumn).toContain(
       "grid-template-columns: repeat(2, minmax(0, 1fr));",
     );
-    expect(threeColumnRule).toContain(
+    expect(threeColumn).toContain(
+      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
+    );
+    expect(threeColumn).toContain(
       "grid-template-columns: repeat(3, minmax(0, 1fr));",
     );
     expect(twoColumn).not.toContain('.settings-grid[data-max-columns=');
     expect(threeColumn).not.toContain('.settings-grid[data-max-columns=');
+  });
+
+  it("stacks Model files above the model collection without width overflow", () => {
+    const stackRule = cssRule(".models-settings", pagesCss);
+    const childRule = cssRule(
+      '.models-settings > *,\n.models-settings [data-slot="model-files-card"]',
+      pagesCss,
+    );
+
+    expect(stackRule).toContain("display: grid;");
+    expect(stackRule).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(stackRule).toContain("min-width: 0;");
+    expect(stackRule).toContain("gap: var(--page-gap);");
+    expect(childRule).toContain("min-width: 0;");
+  });
+
+  it("keeps model cards in a safe one-column fallback until measurement", () => {
+    const listRule = cssRule(".model-list", componentsCss);
+    const childRule = cssRule(".model-list > *", componentsCss);
+    const measuredRule = cssRule(
+      '.model-list[data-masonry-ready="true"]',
+      componentsCss,
+    );
+
+    expect(listRule).toContain("--masonry-row-size: 4px;");
+    expect(listRule).toContain("display: grid;");
+    expect(listRule).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(listRule).toContain("align-items: start;");
+    expect(childRule).toContain("min-width: 0;");
+    expect(childRule).toContain("align-self: start;");
+    expect(measuredRule).toContain("grid-auto-flow: dense;");
+    expect(measuredRule).toContain(
+      "grid-auto-rows: var(--masonry-row-size);",
+    );
+  });
+
+  it("only upgrades measured model collections to two or three columns", () => {
+    const twoColumn = cssBlock(
+      "@container settings-section (min-width: 680px)",
+      pagesCss,
+    );
+    const threeColumn = cssBlock(
+      "@container settings-section (min-width: 1040px)",
+      pagesCss,
+    );
+    const modelRules = flatCssRules(`${componentsCss}\n${pagesCss}`).filter(
+      ({ selector }) => selector.includes(".model-list"),
+    );
+
+    expect(twoColumn).toContain(
+      '.model-list[data-masonry-ready="true"][data-max-columns="2"]',
+    );
+    expect(twoColumn).toContain(
+      '.model-list[data-masonry-ready="true"][data-max-columns="3"]',
+    );
+    expect(twoColumn).toContain(
+      "grid-template-columns: repeat(2, minmax(0, 1fr));",
+    );
+    expect(threeColumn).toContain(
+      '.model-list[data-masonry-ready="true"][data-max-columns="3"]',
+    );
+    expect(threeColumn).toContain(
+      "grid-template-columns: repeat(3, minmax(0, 1fr));",
+    );
+    expect(twoColumn).not.toContain('.model-list[data-max-columns=');
+    expect(threeColumn).not.toContain('.model-list[data-max-columns=');
+
+    for (const { selector, body } of modelRules) {
+      if (
+        body.includes("grid-auto-flow: dense;") ||
+        body.includes("grid-auto-rows:") ||
+        body.includes("grid-template-columns: repeat(")
+      ) {
+        expect(selector).toContain('[data-masonry-ready="true"]');
+      }
+      expect(selector).not.toContain('[data-max-columns="4"]');
+      expect(body).not.toContain("repeat(4,");
+    }
+  });
+
+  it("uses vertical model cards with safely wrapping metadata and actions", () => {
+    const cardRule = cssRule(".model-row", componentsCss);
+    const mainRule = cssRule(
+      ".model-row__main,\n.model-row__main header",
+      componentsCss,
+    );
+    const wrappingRule = cssRule(
+      ".model-row__main header > div,\n.model-row__scores span",
+      componentsCss,
+    );
+    const scoresRule = flatCssRules(componentsCss).find(
+      ({ selector }) => selector.trim() === ".model-row__scores",
+    )?.body ?? "";
+    const actionsRule = flatCssRules(componentsCss).find(
+      ({ selector }) => selector.trim() === ".model-row__actions",
+    )?.body ?? "";
+    const sharedActionsRule = cssRule(
+      ".status-strip,\n.toolbar,\n.row-actions,\n.section__actions,\n.model-row__actions",
+      componentsCss,
+    );
+    const dangerRule = cssRule(
+      '.model-row__scores span[data-tone="danger"]',
+      componentsCss,
+    );
+
+    expect(cardRule).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(mainRule).toContain("min-width: 0;");
+    expect(wrappingRule).toContain("min-width: 0;");
+    expect(wrappingRule).toContain("overflow-wrap: anywhere;");
+    expect(scoresRule).toContain("flex-wrap: wrap;");
+    expect(sharedActionsRule).toContain("flex-wrap: wrap;");
+    expect(actionsRule).toContain("min-width: 0;");
+    expect(actionsRule).toContain("justify-content: flex-start;");
+    expect(dangerRule).toContain("flex-basis: 100%;");
   });
 });
 

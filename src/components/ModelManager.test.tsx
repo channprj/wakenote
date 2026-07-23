@@ -64,6 +64,27 @@ function titleOf(button: string): string | null {
   return match ? match[1] : null;
 }
 
+describe("model card grid", () => {
+  it("renders every model as a card in one capped responsive collection", () => {
+    const models = mockModels();
+    const markup = renderToStaticMarkup(
+      <ModelManager
+        models={models}
+        settings={defaultSettings()}
+        onPatch={() => {}}
+        onVerify={() => {}}
+        onDownload={() => {}}
+        onCancelDownload={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-slot="model-card-grid"');
+    expect(markup).toContain('data-max-columns="3"');
+    expect(markup.match(/class="model-row"/g)).toHaveLength(models.length);
+  });
+});
+
 describe("model manager actions", () => {
   it("enables switching only for usable local models", () => {
     expect(isDisabled(buttonWithText(renderModel("ready"), "Switch"))).toBe(false);

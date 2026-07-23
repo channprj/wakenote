@@ -5,6 +5,7 @@ import { StatusBadge } from "./ui/status-badge";
 import { modelStatusBadgeTone } from "../lib/status-summary";
 import { humanizeModelStatus } from "../lib/transcript-history";
 import type { AppSettings, ModelDescriptor, ModelStatus } from "../lib/types";
+import { useMasonryGrid } from "../hooks/use-masonry-grid";
 
 const LANGUAGE_LABELS: Record<string, string> = {
   ko: "Korean",
@@ -166,8 +167,16 @@ export function ModelManager({
   onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
+  const masonryRef = useMasonryGrid<HTMLDivElement>(models.length);
+  const maxColumns = Math.max(1, Math.min(models.length, 3));
+
   return (
-    <div className="model-list">
+    <div
+      ref={masonryRef}
+      className="model-list"
+      data-slot="model-card-grid"
+      data-max-columns={maxColumns}
+    >
       {models.map((model) => {
         const selected = settings.selected_model === model.id;
         const progress = statusProgress(model);
