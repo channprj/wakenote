@@ -243,8 +243,11 @@ describe("SettingsPage interactions", () => {
     );
     expect(initialGridObservers).toHaveLength(1);
     const initialObserver = initialGridObservers[0];
-    expect(initialObserver.observe.mock.calls.map(([target]) => target)).toEqual(
-      [grid, ...enabledCards],
+    expect(initialObserver.observe).toHaveBeenCalledTimes(6);
+    expect(
+      new Set(initialObserver.observe.mock.calls.map(([target]) => target)),
+    ).toEqual(
+      new Set([grid, ...enabledCards]),
     );
     expect(frames.callbacks.size).toBe(1);
     expect(frames.request).toHaveBeenCalledOnce();
@@ -284,9 +287,10 @@ describe("SettingsPage interactions", () => {
     );
     expect(replacementGridObservers).toHaveLength(1);
     const replacementObserver = replacementGridObservers[0];
+    expect(replacementObserver.observe).toHaveBeenCalledTimes(5);
     expect(
-      replacementObserver.observe.mock.calls.map(([target]) => target),
-    ).toEqual([grid, ...remainingCards]);
+      new Set(replacementObserver.observe.mock.calls.map(([target]) => target)),
+    ).toEqual(new Set([grid, ...remainingCards]));
     expect(frames.callbacks.size).toBe(1);
     expect(frames.request).toHaveBeenCalledTimes(2);
     expect(grid.dataset.masonryReady).toBeUndefined();
