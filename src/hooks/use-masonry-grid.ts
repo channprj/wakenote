@@ -7,6 +7,18 @@ function directItems(grid: HTMLElement): HTMLElement[] {
   );
 }
 
+function pixelLength(value: string): number | null {
+  const token = value.trim();
+  if (
+    !/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?px$/i.test(token)
+  ) {
+    return null;
+  }
+
+  const length = Number(token.slice(0, -2));
+  return Number.isFinite(length) ? length : null;
+}
+
 export function masonryRowSpan(
   height: number,
   rowHeight: number,
@@ -43,10 +55,14 @@ export function measureMasonryGrid(grid: HTMLElement): boolean {
     }
 
     const computedStyle = getComputedStyle(grid);
-    const rowHeight = Number.parseFloat(
+    const rowHeight = pixelLength(
       computedStyle.getPropertyValue("--masonry-row-size"),
     );
-    const rowGap = Number.parseFloat(computedStyle.rowGap);
+    const rowGap = pixelLength(computedStyle.rowGap);
+    if (rowHeight === null || rowGap === null) {
+      resetMasonryGrid(grid);
+      return false;
+    }
     const spans: number[] = [];
 
     for (const item of items) {

@@ -161,6 +161,43 @@ describe("masonry grid measurement", () => {
     expect(grid.dataset.masonryReady).toBe("true");
   });
 
+  it("accepts complete decimal pixel tokens with surrounding whitespace", () => {
+    const { grid, items } = createGrid(6);
+    grid.style.setProperty("--masonry-row-size", " 2.5px ");
+    grid.style.rowGap = "1.5px";
+
+    expect(measureMasonryGrid(grid)).toBe(true);
+    expect(items[0].style.gridRowEnd).toBe("span 2");
+    expect(grid.dataset.masonryReady).toBe("true");
+  });
+
+  it("rejects a row-size token with trailing garbage", () => {
+    const { grid, items } = createGrid(100);
+    grid.style.setProperty("--masonry-row-size", "4garbage");
+
+    expect(measureMasonryGrid(grid)).toBe(false);
+    expect(items[0].style.gridRowEnd).toBe("");
+    expect(grid.dataset.masonryReady).toBeUndefined();
+  });
+
+  it("rejects an unsupported row-size unit", () => {
+    const { grid, items } = createGrid(100);
+    grid.style.setProperty("--masonry-row-size", "0.25rem");
+
+    expect(measureMasonryGrid(grid)).toBe(false);
+    expect(items[0].style.gridRowEnd).toBe("");
+    expect(grid.dataset.masonryReady).toBeUndefined();
+  });
+
+  it("rejects a percentage row gap", () => {
+    const { grid, items } = createGrid(100);
+    grid.style.rowGap = "10%";
+
+    expect(measureMasonryGrid(grid)).toBe(false);
+    expect(items[0].style.gridRowEnd).toBe("");
+    expect(grid.dataset.masonryReady).toBeUndefined();
+  });
+
   it("returns to the ordinary-grid fallback when an item measurement throws", () => {
     const { grid, items } = createGrid(100, 52);
     grid.dataset.masonryReady = "true";
