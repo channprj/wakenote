@@ -251,6 +251,39 @@ describe("useMasonryGrid", () => {
     expect(animationFrames.request).toHaveBeenCalledTimes(2);
   });
 
+  it("remeasures a changed card height without scheduling duplicate frames", () => {
+    const { getByTestId } = render(<MasonryFixture />);
+    const grid = getByTestId("grid");
+    const items = [getByTestId("item-1"), getByTestId("item-2")];
+    const firstRect = vi
+      .spyOn(items[0], "getBoundingClientRect")
+      .mockReturnValue(rect(100));
+    setHeight(items[1], 52);
+    const observer = ControlledResizeObserver.instances[0];
+
+    act(() => animationFrames.flush());
+
+    expect(grid.dataset.masonryReady).toBe("true");
+    expect(items[0].style.gridRowEnd).toBe("span 7");
+    expect(items[1].style.gridRowEnd).toBe("span 4");
+    expect(animationFrames.request).toHaveBeenCalledOnce();
+
+    firstRect.mockReturnValue(rect(148));
+    act(() => {
+      observer.notify();
+      observer.notify();
+    });
+
+    expect(animationFrames.callbacks.size).toBe(1);
+    expect(animationFrames.request).toHaveBeenCalledTimes(2);
+
+    act(() => animationFrames.flush());
+
+    expect(items[0].style.gridRowEnd).toBe("span 10");
+    expect(items[1].style.gridRowEnd).toBe("span 4");
+    expect(grid.dataset.masonryReady).toBe("true");
+  });
+
   it("disconnects, cancels a pending frame, and resets on unmount", () => {
     const { getByTestId, unmount } = render(<MasonryFixture />);
     const grid = getByTestId("grid");

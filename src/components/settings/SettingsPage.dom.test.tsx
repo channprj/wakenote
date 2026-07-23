@@ -139,4 +139,35 @@ describe("SettingsPage interactions", () => {
     const position = screen.getByRole("combobox", { name: "Floating overlay position" });
     expect((position as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("keeps later Audio controls mounted when system sources are removed", () => {
+    const actions = makeActions();
+    const enabled = mockSnapshot();
+    enabled.settings.system_audio_enabled = true;
+    const { rerender } = render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={enabled}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Recognized system sources")).toBeTruthy();
+    expect(screen.getByText("Chunk timing")).toBeTruthy();
+
+    const disabled = mockSnapshot();
+    disabled.settings.system_audio_enabled = false;
+    rerender(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={disabled}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Recognized system sources")).toBeNull();
+    expect(screen.getByText("Chunk timing")).toBeTruthy();
+  });
 });
