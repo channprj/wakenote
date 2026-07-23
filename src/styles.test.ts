@@ -253,6 +253,35 @@ describe("balanced Settings masonry", () => {
     expect(threeColumn).not.toContain('.settings-grid[data-max-columns=');
   });
 
+  it("reflows controls and system-audio content inside narrow cards", () => {
+    const cardRule = cssRule(".settings-card", pagesCss);
+    const narrowCard = cssBlock(
+      "@container settings-card (max-width: 360px)",
+      pagesCss,
+    );
+    const inlineRule = cssRule(".settings-inline-control", narrowCard);
+    const firstChildRule = cssRule(
+      ".settings-inline-control > :first-child",
+      narrowCard,
+    );
+    const bannerRule = cssRule(".system-audio-banner", narrowCard);
+    const bannerContentRule = cssRule(
+      ".system-audio-banner > span",
+      narrowCard,
+    );
+
+    expect(cardRule).toContain("container: settings-card / inline-size;");
+    expect(inlineRule).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto;",
+    );
+    expect(firstChildRule).toContain("grid-column: 1 / -1;");
+    expect(bannerRule).toContain("align-items: flex-start;");
+    expect(bannerRule).toContain("flex-wrap: wrap;");
+    expect(bannerContentRule).toContain("min-width: 0;");
+    expect(bannerContentRule).toContain("overflow-wrap: anywhere;");
+    expect(bannerContentRule).toContain("white-space: normal;");
+  });
+
   it("stacks Model files above the model collection without width overflow", () => {
     const stackRule = cssRule(".models-settings", pagesCss);
     const childRule = cssRule(

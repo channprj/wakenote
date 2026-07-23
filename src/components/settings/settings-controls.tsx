@@ -166,9 +166,15 @@ export function SettingSlider({
   );
 }
 
-export function SettingsGrid({ children }: { children: ReactNode }) {
+export function SettingsGrid({
+  children,
+  maxColumns,
+}: {
+  children: ReactNode;
+  maxColumns: 1 | 2 | 3;
+}) {
   const itemCount = Children.toArray(children).length;
-  const maxColumns = Math.max(1, Math.min(itemCount, 3));
+  const effectiveMaxColumns = Math.max(1, Math.min(itemCount, maxColumns));
   const gridRef = useMasonryGrid<HTMLDivElement>(itemCount);
 
   return (
@@ -176,7 +182,7 @@ export function SettingsGrid({ children }: { children: ReactNode }) {
       ref={gridRef}
       className="settings-grid"
       data-slot="settings-grid"
-      data-max-columns={maxColumns}
+      data-max-columns={effectiveMaxColumns}
     >
       {children}
     </div>

@@ -267,6 +267,10 @@
   }
 }
 
+.settings-card {
+  container: settings-card / inline-size;
+}
+
 .settings-card [data-slot="card-content"] {
   overflow: hidden;
 }
@@ -288,6 +292,34 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
+}
+
+@container settings-card (max-width: 360px) {
+  .settings-inline-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .settings-inline-control > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .system-audio-settings {
+    min-width: 0;
+  }
+
+  .system-audio-banner {
+    min-width: 0;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .system-audio-banner > span {
+    min-width: 0;
+    flex: 1 1 180px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
 }
 
 .settings-action-row {

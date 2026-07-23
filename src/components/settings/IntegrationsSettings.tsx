@@ -26,7 +26,7 @@ export function IntegrationsSettings({
   const [apiKey, setApiKey] = useState("");
 
   return (
-    <SettingsGrid>
+    <SettingsGrid maxColumns={3}>
       <SettingsCard title="Text output" description="Send completed phrases to the active application.">
         <SettingSwitch
           label="Auto-type transcripts into cursor"

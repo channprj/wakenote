@@ -19,7 +19,7 @@ export function StorageSettings({
   const pathPrefix = settings.save_root || "Choose a save folder";
 
   return (
-    <SettingsGrid>
+    <SettingsGrid maxColumns={3}>
       <SettingsCard title="Save location" description="Local audio and transcript archive.">
         <Field orientation="vertical" className="settings-row">
           <FieldContent>

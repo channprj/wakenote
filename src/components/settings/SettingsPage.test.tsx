@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
 import type { SettingsSection } from "@/lib/navigation";
 import { SettingsPage } from "./SettingsPage";
+import { SettingsGrid } from "./settings-controls";
 import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
@@ -99,5 +100,27 @@ describe("SettingsPage balanced masonry", () => {
     expect(markup).toContain('class="models-settings"');
     expect(files).toBeGreaterThan(-1);
     expect(models).toBeGreaterThan(files);
+  });
+
+  it("caps a three-child Settings grid at two columns", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsGrid maxColumns={2}>
+        <div>One</div>
+        <div>Two</div>
+        <div>Three</div>
+      </SettingsGrid>,
+    );
+
+    expect(markup).toContain('data-max-columns="2"');
+  });
+
+  it("keeps the one-column fallback for a single child", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsGrid maxColumns={3}>
+        <div>Only</div>
+      </SettingsGrid>,
+    );
+
+    expect(markup).toContain('data-max-columns="1"');
   });
 });

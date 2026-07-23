@@ -11,7 +11,7 @@ export function GeneralSettings({
   onPatch: (patch: Partial<AppSettings>) => void;
 }) {
   return (
-    <SettingsGrid>
+    <SettingsGrid maxColumns={2}>
       <SettingsCard title="Capture behavior" description="Default recording lifecycle.">
         <SettingSwitch
           label="Recording"

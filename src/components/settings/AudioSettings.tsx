@@ -67,7 +67,7 @@ export function AudioSettings({
   const availability = inputAvailability(settings, microphones);
 
   return (
-    <SettingsGrid>
+    <SettingsGrid maxColumns={3}>
       <SettingsCard title="Permissions" description="Access required for live audio capture.">
         <PermissionSetting
           label="Microphone Permission"

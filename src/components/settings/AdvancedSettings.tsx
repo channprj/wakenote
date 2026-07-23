@@ -11,7 +11,7 @@ export function AdvancedSettings({
   onPatch: (patch: Partial<AppSettings>) => void;
 }) {
   return (
-    <SettingsGrid>
+    <SettingsGrid maxColumns={2}>
       <SettingsCard title="Transcript filtering" description="Expert transcript quality controls.">
         <SettingSwitch
           label="Hide low-confidence transcripts"
