@@ -324,6 +324,13 @@ describe("ReportHistoryView", () => {
     expect(markup).toContain("Nothing is deleted from disk");
   });
 
+  it("offers a filter input over the report list", () => {
+    const markup = renderHistory(historyItem());
+
+    expect(markup).toContain('aria-label="Filter reports"');
+    expect(markup).toContain('type="search"');
+  });
+
   it("shows a live report run with timeline and Stop", () => {
     const run = reportRun({
       status: "running",

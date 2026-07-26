@@ -46,6 +46,44 @@ export function mergeLlmReportRun(
   );
 }
 
+/**
+ * Text a report entry can be matched against.
+ *
+ * Report bodies are not in the history listing (each would need its own detail
+ * load), so filtering covers what the list already knows: kind, file name,
+ * model, covered dates, and the run's own status message.
+ */
+export function reportEntrySearchText(entry: ReportListEntry): string {
+  const kindLabel = entry.kind === "summary" ? "summary" : "detailed report";
+  const parts = [
+    kindLabel,
+    entry.createdAt,
+    entry.report?.file_name,
+    entry.report?.model,
+    entry.report?.date_range,
+    entry.run?.message,
+    entry.run?.status,
+    entry.run?.model,
+    entry.run?.date_range,
+  ];
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Case-insensitive match on every whitespace-separated term. */
+export function filterReportEntries(
+  entries: readonly ReportListEntry[],
+  query: string,
+): ReportListEntry[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) {
+    return [...entries];
+  }
+  return entries.filter((entry) => {
+    const haystack = reportEntrySearchText(entry);
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
 export function combineReportEntries(
   runs: readonly LlmReportRunSnapshot[],
   reports: readonly LlmReportHistoryItem[],

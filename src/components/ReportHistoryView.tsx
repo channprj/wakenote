@@ -8,6 +8,7 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  SearchIcon,
   SparklesIcon,
 } from "lucide-react";
 import {
@@ -16,7 +17,10 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { ReportListEntry } from "../lib/llm-report-runs";
+import {
+  filterReportEntries,
+  type ReportListEntry,
+} from "../lib/llm-report-runs";
 import { formatLocalTimestamp } from "../lib/transcript-history";
 import type {
   LlmReportHistoryDetail,
@@ -31,6 +35,7 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { EmptyState } from "./ui/empty-state";
+import { Input } from "./ui/input";
 import { MarkdownDocument } from "./ui/markdown";
 import { StatusBadge } from "./ui/status-badge";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -92,21 +97,26 @@ export function ReportHistoryView({
   onNewReport?: () => void;
 }) {
   const [filter, setFilter] = useState<ReportFilter>("all");
+  const [query, setQuery] = useState("");
   const [selectedVisibilityKeys, setSelectedVisibilityKeys] =
     useState<Set<string>>(new Set());
-  const filteredEntries = useMemo(
+  const kindEntries = useMemo(
     () =>
       entries.filter(
         (entry) => filter === "all" || entry.kind === filter,
       ),
     [entries, filter],
   );
+  const filteredEntries = useMemo(
+    () => filterReportEntries(kindEntries, query),
+    [kindEntries, query],
+  );
+  // Scoped to the filtered list so a row hidden by the kind filter or the search
+  // query cannot leave its report open in the detail pane.
   const selectedEntry =
-    entries.find((entry) => entry.key === selectedKey) ?? null;
+    filteredEntries.find((entry) => entry.key === selectedKey) ?? null;
   const filteredDetail =
-    detail &&
-    selectedEntry?.report?.report_id === detail.item.report_id &&
-    (filter === "all" || detail.item.kind === filter)
+    detail && selectedEntry?.report?.report_id === detail.item.report_id
       ? detail
       : null;
   const selectedVisibilityEntries = useMemo(
@@ -188,6 +198,17 @@ export function ReportHistoryView({
             ))}
           </TabsList>
         </Tabs>
+        <div className="report-history__search">
+          <SearchIcon aria-hidden="true" />
+          <Input
+            aria-label="Filter reports"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by name, model, or date"
+            type="search"
+            value={query}
+          />
+        </div>
+
         <div className="report-history__toolbar-actions">
           <Button
             aria-label="Refresh report history"
@@ -259,7 +280,23 @@ export function ReportHistoryView({
               title="Loading reports"
             />
           ) : filteredEntries.length === 0 ? (
-            visibilityMode === "hidden" ? (
+            query.trim() && kindEntries.length > 0 ? (
+              <EmptyState
+                icon={SearchIcon}
+                title="No reports match this filter"
+                description={`Nothing here matches “${query.trim()}”.`}
+                action={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setQuery("")}
+                  >
+                    Clear filter
+                  </Button>
+                }
+              />
+            ) : visibilityMode === "hidden" ? (
               <EmptyState
                 icon={EyeOff}
                 title="No hidden reports · Files remain on disk"

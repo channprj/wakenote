@@ -930,6 +930,19 @@
     grid-column: 1 / -1;
   }
 
+  .report-history__toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report-history__search {
+    max-width: none;
+    justify-self: stretch;
+  }
+
+  .report-history__toolbar-actions {
+    justify-content: flex-start;
+  }
+
   .report-history__layout {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
