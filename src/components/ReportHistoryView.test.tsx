@@ -268,7 +268,7 @@ describe("ReportHistoryView", () => {
     expect(markup).toContain("Select a report");
   });
 
-  it("points a user with no reports at the captures they can generate one from", () => {
+  it("offers report creation from the empty state", () => {
     const markup = renderToStaticMarkup(
       <ReportHistoryView
         actionPendingRunId={null}
@@ -284,20 +284,20 @@ describe("ReportHistoryView", () => {
         onRefresh={vi.fn()}
         onRetry={vi.fn()}
         onSelect={vi.fn()}
-        onBrowseTranscripts={vi.fn()}
+        onNewReport={vi.fn()}
       />,
     );
 
     expect(markup).toContain('data-slot="empty-state"');
     expect(markup).toContain("No reports yet");
-    expect(markup).toContain("Choose transcripts");
+    expect(markup).toContain("New report");
   });
 
-  it("omits the browse action when no navigation handler is supplied", () => {
+  it("omits report creation when no handler is supplied", () => {
     const markup = renderReportEntries([]);
 
     expect(markup).toContain("No reports yet");
-    expect(markup).not.toContain("Choose transcripts");
+    expect(markup).not.toContain("New report");
   });
 
   it("explains that hiding a report leaves the file on disk", () => {

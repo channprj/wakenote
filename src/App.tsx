@@ -407,7 +407,10 @@ export default function App() {
         description="Review and download LLM-generated transcript reports."
       >
         <ReportHistoryPanel
-          onBrowseTranscripts={() => setActiveRoute("transcripts")}
+          model={snapshot.settings.openrouter_model}
+          maxIterations={snapshot.settings.llm_max_iterations}
+          openrouterKeyConfigured={snapshot.openrouter_key_configured}
+          onOpenIntegrationSettings={() => openSettings("integrations")}
         />
       </WorkspacePage>
     ),

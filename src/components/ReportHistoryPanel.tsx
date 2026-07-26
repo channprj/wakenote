@@ -20,13 +20,19 @@ import {
   downloadLlmReport,
   listLlmReportHistory,
   loadLlmReportHistoryDetail,
+  loadTranscriptDays,
+  loadTranscriptsForDay,
   retryLlmReport,
+  startLlmReport,
 } from "../lib/tauri-client";
 import type {
   LlmReportHistoryDetail,
   LlmReportHistoryItem,
+  LlmReportKind,
   LlmReportRunSnapshot,
+  TranscriptDay,
 } from "../lib/types";
+import { ReportComposer } from "./reports/ReportComposer";
 import { ReportHistoryView } from "./ReportHistoryView";
 
 interface ReportHistorySelection {
@@ -59,16 +65,29 @@ export function reportSelectionAfterRefresh(
 }
 
 export function ReportHistoryPanel({
-  onBrowseTranscripts,
+  model,
+  maxIterations,
+  openrouterKeyConfigured,
+  onOpenIntegrationSettings,
 }: {
-  onBrowseTranscripts?: () => void;
-} = {}) {
+  model: string;
+  maxIterations: number;
+  openrouterKeyConfigured: boolean;
+  onOpenIntegrationSettings?: () => void;
+}) {
   const {
     runs,
+    activeRun,
     loading: runsLoading,
     error: runsError,
     refresh: refreshRuns,
   } = useLlmReportRuns();
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [days, setDays] = useState<TranscriptDay[]>([]);
+  const [daysLoading, setDaysLoading] = useState(false);
+  const [daysError, setDaysError] = useState<string | null>(null);
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [items, setItems] = useState<LlmReportHistoryItem[]>([]);
   const [selection, setSelection] = useState<ReportHistorySelection>({
     selectedKey: null,
@@ -222,6 +241,49 @@ export function ReportHistoryPanel({
     }
   }, []);
 
+  const openComposer = useCallback(() => {
+    setComposerError(null);
+    setComposerOpen(true);
+    setDaysLoading(true);
+    setDaysError(null);
+    void loadTranscriptDays()
+      .then(setDays)
+      .catch((caught) => setDaysError(errorMessage(caught)))
+      .finally(() => setDaysLoading(false));
+  }, []);
+
+  // The backend takes the transcripts themselves, not a date range, so the
+  // selected days are expanded here before the run starts.
+  const generate = useCallback(
+    async (kind: LlmReportKind, selectedDays: readonly string[]) => {
+      setSubmitting(true);
+      setComposerError(null);
+      try {
+        const perDay = await Promise.all(
+          selectedDays.map((day) => loadTranscriptsForDay(day)),
+        );
+        const transcripts = perDay.flat();
+        if (transcripts.length === 0) {
+          setComposerError(
+            "Those days no longer contain any captures. Reload and pick again.",
+          );
+          return;
+        }
+        const started = await startLlmReport({ kind, transcripts });
+        setComposerOpen(false);
+        setSelection((current) => ({
+          selectedKey: `run:${started.run_id}`,
+          detailReloadRevision: current.detailReloadRevision,
+        }));
+      } catch (caught) {
+        setComposerError(errorMessage(caught));
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [],
+  );
+
   const retry = useCallback(async (runId: string) => {
     setActionPendingRunId(runId);
     setError(null);
@@ -239,44 +301,63 @@ export function ReportHistoryPanel({
   }, []);
 
   return (
-    <ReportHistoryView
-      actionPendingRunId={actionPendingRunId}
-      detail={detail}
-      detailLoading={detailLoading}
-      downloadingId={downloadingId}
-      entries={entries}
-      error={error ?? runsError ?? visibility.error}
-      loading={historyLoading || runsLoading}
-      selectedKey={selection.selectedKey}
-      visibilityMode={visibilityMode}
-      visibleCount={projectedEntries.visible.length}
-      hiddenCount={projectedEntries.hidden.length}
-      visibilityMutating={
-        visibility.loading || visibility.mutating
-      }
-      visibilityStatus={visibility.announcement}
-      onCancel={(runId) => void cancel(runId)}
-      onDownload={(reportId, fileName) =>
-        void download(reportId, fileName)
-      }
-      onRefresh={() => void refresh()}
-      onRetry={(runId) => void retry(runId)}
-      onBrowseTranscripts={onBrowseTranscripts}
-      onVisibilityModeChange={setVisibilityMode}
-      onSetEntriesHidden={(selectedEntries, hidden) =>
-        visibility.setTargetsHidden(
-          selectedEntries.map(reportListVisibilityTarget),
-          hidden,
-        )
-      }
-      onSelect={(selectedKey) =>
-        setSelection((current) =>
-          current.selectedKey === selectedKey
-            ? current
-            : { ...current, selectedKey },
-        )
-      }
-    />
+    <>
+      <ReportComposer
+        days={days}
+        daysError={daysError}
+        daysLoading={daysLoading}
+        error={composerError}
+        hasActiveRun={Boolean(activeRun)}
+        maxIterations={maxIterations}
+        model={model}
+        onGenerate={(kind, selectedDays) =>
+          void generate(kind, selectedDays)
+        }
+        onOpenChange={setComposerOpen}
+        onOpenIntegrationSettings={onOpenIntegrationSettings}
+        open={composerOpen}
+        openrouterKeyConfigured={openrouterKeyConfigured}
+        submitting={submitting}
+      />
+      <ReportHistoryView
+        actionPendingRunId={actionPendingRunId}
+        detail={detail}
+        detailLoading={detailLoading}
+        downloadingId={downloadingId}
+        entries={entries}
+        error={error ?? runsError ?? visibility.error}
+        loading={historyLoading || runsLoading}
+        selectedKey={selection.selectedKey}
+        visibilityMode={visibilityMode}
+        visibleCount={projectedEntries.visible.length}
+        hiddenCount={projectedEntries.hidden.length}
+        visibilityMutating={
+          visibility.loading || visibility.mutating
+        }
+        visibilityStatus={visibility.announcement}
+        onCancel={(runId) => void cancel(runId)}
+        onDownload={(reportId, fileName) =>
+          void download(reportId, fileName)
+        }
+        onRefresh={() => void refresh()}
+        onRetry={(runId) => void retry(runId)}
+        onNewReport={openComposer}
+        onVisibilityModeChange={setVisibilityMode}
+        onSetEntriesHidden={(selectedEntries, hidden) =>
+          visibility.setTargetsHidden(
+            selectedEntries.map(reportListVisibilityTarget),
+            hidden,
+          )
+        }
+        onSelect={(selectedKey) =>
+          setSelection((current) =>
+            current.selectedKey === selectedKey
+              ? current
+              : { ...current, selectedKey },
+          )
+        }
+      />
+    </>
   );
 }
 

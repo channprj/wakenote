@@ -4,11 +4,11 @@ import {
   Download,
   Eye,
   EyeOff,
-  FilesIcon,
   FileText,
   Loader2,
   RefreshCw,
   RotateCcw,
+  SparklesIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -63,7 +63,7 @@ export function ReportHistoryView({
   visibilityStatus = "",
   onVisibilityModeChange,
   onSetEntriesHidden,
-  onBrowseTranscripts,
+  onNewReport,
 }: {
   entries: readonly ReportListEntry[];
   selectedKey: string | null;
@@ -88,8 +88,8 @@ export function ReportHistoryView({
     entries: readonly ReportListEntry[],
     hidden: boolean,
   ) => boolean | Promise<boolean>;
-  /** Sends a user with no reports to the captures they can generate one from. */
-  onBrowseTranscripts?: () => void;
+  /** Opens the report composer. Absent when generation is unavailable. */
+  onNewReport?: () => void;
 }) {
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [selectedVisibilityKeys, setSelectedVisibilityKeys] =
@@ -188,20 +188,28 @@ export function ReportHistoryView({
             ))}
           </TabsList>
         </Tabs>
-        <Button
-          aria-label="Refresh report history"
-          disabled={loading}
-          onClick={onRefresh}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          <RefreshCw
-            data-icon="inline-start"
-            className={loading ? "loading-spin" : undefined}
-          />
-          Refresh
-        </Button>
+        <div className="report-history__toolbar-actions">
+          <Button
+            aria-label="Refresh report history"
+            disabled={loading}
+            onClick={onRefresh}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <RefreshCw
+              data-icon="inline-start"
+              className={loading ? "loading-spin" : undefined}
+            />
+            Refresh
+          </Button>
+          {onNewReport ? (
+            <Button onClick={onNewReport} size="sm" type="button">
+              <SparklesIcon data-icon="inline-start" />
+              New report
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <ListVisibilityToolbar
@@ -267,15 +275,10 @@ export function ReportHistoryView({
                 }
                 description="Reports are written from your captured transcripts. Pick the captures you want covered, then generate a summary or a detailed report."
                 action={
-                  onBrowseTranscripts ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={onBrowseTranscripts}
-                    >
-                      <FilesIcon data-icon="inline-start" />
-                      Choose transcripts
+                  onNewReport ? (
+                    <Button type="button" size="sm" onClick={onNewReport}>
+                      <SparklesIcon data-icon="inline-start" />
+                      New report
                     </Button>
                   ) : undefined
                 }
