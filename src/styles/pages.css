@@ -664,7 +664,7 @@
 
 .report-history__layout {
   grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.6fr);
-  min-height: 420px;
+  min-height: 320px;
 }
 
 .report-history__row {
@@ -706,7 +706,8 @@
 }
 
 .report-history__detail {
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .report-history__content {

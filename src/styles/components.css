@@ -1359,13 +1359,22 @@ svg {
   justify-content: flex-start;
 }
 
+/* Stats and toolbar keep their intrinsic height; only the job table absorbs the
+   leftover space, so a tall window does not stretch the summary cards. */
 .queue-panel {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
+  min-height: 0;
+}
+
+.queue-table-wrap {
+  min-height: 0;
 }
 
 .meeting-panel {
   display: grid;
+  align-content: start;
   gap: 14px;
   min-width: 0;
 }
@@ -1675,6 +1684,13 @@ tr:last-child td {
   text-align: center;
 }
 
+/* With no rows the table area still fills the window, so let the placeholder
+   occupy it instead of hugging the header. */
+.table-wrap:has(> table > tbody > tr > .empty-cell) > table,
+.table-wrap:has(> table > tbody > tr > .empty-cell) .empty-cell {
+  height: 100%;
+}
+
 /* Shared empty/placeholder surface (EmptyState). One look for every list and
    detail pane, sized down to the app's compact type scale. */
 .empty-state {
@@ -1710,6 +1726,7 @@ tr:last-child td {
 
 .transcripts-panel {
   display: grid;
+  align-content: start;
   gap: 10px;
 }
 
@@ -2089,9 +2106,11 @@ tr:last-child td {
 }
 
 .report-history {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
 .report-history__toolbar,
@@ -2156,14 +2175,14 @@ tr:last-child td {
 .report-history__layout {
   display: grid;
   grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
-  min-height: 540px;
+  flex: 1 1 auto;
+  min-height: 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 
 .report-history__list {
   min-width: 0;
-  max-height: 720px;
   overflow-y: auto;
   border-right: 1px solid var(--line);
 }

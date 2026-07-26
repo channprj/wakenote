@@ -136,6 +136,21 @@
   min-width: 0;
 }
 
+/* Workspace pages fill the viewport they are given: the header keeps its height
+   and the content region below it takes the rest, so a long list uses the whole
+   window instead of stopping at a fixed height with a void underneath. */
+.primary-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.primary-workspace > :last-child {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .page-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
