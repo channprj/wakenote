@@ -43,6 +43,7 @@ import type {
   ListVisibilityState,
   SetListVisibilityRequest,
 } from "./types";
+import type { DevFixtures } from "./dev-fixtures";
 
 declare global {
   interface Window {
@@ -82,6 +83,44 @@ function permissionSnapshotFromBrowser(): AppPermissions {
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+}
+
+/**
+ * Loads sample content into the browser mock so the UI can be reviewed with
+ * realistic notes, reports, and an in-flight run.
+ *
+ * Opt-in by design: only the browser entrypoint calls this, and only outside
+ * Tauri. Tests import this module directly and keep the empty mock state, so
+ * seeding never changes their fixtures. No-op inside Tauri, where real backend
+ * data is authoritative.
+ */
+export function seedBrowserFixtures(fixtures: DevFixtures) {
+  if (isTauriRuntime()) {
+    return;
+  }
+
+  browserSnapshot = {
+    ...browserSnapshot,
+    settings: { ...browserSnapshot.settings, ...fixtures.settings },
+    models: fixtures.models,
+    recent_transcripts: fixtures.transcripts,
+  };
+  browserOpenRouterApiKey = fixtures.openrouterApiKey;
+  browserLlmReportHistory.splice(
+    0,
+    browserLlmReportHistory.length,
+    ...fixtures.reports,
+  );
+  browserLlmReportRuns.clear();
+  for (const snapshot of fixtures.runs) {
+    browserLlmReportRuns.set(snapshot.run_id, {
+      snapshot,
+      request: { kind: snapshot.kind, transcripts: [], run_id: snapshot.run_id },
+      timer: null,
+      // Seeded runs are terminal or paused mid-flight; nothing left to advance.
+      nextStage: browserLlmProgressStages.length,
+    });
+  }
 }
 
 export async function loadListVisibility(): Promise<ListVisibilityState> {
