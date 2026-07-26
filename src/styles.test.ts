@@ -468,6 +468,92 @@ describe("compact overflow safety contract", () => {
     );
   });
 
+  it("stacks the report toolbar's filter, search, and actions in compact mode", () => {
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+    const wideToolbar = cssRule(".report-history__toolbar", componentsCss);
+    const wideSearch = cssRule(".report-history__search", componentsCss);
+
+    // Wide: kind filter | search (absorbs slack) | actions.
+    expect(wideToolbar).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
+    );
+    expect(wideSearch).toContain("justify-self: end;");
+
+    // Compact: one column, with the search spanning it instead of being pinned right.
+    expect(cssRule(".report-history__toolbar", compact)).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(cssRule(".report-history__search", compact)).toContain(
+      "justify-self: stretch;",
+    );
+    expect(cssRule(".report-history__toolbar-actions", compact)).toContain(
+      "justify-content: flex-start;",
+    );
+  });
+
+  it("gives workspace pages the viewport height and the slack to their content", () => {
+    const workspace = cssRule(".primary-workspace", shellCss);
+    const lastChild = cssRule(".primary-workspace > :last-child", shellCss);
+    const reportLayout = cssRule(".report-history__layout", componentsCss);
+    const reportList = cssRule(".report-history__list", componentsCss);
+    const queuePanel = cssRule(".queue-panel", componentsCss);
+
+    expect(workspace).toContain("min-height: 100%;");
+    expect(workspace).toContain("flex-direction: column;");
+    expect(lastChild).toContain("flex: 1 1 auto;");
+    expect(lastChild).toContain("min-height: 0;");
+
+    // The report panes grow instead of being pinned to a fixed height.
+    expect(reportLayout).toContain("flex: 1 1 auto;");
+    expect(reportLayout).not.toMatch(/min-height:\s*\d+px/);
+    expect(reportList).not.toContain("max-height:");
+
+    // Only the job table absorbs slack; the stat cards keep their own height.
+    expect(queuePanel).toContain(
+      "grid-template-rows: auto auto minmax(0, 1fr);",
+    );
+
+    // Naturally short panels stay top-aligned rather than stretching rows.
+    expect(cssRule(".meeting-panel", componentsCss)).toContain(
+      "align-content: start;",
+    );
+    expect(cssRule(".transcripts-panel", componentsCss)).toContain(
+      "align-content: start;",
+    );
+  });
+
+  it("keeps rendered report prose on the token-backed reading scale", () => {
+    const root = cssRule(":root", tokensCss);
+
+    for (const declaration of [
+      "--prose-body: 13px;",
+      "--prose-leading: 21px;",
+      "--prose-h1: 19px;",
+      "--prose-h2: 15px;",
+      "--prose-measure: 76ch;",
+    ]) {
+      expect(root).toContain(declaration);
+    }
+
+    const doc = cssRule(".markdown-doc", componentsCss);
+    expect(doc).toContain("font-size: var(--prose-body);");
+    expect(doc).toContain("line-height: var(--prose-leading);");
+    expect(doc).toContain("max-width: var(--prose-measure);");
+
+    // Tailwind's preflight strips list markers, so prose must restore them.
+    expect(componentsCss).toMatch(
+      /\.markdown-doc ul \{[^}]*list-style-type: disc;/,
+    );
+    expect(componentsCss).toMatch(
+      /\.markdown-doc ol \{[^}]*list-style-type: decimal;/,
+    );
+
+    // Wide tables scroll in their own box; the page itself is overflow-x: hidden.
+    expect(cssRule(".markdown-doc__scroll", componentsCss)).toContain(
+      "overflow-x: auto;",
+    );
+  });
+
   it("keeps seven transcript day cells shrinkable", () => {
     const week = cssRule(".transcript-pagination__week");
 
