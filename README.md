@@ -14,6 +14,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
 - **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; Parakeet V3 and SenseVoice download and run fully on-device via a bundled sherpa-onnx engine (no external tools), and Nemotron 3.5 ASR runs through an external-command adapter.
+- **AI summaries and detailed reports** — turn any set of captures into a Markdown document through OpenRouter. The runner drafts, grades its own output against success criteria, and refines until the criteria are met or the iteration budget runs out. See [AI summaries and reports](#ai-summaries-and-reports).
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
 - **macOS tray + caption overlay** — tray icon reflects state (Idle / Listening / Recording / Transcribing / Paused / Error) with quick toggles and a `Reveal Save Folder` action. The floating overlay is a click-through caption surface for the active desktop: it shows only the current live/final transcript text and never opens the main WakeNote window.
@@ -84,6 +85,61 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ranges on every patch.
 
+## AI summaries and reports
+
+Transcription is only half the point: the reason to record a meeting is to read
+what it amounted to afterwards. WakeNote turns captures into a Markdown document
+through OpenRouter.
+
+### The workspace
+
+| Screen | What it is for |
+| --- | --- |
+| **Capture** | Live recording, levels, calibration, and the newest decoded phrases. |
+| **Transcripts** | The per-day archive of short captures. Select some and report on them directly. |
+| **Meetings** | Long-form imported recordings, transcribed segment by segment. |
+| **Reports** | Where reports are created and read. |
+| **Activity** | The transcription queue: pending, running, completed, failed. |
+
+### Two kinds of report
+
+| Kind | Shape | Cost |
+| --- | --- | --- |
+| **Summary** | One-line summary, key points, decisions, action items, open questions. | One draft plus one grading pass. |
+| **Detailed report** | Adds context, chronological detail, risks, and evidence notes tied back to specific captures. | Up to `llm_max_iterations` draft/grade rounds, so roughly 3× a summary by default. |
+
+Both prompts are editable templates in **Settings › Integrations**
+(`llm_summary_prompt_template`, `llm_report_prompt_template`) with
+`{{transcripts}}`, `{{date_range}}`, and `{{selected_count}}` placeholders. Both
+instruct the model to use only the supplied transcript as evidence and to write
+in the transcript's dominant language.
+
+### Generating one
+
+Two entry points, one dialog:
+
+- **Reports › New report** — choose the kind, then tick which capture days to
+  cover. The dialog states the scope, the model, and the iteration budget before
+  you spend anything.
+- **Transcripts › select captures → Summary / Report** — a shortcut when you are
+  already looking at the captures you want covered.
+
+Generation needs an OpenRouter API key (**Settings › Integrations**). One report
+runs at a time; a run in flight can be stopped, and a cancelled or failed run can
+be retried. Progress is reported per stage — preparing, generating, evaluating,
+refining, saving — with the grader's feedback visible as it goes.
+
+### Reading one
+
+Reports render as documents, not raw Markdown: heading hierarchy, GFM tables,
+task lists, fenced code, and blockquotes. Each report shows the model used,
+iterations spent, captures covered, date range, token counts, and OpenRouter cost,
+plus the grader's closing quality feedback. From there you can **Copy** the
+Markdown, **Download Markdown** to a file, or **Run again** to regenerate.
+
+Report bodies are written to `{save_root}/reports/` and stay on disk. Hiding a
+report removes it from the list only — nothing is deleted.
+
 ## Additional ASR providers
 
 WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small`, and `nemotron-3.5-asr-streaming-0.6b`.
@@ -147,10 +203,32 @@ Override the install directory with `WAKENOTE_INSTALL_PATH=…` or `--path …`.
 
 The browser dev fallback (`pnpm dev`) renders the React UI against a mock snapshot defined in `src/lib/app-state.ts` and `src/lib/tauri-client.ts`, so the settings panel, queue, and model manager are dogfoodable without launching Tauri.
 
+## Browser dev fallback
+
+`pnpm dev` serves the frontend on its own with a mock backend, which is the
+fastest way to work on UI without a Tauri rebuild. Because an empty mock leaves
+every screen blank, the browser entrypoint seeds it with sample content from
+`src/lib/dev-fixtures.ts`: a week of Korean and English captures, a finished
+summary and detailed report with real Markdown bodies, one run in flight
+mid-iteration, one failed run, and a few installed models.
+
+Seeding is opt-in and browser-only — `main.tsx` calls it just when the app is
+running outside Tauri, so the desktop build and the test suite are untouched. The
+mock also mirrors real backend semantics (see `.agent/locked-behaviors.md` §10)
+so dogfooding in a browser does not hide product bugs.
+
 ## Testing
 
 - **Frontend (Vitest)** — `pnpm test`
 - **Backend (cargo)** — `cargo test --manifest-path src-tauri/Cargo.toml`
+- **Types** — `pnpm exec tsc --noEmit`
+
+The frontend suite includes design-system contract tests: `src/styles.test.ts`
+and `src/components/ui/density-contract.test.tsx` parse the stylesheets and
+assert that active screens use the shared spacing, typography, and control-height
+tokens rather than hardcoded values, that long text stays wrappable, and that
+nonessential motion is disabled under `prefers-reduced-motion`. Adding a new
+size means adding a token.
 
 ## Project layout
 
@@ -163,13 +241,23 @@ wakenote/
 ├── PRD.md                          Product requirements (KO)
 ├── src/                            React 19 + TS + Tailwind v4 frontend
 │   ├── App.tsx
-│   ├── styles.css
-│   ├── components/                 SettingsPanel, ModelManager, QueuePanel,
-│   │                               LevelMeter, TrayPreview, Onboarding,
-│   │                               ui/primitives
+│   ├── main.tsx                    browser entry (seeds dev fixtures)
+│   ├── styles.css                  imports tokens/shell/components/pages
+│   ├── styles/                     tokens, shell, components, pages
+│   ├── components/
+│   │   ├── shell/                  AppFrame, AppSidebar, PageHeader
+│   │   ├── capture/                recorder, live transcript, calibration
+│   │   ├── transcripts/            player dock
+│   │   ├── meetings/               long-form meeting views
+│   │   ├── reports/                ReportComposer (new-report dialog)
+│   │   ├── settings/               settings sections
+│   │   ├── ReportHistoryView.tsx   report list + rendered document
+│   │   ├── QueuePanel.tsx          transcription queue
+│   │   └── ui/                     primitives incl. markdown, empty-state
 │   ├── overlay/                    click-through live caption overlay
 │   └── lib/                        tauri-client, app-state, status-summary,
-│                                   onboarding, calibration, types
+│                                   llm-report-runs, report-composer,
+│                                   dev-fixtures, onboarding, calibration, types
 └── src-tauri/                      Rust backend (Tauri 2)
     ├── Cargo.toml
     ├── tauri.conf.json

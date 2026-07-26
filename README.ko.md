@@ -14,6 +14,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
 - **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
+- **AI 요약 / 상세 보고서** — 원하는 캡처를 골라 OpenRouter로 Markdown 문서를 만듭니다. 초안을 쓰고, 스스로 품질 기준에 맞춰 평가하고, 기준을 충족하거나 반복 예산이 끝날 때까지 다듬습니다. [AI 요약과 보고서](#ai-요약과-보고서) 참고.
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
 - **macOS 트레이 + 자막 overlay** — 트레이 아이콘이 상태(Idle / Listening / Recording / Transcribing / Paused / Error)를 색으로 보여주며, 빠른 토글과 `Reveal Save Folder` 액션을 제공합니다. Floating overlay는 현재 데스크톱에만 뜨는 click-through 자막 surface로, WakeNote 메인 창을 열지 않고 현재 live/final transcript text만 보여줍니다.
@@ -84,6 +85,57 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 
 설정은 `<app_data_dir>/settings.json`에 저장되며, patch가 적용될 때마다 안전 범위로 clamp됩니다.
 
+## AI 요약과 보고서
+
+전사는 절반일 뿐입니다. 회의를 녹음하는 이유는 결국 그 회의가 무엇으로 정리됐는지
+나중에 읽기 위해서입니다. WakeNote는 캡처를 OpenRouter를 통해 Markdown 문서로 만듭니다.
+
+### 화면 구성
+
+| 화면 | 용도 |
+| --- | --- |
+| **Capture** | 실시간 녹음, 레벨, 캘리브레이션, 최근 인식된 문장. |
+| **Transcripts** | 날짜별 짧은 캡처 보관함. 선택해서 바로 보고서를 만들 수 있습니다. |
+| **Meetings** | 가져온 장시간 녹음. 세그먼트 단위로 전사합니다. |
+| **Reports** | 보고서를 만들고 읽는 곳. |
+| **Activity** | 전사 큐 — 대기, 실행, 완료, 실패. |
+
+### 두 가지 보고서
+
+| 종류 | 구성 | 비용 |
+| --- | --- | --- |
+| **요약** | 한 줄 요약, 핵심 내용, 결정 사항, 액션 아이템, 남은 질문. | 초안 1회 + 평가 1회. |
+| **상세 보고서** | 여기에 맥락, 시간순 상세, 리스크, 개별 캡처로 되짚을 수 있는 근거 노트를 더합니다. | 최대 `llm_max_iterations`회 초안/평가 반복. 기본값에서 요약의 약 3배. |
+
+두 프롬프트 모두 **Settings › Integrations**에서 편집할 수 있는 템플릿
+(`llm_summary_prompt_template`, `llm_report_prompt_template`)이며,
+`{{transcripts}}`, `{{date_range}}`, `{{selected_count}}` 플레이스홀더를 씁니다.
+둘 다 주어진 전사만 근거로 쓰고, 전사의 주 언어로 작성하도록 지시합니다.
+
+### 만들기
+
+진입점은 두 개, 대화상자는 하나입니다.
+
+- **Reports › New report** — 종류를 고르고 어느 날짜의 캡처를 담을지 선택합니다.
+  대화상자가 대상 범위, 모델, 반복 예산을 먼저 알려주므로 쓰기 전에 판단할 수 있습니다.
+- **Transcripts에서 캡처 선택 → Summary / Report** — 이미 원하는 캡처를 보고 있을 때의 바로가기.
+
+생성에는 OpenRouter API 키가 필요합니다(**Settings › Integrations**). 보고서는 한 번에
+하나만 실행되며, 진행 중인 작업은 중단할 수 있고 취소·실패한 작업은 다시 시도할 수
+있습니다. 진행 상황은 preparing / generating / evaluating / refining / saving 단계로
+보여주고, 평가 단계의 피드백도 그때그때 확인할 수 있습니다.
+
+### 읽기
+
+보고서는 원본 Markdown이 아니라 문서로 렌더링됩니다. 제목 계층, GFM 표, 체크리스트,
+코드 블록, 인용을 모두 표시합니다. 각 보고서는 사용한 모델, 소요 반복 횟수, 담은 캡처 수,
+대상 기간, 토큰 수, OpenRouter 비용과 마지막 품질 피드백을 함께 보여줍니다. 여기서
+Markdown을 **Copy**하거나 **Download Markdown**으로 저장하거나 **Run again**으로 다시
+생성할 수 있습니다.
+
+보고서 본문은 `{save_root}/reports/`에 저장되고 디스크에 남습니다. 보고서를 숨기는 것은
+목록에서만 감추는 동작이며, 파일은 삭제되지 않습니다.
+
 ## 추가 ASR provider
 
 WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b` 항목이 포함됩니다.
@@ -128,10 +180,26 @@ pnpm tauri build
 
 `pnpm dev`로 실행하는 브라우저 dev fallback은 `src/lib/app-state.ts`와 `src/lib/tauri-client.ts`에 정의된 mock snapshot으로 React UI를 렌더링합니다. Tauri를 띄우지 않아도 설정 패널·queue·모델 매니저를 dogfooding할 수 있습니다.
 
+빈 mock은 모든 화면을 비워두므로, 브라우저 진입점은 `src/lib/dev-fixtures.ts`의 샘플
+데이터를 주입합니다. 일주일치 한국어·영어 캡처, 실제 Markdown 본문이 있는 요약과 상세
+보고서, 반복 중인 실행 1건, 실패한 실행 1건, 설치된 모델 몇 개가 들어 있습니다.
+
+주입은 opt-in이며 브라우저 전용입니다. `main.tsx`가 Tauri 밖에서 실행될 때만 호출하므로
+데스크톱 빌드와 테스트 스위트는 영향을 받지 않습니다. mock은 실제 백엔드 semantics를
+그대로 따르므로(`.agent/locked-behaviors.md` §10) 브라우저 dogfooding이 제품 버그를
+가리지 않습니다.
+
 ## 테스트
 
 - **프론트엔드 (Vitest)** — `pnpm test`
 - **백엔드 (cargo)** — `cargo test --manifest-path src-tauri/Cargo.toml`
+- **타입** — `pnpm exec tsc --noEmit`
+
+프론트엔드 스위트에는 디자인 시스템 계약 테스트가 있습니다. `src/styles.test.ts`와
+`src/components/ui/density-contract.test.tsx`가 스타일시트를 파싱해서, 활성 화면이
+하드코딩된 값 대신 공용 spacing·typography·control-height 토큰을 쓰는지, 긴 텍스트가
+줄바꿈 가능한지, `prefers-reduced-motion`에서 불필요한 모션이 꺼지는지 검증합니다.
+새 크기가 필요하면 토큰을 추가해야 합니다.
 
 ## 디렉터리 구조
 
@@ -144,12 +212,21 @@ wakenote/
 ├── PRD.md                          제품 요구사항 (한국어)
 ├── src/                            React 19 + TS + Tailwind v4 프론트엔드
 │   ├── App.tsx
-│   ├── styles.css
-│   ├── components/                 SettingsPanel, ModelManager, QueuePanel,
-│   │                               LevelMeter, TrayPreview, Onboarding,
-│   │                               ui/primitives
+│   ├── main.tsx                    브라우저 진입점 (dev fixtures 주입)
+│   ├── styles.css                  tokens/shell/components/pages import
+│   ├── styles/                     tokens, shell, components, pages
+│   ├── components/
+│   │   ├── shell/                  AppFrame, AppSidebar, PageHeader
+│   │   ├── capture/                recorder, live transcript, calibration
+│   │   ├── meetings/               장시간 회의 화면
+│   │   ├── reports/                ReportComposer (새 보고서 대화상자)
+│   │   ├── settings/               설정 섹션
+│   │   ├── ReportHistoryView.tsx   보고서 목록 + 렌더링된 문서
+│   │   └── ui/                     primitives (markdown, empty-state 포함)
 │   ├── overlay/                    click-through live caption overlay
 │   └── lib/                        tauri-client, app-state, status-summary,
+│                                   llm-report-runs, report-composer,
+│                                   dev-fixtures,
 │                                   onboarding, calibration, types
 └── src-tauri/                      Rust 백엔드 (Tauri 2)
     ├── Cargo.toml
