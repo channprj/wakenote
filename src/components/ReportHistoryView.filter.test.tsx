@@ -125,6 +125,33 @@ describe("ReportHistoryView filtering", () => {
     expect(screen.getByText("No reports yet")).toBeTruthy();
   });
 
+  it("copies the report Markdown and confirms it", async () => {
+    // userEvent.setup installs its own clipboard stub, so read back through it.
+    const user = userEvent.setup();
+    render(
+      <ReportHistoryView
+        actionPendingRunId={null}
+        detail={{ item: entries[0].report!, content: "# Saved summary" }}
+        detailLoading={false}
+        downloadingId={null}
+        entries={entries}
+        error={null}
+        loading={false}
+        selectedKey={entries[0].key}
+        onCancel={vi.fn()}
+        onDownload={vi.fn()}
+        onRefresh={vi.fn()}
+        onRetry={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy report Markdown" }));
+
+    expect(await navigator.clipboard.readText()).toBe("# Saved summary");
+    expect(screen.getByText("Copied")).toBeTruthy();
+  });
+
   it("closes the detail pane when the filter hides the selected report", async () => {
     const user = userEvent.setup();
     render(

@@ -1,6 +1,8 @@
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
+  Copy,
   Download,
   Eye,
   EyeOff,
@@ -547,6 +549,22 @@ function ReportDetail({
   onRetry: (runId: string) => void;
 }) {
   const { item } = detail;
+  const [copied, setCopied] = useState(false);
+
+  // Reports get pasted into chat and email far more often than they get saved,
+  // so copying the Markdown is a first-class action next to Download.
+  const copy = useCallback(() => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(detail.content);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      } catch {
+        // Clipboard unavailable — the button simply does not confirm.
+      }
+    })();
+  }, [detail.content]);
+
   return (
     <>
       <header className="report-history__detail-header">
@@ -577,6 +595,20 @@ function ReportDetail({
           </span>
         </div>
         <div className="report-history__detail-actions">
+          <Button
+            aria-label="Copy report Markdown"
+            onClick={copy}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {copied ? (
+              <Check data-icon="inline-start" />
+            ) : (
+              <Copy data-icon="inline-start" />
+            )}
+            {copied ? "Copied" : "Copy"}
+          </Button>
           {sourceRun ? (
             <Button
               aria-label="Run report again"
