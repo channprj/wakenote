@@ -29,6 +29,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { MarkdownDocument } from "./ui/markdown";
 import { StatusBadge } from "./ui/status-badge";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import {
@@ -593,7 +594,10 @@ function ReportDetail({
         </div>
       ) : null}
 
-      <pre className="report-history__content">{detail.content}</pre>
+      <MarkdownDocument
+        className="report-history__content"
+        content={detail.content}
+      />
     </>
   );
 }

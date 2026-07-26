@@ -207,7 +207,9 @@ describe("ReportHistoryView", () => {
     expect(markup).toContain("0.001500");
     expect(markup).toContain("Success criteria met");
     expect(markup).toContain("Download Markdown");
-    expect(markup).toContain("# Saved summary");
+    // Report bodies are rendered as a document, not printed as raw Markdown.
+    expect(markup).toContain("<h1>Saved summary</h1>");
+    expect(markup).not.toContain("# Saved summary");
   });
 
   it("keeps legacy Markdown downloadable while marking usage as unavailable", () => {
@@ -229,7 +231,7 @@ describe("ReportHistoryView", () => {
     expect(markup).toContain("Legacy report");
     expect(markup).toContain("Not recorded");
     expect(markup).toContain("Download Markdown");
-    expect(markup).toContain("# Legacy summary");
+    expect(markup).toContain("<h1>Legacy summary</h1>");
   });
 
   it("does not display stale detail for a newly selected report", () => {

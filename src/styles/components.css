@@ -2379,19 +2379,12 @@ tr:last-child td {
 }
 
 .report-history__content {
-  max-height: 420px;
   margin: 12px 14px 14px 0;
-  overflow: auto;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--surface-alt);
-  color: var(--text);
-  padding: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--text-body);
-  line-height: var(--leading-body);
+  padding: var(--space-4);
 }
 
 .report-history__empty {
@@ -2749,6 +2742,181 @@ code {
   .report-history__usage > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
   }
+}
+
+/* Rendered Markdown report bodies. Uses the --prose-* reading scale rather than
+   the compact control scale: this is the one surface in the app meant to be read
+   as prose. */
+.markdown-doc {
+  min-width: 0;
+  max-width: var(--prose-measure);
+  color: var(--text);
+  font-size: var(--prose-body);
+  line-height: var(--prose-leading);
+  overflow-wrap: anywhere;
+}
+
+.markdown-doc > :first-child {
+  margin-top: 0;
+}
+
+.markdown-doc > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-doc h1,
+.markdown-doc h2,
+.markdown-doc h3,
+.markdown-doc h4 {
+  margin: var(--space-5) 0 var(--space-2);
+  color: var(--foreground);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.markdown-doc h1 {
+  font-size: var(--prose-h1);
+  line-height: var(--prose-h1-leading);
+}
+
+/* Report templates emit every top-level section as `#`, so h1 repeats down the
+   document. A rule above each one reads as a section divider instead of a title. */
+.markdown-doc h1 + *,
+.markdown-doc h2 + * {
+  margin-top: 0;
+}
+
+.markdown-doc h1:not(:first-child) {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-5);
+}
+
+.markdown-doc h2 {
+  font-size: var(--prose-h2);
+  line-height: var(--prose-h2-leading);
+}
+
+.markdown-doc h3,
+.markdown-doc h4 {
+  font-size: var(--prose-h3);
+  line-height: var(--prose-h3-leading);
+}
+
+.markdown-doc p {
+  margin: 0 0 var(--space-3);
+}
+
+.markdown-doc strong {
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+/* Tailwind's preflight strips list markers globally; prose needs them back. */
+.markdown-doc ul,
+.markdown-doc ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  list-style-position: outside;
+}
+
+.markdown-doc ul {
+  list-style-type: disc;
+}
+
+.markdown-doc ul ul {
+  list-style-type: circle;
+}
+
+.markdown-doc ol {
+  list-style-type: decimal;
+}
+
+.markdown-doc li {
+  margin-bottom: var(--space-1);
+}
+
+.markdown-doc li::marker {
+  color: var(--muted-foreground);
+}
+
+/* GFM task lists carry their own checkbox, so the bullet would be redundant. */
+.markdown-doc ul.contains-task-list {
+  list-style-type: none;
+}
+
+.markdown-doc input[type="checkbox"] {
+  margin-right: var(--space-2);
+  vertical-align: baseline;
+  accent-color: var(--primary);
+}
+
+.markdown-doc blockquote {
+  margin: 0 0 var(--space-3);
+  border-left: 2px solid var(--primary);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  color: var(--muted-foreground);
+}
+
+.markdown-doc blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-doc__scroll {
+  margin: 0 0 var(--space-3);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown-doc table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.markdown-doc th,
+.markdown-doc td {
+  border: 1px solid var(--line);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-doc th {
+  background: var(--muted);
+  color: var(--foreground);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.markdown-doc pre {
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-control);
+  background: var(--code-bg);
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+
+.markdown-doc pre code {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: var(--prose-code);
+  line-height: var(--prose-code-leading);
+  white-space: pre;
+}
+
+.markdown-doc :not(pre) > code {
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  background: var(--code-bg);
+  padding: 1px 4px;
+}
+
+.markdown-doc hr {
+  margin: var(--space-5) 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 @theme inline {

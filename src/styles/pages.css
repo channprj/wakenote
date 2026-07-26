@@ -710,9 +710,6 @@
 }
 
 .report-history__content {
-  max-height: none;
-  overflow: visible;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

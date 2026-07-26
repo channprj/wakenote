@@ -41,6 +41,20 @@
   --page-header-height: 44px;
   --status-rail-height: 36px;
 
+  /* Reading scale for generated report bodies. Deliberately looser than the
+     compact UI scale: reports are prose to be read, not controls to be scanned. */
+  --prose-body: 13px;
+  --prose-leading: 21px;
+  --prose-h1: 19px;
+  --prose-h1-leading: 26px;
+  --prose-h2: 15px;
+  --prose-h2-leading: 22px;
+  --prose-h3: 13px;
+  --prose-h3-leading: 20px;
+  --prose-code: 12px;
+  --prose-code-leading: 19px;
+  --prose-measure: 76ch;
+
   --radius-control: 6px;
   --radius-card: 8px;
   --radius: var(--radius-control);
