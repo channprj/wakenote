@@ -268,6 +268,62 @@ describe("ReportHistoryView", () => {
     expect(markup).toContain("Select a report");
   });
 
+  it("points a user with no reports at the captures they can generate one from", () => {
+    const markup = renderToStaticMarkup(
+      <ReportHistoryView
+        actionPendingRunId={null}
+        detail={null}
+        detailLoading={false}
+        downloadingId={null}
+        entries={[]}
+        error={null}
+        loading={false}
+        selectedKey={null}
+        onCancel={vi.fn()}
+        onDownload={vi.fn()}
+        onRefresh={vi.fn()}
+        onRetry={vi.fn()}
+        onSelect={vi.fn()}
+        onBrowseTranscripts={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('data-slot="empty-state"');
+    expect(markup).toContain("No reports yet");
+    expect(markup).toContain("Choose transcripts");
+  });
+
+  it("omits the browse action when no navigation handler is supplied", () => {
+    const markup = renderReportEntries([]);
+
+    expect(markup).toContain("No reports yet");
+    expect(markup).not.toContain("Choose transcripts");
+  });
+
+  it("explains that hiding a report leaves the file on disk", () => {
+    const markup = renderToStaticMarkup(
+      <ReportHistoryView
+        actionPendingRunId={null}
+        detail={null}
+        detailLoading={false}
+        downloadingId={null}
+        entries={[]}
+        error={null}
+        loading={false}
+        selectedKey={null}
+        visibilityMode="hidden"
+        onCancel={vi.fn()}
+        onDownload={vi.fn()}
+        onRefresh={vi.fn()}
+        onRetry={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("No hidden reports · Files remain on disk");
+    expect(markup).toContain("Nothing is deleted from disk");
+  });
+
   it("shows a live report run with timeline and Stop", () => {
     const run = reportRun({
       status: "running",

@@ -58,7 +58,11 @@ export function reportSelectionAfterRefresh(
   };
 }
 
-export function ReportHistoryPanel() {
+export function ReportHistoryPanel({
+  onBrowseTranscripts,
+}: {
+  onBrowseTranscripts?: () => void;
+} = {}) {
   const {
     runs,
     loading: runsLoading,
@@ -257,6 +261,7 @@ export function ReportHistoryPanel() {
       }
       onRefresh={() => void refresh()}
       onRetry={(runId) => void retry(runId)}
+      onBrowseTranscripts={onBrowseTranscripts}
       onVisibilityModeChange={setVisibilityMode}
       onSetEntriesHidden={(selectedEntries, hidden) =>
         visibility.setTargetsHidden(

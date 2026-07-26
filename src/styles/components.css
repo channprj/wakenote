@@ -1525,23 +1525,7 @@ svg {
 }
 
 .meeting-empty {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  min-height: 120px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--muted-foreground);
-  font-size: var(--text-label);
-  line-height: var(--leading-label);
-  font-weight: 700;
-}
-
-.meeting-empty svg {
-  color: var(--primary);
-  width: var(--size-icon-md);
-  height: var(--size-icon-md);
+  min-height: 132px;
 }
 
 .meeting-detail {
@@ -1691,6 +1675,39 @@ tr:last-child td {
   text-align: center;
 }
 
+/* Shared empty/placeholder surface (EmptyState). One look for every list and
+   detail pane, sized down to the app's compact type scale. */
+.empty-state {
+  gap: var(--space-3);
+  min-height: 160px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  padding: var(--space-5);
+}
+
+.empty-state [data-slot="empty-icon"] {
+  color: var(--muted-foreground);
+}
+
+.empty-state [data-slot="empty-title"] {
+  color: var(--foreground);
+  font-size: var(--text-label);
+  line-height: var(--leading-label);
+  font-weight: 650;
+}
+
+.empty-state [data-slot="empty-description"] {
+  max-width: 46ch;
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.empty-state [data-slot="empty-content"] {
+  margin-top: var(--space-1);
+}
+
 .transcripts-panel {
   display: grid;
   gap: 10px;
@@ -1792,12 +1809,7 @@ tr:last-child td {
 }
 
 .transcripts-empty {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-alt);
-  color: var(--muted-foreground);
-  padding: 12px;
-  text-align: center;
+  min-height: 132px;
 }
 
 .transcript-day {
@@ -2387,16 +2399,6 @@ tr:last-child td {
   padding: var(--space-4);
 }
 
-.report-history__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 180px;
-  color: var(--muted-foreground);
-  font-size: var(--text-body);
-  line-height: var(--leading-body);
-}
 
 .report-run-detail {
   display: grid;

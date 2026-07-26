@@ -12,6 +12,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Card,
   CardContent,
@@ -141,19 +142,20 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
             : "Past meetings"}
         </h2>
         {props.past.length === 0 ? (
-          <div className="meeting-empty">
-            <FileAudioIcon aria-hidden="true" />
-            <span>
-              {props.visibilityMode === "hidden"
+          <EmptyState
+            className="meeting-empty"
+            icon={props.visibilityMode === "hidden" ? EyeOffIcon : FileAudioIcon}
+            title={
+              props.visibilityMode === "hidden"
                 ? "No hidden meetings."
-                : "No meetings transcribed yet."}
-            </span>
-            <small>
-              {props.visibilityMode === "hidden"
+                : "No meetings transcribed yet."
+            }
+            description={
+              props.visibilityMode === "hidden"
                 ? "Hidden meetings keep every source file on disk."
-                : "Import a long recording to keep it separate from short transcripts."}
-            </small>
-          </div>
+                : "Import a long recording to keep it separate from short transcripts."
+            }
+          />
         ) : (
           <ul>
             {props.past.map((meeting) => (

@@ -406,7 +406,9 @@ export default function App() {
         title="Reports"
         description="Review and download LLM-generated transcript reports."
       >
-        <ReportHistoryPanel />
+        <ReportHistoryPanel
+          onBrowseTranscripts={() => setActiveRoute("transcripts")}
+        />
       </WorkspacePage>
     ),
     activity: (

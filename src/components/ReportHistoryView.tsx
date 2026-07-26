@@ -4,6 +4,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  FilesIcon,
   FileText,
   Loader2,
   RefreshCw,
@@ -29,6 +30,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { EmptyState } from "./ui/empty-state";
 import { MarkdownDocument } from "./ui/markdown";
 import { StatusBadge } from "./ui/status-badge";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -61,6 +63,7 @@ export function ReportHistoryView({
   visibilityStatus = "",
   onVisibilityModeChange,
   onSetEntriesHidden,
+  onBrowseTranscripts,
 }: {
   entries: readonly ReportListEntry[];
   selectedKey: string | null;
@@ -85,6 +88,8 @@ export function ReportHistoryView({
     entries: readonly ReportListEntry[],
     hidden: boolean,
   ) => boolean | Promise<boolean>;
+  /** Sends a user with no reports to the captures they can generate one from. */
+  onBrowseTranscripts?: () => void;
 }) {
   const [filter, setFilter] = useState<ReportFilter>("all");
   const [selectedVisibilityKeys, setSelectedVisibilityKeys] =
@@ -240,15 +245,42 @@ export function ReportHistoryView({
       <div className="report-history__layout">
         <aside aria-label="Generated reports" className="report-history__list">
           {loading && entries.length === 0 ? (
-            <div className="report-history__empty">
-              <Loader2 className="loading-spin" /> Loading reports
-            </div>
+            <EmptyState
+              icon={Loader2}
+              iconClassName="loading-spin"
+              title="Loading reports"
+            />
           ) : filteredEntries.length === 0 ? (
-            <div className="report-history__empty">
-              {visibilityMode === "hidden"
-                ? "No hidden reports · Files remain on disk"
-                : "No reports found"}
-            </div>
+            visibilityMode === "hidden" ? (
+              <EmptyState
+                icon={EyeOff}
+                title="No hidden reports · Files remain on disk"
+                description="Hiding a report only removes it from this list. Nothing is deleted from disk."
+              />
+            ) : (
+              <EmptyState
+                icon={FileText}
+                title={
+                  filter === "all"
+                    ? "No reports yet"
+                    : `No ${reportKindLabel(filter).toLowerCase()} yet`
+                }
+                description="Reports are written from your captured transcripts. Pick the captures you want covered, then generate a summary or a detailed report."
+                action={
+                  onBrowseTranscripts ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={onBrowseTranscripts}
+                    >
+                      <FilesIcon data-icon="inline-start" />
+                      Choose transcripts
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )
           ) : (
             filteredEntries.map((entry) => (
               <ReportEntryRow
@@ -295,9 +327,11 @@ export function ReportHistoryView({
               onRetry={onRetry}
             />
           ) : detailLoading ? (
-            <div className="report-history__empty">
-              <Loader2 className="loading-spin" /> Loading report
-            </div>
+            <EmptyState
+              icon={Loader2}
+              iconClassName="loading-spin"
+              title="Loading report"
+            />
           ) : filteredDetail && selectedEntry?.report ? (
             <ReportDetail
               actionPending={
@@ -312,7 +346,15 @@ export function ReportHistoryView({
               onRetry={onRetry}
             />
           ) : (
-            <div className="report-history__empty">Select a report</div>
+            <EmptyState
+              icon={FileText}
+              title="Select a report"
+              description={
+                filteredEntries.length > 0
+                  ? "Choose a report from the list to read it here."
+                  : "Generated reports open here as a readable document."
+              }
+            />
           )}
         </section>
       </div>

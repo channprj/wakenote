@@ -2,11 +2,13 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CloudDownload,
   Copy,
   Eye,
   EyeOff,
   FileText,
   FolderOpen,
+  Loader2,
   Mic,
   MonitorSpeaker,
   Pause,
@@ -41,6 +43,7 @@ import {
 } from "./ListVisibilityToolbar";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { EmptyState } from "./ui/empty-state";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
 
@@ -843,16 +846,34 @@ export function TranscriptsView({
               />
             ))}
           </div>
+        ) : isLoadingActive ? (
+          <EmptyState
+            className="transcripts-empty"
+            icon={Loader2}
+            iconClassName="loading-spin"
+            title="Loading…"
+          />
+        ) : hasPending ? (
+          <EmptyState
+            className="transcripts-empty"
+            icon={CloudDownload}
+            title={`${pendingCount} in iCloud — press Reload`}
+            description="These captures are stored in iCloud and not on this Mac yet. Reload downloads them."
+          />
+        ) : visibilityMode === "hidden" ? (
+          <EmptyState
+            className="transcripts-empty"
+            icon={EyeOff}
+            title="No hidden transcripts for this day · Files remain on disk"
+            description="Hiding a capture only removes it from this list. Audio and transcript files are never deleted."
+          />
         ) : (
-          <div className="transcripts-empty">
-            {isLoadingActive
-              ? "Loading…"
-              : hasPending
-                ? `${pendingCount} in iCloud — press Reload`
-                : visibilityMode === "hidden"
-                  ? "No hidden transcripts for this day · Files remain on disk"
-                  : "No transcripts for this day"}
-          </div>
+          <EmptyState
+            className="transcripts-empty"
+            icon={Mic}
+            title="No transcripts for this day"
+            description="Captures land here automatically once recording picks up speech. Pick another day above, or start input from Capture."
+          />
         )}
         {visibilityError ? (
           <div className="warning-banner warning-banner--danger">

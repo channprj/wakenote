@@ -1,6 +1,15 @@
-import { Ban, FileAudio, FolderInput, Play, RotateCw, SkipForward } from "lucide-react";
+import {
+  Ban,
+  FileAudio,
+  FolderInput,
+  ListChecksIcon,
+  Play,
+  RotateCw,
+  SkipForward,
+} from "lucide-react";
 import { Fragment } from "react";
 import { Button } from "./ui/button";
+import { EmptyState } from "./ui/empty-state";
 import { StatusBadge } from "./ui/status-badge";
 import { formatModelLabel } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
@@ -171,7 +180,11 @@ export function QueuePanel({
             {queue.jobs.length === 0 ? (
               <tr>
                 <td colSpan={4} className="empty-cell">
-                  No queued transcription jobs
+                  <EmptyState
+                    icon={ListChecksIcon}
+                    title="No queued transcription jobs"
+                    description="Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog."
+                  />
                 </td>
               </tr>
             ) : (
