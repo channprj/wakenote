@@ -5075,7 +5075,7 @@ dependencies = [
 
 [[package]]
 name = "wakenote"
-version = "0.260727.0"
+version = "0.260727.1"
 dependencies = [
  "async-trait",
  "block2",
