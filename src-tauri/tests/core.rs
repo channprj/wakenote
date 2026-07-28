@@ -4,12 +4,14 @@ use wakenote::audio::{
     input_devices_from_labels,
 };
 use wakenote::commands::{AppBackend, pinned_device_mismatch};
+use wakenote::live_capture::AudioFrame;
 use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
-    AppSettings, AudioFormat, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    MicrophonePriorityEntry, SettingsPatch, ThemeMode, TranscriptionLanguage, expand_user_path,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_run, live_capture_should_start_on_launch,
+    AppSettings, AudioFormat, CaptureMicrophoneEntry, LaunchAtLoginAction,
+    LiveCaptureRuntimeAction, MicrophonePriorityEntry, MicrophoneSlot, SettingsPatch, ThemeMode,
+    TranscriptionLanguage, expand_user_path, launch_at_login_action_for_patch,
+    live_capture_runtime_action_for_patch, live_capture_should_run,
+    live_capture_should_start_on_launch, normalize_capture_microphones,
 };
 use wakenote::storage::{OutputBasename, next_available_output};
 
@@ -370,6 +372,98 @@ fn default_settings_seed_microphone_priority_with_system_default() {
 }
 
 #[test]
+fn default_settings_seed_one_system_default_capture_microphone() {
+    let settings = AppSettings::default();
+
+    assert_eq!(
+        settings.capture_microphones,
+        vec![CaptureMicrophoneEntry {
+            id: "default".to_string(),
+            label: "System Default".to_string(),
+        }],
+    );
+}
+
+#[test]
+fn legacy_single_microphone_migrates_without_enabling_priority_fallback() {
+    let mut value = serde_json::to_value(AppSettings {
+        selected_microphone: "input-3-boya".to_string(),
+        selected_microphone_label: "BOYA".to_string(),
+        microphone_priority: vec![
+            MicrophonePriorityEntry {
+                id: "input-3-boya".to_string(),
+                label: "BOYA".to_string(),
+            },
+            MicrophonePriorityEntry {
+                id: "input-7-airpods".to_string(),
+                label: "AirPods".to_string(),
+            },
+        ],
+        ..AppSettings::default()
+    })
+    .expect("settings json");
+    value
+        .as_object_mut()
+        .expect("settings object")
+        .remove("capture_microphones");
+
+    let mut settings: AppSettings = serde_json::from_value(value).expect("legacy settings");
+    settings.normalize_capture_microphones();
+
+    assert_eq!(
+        settings.capture_microphones,
+        vec![CaptureMicrophoneEntry {
+            id: "input-3-boya".to_string(),
+            label: "BOYA".to_string(),
+        }],
+    );
+}
+
+#[test]
+fn capture_microphones_keep_first_two_unique_explicit_devices() {
+    let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
+        id: id.to_string(),
+        label: label.to_string(),
+    };
+
+    assert_eq!(
+        normalize_capture_microphones(vec![
+            entry("input-1-wired", "Wired"),
+            entry("input-1-wired", "Duplicate"),
+            entry("input-2-wireless", "Wireless"),
+            entry("input-3-third", "Third"),
+        ]),
+        vec![
+            entry("input-1-wired", "Wired"),
+            entry("input-2-wireless", "Wireless"),
+        ],
+    );
+}
+
+#[test]
+fn system_default_cannot_be_combined_with_an_explicit_capture_microphone() {
+    let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
+        id: id.to_string(),
+        label: label.to_string(),
+    };
+
+    assert_eq!(
+        normalize_capture_microphones(vec![
+            entry("default", "System Default"),
+            entry("input-2-wireless", "Wireless"),
+        ]),
+        vec![entry("default", "System Default")],
+    );
+    assert_eq!(
+        normalize_capture_microphones(vec![
+            entry("input-1-wired", "Wired"),
+            entry("default", "System Default"),
+        ]),
+        vec![entry("input-1-wired", "Wired")],
+    );
+}
+
+#[test]
 fn legacy_only_settings_migrate_into_priority_list() {
     // Simulates loading a settings.json saved by an older release that only
     // wrote `selected_microphone[_label]` and has no `microphone_priority`.
@@ -526,6 +620,92 @@ fn microphone_priority_reorder_triggers_live_capture_restart() {
         ),
         LiveCaptureRuntimeAction::Restart,
     );
+}
+
+#[test]
+fn capture_microphone_patch_reconciles_live_capture_slots() {
+    let active = AppSettings::default();
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &active,
+            &SettingsPatch {
+                capture_microphones: Some(vec![
+                    CaptureMicrophoneEntry {
+                        id: "input-1-wired".to_string(),
+                        label: "Wired".to_string(),
+                    },
+                    CaptureMicrophoneEntry {
+                        id: "input-2-wireless".to_string(),
+                        label: "Wireless".to_string(),
+                    },
+                ]),
+                ..SettingsPatch::default()
+            },
+        ),
+        LiveCaptureRuntimeAction::Reconcile,
+    );
+}
+
+#[test]
+fn backend_dual_microphone_slots_process_and_stop_independently() {
+    let mut backend = AppBackend::default();
+    backend.apply_settings_patch_for_test(SettingsPatch {
+        capture_microphones: Some(vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ]),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Primary,
+            16_000,
+            base_time,
+            "input-1-wired",
+            "Wired",
+            false,
+        )
+        .expect("start primary");
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Secondary,
+            16_000,
+            base_time,
+            "input-2-wireless",
+            "Wireless",
+            false,
+        )
+        .expect("start secondary");
+
+    let frame = || AudioFrame {
+        samples: vec![0.25; 320],
+        duration_ms: 20,
+        captured_at: base_time + chrono::Duration::milliseconds(20),
+    };
+    backend
+        .process_audio_frame_for_slot(MicrophoneSlot::Primary, frame())
+        .expect("primary frame");
+    backend
+        .process_audio_frame_for_slot(MicrophoneSlot::Secondary, frame())
+        .expect("secondary frame");
+
+    let status = backend.app_status();
+    assert_eq!(status.microphone_captures.len(), 2);
+    assert!(status.microphone_captures.iter().all(|mic| mic.active));
+
+    backend
+        .stop_capture_slot(MicrophoneSlot::Secondary)
+        .expect("stop secondary");
+    assert!(backend.capture_slot_active(MicrophoneSlot::Primary));
+    assert!(!backend.capture_slot_active(MicrophoneSlot::Secondary));
 }
 
 #[test]

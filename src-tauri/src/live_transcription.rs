@@ -1,10 +1,11 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
-use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::settings::{MicrophoneSlot, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
     configure_whisper_language, decoded_segment_quality, default_whisper_context_parameters,
     resample_linear, should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
@@ -25,6 +26,9 @@ const PARTIAL_WINDOW_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone)]
 pub struct LivePartialRequest {
+    pub source_key: String,
+    pub source_label: String,
+    pub microphone_slot: Option<MicrophoneSlot>,
     pub chunk_id: u64,
     pub model_id: String,
     pub language: TranscriptionLanguage,
@@ -35,6 +39,9 @@ pub struct LivePartialRequest {
 
 #[derive(Debug, Clone)]
 pub struct LivePartialResult {
+    pub source_key: String,
+    pub source_label: String,
+    pub microphone_slot: Option<MicrophoneSlot>,
     pub chunk_id: u64,
     pub text: String,
 }
@@ -42,8 +49,20 @@ pub struct LivePartialResult {
 #[derive(Debug, Clone)]
 pub enum LivePartialEvent {
     Text(LivePartialResult),
-    ModelMissing { chunk_id: u64, model_id: String },
-    EngineError { chunk_id: u64, message: String },
+    ModelMissing {
+        source_key: String,
+        source_label: String,
+        microphone_slot: Option<MicrophoneSlot>,
+        chunk_id: u64,
+        model_id: String,
+    },
+    EngineError {
+        source_key: String,
+        source_label: String,
+        microphone_slot: Option<MicrophoneSlot>,
+        chunk_id: u64,
+        message: String,
+    },
 }
 
 pub type LivePartialCallback = Arc<dyn Fn(LivePartialEvent) + Send + Sync>;
@@ -59,8 +78,9 @@ struct LiveTranscriptionInner {
 }
 
 struct LiveTranscriptionState {
-    pending: Option<LivePartialRequest>,
-    in_flight_chunk_id: Option<u64>,
+    pending: BTreeMap<String, LivePartialRequest>,
+    ready_sources: VecDeque<String>,
+    in_flight_source_key: Option<String>,
     closed: bool,
     model_directory: PathBuf,
     loaded_model: Option<LoadedModel>,
@@ -89,8 +109,9 @@ impl LiveTranscriptionService {
         let model_directory = expand_user_path(model_directory.as_ref().to_string_lossy());
         let inner = Arc::new(LiveTranscriptionInner {
             state: Mutex::new(LiveTranscriptionState {
-                pending: None,
-                in_flight_chunk_id: None,
+                pending: BTreeMap::new(),
+                ready_sources: VecDeque::new(),
+                in_flight_source_key: None,
                 closed: false,
                 model_directory,
                 loaded_model: None,
@@ -122,7 +143,7 @@ impl LiveTranscriptionService {
             .loaded_model
             .as_ref()
             .is_some_and(|loaded| loaded.model_id == model_id);
-        if already_loaded || state.pending.is_some() {
+        if already_loaded || !state.pending.is_empty() {
             return;
         }
         state.preload_model_id = Some(model_id);
@@ -139,7 +160,7 @@ impl LiveTranscriptionService {
         if state.closed {
             return;
         }
-        state.pending = Some(request);
+        enqueue_latest_request(&mut state, request);
         self.inner.cond.notify_one();
     }
 
@@ -155,11 +176,20 @@ impl LiveTranscriptionService {
     }
 }
 
+fn enqueue_latest_request(state: &mut LiveTranscriptionState, request: LivePartialRequest) {
+    let source_key = request.source_key.clone();
+    if !state.pending.contains_key(&source_key) {
+        state.ready_sources.push_back(source_key.clone());
+    }
+    state.pending.insert(source_key, request);
+}
+
 impl Drop for LiveTranscriptionService {
     fn drop(&mut self) {
         if let Ok(mut state) = self.inner.state.lock() {
             state.closed = true;
-            state.pending = None;
+            state.pending.clear();
+            state.ready_sources.clear();
         }
         self.inner.cond.notify_all();
         if let Some(join) = self.join.take() {
@@ -173,7 +203,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
     // Track (chunk_id, model_id) of the most recent ModelMissing emission so
     // we only surface the failure once per chunk — partials fire every few
     // seconds and the UI doesn't need a steady stream of identical errors.
-    let mut last_missing: Option<(u64, String)> = None;
+    let mut last_missing: Option<(String, u64, String)> = None;
     loop {
         let request = match wait_for_request(&inner) {
             Some(WorkItem::Partial(request)) => request,
@@ -204,12 +234,21 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
                 let already_warned =
                     last_missing
                         .as_ref()
-                        .is_some_and(|(prev_chunk, prev_model)| {
-                            *prev_chunk == request.chunk_id && prev_model == &request.model_id
+                        .is_some_and(|(prev_source, prev_chunk, prev_model)| {
+                            prev_source == &request.source_key
+                                && *prev_chunk == request.chunk_id
+                                && prev_model == &request.model_id
                         });
                 if !already_warned {
-                    last_missing = Some((request.chunk_id, request.model_id.clone()));
+                    last_missing = Some((
+                        request.source_key.clone(),
+                        request.chunk_id,
+                        request.model_id.clone(),
+                    ));
                     on_result(LivePartialEvent::ModelMissing {
+                        source_key: request.source_key.clone(),
+                        source_label: request.source_label.clone(),
+                        microphone_slot: request.microphone_slot,
                         chunk_id: request.chunk_id,
                         model_id: request.model_id.clone(),
                     });
@@ -237,6 +276,9 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
         match result {
             Ok(Some(text)) => {
                 on_result(LivePartialEvent::Text(LivePartialResult {
+                    source_key: request.source_key,
+                    source_label: request.source_label,
+                    microphone_slot: request.microphone_slot,
                     chunk_id: request.chunk_id,
                     text,
                 }));
@@ -244,6 +286,9 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
             Ok(None) => {}
             Err(message) => {
                 on_result(LivePartialEvent::EngineError {
+                    source_key: request.source_key,
+                    source_label: request.source_label,
+                    microphone_slot: request.microphone_slot,
                     chunk_id: request.chunk_id,
                     message,
                 });
@@ -260,9 +305,11 @@ fn wait_for_request(inner: &Arc<LiveTranscriptionInner>) -> Option<WorkItem> {
         }
         // A real decode always wins over a preload — if audio is already
         // waiting, loading the model for it covers the warm-up anyway.
-        if let Some(request) = state.pending.take() {
-            state.in_flight_chunk_id = Some(request.chunk_id);
-            return Some(WorkItem::Partial(request));
+        if let Some(source_key) = state.ready_sources.pop_front() {
+            if let Some(request) = state.pending.remove(&source_key) {
+                state.in_flight_source_key = Some(source_key);
+                return Some(WorkItem::Partial(request));
+            }
         }
         if let Some(model_id) = state.preload_model_id.take() {
             return Some(WorkItem::Preload(model_id));
@@ -273,7 +320,7 @@ fn wait_for_request(inner: &Arc<LiveTranscriptionInner>) -> Option<WorkItem> {
 
 fn mark_idle(inner: &Arc<LiveTranscriptionInner>) {
     if let Ok(mut state) = inner.state.lock() {
-        state.in_flight_chunk_id = None;
+        state.in_flight_source_key = None;
     }
 }
 
@@ -386,5 +433,57 @@ fn run_whisper_partial(
         Ok(None)
     } else {
         Ok(Some(text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(source_key: &str, chunk_id: u64) -> LivePartialRequest {
+        LivePartialRequest {
+            source_key: source_key.to_string(),
+            source_label: source_key.to_string(),
+            microphone_slot: None,
+            chunk_id,
+            model_id: "missing-test-model".to_string(),
+            language: TranscriptionLanguage::En,
+            suppress_low_confidence_transcripts: false,
+            samples: Arc::new(Vec::new()),
+            sample_rate: 16_000,
+        }
+    }
+
+    #[test]
+    fn live_partial_keeps_equal_chunk_ids_from_distinct_sources() {
+        let inner = Arc::new(LiveTranscriptionInner {
+            state: Mutex::new(LiveTranscriptionState {
+                pending: BTreeMap::new(),
+                ready_sources: VecDeque::new(),
+                in_flight_source_key: None,
+                closed: false,
+                model_directory: PathBuf::new(),
+                loaded_model: None,
+                preload_model_id: None,
+            }),
+            cond: Condvar::new(),
+        });
+        {
+            let mut state = inner.state.lock().expect("state");
+            enqueue_latest_request(&mut state, request("microphone:wired", 1));
+            enqueue_latest_request(&mut state, request("microphone:wireless", 1));
+        }
+
+        let first = match wait_for_request(&inner).expect("first request") {
+            WorkItem::Partial(request) => request,
+            WorkItem::Preload(_) => panic!("unexpected preload"),
+        };
+        let second = match wait_for_request(&inner).expect("second request") {
+            WorkItem::Partial(request) => request,
+            WorkItem::Preload(_) => panic!("unexpected preload"),
+        };
+        assert_eq!(first.source_key, "microphone:wired");
+        assert_eq!(second.source_key, "microphone:wireless");
+        assert_eq!(first.chunk_id, second.chunk_id);
     }
 }

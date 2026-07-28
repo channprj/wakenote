@@ -66,14 +66,16 @@ function reportRun(
   };
   return {
     ...run,
-    progress: overrides.progress ?? [{
-      run_id: run.run_id,
-      stage: run.stage ?? "preparing",
-      iteration: run.iteration,
-      max_iterations: run.max_iterations,
-      message: run.message,
-      detail: run.detail,
-    }],
+    progress: overrides.progress ?? [
+      {
+        run_id: run.run_id,
+        stage: run.stage ?? "preparing",
+        iteration: run.iteration,
+        max_iterations: run.max_iterations,
+        message: run.message,
+        detail: run.detail,
+      },
+    ],
   };
 }
 
@@ -85,10 +87,20 @@ function view(props: {
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
   sourceLabels?: Record<string, string>;
-  models?: Array<{ id: string; display_name: string; status: "ready" | "missing" }>;
+  models?: Array<{
+    id: string;
+    display_name: string;
+    status: "ready" | "missing";
+  }>;
   selectedModelId?: string;
-  onRegenerate?: (entries: readonly RecentTranscript[], modelId?: string) => void;
-  onGenerateReport?: (entries: readonly RecentTranscript[], kind: "summary" | "detailed_report") => void;
+  onRegenerate?: (
+    entries: readonly RecentTranscript[],
+    modelId?: string,
+  ) => void;
+  onGenerateReport?: (
+    entries: readonly RecentTranscript[],
+    kind: "summary" | "detailed_report",
+  ) => void;
   openrouterKeyConfigured?: boolean;
   reportRun?: LlmReportRunSnapshot | null;
   onOpenReports?: () => void;
@@ -143,8 +155,24 @@ describe("TranscriptsView", () => {
         { day: "2026-05-14", count: 1 },
       ],
       entriesByDay: new Map([
-        ["2026-05-13", [transcript({ recorded_at: "2026-05-13T01:02:03+09:00", text: "yesterday transcript" })]],
-        ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "today transcript" })]],
+        [
+          "2026-05-13",
+          [
+            transcript({
+              recorded_at: "2026-05-13T01:02:03+09:00",
+              text: "yesterday transcript",
+            }),
+          ],
+        ],
+        [
+          "2026-05-14",
+          [
+            transcript({
+              recorded_at: "2026-05-14T01:02:03+09:00",
+              text: "today transcript",
+            }),
+          ],
+        ],
       ]),
     });
 
@@ -167,7 +195,9 @@ describe("TranscriptsView", () => {
     let cursor = -1;
     for (const label of labels) {
       const next = markup.indexOf(`>${label}<`, cursor + 1);
-      expect(next, `expected ${label} after previous label`).toBeGreaterThan(cursor);
+      expect(next, `expected ${label} after previous label`).toBeGreaterThan(
+        cursor,
+      );
       cursor = next;
     }
     expect(markup).toContain('data-day-of-week="0"');
@@ -176,9 +206,15 @@ describe("TranscriptsView", () => {
 
   it("disables future days within the current week and the Next-week arrow", () => {
     const markup = view({ today: new Date("2026-05-14T12:00:00+09:00") });
-    expect(markup).toMatch(/<button[^>]*aria-label="Go to 2026-05-15 transcripts"[^>]*disabled=""/);
-    expect(markup).toMatch(/<button[^>]*aria-label="Go to 2026-05-16 transcripts"[^>]*disabled=""/);
-    expect(markup).toMatch(/<button[^>]*aria-label="Next week"[^>]*disabled=""[^>]*title="Already on this week"/);
+    expect(markup).toMatch(
+      /<button[^>]*aria-label="Go to 2026-05-15 transcripts"[^>]*disabled=""/,
+    );
+    expect(markup).toMatch(
+      /<button[^>]*aria-label="Go to 2026-05-16 transcripts"[^>]*disabled=""/,
+    );
+    expect(markup).toMatch(
+      /<button[^>]*aria-label="Next week"[^>]*disabled=""[^>]*title="Already on this week"/,
+    );
   });
 
   it("disables the Previous-week arrow on the earliest week with transcripts", () => {
@@ -186,14 +222,18 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-14T12:00:00+09:00"),
       days: [{ day: "2026-05-13", count: 1 }],
     });
-    expect(markup).toMatch(/<button[^>]*aria-label="Previous week"[^>]*disabled=""[^>]*title="Already on the earliest week"/);
+    expect(markup).toMatch(
+      /<button[^>]*aria-label="Previous week"[^>]*disabled=""[^>]*title="Already on the earliest week"/,
+    );
   });
 
   it("starts on today's empty date instead of the newest saved day", () => {
     const markup = view({
       today: new Date("2026-05-14T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "older saved transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "older saved transcript" })]],
+      ]),
     });
     expect(markup).toContain("2026-05-14");
     expect(markup).toContain("No transcripts for this day");
@@ -206,13 +246,26 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 2 }],
       entriesByDay: new Map([
-        ["2026-05-10", [
-          transcript({ transcript_path: "/tmp/WakeNote/20260510/180000.txt", recorded_at: "2026-05-10T18:00:00+09:00", text: "evening transcript" }),
-          transcript({ transcript_path: "/tmp/WakeNote/20260510/090000.txt", recorded_at: "2026-05-10T09:00:00+09:00", text: "morning transcript" }),
-        ]],
+        [
+          "2026-05-10",
+          [
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/180000.txt",
+              recorded_at: "2026-05-10T18:00:00+09:00",
+              text: "evening transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/090000.txt",
+              recorded_at: "2026-05-10T09:00:00+09:00",
+              text: "morning transcript",
+            }),
+          ],
+        ],
       ]),
     });
-    expect(markup.indexOf("morning transcript")).toBeLessThan(markup.indexOf("evening transcript"));
+    expect(markup.indexOf("morning transcript")).toBeLessThan(
+      markup.indexOf("evening transcript"),
+    );
   });
 
   it("shows Visible and Hidden counts without treating hidden rows as iCloud gaps", () => {
@@ -230,7 +283,9 @@ describe("TranscriptsView", () => {
 
     expect(markup).toContain("Visible");
     expect(markup).toContain("Hidden");
-    expect(markup).toContain('aria-label="Select transcript 2026-05-10 01:02:03"');
+    expect(markup).toContain(
+      'aria-label="Select transcript 2026-05-10 01:02:03"',
+    );
     expect(markup).not.toContain("more in iCloud");
   });
 
@@ -268,25 +323,41 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "playable transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "playable transcript" })]],
+      ]),
     });
     expect(markup).toContain("playable transcript");
-    expect(markup).toContain('aria-label="Play recording from 2026-05-10 01:02:03"');
+    expect(markup).toContain(
+      'aria-label="Play recording from 2026-05-10 01:02:03"',
+    );
     expect(markup).toContain("transcript-entry__play");
-    expect(markup).toContain('<a class="transcript-entry__timestamp" href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>');
+    expect(markup).toContain(
+      '<a class="transcript-entry__timestamp" href="file:///tmp/WakeNote/20260510/010203.txt" title="/tmp/WakeNote/20260510/010203.txt"><span>2026-05-10 01:02:03</span></a>',
+    );
   });
 
   it("marks playable transcript rows as regeneration context-menu targets", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
-      models: [{ id: "whisper-medium", display_name: "Whisper Medium", status: "ready" }],
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "regeneratable transcript" })]],
+      ]),
+      models: [
+        {
+          id: "whisper-medium",
+          display_name: "Whisper Medium",
+          status: "ready",
+        },
+      ],
       onRegenerate: () => undefined,
     });
 
     expect(markup).toContain('data-regenerate-available="true"');
-    expect(markup).toContain('data-audio-path="/tmp/WakeNote/20260510/010203.m4a"');
+    expect(markup).toContain(
+      'data-audio-path="/tmp/WakeNote/20260510/010203.m4a"',
+    );
   });
 
   it("renders source badges inline between timestamp and transcript text", () => {
@@ -294,28 +365,31 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 3 }],
       entriesByDay: new Map([
-        ["2026-05-10", [
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
-            source: "microphone",
-            source_label: null,
-            text: "mic transcript",
-          }),
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
-            recorded_at: "2026-05-10T01:02:04+09:00",
-            source: "system",
-            source_label: "youtube",
-            text: "youtube transcript",
-          }),
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010205-meet.txt",
-            recorded_at: "2026-05-10T01:02:05+09:00",
-            source: "system",
-            source_label: "meet",
-            text: "meet transcript",
-          }),
-        ]],
+        [
+          "2026-05-10",
+          [
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+              source: "microphone",
+              source_label: null,
+              text: "mic transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+              recorded_at: "2026-05-10T01:02:04+09:00",
+              source: "system",
+              source_label: "youtube",
+              text: "youtube transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010205-meet.txt",
+              recorded_at: "2026-05-10T01:02:05+09:00",
+              source: "system",
+              source_label: "meet",
+              text: "meet transcript",
+            }),
+          ],
+        ],
       ]),
     });
 
@@ -340,15 +414,19 @@ describe("TranscriptsView", () => {
       days: [{ day: "2026-05-10", count: 1 }],
       sourceLabels: { "custom-source-2": "Spotify" },
       entriesByDay: new Map([
-        ["2026-05-10", [
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010206-custom-source-2.txt",
-            recorded_at: "2026-05-10T01:02:06+09:00",
-            source: "system",
-            source_label: "custom-source-2",
-            text: "spotify transcript",
-          }),
-        ]],
+        [
+          "2026-05-10",
+          [
+            transcript({
+              transcript_path:
+                "/tmp/WakeNote/20260510/010206-custom-source-2.txt",
+              recorded_at: "2026-05-10T01:02:06+09:00",
+              source: "system",
+              source_label: "custom-source-2",
+              text: "spotify transcript",
+            }),
+          ],
+        ],
       ]),
     });
 
@@ -362,28 +440,31 @@ describe("TranscriptsView", () => {
       days: [{ day: "2026-05-10", count: 3 }],
       initialSourceFilter: "system:youtube",
       entriesByDay: new Map([
-        ["2026-05-10", [
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010203.txt",
-            source: "microphone",
-            source_label: null,
-            text: "mic transcript",
-          }),
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
-            recorded_at: "2026-05-10T01:02:04+09:00",
-            source: "system",
-            source_label: "youtube",
-            text: "youtube transcript",
-          }),
-          transcript({
-            transcript_path: "/tmp/WakeNote/20260510/010205-meet.txt",
-            recorded_at: "2026-05-10T01:02:05+09:00",
-            source: "system",
-            source_label: "meet",
-            text: "meet transcript",
-          }),
-        ]],
+        [
+          "2026-05-10",
+          [
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010203.txt",
+              source: "microphone",
+              source_label: null,
+              text: "mic transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
+              recorded_at: "2026-05-10T01:02:04+09:00",
+              source: "system",
+              source_label: "youtube",
+              text: "youtube transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010205-meet.txt",
+              recorded_at: "2026-05-10T01:02:05+09:00",
+              source: "system",
+              source_label: "meet",
+              text: "meet transcript",
+            }),
+          ],
+        ],
       ]),
     });
 
@@ -550,7 +631,22 @@ describe("TranscriptsView", () => {
   it("builds source filter options from microphone, built-in, and custom sources", () => {
     const options = transcriptSourceFilterOptions(
       [
-        transcript({ source: "microphone", source_label: null }),
+        transcript({
+          source: "microphone",
+          source_label: "mic-primary-wired",
+          device_id: "input-1-wired",
+          device_name: "Wired",
+          microphone_slot: "primary",
+        }),
+        transcript({
+          transcript_path:
+            "/tmp/WakeNote/20260510/010203-mic-secondary-wireless.txt",
+          source: "microphone",
+          source_label: "mic-secondary-wireless",
+          device_id: "input-2-wireless",
+          device_name: "Wireless",
+          microphone_slot: "secondary",
+        }),
         transcript({
           transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
           source: "system",
@@ -566,8 +662,9 @@ describe("TranscriptsView", () => {
     );
 
     expect(options).toEqual([
-      { id: "all", label: "All sources", count: 3 },
-      { id: "microphone", label: "Mic", count: 1 },
+      { id: "all", label: "All sources", count: 4 },
+      { id: "microphone:input-1-wired", label: "Wired", count: 1 },
+      { id: "microphone:input-2-wireless", label: "Wireless", count: 1 },
       { id: "system:youtube", label: "YouTube", count: 1 },
       { id: "system:custom-source-2", label: "Spotify", count: 1 },
     ]);
@@ -577,19 +674,28 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "playable transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "playable transcript" })]],
+      ]),
       initialPlayingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
       onOpenFolder: () => undefined,
     });
 
-    expect(markup).toContain('aria-label="Pause recording from 2026-05-10 01:02:03"');
-    expect(markup).toContain('aria-label="Open recording folder for 2026-05-10 01:02:03"');
+    expect(markup).toContain(
+      'aria-label="Pause recording from 2026-05-10 01:02:03"',
+    );
+    expect(markup).toContain(
+      'aria-label="Open recording folder for 2026-05-10 01:02:03"',
+    );
   });
 
   it("starts a different playable transcript immediately instead of pausing current playback", () => {
     expect(
       transcriptPlaybackStateAfterToggle(
-        { playingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt", playbackPaused: false },
+        {
+          playingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
+          playbackPaused: false,
+        },
         transcript({
           transcript_path: "/tmp/WakeNote/20260510/020304.txt",
           audio_path: "/tmp/WakeNote/20260510/020304.m4a",
@@ -606,11 +712,21 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "regeneratable transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "regeneratable transcript" })]],
+      ]),
       models: [
-        { id: "whisper-medium", display_name: "Whisper Medium", status: "ready" },
+        {
+          id: "whisper-medium",
+          display_name: "Whisper Medium",
+          status: "ready",
+        },
         { id: "whisper-small", display_name: "Whisper Small", status: "ready" },
-        { id: "whisper-large", display_name: "Whisper Large", status: "missing" },
+        {
+          id: "whisper-large",
+          display_name: "Whisper Large",
+          status: "missing",
+        },
       ],
       selectedModelId: "whisper-medium",
       onRegenerate: () => undefined,
@@ -627,10 +743,22 @@ describe("TranscriptsView", () => {
     const withEntries = view({
       today: new Date("2026-05-19T18:00:00+09:00"),
       days: [{ day: "2026-05-19", count: 1 }],
-      entriesByDay: new Map([["2026-05-19", [transcript({ recorded_at: "2026-05-19T15:53:23+09:00", text: "슬립~" })]]]),
+      entriesByDay: new Map([
+        [
+          "2026-05-19",
+          [
+            transcript({
+              recorded_at: "2026-05-19T15:53:23+09:00",
+              text: "슬립~",
+            }),
+          ],
+        ],
+      ]),
     });
     expect(withEntries).toContain('aria-label="Reload this day"');
-    expect(withEntries).toContain('aria-label="Copy all transcripts for this day"');
+    expect(withEntries).toContain(
+      'aria-label="Copy all transcripts for this day"',
+    );
     expect(withEntries).toContain("Copy all");
 
     const empty = view({ today: new Date("2026-05-19T18:00:00+09:00") });
@@ -642,13 +770,19 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "reportable transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
+      ]),
       openrouterKeyConfigured: true,
       onGenerateReport: () => undefined,
     });
 
-    expect(markup).toContain('aria-label="Summarize all visible transcripts for this day"');
-    expect(markup).toContain('aria-label="Create detailed report from all visible transcripts for this day"');
+    expect(markup).toContain(
+      'aria-label="Summarize all visible transcripts for this day"',
+    );
+    expect(markup).toContain(
+      'aria-label="Create detailed report from all visible transcripts for this day"',
+    );
     expect(markup).toContain("Summary all");
     expect(markup).toContain("Report all");
   });
@@ -657,13 +791,19 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "reportable transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
+      ]),
       openrouterKeyConfigured: false,
       onGenerateReport: () => undefined,
     });
 
-    expect(markup).toMatch(/aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/);
-    expect(markup).toContain("Save an OpenRouter API key in Advanced settings first");
+    expect(markup).toMatch(
+      /aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/,
+    );
+    expect(markup).toContain(
+      "Save an OpenRouter API key in Advanced settings first",
+    );
   });
 
   it("shows a durable run notice with Open Reports", () => {
@@ -705,7 +845,9 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-19T18:00:00+09:00"),
       loadingDay: "2026-05-19",
     });
-    expect(markup).toMatch(/<button[^>]*aria-label="Reload this day"[^>]*disabled=""/);
+    expect(markup).toMatch(
+      /<button[^>]*aria-label="Reload this day"[^>]*disabled=""/,
+    );
     expect(markup).toContain("Loading…");
   });
 
@@ -713,7 +855,9 @@ describe("TranscriptsView", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([["2026-05-10", [transcript({ text: "currently playing transcript" })]]]),
+      entriesByDay: new Map([
+        ["2026-05-10", [transcript({ text: "currently playing transcript" })]],
+      ]),
       initialPlayingTranscriptPath: "/tmp/WakeNote/20260510/010203.txt",
     });
     expect(markup).toContain('data-slot="transcript-player-dock"');
@@ -729,7 +873,15 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-14T12:00:00+09:00"),
       days: [{ day: "2026-05-14", count: 3 }],
       entriesByDay: new Map([
-        ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "local one" })]],
+        [
+          "2026-05-14",
+          [
+            transcript({
+              recorded_at: "2026-05-14T01:02:03+09:00",
+              text: "local one",
+            }),
+          ],
+        ],
       ]),
     });
     // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
@@ -753,7 +905,15 @@ describe("TranscriptsView", () => {
       today: new Date("2026-05-14T12:00:00+09:00"),
       days: [{ day: "2026-05-14", count: 1 }],
       entriesByDay: new Map([
-        ["2026-05-14", [transcript({ recorded_at: "2026-05-14T01:02:03+09:00", text: "only one" })]],
+        [
+          "2026-05-14",
+          [
+            transcript({
+              recorded_at: "2026-05-14T01:02:03+09:00",
+              text: "only one",
+            }),
+          ],
+        ],
       ]),
     });
     expect(markup).not.toContain("in iCloud");
@@ -779,8 +939,12 @@ describe("addDays", () => {
 
 describe("previousWeekDisabledReason", () => {
   it("returns a reason at or before the earliest week", () => {
-    expect(previousWeekDisabledReason("2026-05-10", "2026-05-13")).toBe("Already on the earliest week");
-    expect(previousWeekDisabledReason("2026-05-03", "2026-05-13")).toBe("Already on the earliest week");
+    expect(previousWeekDisabledReason("2026-05-10", "2026-05-13")).toBe(
+      "Already on the earliest week",
+    );
+    expect(previousWeekDisabledReason("2026-05-03", "2026-05-13")).toBe(
+      "Already on the earliest week",
+    );
   });
   it("returns null when there is an older week", () => {
     expect(previousWeekDisabledReason("2026-05-10", "2026-05-01")).toBeNull();
@@ -789,8 +953,12 @@ describe("previousWeekDisabledReason", () => {
 
 describe("nextWeekDisabledReason", () => {
   it("returns a reason at or after today's week", () => {
-    expect(nextWeekDisabledReason("2026-05-10", "2026-05-14")).toBe("Already on this week");
-    expect(nextWeekDisabledReason("2026-05-17", "2026-05-14")).toBe("Already on this week");
+    expect(nextWeekDisabledReason("2026-05-10", "2026-05-14")).toBe(
+      "Already on this week",
+    );
+    expect(nextWeekDisabledReason("2026-05-17", "2026-05-14")).toBe(
+      "Already on this week",
+    );
   });
   it("returns null when there is a newer week", () => {
     expect(nextWeekDisabledReason("2026-05-03", "2026-05-14")).toBeNull();

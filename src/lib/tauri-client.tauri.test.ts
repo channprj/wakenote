@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defaultPermissions, defaultSettings, emptyQueue, mockModels } from "./app-state";
+import {
+  defaultPermissions,
+  defaultSettings,
+  emptyQueue,
+  mockModels,
+} from "./app-state";
 import type {
   AppStatus,
   LlmReportRunSnapshot,
@@ -43,6 +48,7 @@ const status: AppStatus = {
     noise_floor_dbfs: -120,
     suggested_threshold_dbfs: -90,
   },
+  microphone_captures: [],
   queue,
 };
 
@@ -122,16 +128,20 @@ function mockInvoke(command: string) {
     case "list_llm_report_runs":
       return Promise.resolve([reportRun()]);
     case "cancel_llm_report":
-      return Promise.resolve(reportRun({
-        revision: 2,
-        status: "stopping",
-        message: "Stopping report generation",
-      }));
+      return Promise.resolve(
+        reportRun({
+          revision: 2,
+          status: "stopping",
+          message: "Stopping report generation",
+        }),
+      );
     case "retry_llm_report":
-      return Promise.resolve(reportRun({
-        run_id: "run-2",
-        parent_run_id: "run-1",
-      }));
+      return Promise.resolve(
+        reportRun({
+          run_id: "run-2",
+          parent_run_id: "run-1",
+        }),
+      );
     default:
       return Promise.reject(new Error(`unexpected invoke command: ${command}`));
   }
@@ -168,7 +178,9 @@ describe("tauri runtime client snapshots", () => {
     const transcripts = await loadRecentTranscripts();
 
     expect(transcripts).toHaveLength(1);
-    expect(mocks.invoke).toHaveBeenCalledWith("recent_transcripts", { limit: 50 });
+    expect(mocks.invoke).toHaveBeenCalledWith("recent_transcripts", {
+      limit: 50,
+    });
   });
 
   it("rebuilds one transcript day index through an explicit Tauri command", async () => {
@@ -190,7 +202,10 @@ describe("tauri runtime client snapshots", () => {
     mocks.invoke.mockImplementation(mockInvoke);
     const { regenerateTranscript } = await import("./tauri-client");
 
-    await regenerateTranscript("/tmp/WakeNote/20260611/024304-spotify.m4a", "whisper-small");
+    await regenerateTranscript(
+      "/tmp/WakeNote/20260611/024304-spotify.m4a",
+      "whisper-small",
+    );
 
     expect(mocks.invoke).toHaveBeenCalledWith("regenerate_transcript", {
       audioPath: "/tmp/WakeNote/20260611/024304-spotify.m4a",
@@ -287,9 +302,9 @@ describe("tauri runtime client snapshots", () => {
       transcripts: [],
     });
 
-    expect(
-      mocks.invoke.mock.calls.map(([command]) => command),
-    ).not.toContain("generate_transcript_report");
+    expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
+      "generate_transcript_report",
+    );
   });
 
   it("lists and loads persisted LLM report history through Tauri commands", async () => {
@@ -324,16 +339,21 @@ describe("tauri runtime client snapshots", () => {
       }
       return mockInvoke(command);
     });
-    const { listLlmReportHistory, loadLlmReportHistoryDetail } = await import("./tauri-client");
+    const { listLlmReportHistory, loadLlmReportHistoryDetail } = await import(
+      "./tauri-client"
+    );
 
     const history = await listLlmReportHistory();
     const detail = await loadLlmReportHistoryDetail(item.report_id);
 
     expect(history).toEqual([item]);
     expect(detail.content).toBe("# Saved summary");
-    expect(mocks.invoke).toHaveBeenCalledWith("load_llm_report_history_detail", {
-      reportId: item.report_id,
-    });
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "load_llm_report_history_detail",
+      {
+        reportId: item.report_id,
+      },
+    );
   });
 
   it("downloads an existing report with a native Markdown save dialog", async () => {

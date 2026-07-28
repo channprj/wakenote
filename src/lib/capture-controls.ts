@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   AppStatus,
+  CaptureMicrophoneEntry,
   MicrophoneDevice,
   MicrophonePriorityEntry,
 } from "./types";
@@ -8,7 +9,8 @@ import type {
 type PrioritySettings = Pick<
   AppSettings,
   "microphone_priority" | "selected_microphone" | "selected_microphone_label"
->;
+> &
+  Partial<Pick<AppSettings, "capture_microphones">>;
 
 export interface InputAvailability {
   canStart: boolean;
@@ -20,7 +22,9 @@ export interface InputAvailability {
 export function isLiveInputStreamErrored(
   status: Pick<AppStatus, "runtime_warning">,
 ): boolean {
-  return Boolean(status.runtime_warning?.startsWith("Live input stream error:"));
+  return Boolean(
+    status.runtime_warning?.startsWith("Live input stream error:"),
+  );
 }
 
 export function startLiveCaptureDisabledReason(
@@ -64,12 +68,43 @@ export function derivePriorityList(
   ];
 }
 
+export function normalizeCaptureMicrophones(
+  entries: readonly CaptureMicrophoneEntry[],
+): CaptureMicrophoneEntry[] {
+  const seen = new Set<string>();
+  const normalized = entries
+    .map((entry) => ({
+      id: entry.id.trim(),
+      label:
+        entry.label.trim() ||
+        (entry.id === "default" ? "System Default" : entry.id.trim()),
+    }))
+    .filter((entry) => {
+      if (!entry.id || seen.has(entry.id)) {
+        return false;
+      }
+      seen.add(entry.id);
+      return true;
+    })
+    .slice(0, 2);
+  if (
+    normalized.some((entry) => entry.id === "default") &&
+    normalized.length > 1
+  ) {
+    return normalized.slice(0, 1);
+  }
+  return normalized.length > 0
+    ? normalized
+    : [{ id: "default", label: "System Default" }];
+}
+
 export function inputAvailability(
   settings: PrioritySettings,
   microphones: readonly MicrophoneDevice[],
 ): InputAvailability {
-  const priority = derivePriorityList(settings);
-  const primary = priority[0];
+  const primary = normalizeCaptureMicrophones(
+    settings.capture_microphones ?? derivePriorityList(settings).slice(0, 1),
+  )[0];
   const primaryDevice = microphones.find(
     (microphone) => microphone.id === primary?.id && microphone.available,
   );
@@ -82,36 +117,11 @@ export function inputAvailability(
     };
   }
 
-  const nextPriority = priority
-    .slice(1)
-    .map((entry) => microphones.find((microphone) => microphone.id === entry.id))
-    .find((microphone) => microphone?.available);
-  if (nextPriority) {
-    const primaryLabel = primary?.label || settings.selected_microphone_label;
-    return {
-      canStart: true,
-      activeLabel: nextPriority.label,
-      warning: `Primary input "${primaryLabel}" is unavailable. WakeNote will use "${nextPriority.label}".`,
-      warningTone: "warning",
-    };
-  }
-
-  const systemFallback = microphones.find(
-    (microphone) => microphone.fallback && microphone.available,
-  );
-  if (systemFallback) {
-    return {
-      canStart: true,
-      activeLabel: systemFallback.label,
-      warning: `Selected inputs are unavailable. WakeNote will use "${systemFallback.label}" as the system fallback.`,
-      warningTone: "warning",
-    };
-  }
-
   return {
     canStart: false,
-    activeLabel: primary?.label || settings.selected_microphone_label || "No input",
-    warning: "No available input device is selected.",
+    activeLabel:
+      primary?.label || settings.selected_microphone_label || "No input",
+    warning: `Primary input "${primary?.label || settings.selected_microphone_label}" is unavailable. WakeNote will wait for the same device.`,
     warningTone: "danger",
   };
 }

@@ -56,7 +56,10 @@ import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
 const launchAutoStartPollWindowMs = 130_000;
 
-function preserveRecentTranscripts(current: AppSnapshot, next: AppSnapshot): AppSnapshot {
+function preserveRecentTranscripts(
+  current: AppSnapshot,
+  next: AppSnapshot,
+): AppSnapshot {
   if (next.recent_transcripts.length > 0) {
     return next;
   }
@@ -110,7 +113,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
-  const launchAutoStartPollUntilMs = useRef(Date.now() + launchAutoStartPollWindowMs);
+  const launchAutoStartPollUntilMs = useRef(
+    Date.now() + launchAutoStartPollWindowMs,
+  );
   const transcriptDispatch = useRef((event: TranscriptEvent) => {
     setTranscriptLog((entries) => reduceTranscriptLog(entries, event));
   });
@@ -175,53 +180,110 @@ export default function App() {
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
       const dispatch = transcriptDispatch.current;
-      const subscriptions: Array<[string, (payload: unknown) => TranscriptEvent | null]> = [
-        ["live-transcript-started", (payload) => {
-          const data = payload as { chunk_id: number; started_at: string };
-          return { type: "started", chunk_id: data.chunk_id, started_at: data.started_at };
-        }],
-        ["live-transcript-partial", (payload) => {
-          const data = payload as { chunk_id: number; text: string };
-          return { type: "partial", chunk_id: data.chunk_id, text: data.text };
-        }],
-        ["live-transcript-committed", (payload) => {
-          const data = payload as { chunk_id: number; audio_path: string };
-          return {
-            type: "committed",
-            chunk_id: data.chunk_id,
-            audio_path: data.audio_path,
-          };
-        }],
-        ["live-transcript-final", (payload) => {
-          const data = payload as {
-            chunk_id: number | null;
-            audio_path: string;
-            text: string;
-            recorded_at?: string;
-          };
-          return {
-            type: "final",
-            chunk_id: data.chunk_id,
-            audio_path: data.audio_path,
-            text: data.text,
-            recorded_at: data.recorded_at,
-          };
-        }],
-        ["live-transcript-failed", (payload) => {
-          const data = payload as {
-            chunk_id: number | null;
-            audio_path: string;
-            error: string;
-            recorded_at?: string;
-          };
-          return {
-            type: "failed",
-            chunk_id: data.chunk_id,
-            audio_path: data.audio_path,
-            error: data.error,
-            recorded_at: data.recorded_at,
-          };
-        }],
+      const subscriptions: Array<
+        [string, (payload: unknown) => TranscriptEvent | null]
+      > = [
+        [
+          "live-transcript-started",
+          (payload) => {
+            const data = payload as {
+              source_key: string;
+              source_label: string;
+              microphone_slot?: "primary" | "secondary" | null;
+              chunk_id: number;
+              started_at: string;
+            };
+            return {
+              type: "started",
+              source_key: data.source_key,
+              source_label: data.source_label,
+              microphone_slot: data.microphone_slot,
+              chunk_id: data.chunk_id,
+              started_at: data.started_at,
+            };
+          },
+        ],
+        [
+          "live-transcript-partial",
+          (payload) => {
+            const data = payload as {
+              source_key: string;
+              source_label: string;
+              microphone_slot?: "primary" | "secondary" | null;
+              chunk_id: number;
+              text: string;
+            };
+            return { type: "partial", ...data };
+          },
+        ],
+        [
+          "live-transcript-committed",
+          (payload) => {
+            const data = payload as {
+              source_key: string;
+              source_label: string;
+              microphone_slot?: "primary" | "secondary" | null;
+              chunk_id: number;
+              audio_path: string;
+            };
+            return {
+              type: "committed",
+              source_key: data.source_key,
+              source_label: data.source_label,
+              microphone_slot: data.microphone_slot,
+              chunk_id: data.chunk_id,
+              audio_path: data.audio_path,
+            };
+          },
+        ],
+        [
+          "live-transcript-final",
+          (payload) => {
+            const data = payload as {
+              source_key: string;
+              source_label: string;
+              microphone_slot?: "primary" | "secondary" | null;
+              chunk_id: number | null;
+              audio_path: string;
+              text: string;
+              recorded_at?: string;
+            };
+            return {
+              type: "final",
+              source_key: data.source_key,
+              source_label: data.source_label,
+              microphone_slot: data.microphone_slot,
+              chunk_id: data.chunk_id,
+              audio_path: data.audio_path,
+              text: data.text,
+              recorded_at: data.recorded_at,
+            };
+          },
+        ],
+        [
+          "live-transcript-failed",
+          (payload) => {
+            const data = payload as {
+              source_key: string;
+              source_label: string;
+              microphone_slot?: "primary" | "secondary" | null;
+              chunk_id: number | null;
+              audio_path: string;
+              error: string;
+              recorded_at?: string;
+            };
+            return {
+              type: "failed",
+              source_key: data.source_key,
+              source_label: data.source_label,
+              microphone_slot: data.microphone_slot,
+              chunk_id: data.chunk_id,
+              audio_path: data.audio_path,
+              error: data.error,
+              recorded_at: data.recorded_at,
+            };
+          },
+        ],
         ["source-capture-started", () => null],
         ["source-capture-stopped", () => null],
         ["source-capture-error", () => null],
@@ -285,12 +347,9 @@ export default function App() {
 
   useEffect(() => {
     if (
-      !shouldPollSnapshot(
-        snapshot.status,
-        snapshot.queue,
-        snapshot.models,
-        { launchAutoStartPending },
-      )
+      !shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models, {
+        launchAutoStartPending,
+      })
     ) {
       return;
     }
@@ -344,7 +403,9 @@ export default function App() {
     newestTranscriptTextEntries(transcriptEntries).at(-1)?.text ?? "";
   const usableModelIds = new Set(
     snapshot.models
-      .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
+      .filter((model) =>
+        ["ready", "installed", "unloaded"].includes(model.status),
+      )
       .map((model) => model.id),
   );
   const canProcessTranscription =
@@ -458,14 +519,18 @@ export default function App() {
                 ? requestScreenRecordingPermission
                 : openScreenRecordingSettings,
             ),
-          onVerifyModel: (modelId) => void runAction(() => verifyModel(modelId)),
-          onDownloadModel: (modelId) => void runAction(() => downloadModel(modelId)),
+          onVerifyModel: (modelId) =>
+            void runAction(() => verifyModel(modelId)),
+          onDownloadModel: (modelId) =>
+            void runAction(() => downloadModel(modelId)),
           onCancelModelDownload: (modelId) =>
             void runAction(() => cancelModelDownload(modelId)),
-          onDeleteModel: (modelId) => void runAction(() => deleteModel(modelId)),
+          onDeleteModel: (modelId) =>
+            void runAction(() => deleteModel(modelId)),
           onSaveOpenRouterApiKey: (apiKey) =>
             void runAction(() => saveOpenRouterApiKey(apiKey)),
-          onDeleteOpenRouterApiKey: () => void runAction(deleteOpenRouterApiKey),
+          onDeleteOpenRouterApiKey: () =>
+            void runAction(deleteOpenRouterApiKey),
         }}
       />
     ),

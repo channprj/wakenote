@@ -45,6 +45,10 @@ describe("SettingsPage ownership", () => {
     const markup = renderSection("audio");
 
     expect(markup).toContain("Microphone Permission");
+    expect(markup).toContain('aria-label="Primary microphone"');
+    expect(markup).toContain('aria-label="Secondary microphone"');
+    expect(markup).toContain("1 / 2 selected");
+    expect(markup).toContain("Input monitoring uses Primary only.");
     expect(markup).toContain("Threshold");
     expect(markup).not.toContain("OpenRouter");
   });
@@ -88,9 +92,14 @@ describe("SettingsPage balanced masonry", () => {
     ["storage", "3"],
     ["integrations", "3"],
     ["audio", "3"],
-  ] as const)("caps the %s grid by its rendered card count", (section, maxColumns) => {
-    expect(renderSection(section)).toContain(`data-max-columns="${maxColumns}"`);
-  });
+  ] as const)(
+    "caps the %s grid by its rendered card count",
+    (section, maxColumns) => {
+      expect(renderSection(section)).toContain(
+        `data-max-columns="${maxColumns}"`,
+      );
+    },
+  );
 
   it("places Model files before a separate model-card grid", () => {
     const markup = renderSection("models");

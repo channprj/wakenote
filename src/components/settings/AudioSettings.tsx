@@ -1,14 +1,14 @@
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  CircleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleAlertIcon } from "lucide-react";
 import { LevelMeter } from "@/components/LevelMeter";
 import { SystemAudioSettings } from "@/components/SystemAudioSettings";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -19,7 +19,10 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { calibrationSettingsPatch } from "@/lib/calibration";
-import { derivePriorityList, inputAvailability } from "@/lib/capture-controls";
+import {
+  inputAvailability,
+  normalizeCaptureMicrophones,
+} from "@/lib/capture-controls";
 import {
   RECORDING_FIELD_HELP,
   resetRecordingSettingsPatch,
@@ -27,15 +30,10 @@ import {
 import type {
   AppSettings,
   AppSnapshot,
+  CaptureMicrophoneEntry,
   MicrophoneDevice,
-  MicrophonePriorityEntry,
 } from "@/lib/types";
-import {
-  addMicrophonePriority,
-  formatChunkDuration,
-  removeMicrophonePriority,
-  reorderMicrophonePriority,
-} from "./settings-helpers";
+import { formatChunkDuration } from "./settings-helpers";
 import {
   SettingSelect,
   SettingSlider,
@@ -68,7 +66,10 @@ export function AudioSettings({
 
   return (
     <SettingsGrid maxColumns={3}>
-      <SettingsCard title="Permissions" description="Access required for live audio capture.">
+      <SettingsCard
+        title="Permissions"
+        description="Access required for live audio capture."
+      >
         <PermissionSetting
           label="Microphone Permission"
           status={microphonePermission.label}
@@ -88,7 +89,9 @@ export function AudioSettings({
           label="Capture system audio"
           description="Capture supported meeting and media applications."
           checked={settings.system_audio_enabled}
-          onCheckedChange={(system_audio_enabled) => actions.onPatch({ system_audio_enabled })}
+          onCheckedChange={(system_audio_enabled) =>
+            actions.onPatch({ system_audio_enabled })
+          }
         />
         {settings.system_audio_enabled ? (
           <PermissionSetting
@@ -110,31 +113,47 @@ export function AudioSettings({
       </SettingsCard>
 
       {settings.system_audio_enabled ? (
-        <SettingsCard title="Recognized system sources" description="Live detection and built-in source capture.">
+        <SettingsCard
+          title="Recognized system sources"
+          description="Live detection and built-in source capture."
+        >
           <SystemAudioSettings settings={settings} onPatch={actions.onPatch} />
         </SettingsCard>
       ) : null}
 
-      <SettingsCard title="Microphone" description="Priority, monitoring, and language.">
-        <MicrophonePriorityList
-          value={derivePriorityList(settings)}
+      <SettingsCard
+        title="Microphone"
+        description="Selection, monitoring, and language."
+      >
+        <MicrophoneSelectors
+          value={settings.capture_microphones}
           microphones={microphones}
-          onChange={(microphone_priority) => actions.onPatch({ microphone_priority })}
+          onChange={(capture_microphones) =>
+            actions.onPatch({ capture_microphones })
+          }
         />
+        <MicrophoneStatusRows settings={settings} status={status} />
         {availability.warning ? (
           <Alert
-            variant={availability.warningTone === "danger" ? "destructive" : "default"}
+            variant={
+              availability.warningTone === "danger" ? "destructive" : "default"
+            }
             data-tone={availability.warningTone}
             className="my-2"
           >
             <CircleAlertIcon />
-            <AlertTitle>Input {availability.warningTone === "danger" ? "unavailable" : "fallback"}</AlertTitle>
+            <AlertTitle>
+              Input{" "}
+              {availability.warningTone === "danger"
+                ? "unavailable"
+                : "fallback"}
+            </AlertTitle>
             <AlertDescription>{availability.warning}</AlertDescription>
           </Alert>
         ) : null}
         <SettingSwitch
           label="Monitor input audio"
-          description="Play the selected microphone through the default output device."
+          description="Play the Primary microphone through the default output device."
           checked={settings.input_monitoring_enabled}
           onCheckedChange={(input_monitoring_enabled) =>
             actions.onPatch({ input_monitoring_enabled })
@@ -159,14 +178,19 @@ export function AudioSettings({
         />
       </SettingsCard>
 
-      <SettingsCard title="Calibration" description="Live level and threshold calibration.">
+      <SettingsCard
+        title="Calibration"
+        description="Live level and threshold calibration."
+      >
         <LevelMeter
           settings={settings}
           status={status}
           onApplyThreshold={(threshold_dbfs) =>
             actions.onPatch(calibrationSettingsPatch(threshold_dbfs))
           }
-          onResetRecordingSettings={() => actions.onPatch(resetRecordingSettingsPatch())}
+          onResetRecordingSettings={() =>
+            actions.onPatch(resetRecordingSettingsPatch())
+          }
         />
         <SettingSlider
           label="Threshold"
@@ -175,7 +199,9 @@ export function AudioSettings({
           min={-90}
           max={-10}
           suffix=" dBFS"
-          onValueChange={(threshold_dbfs) => actions.onPatch({ threshold_dbfs })}
+          onValueChange={(threshold_dbfs) =>
+            actions.onPatch({ threshold_dbfs })
+          }
         />
         <SettingSlider
           label="Mic Input Volume"
@@ -191,7 +217,10 @@ export function AudioSettings({
         />
       </SettingsCard>
 
-      <SettingsCard title="Chunk timing" description="Voice gate and recording boundaries.">
+      <SettingsCard
+        title="Chunk timing"
+        description="Voice gate and recording boundaries."
+      >
         {durationFields.map(([key, label, min, max]) => (
           <SettingSlider
             key={key}
@@ -220,6 +249,73 @@ export function AudioSettings({
   );
 }
 
+function MicrophoneStatusRows({
+  settings,
+  status,
+}: {
+  settings: AppSettings;
+  status: AppSnapshot["status"];
+}) {
+  const selected = normalizeCaptureMicrophones(settings.capture_microphones);
+  return (
+    <div className="grid gap-2" aria-label="Microphone capture status">
+      {selected.map((configured, index) => {
+        const slot = index === 0 ? "primary" : "secondary";
+        const runtime = status.microphone_captures.find(
+          (item) => item.slot === slot,
+        );
+        const state = runtime?.reconnecting
+          ? "Reconnecting"
+          : runtime?.active
+            ? "Active"
+            : "Waiting";
+        const level = runtime?.level.current_dbfs ?? -120;
+        return (
+          <div
+            key={`${slot}:${configured.id}`}
+            className="rounded-md border border-border/70 px-3 py-2"
+            aria-label={`${slot === "primary" ? "Primary" : "Secondary"} microphone status`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-sm font-medium">
+                {slot === "primary" ? "Primary" : "Secondary"} ·{" "}
+                {runtime?.label ?? configured.label}
+              </span>
+              <StatusBadge
+                tone={
+                  runtime?.active
+                    ? "success"
+                    : runtime?.warning
+                      ? "warning"
+                      : "neutral"
+                }
+              >
+                {state}
+              </StatusBadge>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-[width]"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, ((level + 90) / 90) * 100))}%`,
+                  }}
+                />
+              </div>
+              <span className="tabular-nums">{Math.round(level)} dBFS</span>
+            </div>
+            {runtime?.warning ? (
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                {runtime.warning}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PermissionSetting({
   label,
   status,
@@ -240,7 +336,9 @@ function PermissionSetting({
         <FieldDescription>{detail}</FieldDescription>
       </FieldContent>
       <div className="settings-action-row">
-        <StatusBadge tone={status.toLowerCase().includes("allow") ? "success" : "warning"}>
+        <StatusBadge
+          tone={status.toLowerCase().includes("allow") ? "success" : "warning"}
+        >
           {status}
         </StatusBadge>
         {actionLabel ? (
@@ -253,97 +351,117 @@ function PermissionSetting({
   );
 }
 
-function MicrophonePriorityList({
+function MicrophoneSelectors({
   value,
   microphones,
   onChange,
 }: {
-  value: MicrophonePriorityEntry[];
+  value: CaptureMicrophoneEntry[];
   microphones: MicrophoneDevice[];
-  onChange: (next: MicrophonePriorityEntry[]) => void;
+  onChange: (next: CaptureMicrophoneEntry[]) => void;
 }) {
-  const availableToAdd = microphones.filter(
-    (device) => !value.some((entry) => entry.id === device.id),
+  const selected = normalizeCaptureMicrophones(value);
+  const primary = selected[0];
+  const secondary = selected[1];
+  const explicitDevices = microphones.filter(
+    (device) => device.id !== "default",
   );
+  const secondaryDisabled = primary.id === "default";
+  const deviceEntry = (id: string) => {
+    const device = microphones.find((microphone) => microphone.id === id);
+    return device ? { id: device.id, label: device.label } : null;
+  };
 
   return (
     <Field orientation="vertical" className="settings-row">
       <FieldContent>
-        <FieldLabel>Microphone priority</FieldLabel>
+        <FieldLabel>Capture microphones</FieldLabel>
         <FieldDescription>
-          WakeNote tries each device in order and returns to the primary input when available.
+          Choose one required Primary and one optional Secondary. Each
+          microphone records and reconnects independently.
         </FieldDescription>
       </FieldContent>
-      <ol className="settings-priority-list" aria-label="Microphone priority order">
-        {value.map((entry, index) => {
-          const availability = microphones.find((microphone) => microphone.id === entry.id)?.available;
-          return (
-            <li key={entry.id}>
-              <span className="settings-priority-list__position">{index + 1}</span>
-              <span className="min-w-0 truncate" title={`${entry.label} · ${entry.id}`}>
-                {entry.label}
-              </span>
-              {index === 0 ? <StatusBadge tone="primary">Primary</StatusBadge> : null}
-              {availability === false ? <StatusBadge tone="warning">Unavailable</StatusBadge> : null}
-              {availability === undefined ? <StatusBadge tone="warning">Not connected</StatusBadge> : null}
-              <div className="settings-priority-list__actions">
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Move ${entry.label} up`}
-                  disabled={index === 0}
-                  onClick={() => onChange(reorderMicrophonePriority(value, index, index - 1))}
-                >
-                  <ArrowUpIcon data-icon="solo" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Move ${entry.label} down`}
-                  disabled={index === value.length - 1}
-                  onClick={() => onChange(reorderMicrophonePriority(value, index, index + 1))}
-                >
-                  <ArrowDownIcon data-icon="solo" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Remove ${entry.label}`}
-                  disabled={value.length <= 1}
-                  onClick={() => onChange(removeMicrophonePriority(value, index))}
-                >
-                  <XIcon data-icon="solo" />
-                </Button>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-      {availableToAdd.length > 0 ? (
+      <div className="grid gap-3">
         <Select
-          value=""
+          value={primary.id}
           onValueChange={(id) => {
-            const device = microphones.find((microphone) => microphone.id === id);
-            if (device) onChange(addMicrophonePriority(value, device));
+            const nextPrimary = deviceEntry(id);
+            if (!nextPrimary) return;
+            onChange(
+              normalizeCaptureMicrophones([
+                nextPrimary,
+                ...(id === "default" || secondary?.id === id || !secondary
+                  ? []
+                  : [secondary]),
+              ]),
+            );
           }}
         >
-          <SelectTrigger size="sm" className="w-fit min-w-44" aria-label="Add microphone">
-            <SelectValue placeholder="Add a microphone…" />
+          <SelectTrigger
+            size="sm"
+            className="w-full"
+            aria-label="Primary microphone"
+          >
+            <SelectValue placeholder="Select Primary microphone" />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              {availableToAdd.map((device) => (
+              {microphones.map((device) => (
                 <SelectItem key={device.id} value={device.id}>
-                  {device.label}{device.available ? "" : " (Unavailable)"}
+                  {device.label}
+                  {device.available ? "" : " (Unavailable)"}
                 </SelectItem>
               ))}
             </SelectGroup>
           </SelectContent>
         </Select>
-      ) : null}
+        <Select
+          value={secondary?.id ?? "__none__"}
+          disabled={secondaryDisabled}
+          onValueChange={(id) => {
+            if (id === "__none__") {
+              onChange([primary]);
+              return;
+            }
+            const nextSecondary = deviceEntry(id);
+            if (nextSecondary)
+              onChange(normalizeCaptureMicrophones([primary, nextSecondary]));
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="w-full"
+            aria-label="Secondary microphone"
+          >
+            <SelectValue
+              placeholder={
+                secondaryDisabled
+                  ? "Choose a physical Primary first"
+                  : "No Secondary microphone"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="__none__">No Secondary microphone</SelectItem>
+              {explicitDevices
+                .filter((device) => device.id !== primary.id)
+                .map((device) => (
+                  <SelectItem key={device.id} value={device.id}>
+                    {device.label}
+                    {device.available ? "" : " (Unavailable)"}
+                  </SelectItem>
+                ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Input monitoring uses Primary only.</span>
+          <StatusBadge tone={selected.length === 2 ? "success" : "neutral"}>
+            {selected.length} / 2 selected
+          </StatusBadge>
+        </div>
+      </div>
     </Field>
   );
 }

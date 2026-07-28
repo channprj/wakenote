@@ -169,6 +169,38 @@ pub struct MicrophonePriorityEntry {
     pub label: String,
 }
 
+pub const MAX_CAPTURE_MICROPHONES: usize = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MicrophoneSlot {
+    Primary,
+    Secondary,
+}
+
+impl MicrophoneSlot {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Secondary => "secondary",
+        }
+    }
+
+    pub const fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::Primary),
+            1 => Some(Self::Secondary),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureMicrophoneEntry {
+    pub id: String,
+    pub label: String,
+}
+
 /// Per-source override for "auto-prompt on detection". Only recognized source
 /// ids (see [`crate::sources`]) are kept; entries with an unknown id are dropped
 /// during [`AppSettings::apply_patch`]. Sources without an entry fall back to the
@@ -205,6 +237,8 @@ pub struct AppSettings {
     /// when the active device is somewhere further down the list.
     #[serde(default)]
     pub microphone_priority: Vec<MicrophonePriorityEntry>,
+    #[serde(default)]
+    pub capture_microphones: Vec<CaptureMicrophoneEntry>,
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
@@ -285,6 +319,7 @@ pub struct SettingsPatch {
     pub selected_microphone: Option<String>,
     pub selected_microphone_label: Option<String>,
     pub microphone_priority: Option<Vec<MicrophonePriorityEntry>>,
+    pub capture_microphones: Option<Vec<CaptureMicrophoneEntry>>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
@@ -339,6 +374,7 @@ pub enum LiveCaptureRuntimeAction {
     Start,
     Stop,
     Restart,
+    Reconcile,
     Unchanged,
 }
 
@@ -347,6 +383,47 @@ pub fn default_microphone_priority() -> Vec<MicrophonePriorityEntry> {
         id: "default".to_string(),
         label: "System Default".to_string(),
     }]
+}
+
+pub fn default_capture_microphones() -> Vec<CaptureMicrophoneEntry> {
+    vec![CaptureMicrophoneEntry {
+        id: "default".to_string(),
+        label: "System Default".to_string(),
+    }]
+}
+
+pub fn normalize_capture_microphones(
+    entries: Vec<CaptureMicrophoneEntry>,
+) -> Vec<CaptureMicrophoneEntry> {
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.id.trim().to_string();
+            if id.is_empty() || !seen.insert(id.clone()) {
+                return None;
+            }
+            let label = if entry.label.trim().is_empty() {
+                if id == "default" {
+                    "System Default".to_string()
+                } else {
+                    id.clone()
+                }
+            } else {
+                entry.label.trim().to_string()
+            };
+            Some(CaptureMicrophoneEntry { id, label })
+        })
+        .take(MAX_CAPTURE_MICROPHONES)
+        .collect::<Vec<_>>();
+
+    if normalized.len() > 1 && normalized.iter().any(|entry| entry.id == "default") {
+        normalized.truncate(1);
+    }
+    if normalized.is_empty() {
+        return default_capture_microphones();
+    }
+    normalized
 }
 
 pub fn default_audio_bitrate_kbps() -> u32 {
@@ -398,6 +475,9 @@ pub fn live_capture_runtime_action_for_patch(
         .unwrap_or(settings.recording_enabled);
     let next_pause_all = patch.pause_all.unwrap_or(settings.pause_all);
     let should_run = next_recording_enabled && !next_pause_all;
+    let capture_microphones_changed = patch.capture_microphones.as_ref().is_some_and(|entries| {
+        normalize_capture_microphones(entries.clone()) != settings.capture_microphones
+    });
     let microphone_changed = patch
         .selected_microphone
         .as_ref()
@@ -407,10 +487,16 @@ pub fn live_capture_runtime_action_for_patch(
             .as_ref()
             .is_some_and(|list| top_priority_id(list) != settings.selected_microphone);
 
-    match (currently_running, should_run, microphone_changed) {
-        (false, true, _) => LiveCaptureRuntimeAction::Start,
-        (true, false, _) => LiveCaptureRuntimeAction::Stop,
-        (true, true, true) => LiveCaptureRuntimeAction::Restart,
+    match (
+        currently_running,
+        should_run,
+        microphone_changed,
+        capture_microphones_changed,
+    ) {
+        (false, true, _, _) => LiveCaptureRuntimeAction::Start,
+        (true, false, _, _) => LiveCaptureRuntimeAction::Stop,
+        (true, true, _, true) => LiveCaptureRuntimeAction::Reconcile,
+        (true, true, true, false) => LiveCaptureRuntimeAction::Restart,
         _ => LiveCaptureRuntimeAction::Unchanged,
     }
 }
@@ -580,6 +666,46 @@ fn normalize_custom_sources(list: Vec<CustomSourceEntry>) -> Vec<CustomSourceEnt
 }
 
 impl AppSettings {
+    pub fn normalize_capture_microphones(&mut self) {
+        if self.capture_microphones.is_empty() {
+            self.capture_microphones = vec![CaptureMicrophoneEntry {
+                id: if self.selected_microphone.is_empty() {
+                    "default".to_string()
+                } else {
+                    self.selected_microphone.clone()
+                },
+                label: if self.selected_microphone_label.is_empty() {
+                    if self.selected_microphone == "default" {
+                        "System Default".to_string()
+                    } else {
+                        self.selected_microphone.clone()
+                    }
+                } else {
+                    self.selected_microphone_label.clone()
+                },
+            }];
+        }
+        self.capture_microphones =
+            normalize_capture_microphones(std::mem::take(&mut self.capture_microphones));
+        let primary = self
+            .capture_microphones
+            .first()
+            .cloned()
+            .expect("capture microphones are non-empty after normalization");
+        self.selected_microphone = primary.id.clone();
+        self.selected_microphone_label = primary.label.clone();
+
+        if let Some(existing) = self.microphone_priority.first_mut() {
+            existing.id = primary.id;
+            existing.label = primary.label;
+        } else {
+            self.microphone_priority.push(MicrophonePriorityEntry {
+                id: primary.id,
+                label: primary.label,
+            });
+        }
+    }
+
     /// Reconcile [`Self::microphone_priority`] with the legacy
     /// `selected_microphone[_label]` fields. The priority list is the source of
     /// truth: after this call, `priority[0]` and the legacy single-mic fields
@@ -623,6 +749,10 @@ impl AppSettings {
     }
 
     pub fn apply_patch(&mut self, patch: SettingsPatch) {
+        let capture_microphones_patch = patch.capture_microphones.clone();
+        let legacy_microphone_patch = patch.selected_microphone.is_some()
+            || patch.selected_microphone_label.is_some()
+            || patch.microphone_priority.is_some();
         if let Some(value) = patch.recording_enabled {
             self.recording_enabled = value;
         }
@@ -663,6 +793,15 @@ impl AppSettings {
             self.microphone_priority = list;
         }
         self.normalize_microphone_priority();
+        if let Some(list) = capture_microphones_patch {
+            self.capture_microphones = list;
+        } else if legacy_microphone_patch {
+            self.capture_microphones = vec![CaptureMicrophoneEntry {
+                id: self.selected_microphone.clone(),
+                label: self.selected_microphone_label.clone(),
+            }];
+        }
+        self.normalize_capture_microphones();
         if let Some(value) = patch.save_root {
             self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
@@ -820,6 +959,7 @@ impl Default for AppSettings {
             selected_microphone: "default".to_string(),
             selected_microphone_label: "System Default".to_string(),
             microphone_priority: default_microphone_priority(),
+            capture_microphones: default_capture_microphones(),
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,

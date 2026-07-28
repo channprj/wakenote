@@ -19,7 +19,7 @@ use wakenote::models::{ModelStatus, ModelStore};
 use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
-    AudioFormat, FloatingOverlayPosition, SettingsPatch, TranscriptionLanguage,
+    AudioFormat, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch, TranscriptionLanguage,
 };
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
@@ -328,6 +328,7 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
         live_capture_chunk_id: None,
         source: ChunkSource::System,
         source_label: Some("youtube".into()),
+        microphone_slot: None,
     };
     let metadata_path = tmp.path().join("20260510/010203-youtube.json");
     std::fs::write(
@@ -340,6 +341,57 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
 
     assert_eq!(transcripts[0].source, ChunkSource::System);
     assert_eq!(transcripts[0].source_label.as_deref(), Some("youtube"));
+}
+
+#[test]
+fn recent_transcript_preserves_microphone_identity() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+    write_transcript_sidecar(
+        tmp.path(),
+        "20260510/010203-mic-primary-wired.txt",
+        "primary transcript\n",
+    );
+    let started_at = chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 3).unwrap();
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        device_id: "input-1-wired".into(),
+        device_name: "Wired".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+        duration_ms: 1_000,
+        transcription_status: TranscriptionStatus::Completed,
+        transcribed_at: None,
+        app_version: "0.1.1".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: Some(1),
+        source: ChunkSource::Microphone,
+        source_label: Some("mic-primary-wired".into()),
+        microphone_slot: Some(MicrophoneSlot::Primary),
+    };
+    std::fs::write(
+        tmp.path().join("20260510/010203-mic-primary-wired.json"),
+        serde_json::to_vec(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+
+    let transcript = backend.recent_transcripts(1).remove(0);
+    assert_eq!(transcript.device_id.as_deref(), Some("input-1-wired"));
+    assert_eq!(transcript.device_name.as_deref(), Some("Wired"));
+    assert_eq!(transcript.microphone_slot, Some(MicrophoneSlot::Primary));
 }
 
 #[test]
@@ -720,6 +772,7 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
         live_capture_chunk_id: None,
         source: ChunkSource::System,
         source_label: Some("Spotify".into()),
+        microphone_slot: None,
     };
     std::fs::write(
         audio_path.with_extension("json"),
@@ -966,12 +1019,12 @@ fn backend_clears_active_microphone_warning_after_healthy_audio_on_selected_devi
     backend.set_microphone_warning(
         "Microphone has not produced audio after several recovery attempts. Try Refresh.",
     );
-    assert_eq!(
+    assert_ne!(
         tray_runtime_presentation(&backend.settings(), &backend.app_status())
             .icon
             .rgba,
         [220, 38, 38, 255],
-        "standing microphone warning should force the disconnected tray color",
+        "an active microphone keeps the tray usable while its warning remains visible in status",
     );
 
     backend

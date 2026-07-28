@@ -10,6 +10,7 @@ pub mod llm;
 pub mod llm_runs;
 pub mod meeting;
 pub mod models;
+pub mod multi_capture;
 pub mod overlay;
 pub mod overlay_caption;
 pub mod permissions;

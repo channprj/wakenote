@@ -16,6 +16,9 @@ fn request() -> LlmGenerateRequest {
             text: "Exact retry evidence".into(),
             source: ChunkSource::Microphone,
             source_label: None,
+            device_id: None,
+            device_name: None,
+            microphone_slot: None,
         }],
         run_id: None,
     }

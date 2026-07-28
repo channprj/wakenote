@@ -74,7 +74,10 @@ const browserLlmReportRuns = new Map<string, BrowserLlmReportRunRecord>();
 const browserLlmReportRunListeners = new Set<
   (snapshot: LlmReportRunSnapshot) => void
 >();
-const browserVerificationPreviousStatuses = new Map<string, ModelDescriptor["status"]>();
+const browserVerificationPreviousStatuses = new Map<
+  string,
+  ModelDescriptor["status"]
+>();
 const defaultRecentTranscriptLimit = 50;
 
 function permissionSnapshotFromBrowser(): AppPermissions {
@@ -115,7 +118,11 @@ export function seedBrowserFixtures(fixtures: DevFixtures) {
   for (const snapshot of fixtures.runs) {
     browserLlmReportRuns.set(snapshot.run_id, {
       snapshot,
-      request: { kind: snapshot.kind, transcripts: [], run_id: snapshot.run_id },
+      request: {
+        kind: snapshot.kind,
+        transcripts: [],
+        run_id: snapshot.run_id,
+      },
       timer: null,
       // Seeded runs are terminal or paused mid-flight; nothing left to advance.
       nextStage: browserLlmProgressStages.length,
@@ -167,7 +174,9 @@ function isBrowserUploadableAudioPath(audioPath: string) {
 
 function isUsableBrowserModel(modelId: string, models: ModelDescriptor[]) {
   const model = models.find((candidate) => candidate.id === modelId);
-  return Boolean(model && ["ready", "installed", "unloaded"].includes(model.status));
+  return Boolean(
+    model && ["ready", "installed", "unloaded"].includes(model.status),
+  );
 }
 
 function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
@@ -185,7 +194,8 @@ function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
       return model;
     }
 
-    const previousStatus = browserVerificationPreviousStatuses.get(model.id) ?? "missing";
+    const previousStatus =
+      browserVerificationPreviousStatuses.get(model.id) ?? "missing";
     browserVerificationPreviousStatuses.delete(model.id);
     if (["ready", "installed", "unloaded"].includes(previousStatus)) {
       return {
@@ -201,7 +211,9 @@ function settledBrowserModels(models: ModelDescriptor[]): ModelDescriptor[] {
       status: previousStatus === "error" ? "error" : "missing",
       download_progress: null,
       download_error:
-        previousStatus === "error" ? (model.download_error ?? "model verification failed") : null,
+        previousStatus === "error"
+          ? (model.download_error ?? "model verification failed")
+          : null,
     };
   });
 }
@@ -219,13 +231,20 @@ function browserLevelSnapshot(activeCapture: boolean): AppStatus["level"] {
 
   return {
     current_dbfs: currentDbfs,
-    peak_dbfs: Math.max(currentDbfs, browserSnapshot.status?.level.peak_dbfs ?? currentDbfs),
+    peak_dbfs: Math.max(
+      currentDbfs,
+      browserSnapshot.status?.level.peak_dbfs ?? currentDbfs,
+    ),
     noise_floor_dbfs: -73,
     suggested_threshold_dbfs: -61,
   };
 }
 
-function maybeQueueBrowserCapture(settings: AppSettings, queue: QueueSnapshot, status: AppStatus) {
+function maybeQueueBrowserCapture(
+  settings: AppSettings,
+  queue: QueueSnapshot,
+  status: AppStatus,
+) {
   if (
     browserCaptureSessionId === 0 ||
     browserQueuedCaptureSessionId === browserCaptureSessionId ||
@@ -235,10 +254,9 @@ function maybeQueueBrowserCapture(settings: AppSettings, queue: QueueSnapshot, s
     return queue;
   }
 
-  const audioPath = `${settings.save_root}/browser-capture-${String(browserCaptureSessionId).padStart(
-    3,
-    "0",
-  )}.${settings.audio_format}`;
+  const audioPath = `${settings.save_root}/browser-capture-${String(
+    browserCaptureSessionId,
+  ).padStart(3, "0")}.${settings.audio_format}`;
   browserQueuedCaptureSessionId = browserCaptureSessionId;
   if (queue.jobs.some((job) => job.audio_path === audioPath)) {
     return queue;
@@ -266,7 +284,8 @@ function statusFrom(
     mode === "recording_and_transcription" || mode === "recording_only";
   const activeCapture = canCapture && liveInputActive;
   const level = browserLevelSnapshot(activeCapture);
-  const isRecording = activeCapture && level.current_dbfs >= settings.threshold_dbfs;
+  const isRecording =
+    activeCapture && level.current_dbfs >= settings.threshold_dbfs;
 
   return {
     mode,
@@ -284,6 +303,17 @@ function statusFrom(
     runtime_warning: browserSnapshot.status?.runtime_warning ?? null,
     threshold_dbfs: settings.threshold_dbfs,
     level,
+    microphone_captures: settings.capture_microphones.map(
+      (microphone, index) => ({
+        slot: index === 0 ? "primary" : "secondary",
+        device_id: microphone.id,
+        label: microphone.label,
+        active: activeCapture,
+        reconnecting: false,
+        warning: null,
+        level,
+      }),
+    ),
     queue,
   };
 }
@@ -294,7 +324,11 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     const currentQueue = browserSnapshot.queue ?? emptyQueue();
     const models = settledBrowserModels(browserSnapshot.models ?? mockModels());
     const currentStatus = statusFrom(settings, currentQueue);
-    const queue = maybeQueueBrowserCapture(settings, currentQueue, currentStatus);
+    const queue = maybeQueueBrowserCapture(
+      settings,
+      currentQueue,
+      currentStatus,
+    );
     browserSnapshot = {
       ...browserSnapshot,
       settings,
@@ -306,7 +340,15 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     return browserSnapshot;
   }
 
-  const [settings, status, microphones, models, queue, permissions, openRouterKeyStatus] = await Promise.all([
+  const [
+    settings,
+    status,
+    microphones,
+    models,
+    queue,
+    permissions,
+    openRouterKeyStatus,
+  ] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
@@ -393,10 +435,15 @@ export async function rebuildTranscriptDayIndex(
     return loadTranscriptsForDay(day, download);
   }
 
-  return invoke<RecentTranscript[]>("rebuild_transcript_day_index", { day, download });
+  return invoke<RecentTranscript[]>("rebuild_transcript_day_index", {
+    day,
+    download,
+  });
 }
 
-export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapshot> {
+export async function saveSettingsPatch(
+  patch: SettingsPatch,
+): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const previousSettings = browserSnapshot.settings ?? defaultSettings();
     const models = browserSnapshot.models ?? mockModels();
@@ -445,7 +492,9 @@ export async function saveSettingsPatch(patch: SettingsPatch): Promise<AppSnapsh
   return loadSnapshot();
 }
 
-export async function saveOpenRouterApiKey(apiKey: string): Promise<AppSnapshot> {
+export async function saveOpenRouterApiKey(
+  apiKey: string,
+): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const trimmed = apiKey.trim();
     if (!trimmed) {
@@ -487,7 +536,9 @@ const browserLlmProgressStages: ReadonlyArray<{
   { stage: "saving", message: "Saving report" },
 ];
 
-function copyLlmGenerateRequest(request: LlmGenerateRequest): LlmGenerateRequest {
+function copyLlmGenerateRequest(
+  request: LlmGenerateRequest,
+): LlmGenerateRequest {
   return {
     ...request,
     transcripts: request.transcripts.map((transcript) => ({ ...transcript })),
@@ -574,9 +625,7 @@ function completeBrowserLlmReportRun(record: BrowserLlmReportRunRecord) {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    cost: Number(
-      ((promptTokens + completionTokens) * 0.000001).toFixed(6),
-    ),
+    cost: Number(((promptTokens + completionTokens) * 0.000001).toFixed(6)),
   };
   const reportId = `browser-${Date.now()}-${browserLlmReportRunSequence}-${record.request.kind}`;
   const fileName = `${reportId}.md`;
@@ -640,18 +689,13 @@ function advanceBrowserLlmReportRun(runId: string) {
     completeBrowserLlmReportRun(record);
     return;
   }
-  const progress = browserLlmProgressEvent(
-    record,
-    stage.stage,
-    stage.message,
-  );
+  const progress = browserLlmProgressEvent(record, stage.stage, stage.message);
   updateBrowserLlmRun(
     record,
     {
       status: "running",
       stage: stage.stage,
-      started_at:
-        record.snapshot.started_at ?? new Date().toISOString(),
+      started_at: record.snapshot.started_at ?? new Date().toISOString(),
       iteration: progress.iteration,
       message: stage.message,
       detail: null,
@@ -659,10 +703,7 @@ function advanceBrowserLlmReportRun(runId: string) {
     progress,
   );
   record.nextStage += 1;
-  record.timer = setTimeout(
-    () => advanceBrowserLlmReportRun(runId),
-    10,
-  );
+  record.timer = setTimeout(() => advanceBrowserLlmReportRun(runId), 10);
 }
 
 function createBrowserLlmReportRun(
@@ -677,9 +718,7 @@ function createBrowserLlmReportRun(
   }
   const active = activeBrowserLlmReportRun();
   if (active) {
-    throw new Error(
-      `Report run ${active.snapshot.run_id} is already active`,
-    );
+    throw new Error(`Report run ${active.snapshot.run_id} is already active`);
   }
   const settings = browserSnapshot.settings ?? defaultSettings();
   const runId = nextLlmReportRunId();
@@ -708,8 +747,7 @@ function createBrowserLlmReportRun(
       progress: [],
       model: settings.openrouter_model,
       selected_count: privateRequest.transcripts.length,
-      date_range:
-        browserReportDateRange(privateRequest.transcripts) ?? "",
+      date_range: browserReportDateRange(privateRequest.transcripts) ?? "",
       report_id: null,
       report_path: null,
       completion_reason: null,
@@ -723,10 +761,7 @@ function createBrowserLlmReportRun(
   };
   browserLlmReportRuns.set(runId, record);
   publishBrowserLlmReportRun(record);
-  record.timer = setTimeout(
-    () => advanceBrowserLlmReportRun(runId),
-    10,
-  );
+  record.timer = setTimeout(() => advanceBrowserLlmReportRun(runId), 10);
   return copyLlmReportRunSnapshot(record.snapshot);
 }
 
@@ -739,15 +774,11 @@ export async function startLlmReport(
   return invoke<LlmReportRunSnapshot>("start_llm_report", { request });
 }
 
-export async function listLlmReportRuns(): Promise<
-  LlmReportRunSnapshot[]
-> {
+export async function listLlmReportRuns(): Promise<LlmReportRunSnapshot[]> {
   if (!isTauriRuntime()) {
     return [...browserLlmReportRuns.values()]
       .map((record) => copyLlmReportRunSnapshot(record.snapshot))
-      .sort((left, right) =>
-        right.created_at.localeCompare(left.created_at),
-      );
+      .sort((left, right) => right.created_at.localeCompare(left.created_at));
   }
   return invoke<LlmReportRunSnapshot[]>("list_llm_report_runs");
 }
@@ -828,9 +859,8 @@ export async function subscribeLlmReportRuns(
     return () => browserLlmReportRunListeners.delete(onRun);
   }
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<LlmReportRunSnapshot>(
-    "llm-report-run-updated",
-    (event) => onRun(event.payload),
+  return listen<LlmReportRunSnapshot>("llm-report-run-updated", (event) =>
+    onRun(event.payload),
   );
 }
 
@@ -845,13 +875,17 @@ export async function loadLlmReportHistoryDetail(
   reportId: string,
 ): Promise<LlmReportHistoryDetail> {
   if (!isTauriRuntime()) {
-    const detail = browserLlmReportHistory.find(({ item }) => item.report_id === reportId);
+    const detail = browserLlmReportHistory.find(
+      ({ item }) => item.report_id === reportId,
+    );
     if (!detail) {
       throw new Error(`Report not found: ${reportId}`);
     }
     return { item: { ...detail.item }, content: detail.content };
   }
-  return invoke<LlmReportHistoryDetail>("load_llm_report_history_detail", { reportId });
+  return invoke<LlmReportHistoryDetail>("load_llm_report_history_detail", {
+    reportId,
+  });
 }
 
 export async function downloadLlmReport(
@@ -860,10 +894,15 @@ export async function downloadLlmReport(
 ): Promise<string | null> {
   if (!isTauriRuntime()) {
     const detail = await loadLlmReportHistoryDetail(reportId);
-    if (typeof document === "undefined" || typeof URL.createObjectURL !== "function") {
+    if (
+      typeof document === "undefined" ||
+      typeof URL.createObjectURL !== "function"
+    ) {
       return detail.item.file_name;
     }
-    const url = URL.createObjectURL(new Blob([detail.content], { type: "text/markdown;charset=utf-8" }));
+    const url = URL.createObjectURL(
+      new Blob([detail.content], { type: "text/markdown;charset=utf-8" }),
+    );
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = detail.item.file_name;
@@ -882,7 +921,9 @@ export async function downloadLlmReport(
   return invoke<string>("export_llm_report", { reportId, destinationPath });
 }
 
-function browserReportDateRange(transcripts: readonly RecentTranscript[]): string | null {
+function browserReportDateRange(
+  transcripts: readonly RecentTranscript[],
+): string | null {
   const timestamps = transcripts
     .map((transcript) => transcript.recorded_at)
     .filter(Boolean)
@@ -901,7 +942,9 @@ export async function enqueueBacklog(saveRoot: string): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const audioPath = `${saveRoot}/20260506/230709.m4a`;
-    if (browserSnapshot.queue.jobs.some((job) => job.audio_path === audioPath)) {
+    if (
+      browserSnapshot.queue.jobs.some((job) => job.audio_path === audioPath)
+    ) {
       return browserSnapshot;
     }
 
@@ -933,7 +976,9 @@ export async function enqueueBacklog(saveRoot: string): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
-export async function enqueueAudioFiles(audioPaths: string[]): Promise<AppSnapshot> {
+export async function enqueueAudioFiles(
+  audioPaths: string[],
+): Promise<AppSnapshot> {
   if (audioPaths.length === 0) {
     return loadSnapshot();
   }
@@ -941,7 +986,9 @@ export async function enqueueAudioFiles(audioPaths: string[]): Promise<AppSnapsh
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
     const firstId = browserSnapshot.queue.jobs.length + 1;
-    const queuedPaths = new Set(browserSnapshot.queue.jobs.map((job) => job.audio_path));
+    const queuedPaths = new Set(
+      browserSnapshot.queue.jobs.map((job) => job.audio_path),
+    );
     const importedJobs = audioPaths
       .filter((audioPath) => {
         if (!isBrowserImportableAudioPath(audioPath)) {
@@ -1046,7 +1093,8 @@ export async function requestScreenRecordingPermission(): Promise<AppSnapshot> {
         screen_recording: {
           status: "granted",
           label: "Allowed",
-          detail: "WakeNote can capture system audio (Google Meet, Zoom, YouTube).",
+          detail:
+            "WakeNote can capture system audio (Google Meet, Zoom, YouTube).",
           can_request: false,
           can_open_settings: true,
         },
@@ -1104,9 +1152,13 @@ const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
   },
 ];
 
-function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceInfo[] {
+function recognizedSourcesFromBrowser(
+  settings: AppSettings,
+): RecognizedSourceInfo[] {
   const builtIns = BROWSER_RECOGNIZED_SOURCES.map((source) => {
-    const override = settings.source_auto_prompt.find((entry) => entry.source_id === source.id);
+    const override = settings.source_auto_prompt.find(
+      (entry) => entry.source_id === source.id,
+    );
     return {
       id: source.id,
       label: source.label,
@@ -1119,7 +1171,9 @@ function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceIn
   return [
     ...builtIns,
     ...settings.custom_sources.map((source) => {
-      const override = settings.source_auto_prompt.find((entry) => entry.source_id === source.id);
+      const override = settings.source_auto_prompt.find(
+        (entry) => entry.source_id === source.id,
+      );
       return {
         id: source.id,
         label: source.label,
@@ -1134,15 +1188,21 @@ function recognizedSourcesFromBrowser(settings: AppSettings): RecognizedSourceIn
 
 export async function loadRecognizedSources(): Promise<RecognizedSourceInfo[]> {
   if (!isTauriRuntime()) {
-    return recognizedSourcesFromBrowser(browserSnapshot.settings ?? defaultSettings());
+    return recognizedSourcesFromBrowser(
+      browserSnapshot.settings ?? defaultSettings(),
+    );
   }
   return invoke<RecognizedSourceInfo[]>("list_recognized_sources");
 }
 
-export async function startSourceCapture(sourceId: string): Promise<AppSnapshot> {
+export async function startSourceCapture(
+  sourceId: string,
+): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const settings = browserSnapshot.settings ?? defaultSettings();
-    const source = recognizedSourcesFromBrowser(settings).find((entry) => entry.id === sourceId);
+    const source = recognizedSourcesFromBrowser(settings).find(
+      (entry) => entry.id === sourceId,
+    );
     if (source) {
       browserDetectedSource = {
         source_id: source.id,
@@ -1190,7 +1250,9 @@ export function browserUploadedPathFromSource(
   return `${saveRoot}/uploaded/${day}/${fileName}`;
 }
 
-export async function uploadAudioFile(sourcePath: string): Promise<UploadedAudio> {
+export async function uploadAudioFile(
+  sourcePath: string,
+): Promise<UploadedAudio> {
   if (!isTauriRuntime()) {
     if (!isBrowserUploadableAudioPath(sourcePath)) {
       throw new Error("only mp3, m4a, and wav audio files can be uploaded");
@@ -1198,7 +1260,8 @@ export async function uploadAudioFile(sourcePath: string): Promise<UploadedAudio
     const settings = browserSnapshot.settings ?? defaultSettings();
     return {
       audio_path: browserUploadedPathFromSource(sourcePath, settings.save_root),
-      original_filename: sourcePath.split("/").filter(Boolean).pop() ?? "audio.mp3",
+      original_filename:
+        sourcePath.split("/").filter(Boolean).pop() ?? "audio.mp3",
       stored_at: new Date().toISOString(),
     };
   }
@@ -1240,8 +1303,12 @@ export async function loadAudioWaveform(
     for (let index = 0; index < count; index += 1) {
       const envelope = Math.abs(Math.sin(index / 7) * Math.cos(index / 19));
       const wobble = Math.sin(index / 3.1) * 0.18;
-      const positive = Number((0.06 + envelope * 0.78 + Math.max(0, wobble)).toFixed(3));
-      const negative = Number((-0.05 - envelope * 0.66 + Math.min(0, wobble)).toFixed(3));
+      const positive = Number(
+        (0.06 + envelope * 0.78 + Math.max(0, wobble)).toFixed(3),
+      );
+      const negative = Number(
+        (-0.05 - envelope * 0.66 + Math.min(0, wobble)).toFixed(3),
+      );
       peaks.push(Math.min(1, Math.max(positive, Math.abs(negative))));
       peaksMax.push(Math.min(1, positive));
       peaksMin.push(Math.max(-1, negative));
@@ -1260,7 +1327,10 @@ export async function loadAudioWaveform(
     };
   }
 
-  return invoke<AudioWaveform>("analyze_audio_waveform", { audioPath, bucketCount });
+  return invoke<AudioWaveform>("analyze_audio_waveform", {
+    audioPath,
+    bucketCount,
+  });
 }
 
 export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
@@ -1272,7 +1342,11 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
       }
 
       cancelled = true;
-      return { ...job, status: "cancelled" as const, error: "cancelled by user" };
+      return {
+        ...job,
+        status: "cancelled" as const,
+        error: "cancelled by user",
+      };
     });
     if (!cancelled) {
       return browserSnapshot;
@@ -1335,7 +1409,11 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
 
     let processedAudioPath = "";
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (processedAudioPath || job.status !== "pending" || !isUsableBrowserModel(job.model_id, models)) {
+      if (
+        processedAudioPath ||
+        job.status !== "pending" ||
+        !isUsableBrowserModel(job.model_id, models)
+      ) {
         return job;
       }
 
@@ -1458,7 +1536,8 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
       return loadSnapshot();
     }
     const mode = deriveProductMode(settings);
-    const canCapture = mode === "recording_and_transcription" || mode === "recording_only";
+    const canCapture =
+      mode === "recording_and_transcription" || mode === "recording_only";
     if (!canCapture) {
       browserSnapshot = {
         ...browserSnapshot,
@@ -1470,7 +1549,8 @@ export async function startLiveCapture(): Promise<AppSnapshot> {
     }
 
     browserCaptureSessionId += 1;
-    browserCaptureSessionTranscriptionRequested = settings.transcription_enabled;
+    browserCaptureSessionTranscriptionRequested =
+      settings.transcription_enabled;
     browserSnapshot = {
       ...browserSnapshot,
       settings,
@@ -1619,7 +1699,9 @@ export async function downloadModel(modelId: string): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
-export async function cancelModelDownload(modelId: string): Promise<AppSnapshot> {
+export async function cancelModelDownload(
+  modelId: string,
+): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const target = browserSnapshot.models.find((model) => model.id === modelId);
     if (
@@ -1668,7 +1750,12 @@ export async function deleteModel(modelId: string): Promise<AppSnapshot> {
       ...browserSnapshot,
       models: browserSnapshot.models.map((model) =>
         model.id === modelId
-          ? { ...model, status: "missing", download_progress: null, download_error: null }
+          ? {
+              ...model,
+              status: "missing",
+              download_progress: null,
+              download_error: null,
+            }
           : model,
       ),
     };
@@ -1712,7 +1799,10 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     let skipped = false;
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (job.id !== id || !["pending", "failed", "cancelled"].includes(job.status)) {
+      if (
+        job.id !== id ||
+        !["pending", "failed", "cancelled"].includes(job.status)
+      ) {
         return job;
       }
 
@@ -1759,7 +1849,9 @@ export async function importAndStartMeeting(): Promise<MeetingSummary | null> {
   if (typeof selected !== "string") {
     return null;
   }
-  return invoke<MeetingSummary>("import_and_start_meeting", { sourcePath: selected });
+  return invoke<MeetingSummary>("import_and_start_meeting", {
+    sourcePath: selected,
+  });
 }
 
 export async function meetingDetail(id: string): Promise<MeetingDetail> {

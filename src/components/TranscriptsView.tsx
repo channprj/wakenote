@@ -44,12 +44,21 @@ import {
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { EmptyState } from "./ui/empty-state";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
 
 type CopyToastKind = "all" | "selected";
 type DragMode = "select" | "deselect";
-type RegenerationModel = Pick<ModelDescriptor, "id" | "display_name" | "status">;
+type RegenerationModel = Pick<
+  ModelDescriptor,
+  "id" | "display_name" | "status"
+>;
 
 const ALL_SOURCE_FILTER = "all";
 
@@ -210,14 +219,18 @@ export function TranscriptsView({
 
   const [activeDay, setActiveDay] = useState<string | null>(null);
   const [viewWeekStart, setViewWeekStart] = useState<string | null>(null);
-  const [playingTranscriptPath, setPlayingTranscriptPath] = useState<string | null>(
-    initialPlayingTranscriptPath,
-  );
+  const [playingTranscriptPath, setPlayingTranscriptPath] = useState<
+    string | null
+  >(initialPlayingTranscriptPath);
   const [playbackPaused, setPlaybackPaused] = useState(false);
   const [sourceFilter, setSourceFilter] = useState(initialSourceFilter);
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [copyToast, setCopyToast] = useState<CopyToastKind | null>(null);
-  const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(null);
+  const [contextMenu, setContextMenu] = useState<TranscriptContextMenu | null>(
+    null,
+  );
   const dragStateRef = useRef<DragState | null>(null);
   const lastSelectionAnchorRef = useRef<string | null>(null);
   const effectiveActiveDay = activeDay ?? todayDay;
@@ -251,13 +264,19 @@ export function TranscriptsView({
   );
 
   const usableRegenerationModels = useMemo(
-    () => orderRegenerationModelOptions(regenerationModelOptions(models), selectedModelId),
+    () =>
+      orderRegenerationModelOptions(
+        regenerationModelOptions(models),
+        selectedModelId,
+      ),
     [models, selectedModelId],
   );
 
   const playingTranscript = useMemo(() => {
     for (const list of entriesByDay.values()) {
-      const match = list.find((entry) => entry.transcript_path === playingTranscriptPath);
+      const match = list.find(
+        (entry) => entry.transcript_path === playingTranscriptPath,
+      );
       if (match) {
         return match;
       }
@@ -270,7 +289,11 @@ export function TranscriptsView({
   }, [onActiveDayChange, effectiveActiveDay]);
 
   useEffect(() => {
-    if (activeDay !== null && !availableDays.has(activeDay) && activeDay !== todayDay) {
+    if (
+      activeDay !== null &&
+      !availableDays.has(activeDay) &&
+      activeDay !== todayDay
+    ) {
       setActiveDay(null);
     }
   }, [availableDays, activeDay, todayDay]);
@@ -288,7 +311,9 @@ export function TranscriptsView({
   }, [sourceFilter, sourceFilterOptions]);
 
   useEffect(() => {
-    const visiblePaths = new Set(filteredEntries.map((entry) => entry.transcript_path));
+    const visiblePaths = new Set(
+      filteredEntries.map((entry) => entry.transcript_path),
+    );
     if (
       lastSelectionAnchorRef.current &&
       !visiblePaths.has(lastSelectionAnchorRef.current)
@@ -341,31 +366,39 @@ export function TranscriptsView({
     };
   }, [contextMenu]);
 
-  const beginDragSelection = useCallback((path: string, extendRange = false) => {
-    if (extendRange) {
-      dragStateRef.current = null;
-      const anchorPath = lastSelectionAnchorRef.current;
-      if (!anchorPath) {
-        lastSelectionAnchorRef.current = path;
+  const beginDragSelection = useCallback(
+    (path: string, extendRange = false) => {
+      if (extendRange) {
+        dragStateRef.current = null;
+        const anchorPath = lastSelectionAnchorRef.current;
+        if (!anchorPath) {
+          lastSelectionAnchorRef.current = path;
+        }
+        setSelectedPaths((prev) =>
+          selectTranscriptPathsAfterShiftClick(
+            filteredEntries,
+            prev,
+            anchorPath,
+            path,
+          ),
+        );
+        return;
       }
-      setSelectedPaths((prev) =>
-        selectTranscriptPathsAfterShiftClick(filteredEntries, prev, anchorPath, path),
-      );
-      return;
-    }
-    lastSelectionAnchorRef.current = path;
-    setSelectedPaths((prev) => {
-      const next = new Set(prev);
-      const mode: DragMode = prev.has(path) ? "deselect" : "select";
-      if (mode === "select") {
-        next.add(path);
-      } else {
-        next.delete(path);
-      }
-      dragStateRef.current = { mode, visited: new Set([path]) };
-      return next;
-    });
-  }, [filteredEntries]);
+      lastSelectionAnchorRef.current = path;
+      setSelectedPaths((prev) => {
+        const next = new Set(prev);
+        const mode: DragMode = prev.has(path) ? "deselect" : "select";
+        if (mode === "select") {
+          next.add(path);
+        } else {
+          next.delete(path);
+        }
+        dragStateRef.current = { mode, visited: new Set([path]) };
+        return next;
+      });
+    },
+    [filteredEntries],
+  );
 
   const continueDragSelection = useCallback((path: string) => {
     const drag = dragStateRef.current;
@@ -388,32 +421,44 @@ export function TranscriptsView({
     setViewWeekStart(null);
   };
 
-  const writeToClipboard = useCallback(async (text: string, kind: CopyToastKind) => {
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyToast(kind);
-      setSelectedPaths(new Set());
-      lastSelectionAnchorRef.current = null;
-      window.setTimeout(() => setCopyToast(null), 1500);
-    } catch {
-      // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
-    }
-  }, []);
+  const writeToClipboard = useCallback(
+    async (text: string, kind: CopyToastKind) => {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopyToast(kind);
+        setSelectedPaths(new Set());
+        lastSelectionAnchorRef.current = null;
+        window.setTimeout(() => setCopyToast(null), 1500);
+      } catch {
+        // Clipboard API unavailable — silently ignore; UI feedback simply won't toggle.
+      }
+    },
+    [],
+  );
 
   const handleCopyAll = useCallback(() => {
-    void writeToClipboard(formatTranscriptsForCopy(filteredEntries, sourceLabels), "all");
+    void writeToClipboard(
+      formatTranscriptsForCopy(filteredEntries, sourceLabels),
+      "all",
+    );
   }, [writeToClipboard, filteredEntries, sourceLabels]);
 
   const handleCopySelected = useCallback(() => {
     const selected = filteredEntries.filter((entry) =>
       selectedPaths.has(entry.transcript_path),
     );
-    void writeToClipboard(formatTranscriptsForCopy(selected, sourceLabels), "selected");
+    void writeToClipboard(
+      formatTranscriptsForCopy(selected, sourceLabels),
+      "selected",
+    );
   }, [writeToClipboard, filteredEntries, selectedPaths, sourceLabels]);
 
   const selectedEntries = useMemo(
-    () => filteredEntries.filter((entry) => selectedPaths.has(entry.transcript_path)),
+    () =>
+      filteredEntries.filter((entry) =>
+        selectedPaths.has(entry.transcript_path),
+      ),
     [filteredEntries, selectedPaths],
   );
 
@@ -437,7 +482,8 @@ export function TranscriptsView({
 
   const handleSelectAllVisible = useCallback(() => {
     setSelectedPaths(selectTranscriptPathsForEntries(filteredEntries));
-    lastSelectionAnchorRef.current = filteredEntries[0]?.transcript_path ?? null;
+    lastSelectionAnchorRef.current =
+      filteredEntries[0]?.transcript_path ?? null;
   }, [filteredEntries]);
 
   const handleTranscriptSelectionChange = useCallback(
@@ -470,11 +516,7 @@ export function TranscriptsView({
       }
       return succeeded;
     },
-    [
-      handleClearSelection,
-      onSetTranscriptsHidden,
-      visibilityMode,
-    ],
+    [handleClearSelection, onSetTranscriptsHidden, visibilityMode],
   );
 
   const handleTogglePlayback = useCallback(
@@ -497,7 +539,10 @@ export function TranscriptsView({
 
   const handlePlaybackEnded = useCallback(() => {
     if (autoPlayNext) {
-      const nextPath = nextPlayableTranscriptPath(filteredEntries, playingTranscriptPath);
+      const nextPath = nextPlayableTranscriptPath(
+        filteredEntries,
+        playingTranscriptPath,
+      );
       if (nextPath) {
         setPlayingTranscriptPath(nextPath);
         setPlaybackPaused(false);
@@ -509,9 +554,7 @@ export function TranscriptsView({
 
   const openContextMenu = useCallback(
     (entry: RecentTranscript, x: number, y: number) => {
-      const canOpenVisibilityMenu = Boolean(
-        onSetTranscriptsHidden,
-      );
+      const canOpenVisibilityMenu = Boolean(onSetTranscriptsHidden);
       const canOpenRegenerationMenu =
         Boolean(onRegenerate) &&
         usableRegenerationModels.length > 0 &&
@@ -527,12 +570,11 @@ export function TranscriptsView({
       if (targets.length === 0) {
         return;
       }
-      const regenerationTargets =
-        transcriptRegenerationTargetsForContextMenu(
-          entry,
-          filteredEntries,
-          selectedPaths,
-        );
+      const regenerationTargets = transcriptRegenerationTargetsForContextMenu(
+        entry,
+        filteredEntries,
+        selectedPaths,
+      );
       if (!selectedPaths.has(entry.transcript_path)) {
         setSelectedPaths(new Set([entry.transcript_path]));
         lastSelectionAnchorRef.current = entry.transcript_path;
@@ -557,14 +599,17 @@ export function TranscriptsView({
     ],
   );
 
-  const handleRegenerateFromMenu = useCallback((modelId: string) => {
-    if (!contextMenu) {
-      return;
-    }
-    const targets = contextMenu.regenerationTargets;
-    setContextMenu(null);
-    void onRegenerate?.(targets, modelId);
-  }, [contextMenu, onRegenerate]);
+  const handleRegenerateFromMenu = useCallback(
+    (modelId: string) => {
+      if (!contextMenu) {
+        return;
+      }
+      const targets = contextMenu.regenerationTargets;
+      setContextMenu(null);
+      void onRegenerate?.(targets, modelId);
+    },
+    [contextMenu, onRegenerate],
+  );
 
   const handleVisibilityFromMenu = useCallback(() => {
     if (!contextMenu) {
@@ -623,10 +668,7 @@ export function TranscriptsView({
   const hiddenCount =
     hiddenCountByDay.get(effectiveActiveDay) ??
     (visibilityMode === "hidden" ? activeEntries.length : 0);
-  const pendingCount = Math.max(
-    0,
-    availableCount - visibleCount - hiddenCount,
-  );
+  const pendingCount = Math.max(0, availableCount - visibleCount - hiddenCount);
   const hasPending = pendingCount > 0 && !isLoadingActive;
   const transcriptCountText =
     effectiveSourceFilter === ALL_SOURCE_FILTER
@@ -634,7 +676,8 @@ export function TranscriptsView({
       : `${filteredEntries.length} / ${activeEntries.length} transcripts`;
   const showSourceFilter = sourceFilterOptions.length > 2;
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
-  const handlePrevWeek = () => setViewWeekStart(addDays(effectiveWeekStart, -7));
+  const handlePrevWeek = () =>
+    setViewWeekStart(addDays(effectiveWeekStart, -7));
   const handleNextWeek = () => setViewWeekStart(addDays(effectiveWeekStart, 7));
 
   return (
@@ -660,9 +703,7 @@ export function TranscriptsView({
         onModeChange={(mode) => onVisibilityModeChange?.(mode)}
         onSelectAll={handleSelectAllVisible}
         onClearSelection={handleClearSelection}
-        onApplySelection={() =>
-          void applyTranscriptVisibility(selectedEntries)
-        }
+        onApplySelection={() => void applyTranscriptVisibility(selectedEntries)}
       />
       <article className="transcript-day transcript-day--condensed">
         <header>
@@ -670,7 +711,10 @@ export function TranscriptsView({
             <span>{effectiveActiveDay}</span>
             <strong>{transcriptCountText}</strong>
           </div>
-          <div data-slot="transcript-toolbar" className="transcript-day__actions transcript-toolbar">
+          <div
+            data-slot="transcript-toolbar"
+            className="transcript-day__actions transcript-toolbar"
+          >
             <span className="transcript-toolbar__autoplay">
               Autoplay next: {autoPlayNext ? "On" : "Off"}
             </span>
@@ -700,7 +744,10 @@ export function TranscriptsView({
             ) : null}
             {hasEntries && selectionCount > 0 ? (
               <>
-                <span aria-live="polite" className="transcript-day__selection-count">
+                <span
+                  aria-live="polite"
+                  className="transcript-day__selection-count"
+                >
                   {selectionCount} selected
                 </span>
                 <Button
@@ -726,7 +773,9 @@ export function TranscriptsView({
                       aria-label="Summarize selected transcripts"
                       disabled={Boolean(reportDisabledReason)}
                       title={reportDisabledReason}
-                      onClick={() => handleGenerateReport(selectedEntries, "summary")}
+                      onClick={() =>
+                        handleGenerateReport(selectedEntries, "summary")
+                      }
                       size="sm"
                       type="button"
                       variant="secondary"
@@ -737,7 +786,9 @@ export function TranscriptsView({
                       aria-label="Create detailed report from selected transcripts"
                       disabled={Boolean(reportDisabledReason)}
                       title={reportDisabledReason}
-                      onClick={() => handleGenerateReport(selectedEntries, "detailed_report")}
+                      onClick={() =>
+                        handleGenerateReport(selectedEntries, "detailed_report")
+                      }
                       size="sm"
                       type="button"
                       variant="secondary"
@@ -781,7 +832,9 @@ export function TranscriptsView({
                   }
                   disabled={Boolean(reportDisabledReason)}
                   title={reportDisabledReason}
-                  onClick={() => handleGenerateReport(filteredEntries, "summary")}
+                  onClick={() =>
+                    handleGenerateReport(filteredEntries, "summary")
+                  }
                   size="sm"
                   type="button"
                   variant="secondary"
@@ -796,7 +849,9 @@ export function TranscriptsView({
                   }
                   disabled={Boolean(reportDisabledReason)}
                   title={reportDisabledReason}
-                  onClick={() => handleGenerateReport(filteredEntries, "detailed_report")}
+                  onClick={() =>
+                    handleGenerateReport(filteredEntries, "detailed_report")
+                  }
                   size="sm"
                   type="button"
                   variant="secondary"
@@ -823,13 +878,19 @@ export function TranscriptsView({
           </div>
         </header>
         {hasEntries ? (
-          <div data-slot="transcript-list" className="transcript-entry-list transcript-entry-list--condensed">
+          <div
+            data-slot="transcript-list"
+            className="transcript-entry-list transcript-entry-list--condensed"
+          >
             {filteredEntries.map((entry) => (
               <TranscriptEntryRow
                 entry={entry}
-                isPlaybackActive={entry.transcript_path === playingTranscriptPath}
+                isPlaybackActive={
+                  entry.transcript_path === playingTranscriptPath
+                }
                 isPlaying={
-                  entry.transcript_path === playingTranscriptPath && !playbackPaused
+                  entry.transcript_path === playingTranscriptPath &&
+                  !playbackPaused
                 }
                 isSelected={selectedPaths.has(entry.transcript_path)}
                 key={entry.transcript_path}
@@ -894,9 +955,7 @@ export function TranscriptsView({
             <div>
               <strong>{reportRun.message}</strong>
               <span>
-                {reportRun.kind === "summary"
-                  ? "Summary"
-                  : "Detailed report"}
+                {reportRun.kind === "summary" ? "Summary" : "Detailed report"}
                 {" · "}
                 {reportRun.iteration > 0
                   ? `Iteration ${reportRun.iteration} of ${reportRun.max_iterations}`
@@ -968,23 +1027,15 @@ export function TranscriptsView({
                 aria-hidden="true"
                 className="transcript-context-menu__chevron"
               />
-              <div
-                className="transcript-context-menu__submenu"
-                role="menu"
-              >
+              <div className="transcript-context-menu__submenu" role="menu">
                 {usableRegenerationModels.map((model) => (
                   <button
                     key={model.id}
-                    onClick={() =>
-                      handleRegenerateFromMenu(model.id)
-                    }
+                    onClick={() => handleRegenerateFromMenu(model.id)}
                     role="menuitem"
                     type="button"
                   >
-                    {formatModelLabel(
-                      model.id,
-                      usableRegenerationModels,
-                    )}
+                    {formatModelLabel(model.id, usableRegenerationModels)}
                   </button>
                 ))}
               </div>
@@ -1071,7 +1122,9 @@ function TranscriptEntryRow({
     <div
       aria-selected={isSelected}
       className="transcript-entry transcript-entry--condensed"
-      data-audio-path={regenerateAvailable ? entry.audio_path ?? undefined : undefined}
+      data-audio-path={
+        regenerateAvailable ? (entry.audio_path ?? undefined) : undefined
+      }
       data-regenerate-available={regenerateAvailable ? "true" : undefined}
       data-selected={isSelected ? "true" : undefined}
       onContextMenu={handleContextMenu}
@@ -1083,10 +1136,7 @@ function TranscriptEntryRow({
         disabled={visibilityMutating}
         aria-label={`Select transcript ${timestamp || entry.transcript_path}`}
         onCheckedChange={(checked) =>
-          onSelectionChange(
-            entry.transcript_path,
-            checked === true,
-          )
+          onSelectionChange(entry.transcript_path, checked === true)
         }
       />
       <a
@@ -1176,9 +1226,16 @@ export function transcriptSourceFilterOptions(
   }
 
   const microphone = byId.get("microphone");
+  const microphoneDevices = [...byId.values()].filter((option) =>
+    option.id.startsWith("microphone:"),
+  );
   const ordered = [
     ...(microphone ? [microphone] : []),
-    ...[...byId.values()].filter((option) => option.id !== "microphone"),
+    ...microphoneDevices,
+    ...[...byId.values()].filter(
+      (option) =>
+        option.id !== "microphone" && !option.id.startsWith("microphone:"),
+    ),
   ];
 
   return [
@@ -1198,7 +1255,9 @@ export function filterTranscriptsBySource(
   if (sourceFilter === ALL_SOURCE_FILTER) {
     return [...entries];
   }
-  return entries.filter((entry) => transcriptSourceFilterKey(entry) === sourceFilter);
+  return entries.filter(
+    (entry) => transcriptSourceFilterKey(entry) === sourceFilter,
+  );
 }
 
 export function selectTranscriptPathsForEntries(
@@ -1214,7 +1273,9 @@ export function selectTranscriptPathsAfterShiftClick(
   targetPath: string,
 ): Set<string> {
   const next = new Set(selectedPaths);
-  const targetIndex = entries.findIndex((entry) => entry.transcript_path === targetPath);
+  const targetIndex = entries.findIndex(
+    (entry) => entry.transcript_path === targetPath,
+  );
   if (targetIndex < 0) {
     return next;
   }
@@ -1283,12 +1344,14 @@ function isKeyboardCopyIgnoredTarget(target: HTMLElement | null): boolean {
   if (!target) {
     return false;
   }
-  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+  return Boolean(
+    target.closest("input, textarea, select, [contenteditable='true']"),
+  );
 }
 
 function transcriptSourceFilterKey(entry: RecentTranscript): string {
   if ((entry.source ?? "microphone") !== "system") {
-    return "microphone";
+    return entry.device_id ? `microphone:${entry.device_id}` : "microphone";
   }
   return `system:${entry.source_label ?? ""}`;
 }
@@ -1308,12 +1371,18 @@ function orderRegenerationModelOptions(
   if (!selectedModelId) {
     return models;
   }
-  const selectedIndex = models.findIndex((model) => model.id === selectedModelId);
+  const selectedIndex = models.findIndex(
+    (model) => model.id === selectedModelId,
+  );
   if (selectedIndex <= 0) {
     return models;
   }
   const selected = models[selectedIndex];
-  return [selected, ...models.slice(0, selectedIndex), ...models.slice(selectedIndex + 1)];
+  return [
+    selected,
+    ...models.slice(0, selectedIndex),
+    ...models.slice(selectedIndex + 1),
+  ];
 }
 
 function transcriptSourcePresentation(
@@ -1326,9 +1395,10 @@ function transcriptSourcePresentation(
   icon: typeof Mic;
 } {
   if ((entry.source ?? "microphone") !== "system") {
+    const label = transcriptSourceLabel(entry, sourceLabels);
     return {
-      label: "Mic",
-      title: "Microphone transcript",
+      label,
+      title: `${label} microphone transcript`,
       tone: "microphone",
       icon: Mic,
     };
@@ -1411,7 +1481,10 @@ export function previousWeekDisabledReason(
   return null;
 }
 
-export function nextWeekDisabledReason(weekStart: string, todayDay: string): string | null {
+export function nextWeekDisabledReason(
+  weekStart: string,
+  todayDay: string,
+): string | null {
   if (weekStart >= weekStartFor(todayDay)) {
     return "Already on this week";
   }

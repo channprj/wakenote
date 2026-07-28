@@ -3,6 +3,7 @@ import type { AppSettings, AppStatus, MicrophoneDevice } from "./types";
 import {
   derivePriorityList,
   inputAvailability,
+  normalizeCaptureMicrophones,
   startLiveCaptureDisabledReason,
   stopLiveCaptureDisabledReason,
 } from "./capture-controls";
@@ -11,14 +12,40 @@ const startSettings: Pick<AppSettings, "pause_all" | "recording_enabled"> = {
   pause_all: false,
   recording_enabled: true,
 };
-const stoppedStatus: Pick<AppStatus, "live_input_active" | "runtime_warning"> = {
-  live_input_active: false,
-  runtime_warning: null,
-};
+const stoppedStatus: Pick<AppStatus, "live_input_active" | "runtime_warning"> =
+  {
+    live_input_active: false,
+    runtime_warning: null,
+  };
 
 describe("capture controls", () => {
+  it("keeps at most two unique explicit microphone selections", () => {
+    expect(
+      normalizeCaptureMicrophones([
+        { id: "wired", label: "Wired" },
+        { id: "wired", label: "Duplicate" },
+        { id: "wireless", label: "Wireless" },
+        { id: "third", label: "Third" },
+      ]),
+    ).toEqual([
+      { id: "wired", label: "Wired" },
+      { id: "wireless", label: "Wireless" },
+    ]);
+  });
+
+  it("does not combine System Default with a second device", () => {
+    expect(
+      normalizeCaptureMicrophones([
+        { id: "default", label: "System Default" },
+        { id: "wired", label: "Wired" },
+      ]),
+    ).toEqual([{ id: "default", label: "System Default" }]);
+  });
+
   it("allows Start Input when capture and an input are available", () => {
-    expect(startLiveCaptureDisabledReason(startSettings, stoppedStatus, true)).toBeNull();
+    expect(
+      startLiveCaptureDisabledReason(startSettings, stoppedStatus, true),
+    ).toBeNull();
   });
 
   it("explains capture blockers in action priority order", () => {
@@ -29,9 +56,9 @@ describe("capture controls", () => {
         true,
       ),
     ).toBe("All capture is paused");
-    expect(startLiveCaptureDisabledReason(startSettings, stoppedStatus, false)).toBe(
-      "No microphone available",
-    );
+    expect(
+      startLiveCaptureDisabledReason(startSettings, stoppedStatus, false),
+    ).toBe("No microphone available");
     expect(stopLiveCaptureDisabledReason({ live_input_active: false })).toBe(
       "Input is not running",
     );
@@ -51,17 +78,23 @@ describe("inputAvailability", () => {
     ],
   };
 
-  it("uses the first available priority entry and warns about fallback", () => {
+  it("waits for the selected primary instead of substituting another device", () => {
     const microphones: MicrophoneDevice[] = [
       { id: "studio", label: "Studio Mic", available: false, fallback: false },
-      { id: "laptop", label: "MacBook Microphone", available: true, fallback: false },
+      {
+        id: "laptop",
+        label: "MacBook Microphone",
+        available: true,
+        fallback: false,
+      },
     ];
 
     expect(inputAvailability(settings, microphones)).toEqual({
-      canStart: true,
-      activeLabel: "MacBook Microphone",
-      warning: 'Primary input "Studio Mic" is unavailable. WakeNote will use "MacBook Microphone".',
-      warningTone: "warning",
+      canStart: false,
+      activeLabel: "Studio Mic",
+      warning:
+        'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
+      warningTone: "danger",
     });
   });
 
@@ -69,7 +102,8 @@ describe("inputAvailability", () => {
     expect(inputAvailability(settings, [])).toEqual({
       canStart: false,
       activeLabel: "Studio Mic",
-      warning: "No available input device is selected.",
+      warning:
+        'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
       warningTone: "danger",
     });
   });

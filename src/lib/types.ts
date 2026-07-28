@@ -50,6 +50,13 @@ export interface MicrophonePriorityEntry {
   label: string;
 }
 
+export interface CaptureMicrophoneEntry {
+  id: string;
+  label: string;
+}
+
+export type MicrophoneSlot = "primary" | "secondary";
+
 export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
@@ -59,6 +66,7 @@ export interface AppSettings {
   selected_microphone: string;
   selected_microphone_label: string;
   microphone_priority: MicrophonePriorityEntry[];
+  capture_microphones: CaptureMicrophoneEntry[];
   save_root: string;
   save_root_confirmed: boolean;
   audio_format: AudioFormat;
@@ -213,6 +221,9 @@ export interface RecentTranscript {
   text: string;
   source?: ChunkSource;
   source_label?: string | null;
+  device_id?: string | null;
+  device_name?: string | null;
+  microphone_slot?: MicrophoneSlot | null;
 }
 
 export type LlmReportKind = "summary" | "detailed_report";
@@ -470,7 +481,18 @@ export interface AppStatus {
   runtime_warning?: string | null;
   threshold_dbfs: number;
   level: LevelSnapshot;
+  microphone_captures: MicrophoneCaptureStatus[];
   queue: QueueSnapshot;
+}
+
+export interface MicrophoneCaptureStatus {
+  slot: MicrophoneSlot;
+  device_id: string;
+  label: string;
+  active: boolean;
+  reconnecting: boolean;
+  warning?: string | null;
+  level: LevelSnapshot;
 }
 
 export interface AppSnapshot {

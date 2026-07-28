@@ -22,18 +22,20 @@ export function formatLocalTimestamp(value: string | Date): string {
     return "";
   }
 
-  return [
-    date.getFullYear(),
-    pad2(date.getMonth() + 1),
-    pad2(date.getDate()),
-  ].join("-") + ` ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+  return (
+    [date.getFullYear(), pad2(date.getMonth() + 1), pad2(date.getDate())].join(
+      "-",
+    ) +
+    ` ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
+  );
 }
 
 export function formatTranscriptForCopy(
   entry: RecentTranscript,
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
-  const timestamp = formatLocalTimestamp(entry.recorded_at) || entry.recorded_at;
+  const timestamp =
+    formatLocalTimestamp(entry.recorded_at) || entry.recorded_at;
   return `${timestamp} [${transcriptSourceLabel(entry, sourceLabels)}] - ${entry.text}`;
 }
 
@@ -41,15 +43,17 @@ export function formatTranscriptsForCopy(
   entries: RecentTranscript[],
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
-  return entries.map((entry) => formatTranscriptForCopy(entry, sourceLabels)).join("\n");
+  return entries
+    .map((entry) => formatTranscriptForCopy(entry, sourceLabels))
+    .join("\n");
 }
 
 export function transcriptSourceLabel(
-  entry: Pick<RecentTranscript, "source" | "source_label">,
+  entry: Pick<RecentTranscript, "source" | "source_label" | "device_name">,
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
   if ((entry.source ?? "microphone") !== "system") {
-    return "Mic";
+    return entry.device_name?.trim() || "Mic";
   }
   if (entry.source_label && sourceLabels[entry.source_label]) {
     return sourceLabels[entry.source_label];
@@ -75,7 +79,11 @@ export function appendRecentAge(
 ): string {
   const recordedDate = new Date(recordedAt);
   const diffMs = now.getTime() - recordedDate.getTime();
-  if (Number.isNaN(recordedDate.getTime()) || diffMs < 0 || diffMs >= millisecondsPerDay) {
+  if (
+    Number.isNaN(recordedDate.getTime()) ||
+    diffMs < 0 ||
+    diffMs >= millisecondsPerDay
+  ) {
     return text;
   }
 
@@ -91,15 +99,16 @@ export function appendRecentAge(
 export function groupTranscriptsByDay(
   transcripts: RecentTranscript[],
 ): Array<TranscriptDayGroup<RecentTranscript>> {
-  return groupByDay(
-    transcripts,
-    (transcript) => transcriptDayFromTimestamp(transcript.recorded_at),
+  return groupByDay(transcripts, (transcript) =>
+    transcriptDayFromTimestamp(transcript.recorded_at),
   )
     .map((group) => ({
       ...group,
       entries: [...group.entries].sort(compareTranscriptsChronologically),
     }))
-    .sort((left, right) => compareTranscriptDaysDescending(left.day, right.day));
+    .sort((left, right) =>
+      compareTranscriptDaysDescending(left.day, right.day),
+    );
 }
 
 export function groupQueueJobsByDay(
@@ -110,7 +119,9 @@ export function groupQueueJobsByDay(
       ...group,
       entries: [...group.entries].sort(compareQueueJobsChronologically),
     }))
-    .sort((left, right) => compareTranscriptDaysDescending(left.day, right.day));
+    .sort((left, right) =>
+      compareTranscriptDaysDescending(left.day, right.day),
+    );
 }
 
 export function countFailedQueueJobs(jobs: QueueJob[]): number {
@@ -207,9 +218,10 @@ export function queueDayBreakdown(jobs: QueueJob[]): QueueDayBreakdownEntry[] {
       counts[job.status] += 1;
     }
   }
-  return QUEUE_DAY_BREAKDOWN_ORDER
-    .map((status) => ({ status, count: counts[status] }))
-    .filter((entry) => entry.count > 0);
+  return QUEUE_DAY_BREAKDOWN_ORDER.map((status) => ({
+    status,
+    count: counts[status],
+  })).filter((entry) => entry.count > 0);
 }
 
 export interface QueueStatsBannerEntry {
@@ -235,7 +247,9 @@ const QUEUE_STATS_BANNER_ORDER: readonly QueueJobStatus[] = [
   "completed",
 ];
 
-export function queueStatsBanner(queue: QueueSnapshot): QueueStatsBannerEntry[] {
+export function queueStatsBanner(
+  queue: QueueSnapshot,
+): QueueStatsBannerEntry[] {
   // Mixed data sources are intentional: QueueSnapshot exposes pending_count /
   // running_count / failed_count as canonical top-level counters from the
   // backend, while skipped / cancelled / completed counts are derived from
@@ -254,7 +268,9 @@ export function queueStatsBanner(queue: QueueSnapshot): QueueStatsBannerEntry[] 
     status,
     label: humanizeQueueJobStatus(status),
     count: counts[status],
-    title: summarizeQueueJobsByDay(queue.jobs.filter((job) => job.status === status)),
+    title: summarizeQueueJobsByDay(
+      queue.jobs.filter((job) => job.status === status),
+    ),
   }));
 }
 
@@ -364,7 +380,10 @@ export function queueJobSidecarPath(
   return null;
 }
 
-function swapAudioExtension(audioPath: string, replacement: string): string | null {
+function swapAudioExtension(
+  audioPath: string,
+  replacement: string,
+): string | null {
   if (!/\.(m4a|wav)$/i.test(audioPath)) {
     return null;
   }
@@ -405,12 +424,16 @@ function compareTranscriptsChronologically(
   right: RecentTranscript,
 ): number {
   return (
-    timestampSortValue(left.recorded_at) - timestampSortValue(right.recorded_at) ||
+    timestampSortValue(left.recorded_at) -
+      timestampSortValue(right.recorded_at) ||
     left.transcript_path.localeCompare(right.transcript_path)
   );
 }
 
-function compareQueueJobsChronologically(left: QueueJob, right: QueueJob): number {
+function compareQueueJobsChronologically(
+  left: QueueJob,
+  right: QueueJob,
+): number {
   const leftKey = queueJobTimeKey(left.audio_path);
   const rightKey = queueJobTimeKey(right.audio_path);
   if (leftKey && rightKey) {

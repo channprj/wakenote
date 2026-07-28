@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::settings::{AppSettings, AudioFormat, clamp_audio_bitrate_kbps};
+use crate::settings::{AppSettings, AudioFormat, MicrophoneSlot, clamp_audio_bitrate_kbps};
 use crate::storage::{OutputTarget, next_available_output};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +62,8 @@ pub struct ChunkMetadata {
     pub source: ChunkSource,
     #[serde(default)]
     pub source_label: Option<String>,
+    #[serde(default)]
+    pub microphone_slot: Option<MicrophoneSlot>,
     /// Wall-clock time transcription last ran for this chunk (success or failure).
     /// Recorded for debugging clock/latency issues and is absent until the chunk
     /// has been transcribed; `#[serde(default)]` keeps older sidecars loading.
@@ -187,11 +189,36 @@ impl Recorder {
             live_capture_chunk_id: request.live_capture_chunk_id,
             source: request.source,
             source_label: request.source_label.map(str::to_string),
+            microphone_slot: microphone_slot_from_source_label(
+                request.source,
+                request.source_label,
+            ),
             transcribed_at: None,
         };
         write_metadata(&target.metadata_path, &metadata)?;
 
         Ok(recorded_chunk(target))
+    }
+}
+
+pub fn microphone_output_label(slot: MicrophoneSlot, device_label: &str) -> String {
+    format!("mic-{}-{device_label}", slot.as_str())
+}
+
+fn microphone_slot_from_source_label(
+    source: ChunkSource,
+    source_label: Option<&str>,
+) -> Option<MicrophoneSlot> {
+    if source != ChunkSource::Microphone {
+        return None;
+    }
+    let label = source_label?.to_ascii_lowercase();
+    if label == "mic-primary" || label.starts_with("mic-primary-") {
+        Some(MicrophoneSlot::Primary)
+    } else if label == "mic-secondary" || label.starts_with("mic-secondary-") {
+        Some(MicrophoneSlot::Secondary)
+    } else {
+        None
     }
 }
 
@@ -415,6 +442,7 @@ mod tests {
             live_capture_chunk_id: Some(1),
             source,
             source_label,
+            microphone_slot: None,
             transcribed_at: None,
         }
     }

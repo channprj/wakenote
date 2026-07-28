@@ -24,10 +24,9 @@ use wakenote::commands::{
     MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
     TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio,
     main_window_close_action, microphone_devices_from_input_devices,
-    open_containing_folder_request, pinned_device_mismatch, recorded_at_for_audio_path,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
-    with_live_runtime_warning,
+    open_containing_folder_request, recorded_at_for_audio_path, reveal_save_folder_request,
+    tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::input_monitor::InputMonitorRuntime;
@@ -41,6 +40,7 @@ use wakenote::live_transcription::{
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore};
+use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
     OVERLAY_CAPTION_FINAL_HOLD, OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT,
@@ -52,7 +52,7 @@ use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::ChunkMetadata;
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    SettingsPatch, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
+    MicrophoneSlot, SettingsPatch, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_start_on_launch, resolve_auto_prompt,
 };
@@ -69,7 +69,7 @@ use wakenote::transcription::{
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
-type LiveCaptureState = Mutex<LiveCaptureRuntime<CpalAudioInput>>;
+type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
@@ -329,18 +329,27 @@ const TRAY_MENU_ORDER: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
     chunk_id: u64,
     started_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct LivePartialPayload {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
     chunk_id: u64,
     text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveCommittedPayload {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
     chunk_id: u64,
     audio_path: String,
     will_transcribe: bool,
@@ -348,6 +357,9 @@ struct LiveCommittedPayload {
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveFinalPayload {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
     chunk_id: Option<u64>,
     audio_path: String,
     recorded_at: String,
@@ -356,6 +368,9 @@ struct LiveFinalPayload {
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveFailedPayload {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
     chunk_id: Option<u64>,
     audio_path: String,
     recorded_at: String,
@@ -1095,8 +1110,8 @@ fn app_status(
         .lock()
         .map(|live_capture| {
             (
-                live_capture.dropped_frame_count(),
-                live_capture.runtime_error(),
+                live_capture.total_dropped_frame_count(),
+                live_capture.first_runtime_error(),
             )
         })
         .unwrap_or((0, None));
@@ -1971,32 +1986,6 @@ fn start_live_capture_runtime(
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
-    let (is_running, stream_error, dropped_frames) = {
-        let live_capture = live_state.lock().map_err(|error| error.to_string())?;
-        (
-            live_capture.is_running(),
-            live_capture.runtime_error(),
-            live_capture.dropped_frame_count(),
-        )
-    };
-    if is_running && stream_error.is_none() {
-        let backend = backend_state.lock().map_err(|error| error.to_string())?;
-        return Ok(with_live_runtime_warning(
-            backend.app_status(),
-            dropped_frames,
-            None,
-        ));
-    }
-    if stream_error.is_some() {
-        live_state.lock().map_err(|error| error.to_string())?.stop();
-        let (handler, events) = {
-            let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-            backend.stop_capture_session()?;
-            live_events_for_dispatch(&mut backend)
-        };
-        dispatch_live_events(handler, events);
-    }
-
     let settings = {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -2006,138 +1995,60 @@ fn start_live_capture_runtime(
         settings
     };
 
-    // Recovery override (set by the watchdog when falling back to default after
-    // a wedged pinned stream) takes precedence over the persisted selection for
-    // this single start. The override is one-shot — `take_microphone_recovery_override`
-    // clears it so subsequent restarts honour the user's pinned device again.
-    let recovery_override = {
-        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        backend.take_microphone_recovery_override()
-    };
-    let recovery_override_active = recovery_override.is_some();
-    let (requested_device_id, requested_label_hint) = match recovery_override {
-        Some(override_data) => (override_data.device_id, override_data.label_hint),
-        None => (
-            settings.selected_microphone.clone(),
-            Some(settings.selected_microphone_label.clone()).filter(|label| !label.is_empty()),
-        ),
-    };
-    let resolved = match resolve_capture_device_with_timeout(
-        requested_device_id.clone(),
-        requested_label_hint.clone(),
-    ) {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-            let status = backend.capture_start_failed(format!("Microphone unavailable: {error}"));
-            drop(backend);
-            apply_input_monitor_settings(app, backend_state)?;
-            return Ok(status);
+    let desired_slots = settings
+        .capture_microphones
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| MicrophoneSlot::from_index(index).map(|slot| (slot, entry)))
+        .collect::<Vec<_>>();
+    let active_slots = live_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_slots();
+    for slot in active_slots {
+        let keep = desired_slots.iter().any(|(desired_slot, entry)| {
+            *desired_slot == slot
+                && backend_state
+                    .lock()
+                    .map(|backend| backend.capture_slot_matches(slot, &entry.id, &entry.label))
+                    .unwrap_or(false)
+        });
+        if !keep {
+            stop_live_capture_slot_runtime(backend_state, live_state, slot)?;
         }
-    };
-    // True if the device we actually opened diverges from the user's pinned
-    // selection — either because the watchdog overrode it or because cpal
-    // genuinely could not match (label differs). A stable-id drift with the
-    // same label is NOT a divergence; the resolver found the same physical
-    // device after cpal re-enumeration.
-    let used_fallback_device = recovery_override_active
-        || pinned_device_mismatch(
-            &settings.selected_microphone,
-            &settings.selected_microphone_label,
-            &resolved.device_id,
-            &resolved.device_name,
-            resolved.used_fallback_device,
-        );
+    }
 
-    let (device_id, sample_rate, handler, events) = {
-        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        // Persist the resolved stable id back into settings when we matched
-        // a pinned device by label — keeps the priority list and pinned id
-        // pointing at the current cpal index instead of drifting forever.
-        backend.reconcile_resolved_device_id(
-            &requested_device_id,
-            &resolved.device_id,
-            &resolved.device_name,
-        );
-        backend.start_capture_session_with_device(
-            resolved.sample_rate,
-            chrono::Utc::now(),
-            resolved.device_id.clone(),
-            resolved.device_name,
-            used_fallback_device,
-        )?;
-        let (handler, events) = live_events_for_dispatch(&mut backend);
-        (resolved.device_id, resolved.sample_rate, handler, events)
-    };
-    dispatch_live_events(handler, events);
-
-    let backend_arc = Arc::clone(backend_state);
-    let callback_backend = backend_arc.clone();
-    let callback_transcription = transcription_state.clone();
-    let callback_app = app.clone();
-    let callback_input_monitor = app
-        .try_state::<InputMonitorState>()
-        .map(|state| state.inner().clone());
-    let callback_overlay_level_throttle = Arc::new(Mutex::new(
-        Instant::now()
-            .checked_sub(Duration::from_millis(100))
-            .unwrap_or_else(Instant::now),
-    ));
-    let start_result = live_state.lock().map_err(|error| error.to_string())?.start(
-        AudioInputConfig {
-            device_id,
-            sample_rate: Some(sample_rate),
-            label_hint: requested_label_hint,
-        },
-        move |frame| {
-            if let Some(input_monitor) = callback_input_monitor.as_ref() {
-                if let Ok(monitor) = input_monitor.try_lock() {
-                    monitor.feed(&frame.samples);
-                }
-            }
-            let waveform_levels = overlay::waveform_levels_from_samples(
-                &frame.samples,
-                overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+    for (slot, entry) in desired_slots {
+        let healthy = live_state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .diagnostic(slot)
+            .is_some_and(|diagnostic| diagnostic.running && diagnostic.runtime_error.is_none());
+        if healthy {
+            continue;
+        }
+        if live_state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .is_running(slot)
+        {
+            stop_live_capture_slot_runtime(backend_state, live_state, slot)?;
+        }
+        if let Err(error) = start_live_capture_slot_runtime(
+            app,
+            backend_state,
+            live_state,
+            transcription_state.clone(),
+            slot,
+            entry.id.clone(),
+            entry.label.clone(),
+        ) {
+            let mut backend = backend_state.lock().map_err(|lock| lock.to_string())?;
+            backend.capture_slot_start_failed(
+                slot,
+                format!("{} microphone unavailable: {error}", slot.as_str()),
             );
-            let (should_kick, handler, events, emit_waveform, tray_status) =
-                if let Ok(mut backend) = callback_backend.lock() {
-                    let status = backend.process_audio_frame(frame);
-                    let emit_waveform = status
-                        .as_ref()
-                        .map(|status| matches!(status.tray_state, TrayState::Recording))
-                        .unwrap_or(false);
-                    let should_kick = status
-                        .map(|_| backend.should_process_transcriptions())
-                        .unwrap_or(false);
-                    let tray_status = Some((backend.settings(), backend.app_status()));
-                    let (handler, events) = live_events_for_dispatch(&mut backend);
-                    (should_kick, handler, events, emit_waveform, tray_status)
-                } else {
-                    (false, None, Vec::new(), false, None)
-                };
-            dispatch_live_events(handler, events);
-            if let Some((settings, status)) = tray_status {
-                update_tray_presentation(&callback_app, &settings, &status);
-            }
-            if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
-                overlay::emit_waveform_levels(&callback_app, waveform_levels);
-            }
-            if should_kick {
-                kick_transcription_worker(
-                    callback_app.clone(),
-                    callback_backend.clone(),
-                    callback_transcription.clone(),
-                );
-            }
-        },
-    );
-
-    if let Err(error) = start_result {
-        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
-        let status = backend.capture_start_failed(format!("Microphone capture failed: {error}"));
-        drop(backend);
-        apply_input_monitor_settings(app, backend_state)?;
-        return Ok(status);
+        }
     }
     apply_input_monitor_settings(app, backend_state)?;
 
@@ -2164,17 +2075,157 @@ fn start_live_capture_runtime(
         .lock()
         .map(|live_capture| {
             (
-                live_capture.dropped_frame_count(),
-                live_capture.runtime_error(),
+                live_capture.total_dropped_frame_count(),
+                live_capture.first_runtime_error(),
             )
         })
         .unwrap_or((0, None));
     let backend = backend_state.lock().map_err(|error| error.to_string())?;
+    let runtime_error = (!backend.app_status().live_input_active)
+        .then_some(runtime_error)
+        .flatten();
     Ok(with_live_runtime_warning(
         backend.app_status(),
         dropped_frames,
         runtime_error,
     ))
+}
+
+fn start_live_capture_slot_runtime(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    live_state: &LiveCaptureState,
+    transcription_state: AutoTranscriptionState,
+    slot: MicrophoneSlot,
+    requested_device_id: String,
+    requested_label: String,
+) -> Result<(), String> {
+    let requested_label_hint = Some(requested_label.clone()).filter(|label| !label.is_empty());
+    let resolved = resolve_capture_device_with_timeout(
+        requested_device_id.clone(),
+        requested_label_hint.clone(),
+    )
+    .map_err(|error| error.to_string())?;
+    if requested_device_id != "default" && resolved.used_fallback_device {
+        return Err(format!(
+            "{} is disconnected; waiting for the same device",
+            requested_label
+        ));
+    }
+
+    let (device_id, sample_rate, handler, events) = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        backend.reconcile_capture_microphone_device_id(
+            slot,
+            &requested_device_id,
+            &resolved.device_id,
+            &resolved.device_name,
+        );
+        backend.start_capture_session_for_slot(
+            slot,
+            resolved.sample_rate,
+            chrono::Utc::now(),
+            resolved.device_id.clone(),
+            resolved.device_name,
+            false,
+        )?;
+        backend.clear_microphone_slot_warning(slot);
+        let (handler, events) = live_events_for_dispatch(&mut backend);
+        (resolved.device_id, resolved.sample_rate, handler, events)
+    };
+    dispatch_live_events(handler, events);
+
+    let callback_backend = Arc::clone(backend_state);
+    let callback_transcription = transcription_state.clone();
+    let callback_app = app.clone();
+    let callback_input_monitor = (slot == MicrophoneSlot::Primary)
+        .then(|| {
+            app.try_state::<InputMonitorState>()
+                .map(|state| state.inner().clone())
+        })
+        .flatten();
+    let callback_overlay_level_throttle = Arc::new(Mutex::new(
+        Instant::now()
+            .checked_sub(Duration::from_millis(100))
+            .unwrap_or_else(Instant::now),
+    ));
+    let start_result = live_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .start_slot(
+            slot,
+            AudioInputConfig {
+                device_id,
+                sample_rate: Some(sample_rate),
+                label_hint: requested_label_hint,
+            },
+            move |frame| {
+                if let Some(input_monitor) = callback_input_monitor.as_ref() {
+                    if let Ok(monitor) = input_monitor.try_lock() {
+                        monitor.feed(&frame.samples);
+                    }
+                }
+                let waveform_levels = overlay::waveform_levels_from_samples(
+                    &frame.samples,
+                    overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+                );
+                let (should_kick, handler, events, emit_waveform, tray_status) =
+                    if let Ok(mut backend) = callback_backend.lock() {
+                        let status = backend.process_audio_frame_for_slot(slot, frame);
+                        let emit_waveform = slot == MicrophoneSlot::Primary
+                            && status
+                                .as_ref()
+                                .map(|status| matches!(status.tray_state, TrayState::Recording))
+                                .unwrap_or(false);
+                        let should_kick = status
+                            .map(|_| backend.should_process_transcriptions())
+                            .unwrap_or(false);
+                        let tray_status = Some((backend.settings(), backend.app_status()));
+                        let (handler, events) = live_events_for_dispatch(&mut backend);
+                        (should_kick, handler, events, emit_waveform, tray_status)
+                    } else {
+                        (false, None, Vec::new(), false, None)
+                    };
+                dispatch_live_events(handler, events);
+                if let Some((settings, status)) = tray_status {
+                    update_tray_presentation(&callback_app, &settings, &status);
+                }
+                if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
+                    overlay::emit_waveform_levels(&callback_app, waveform_levels);
+                }
+                if should_kick {
+                    kick_transcription_worker(
+                        callback_app.clone(),
+                        callback_backend.clone(),
+                        callback_transcription.clone(),
+                    );
+                }
+            },
+        );
+    if let Err(error) = start_result {
+        let mut backend = backend_state.lock().map_err(|lock| lock.to_string())?;
+        backend.stop_capture_slot(slot)?;
+        return Err(format!("capture failed: {error}"));
+    }
+    Ok(())
+}
+
+fn stop_live_capture_slot_runtime(
+    backend_state: &BackendState,
+    live_state: &LiveCaptureState,
+    slot: MicrophoneSlot,
+) -> Result<(), String> {
+    live_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stop_slot(slot);
+    let (handler, events) = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        backend.stop_capture_slot(slot)?;
+        live_events_for_dispatch(&mut backend)
+    };
+    dispatch_live_events(handler, events);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2198,7 +2249,10 @@ fn stop_live_capture_runtime(
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
 ) -> Result<AppStatus, String> {
-    live_state.lock().map_err(|error| error.to_string())?.stop();
+    live_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .stop_all();
     let (status, handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         let status = backend.stop_capture_session()?;
@@ -3154,7 +3208,9 @@ fn wire_live_transcription(
                     "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
                 );
-                if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
+                if result.microphone_slot != Some(MicrophoneSlot::Secondary)
+                    && let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>()
+                {
                     let (overlay_position, caption_style) = backend_for_partial
                         .lock()
                         .ok()
@@ -3191,6 +3247,9 @@ fn wire_live_transcription(
                 if let Err(error) = app_for_partial.emit(
                     EVENT_LIVE_PARTIAL,
                     LivePartialPayload {
+                        source_key: result.source_key,
+                        source_label: result.source_label,
+                        microphone_slot: result.microphone_slot,
                         chunk_id: result.chunk_id,
                         text: result.text,
                     },
@@ -3198,7 +3257,13 @@ fn wire_live_transcription(
                     eprintln!("[wakenote] WARN failed to emit partial: {error}");
                 }
             }
-            LivePartialEvent::ModelMissing { chunk_id, model_id } => {
+            LivePartialEvent::ModelMissing {
+                source_key,
+                source_label,
+                microphone_slot,
+                chunk_id,
+                model_id,
+            } => {
                 eprintln!(
                     "[wakenote] live partial: model missing chunk_id={chunk_id} model={model_id}"
                 );
@@ -3221,6 +3286,9 @@ fn wire_live_transcription(
                 if let Err(emit_error) = app_for_partial.emit(
                     EVENT_LIVE_FAILED,
                     LiveFailedPayload {
+                        source_key,
+                        source_label,
+                        microphone_slot,
                         chunk_id: Some(chunk_id),
                         audio_path: String::new(),
                         recorded_at: chrono::Utc::now().to_rfc3339(),
@@ -3230,7 +3298,13 @@ fn wire_live_transcription(
                     eprintln!("[wakenote] WARN failed to emit live-failed: {emit_error}");
                 }
             }
-            LivePartialEvent::EngineError { chunk_id, message } => {
+            LivePartialEvent::EngineError {
+                source_key,
+                source_label,
+                microphone_slot,
+                chunk_id,
+                message,
+            } => {
                 eprintln!(
                     "[wakenote] live partial: engine error chunk_id={chunk_id} message={message}"
                 );
@@ -3250,6 +3324,9 @@ fn wire_live_transcription(
                 if let Err(emit_error) = app_for_partial.emit(
                     EVENT_LIVE_FAILED,
                     LiveFailedPayload {
+                        source_key,
+                        source_label,
+                        microphone_slot,
                         chunk_id: Some(chunk_id),
                         audio_path: String::new(),
                         recorded_at: chrono::Utc::now().to_rfc3339(),
@@ -3272,12 +3349,17 @@ fn wire_live_transcription(
     let service_for_handler = service.clone();
     let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
         LiveTranscriptEvent::Started {
+            source_key,
+            source_label,
+            microphone_slot,
             chunk_id,
             started_at,
             overlay_position,
         } => {
             eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
-            if let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>() {
+            if microphone_slot != Some(MicrophoneSlot::Secondary)
+                && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()
+            {
                 let caption_style = app_for_handler
                     .try_state::<BackendState>()
                     .and_then(|state| {
@@ -3302,6 +3384,9 @@ fn wire_live_transcription(
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_STARTED,
                 LiveStartedPayload {
+                    source_key,
+                    source_label,
+                    microphone_slot,
                     chunk_id,
                     started_at: started_at.to_rfc3339(),
                 },
@@ -3310,6 +3395,9 @@ fn wire_live_transcription(
             }
         }
         LiveTranscriptEvent::SamplesReady {
+            source_key,
+            source_label,
+            microphone_slot,
             chunk_id,
             model_id,
             language,
@@ -3326,6 +3414,9 @@ fn wire_live_transcription(
                 samples.len()
             );
             service_for_handler.submit(LivePartialRequest {
+                source_key,
+                source_label,
+                microphone_slot,
                 chunk_id,
                 model_id,
                 language,
@@ -3335,6 +3426,9 @@ fn wire_live_transcription(
             });
         }
         LiveTranscriptEvent::Committed {
+            source_key,
+            source_label,
+            microphone_slot,
             chunk_id,
             audio_path,
             overlay_position: _,
@@ -3344,7 +3438,9 @@ fn wire_live_transcription(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
-            if let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>() {
+            if microphone_slot != Some(MicrophoneSlot::Secondary)
+                && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()
+            {
                 let snapshot = caption_state.lock().ok().map(|mut runtime| {
                     runtime.mark_committed(chunk_id, audio_path.clone(), will_transcribe);
                     runtime.snapshot()
@@ -3374,6 +3470,9 @@ fn wire_live_transcription(
             if let Err(error) = app_for_handler.emit(
                 EVENT_LIVE_COMMITTED,
                 LiveCommittedPayload {
+                    source_key,
+                    source_label,
+                    microphone_slot,
                     chunk_id,
                     audio_path: audio_path.to_string_lossy().to_string(),
                     will_transcribe,
@@ -3513,6 +3612,7 @@ fn emit_outcome_to_frontend(
         });
     let audio_path_str = audio_path.to_string_lossy().to_string();
     let recorded_at = recorded_at_for_audio_path(audio_path);
+    let source_identity = capture_source_identity_from_metadata(audio_path);
 
     match &outcome.status {
         TranscriptionJobStatus::Completed => {
@@ -3533,7 +3633,9 @@ fn emit_outcome_to_frontend(
                 audio_path_str,
                 text.len()
             );
-            if chunk_id.is_some() {
+            if chunk_id.is_some()
+                && source_identity.microphone_slot != Some(MicrophoneSlot::Secondary)
+            {
                 if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
                     let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
                         if runtime.show_final_at(
@@ -3591,6 +3693,9 @@ fn emit_outcome_to_frontend(
             if let Err(error) = app.emit(
                 EVENT_LIVE_FINAL,
                 LiveFinalPayload {
+                    source_key: source_identity.source_key,
+                    source_label: source_identity.source_label,
+                    microphone_slot: source_identity.microphone_slot,
                     chunk_id,
                     audio_path: audio_path_str,
                     recorded_at,
@@ -3605,7 +3710,9 @@ fn emit_outcome_to_frontend(
                 "[wakenote] emit failed chunk_id={:?} path={} error={}",
                 chunk_id, audio_path_str, error
             );
-            if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
+            if source_identity.microphone_slot != Some(MicrophoneSlot::Secondary)
+                && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
+            {
                 let snapshot = caption_state.lock().ok().map(|mut runtime| {
                     runtime.hide();
                     runtime.snapshot()
@@ -3617,6 +3724,9 @@ fn emit_outcome_to_frontend(
             if let Err(emit_error) = app.emit(
                 EVENT_LIVE_FAILED,
                 LiveFailedPayload {
+                    source_key: source_identity.source_key,
+                    source_label: source_identity.source_label,
+                    microphone_slot: source_identity.microphone_slot,
                     chunk_id,
                     audio_path: audio_path_str,
                     recorded_at,
@@ -3634,6 +3744,50 @@ fn chunk_id_from_metadata(audio_path: &Path) -> Option<u64> {
     let bytes = std::fs::read(&metadata_path).ok()?;
     let metadata: ChunkMetadata = serde_json::from_slice(&bytes).ok()?;
     metadata.live_capture_chunk_id
+}
+
+struct CaptureSourceIdentity {
+    source_key: String,
+    source_label: String,
+    microphone_slot: Option<MicrophoneSlot>,
+}
+
+fn capture_source_identity_from_metadata(audio_path: &Path) -> CaptureSourceIdentity {
+    let metadata = std::fs::read(audio_path.with_extension("json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ChunkMetadata>(&bytes).ok());
+    let Some(metadata) = metadata else {
+        return CaptureSourceIdentity {
+            source_key: "microphone".to_string(),
+            source_label: "Mic".to_string(),
+            microphone_slot: None,
+        };
+    };
+    if metadata.source == wakenote::recorder::ChunkSource::System {
+        let label = metadata
+            .source_label
+            .filter(|label| !label.is_empty())
+            .unwrap_or_else(|| "System".to_string());
+        return CaptureSourceIdentity {
+            source_key: format!("system:{label}"),
+            source_label: label,
+            microphone_slot: None,
+        };
+    }
+    let source_label = if metadata.device_name.trim().is_empty() {
+        "Mic".to_string()
+    } else {
+        metadata.device_name
+    };
+    CaptureSourceIdentity {
+        source_key: if metadata.device_id.trim().is_empty() {
+            "microphone".to_string()
+        } else {
+            format!("microphone:{}", metadata.device_id)
+        },
+        source_label,
+        microphone_slot: metadata.microphone_slot,
+    }
 }
 
 fn apply_launch_at_login_action(
@@ -3661,11 +3815,60 @@ fn spawn_mic_recovery_watchdog(
             thread::sleep(MIC_RECOVERY_TICK_INTERVAL);
             let (live_running, runtime_error) = match app.try_state::<LiveCaptureState>() {
                 Some(state) => match state.lock() {
-                    Ok(live) => (live.is_running(), live.runtime_error()),
+                    Ok(live) => live
+                        .diagnostic(MicrophoneSlot::Primary)
+                        .map(|diagnostic| (diagnostic.running, diagnostic.runtime_error))
+                        .unwrap_or((false, None)),
                     Err(_) => continue,
                 },
                 None => continue,
             };
+            let secondary_config = backend_state.lock().ok().and_then(|backend| {
+                let settings = backend.settings();
+                (settings.recording_enabled && !settings.pause_all)
+                    .then(|| settings.capture_microphones.get(1).cloned())
+                    .flatten()
+            });
+            if let Some(configured) = secondary_config {
+                let secondary_healthy = app
+                    .try_state::<LiveCaptureState>()
+                    .and_then(|state| {
+                        state
+                            .lock()
+                            .ok()
+                            .and_then(|live| live.diagnostic(MicrophoneSlot::Secondary))
+                    })
+                    .is_some_and(|diagnostic| {
+                        diagnostic.running && diagnostic.runtime_error.is_none()
+                    });
+                if !secondary_healthy {
+                    if let Some(state) = app.try_state::<LiveCaptureState>() {
+                        let _ = stop_live_capture_slot_runtime(
+                            &backend_state,
+                            state.inner(),
+                            MicrophoneSlot::Secondary,
+                        );
+                        if let Err(error) = start_live_capture_slot_runtime(
+                            &app,
+                            &backend_state,
+                            state.inner(),
+                            transcription_state.clone(),
+                            MicrophoneSlot::Secondary,
+                            configured.id,
+                            configured.label,
+                        ) {
+                            if let Ok(mut backend) = backend_state.lock() {
+                                backend.set_microphone_slot_warning(
+                                    MicrophoneSlot::Secondary,
+                                    format!(
+                                        "Secondary microphone disconnected; waiting for the same device: {error}"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             // Decide whether this tick should do anything at all. We act when
             // the stream is running (normal heartbeat/silence watching) OR
             // when no stream is running but the user still wants recording
@@ -3730,28 +3933,44 @@ fn apply_mic_recovery_action(
     };
     match action {
         MicHealthAction::SwitchTo { device_id, reason } => {
-            eprintln!("[mic-watchdog] switching to {device_id}: {reason}");
-            if let Ok(mut backend) = backend_state.lock() {
-                backend.set_microphone_recovery_override(&device_id);
-            }
-            if let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner()) {
-                eprintln!("[mic-watchdog] stop before switch failed: {error}");
+            eprintln!("[mic-watchdog] restarting primary {device_id}: {reason}");
+            if let Err(error) = stop_live_capture_slot_runtime(
+                backend_state,
+                live_state.inner(),
+                MicrophoneSlot::Primary,
+            ) {
+                eprintln!("[mic-watchdog] stop primary before restart failed: {error}");
             }
             // CoreAudio frequently retains wedged state for ~tens of ms
             // after a device is released. A brief settling delay before
             // reopening avoids handing us back the same wedged stream.
             thread::sleep(MIC_RECOVERY_SETTLING_DELAY);
-            if let Err(error) = start_live_capture_runtime(
-                app,
-                backend_state,
-                live_state.inner(),
-                transcription_state.clone(),
-            ) {
-                eprintln!("[mic-watchdog] switch start failed: {error}");
+            let configured = backend_state
+                .lock()
+                .ok()
+                .and_then(|backend| backend.settings().capture_microphones.first().cloned());
+            let restart = configured
+                .ok_or_else(|| "Primary microphone is not configured".to_string())
+                .and_then(|entry| {
+                    start_live_capture_slot_runtime(
+                        app,
+                        backend_state,
+                        live_state.inner(),
+                        transcription_state.clone(),
+                        MicrophoneSlot::Primary,
+                        entry.id,
+                        entry.label,
+                    )
+                });
+            if let Err(error) = restart {
+                eprintln!("[mic-watchdog] primary restart failed: {error}");
                 if let Ok(mut backend) = backend_state.lock() {
-                    backend.set_microphone_warning(format!(
-                        "Microphone recovery failed: {error}. Try Refresh or change priority."
-                    ));
+                    backend.capture_slot_start_failed(
+                        MicrophoneSlot::Primary,
+                        format!(
+                            "Primary microphone recovery failed: {error}. Try Refresh or reconnect the same device."
+                        ),
+                    );
                 }
             }
         }
@@ -3776,6 +3995,10 @@ fn apply_live_capture_runtime_action(
         }
         LiveCaptureRuntimeAction::Restart => {
             stop_live_capture_runtime(app, backend_state, live_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
+            Ok(())
+        }
+        LiveCaptureRuntimeAction::Reconcile => {
             start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
             Ok(())
         }
@@ -4196,7 +4419,9 @@ fn main() {
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
-            app.manage(Mutex::new(LiveCaptureRuntime::new(CpalAudioInput)));
+            app.manage(Mutex::new(
+                MultiCaptureRuntime::<CpalAudioInput>::default(),
+            ));
             app.manage(input_monitor_state);
             app.manage(live_transcriber_state.clone());
             app.manage(overlay_caption_state);

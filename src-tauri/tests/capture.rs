@@ -3,8 +3,8 @@ use wakenote::capture::{
     CaptureController, CaptureControllerConfig, CaptureControllerEvent, CaptureProcessor,
     CaptureProcessorConfig,
 };
-use wakenote::recorder::ChunkSource;
-use wakenote::settings::{AppSettings, AudioFormat};
+use wakenote::recorder::{ChunkMetadata, ChunkSource};
+use wakenote::settings::{AppSettings, AudioFormat, MicrophoneSlot};
 
 fn settings() -> AppSettings {
     AppSettings {
@@ -433,6 +433,78 @@ fn capture_controller_flushes_active_chunk_before_threshold_settings_change() {
     assert_eq!(completed_event_count(&events), 1);
     assert!(!controller.is_recording());
     assert!(controller.completed_chunks()[0].audio_path.exists());
+}
+
+#[test]
+fn dual_microphone_chunks_have_distinct_paths_and_slot_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+    let mut capture_settings = settings();
+    capture_settings.attack_ms = 0;
+    capture_settings.min_chunk_ms = 0;
+
+    let make_processor = |device_id: &str, device_name: &str, source_label: &str| {
+        CaptureProcessor::new(CaptureProcessorConfig {
+            save_root: tmp.path().to_path_buf(),
+            settings: capture_settings.clone(),
+            sample_rate: 10,
+            device_id: device_id.to_string(),
+            device_name: device_name.to_string(),
+            used_fallback_device: false,
+            base_time,
+            app_version: "0.1.0".to_string(),
+            source: ChunkSource::Microphone,
+            source_label: Some(source_label.to_string()),
+        })
+    };
+    let mut primary = make_processor("input-1-wired", "Wired", "mic-primary-wired");
+    let mut secondary = make_processor("input-2-wireless", "Wireless", "mic-secondary-wireless");
+
+    primary
+        .process_samples(&[0.8], 100)
+        .expect("primary speech");
+    secondary
+        .process_samples(&[0.8], 100)
+        .expect("secondary speech");
+    primary.flush().expect("primary flush");
+    secondary.flush().expect("secondary flush");
+
+    let primary_chunk = &primary.completed_chunks()[0];
+    let secondary_chunk = &secondary.completed_chunks()[0];
+    assert_ne!(primary_chunk.audio_path, secondary_chunk.audio_path);
+    assert!(
+        primary_chunk
+            .audio_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("mic-primary-wired")
+    );
+    assert!(
+        secondary_chunk
+            .audio_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("mic-secondary-wireless")
+    );
+
+    let primary_metadata: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(&primary_chunk.metadata_path).expect("primary metadata"),
+    )
+    .expect("parse primary metadata");
+    let secondary_metadata: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(&secondary_chunk.metadata_path).expect("secondary metadata"),
+    )
+    .expect("parse secondary metadata");
+    assert_eq!(
+        primary_metadata.microphone_slot,
+        Some(MicrophoneSlot::Primary)
+    );
+    assert_eq!(
+        secondary_metadata.microphone_slot,
+        Some(MicrophoneSlot::Secondary)
+    );
 }
 
 fn completed_event_count(events: &[CaptureControllerEvent]) -> usize {

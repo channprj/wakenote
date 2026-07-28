@@ -197,6 +197,7 @@ fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
         live_capture_chunk_id: None,
         source: ChunkSource::System,
         source_label: Some("Spotify".into()),
+        microphone_slot: None,
     };
     std::fs::write(
         audio_path.with_extension("json"),

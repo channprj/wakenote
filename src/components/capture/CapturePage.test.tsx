@@ -54,7 +54,9 @@ describe("CapturePage", () => {
 
     const markup = renderCapture(snapshot);
 
-    expect(markup).toContain("No available input device is selected.");
+    expect(markup).toContain(
+      "Primary input &quot;System Default&quot; is unavailable. WakeNote will wait for the same device.",
+    );
     expect(markup).toContain('title="No microphone available"');
   });
 
@@ -70,6 +72,8 @@ describe("CapturePage", () => {
       error: null,
     };
 
-    expect(renderCapture(snapshot, [transcript])).toContain(LONG_CONTENT.korean);
+    expect(renderCapture(snapshot, [transcript])).toContain(
+      LONG_CONTENT.korean,
+    );
   });
 });

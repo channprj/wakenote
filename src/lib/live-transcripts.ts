@@ -18,13 +18,14 @@ export function newestTranscriptTextEntries(
       continue;
     }
 
-    const key = entry.audio_path ?? text;
-    if (seen.has(key) || seen.has(text)) {
+    const sourceTextKey = `${entry.source_key ?? "microphone"}:${text}`;
+    const key = entry.audio_path ?? sourceTextKey;
+    if (seen.has(key) || seen.has(sourceTextKey)) {
       continue;
     }
 
     seen.add(key);
-    seen.add(text);
+    seen.add(sourceTextKey);
     visibleEntries.push(entry);
     if (visibleEntries.length === RECENT_TRANSCRIPT_LIMIT) {
       break;

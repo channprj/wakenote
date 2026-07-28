@@ -19,7 +19,10 @@ function entry(overrides: Partial<TranscriptEntry>): TranscriptEntry {
 describe("LiveTranscriptList", () => {
   it("renders live text in an in-flow semantic list", () => {
     const markup = renderToStaticMarkup(
-      <LiveTranscriptList entries={[entry({ status: "partial" })]} liveActive />,
+      <LiveTranscriptList
+        entries={[entry({ status: "partial" })]}
+        liveActive
+      />,
     );
 
     expect(markup).toContain(
@@ -30,6 +33,31 @@ describe("LiveTranscriptList", () => {
     expect(markup).toContain(">Live</span>");
     expect(markup).toContain('data-slot="transcript-text"');
     expect(markup).toContain("현재 문장");
+  });
+
+  it("renders microphone names for interleaved live entries", () => {
+    const markup = renderToStaticMarkup(
+      <LiveTranscriptList
+        liveActive
+        entries={[
+          entry({
+            source_key: "microphone:wired",
+            source_label: "Wired",
+            microphone_slot: "primary",
+          }),
+          entry({
+            source_key: "microphone:wireless",
+            source_label: "Wireless",
+            microphone_slot: "secondary",
+            chunk_id: 1,
+            started_at: "2026-07-15T00:00:01Z",
+          }),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-slot="transcript-source">Wired</span>');
+    expect(markup).toContain('data-slot="transcript-source">Wireless</span>');
   });
 
   it("links final timestamps to audio and keeps the full transcript visible", () => {

@@ -16,6 +16,9 @@ export type TranscriptEntryStatus =
   | "failed";
 
 export interface TranscriptEntry {
+  source_key?: string;
+  source_label?: string;
+  microphone_slot?: "primary" | "secondary" | null;
   chunk_id: number;
   status: TranscriptEntryStatus;
   text: string;
@@ -26,23 +29,33 @@ export interface TranscriptEntry {
 }
 
 export type TranscriptEvent =
-  | { type: "started"; chunk_id: number; started_at: string }
-  | { type: "partial"; chunk_id: number; text: string }
-  | { type: "committed"; chunk_id: number; audio_path: string }
-  | {
+  | (SourceIdentity & { type: "started"; chunk_id: number; started_at: string })
+  | (SourceIdentity & { type: "partial"; chunk_id: number; text: string })
+  | (SourceIdentity & {
+      type: "committed";
+      chunk_id: number;
+      audio_path: string;
+    })
+  | ({
       type: "final";
       chunk_id: number | null;
       audio_path: string;
       text: string;
       recorded_at?: string;
-    }
-  | {
+    } & SourceIdentity)
+  | ({
       type: "failed";
       chunk_id: number | null;
       audio_path: string;
       error: string;
       recorded_at?: string;
-    };
+    } & SourceIdentity);
+
+interface SourceIdentity {
+  source_key?: string;
+  source_label?: string;
+  microphone_slot?: "primary" | "secondary" | null;
+}
 
 export const TRANSCRIPT_LOG_LIMIT = 12;
 
@@ -53,6 +66,7 @@ export function reduceTranscriptLog(
   switch (event.type) {
     case "started":
       return appendOrReplace(entries, event.chunk_id, () => ({
+        ...sourceIdentity(event),
         chunk_id: event.chunk_id,
         status: "listening",
         text: "",
@@ -63,9 +77,10 @@ export function reduceTranscriptLog(
       }));
 
     case "partial":
-      if (!entries.some((entry) => entry.chunk_id === event.chunk_id)) {
+      if (!entries.some((entry) => sameChunk(entry, event))) {
         const timestamp = new Date().toISOString();
         return appendOrReplace(entries, event.chunk_id, () => ({
+          ...sourceIdentity(event),
           chunk_id: event.chunk_id,
           status: "partial",
           text: event.text,
@@ -75,7 +90,7 @@ export function reduceTranscriptLog(
           error: null,
         }));
       }
-      return updateEntry(entries, event.chunk_id, (entry) => {
+      return updateEntry(entries, event, (entry) => {
         if (entry.status === "final" || entry.status === "failed") {
           return entry;
         }
@@ -83,47 +98,71 @@ export function reduceTranscriptLog(
       });
 
     case "committed":
-      return updateEntry(entries, event.chunk_id, (entry) => ({
+      return updateEntry(entries, event, (entry) => ({
         ...entry,
         status: entry.status === "final" ? entry.status : "queued",
         audio_path: event.audio_path,
       }));
 
     case "final":
-      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => {
-        const recordedAt =
-          entry?.recorded_at ||
-          entry?.started_at ||
-          event.recorded_at ||
-          new Date().toISOString();
-        return {
-          ...(entry ?? defaultEntry(event.chunk_id, event.audio_path, event.recorded_at)),
-          chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
-          status: "final",
-          text: event.text,
-          recorded_at: recordedAt,
-          audio_path: event.audio_path,
-          error: null,
-        };
-      });
+      return updateOrAppendByAudio(
+        entries,
+        event.chunk_id,
+        event.audio_path,
+        event,
+        (entry) => {
+          const recordedAt =
+            entry?.recorded_at ||
+            entry?.started_at ||
+            event.recorded_at ||
+            new Date().toISOString();
+          return {
+            ...(entry ??
+              defaultEntry(
+                event.chunk_id,
+                event.audio_path,
+                event.recorded_at,
+              )),
+            ...sourceIdentity(event),
+            chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
+            status: "final",
+            text: event.text,
+            recorded_at: recordedAt,
+            audio_path: event.audio_path,
+            error: null,
+          };
+        },
+      );
 
     case "failed":
-      return updateOrAppendByAudio(entries, event.chunk_id, event.audio_path, (entry) => {
-        const recordedAt =
-          entry?.recorded_at ||
-          entry?.started_at ||
-          event.recorded_at ||
-          new Date().toISOString();
-        return {
-          ...(entry ?? defaultEntry(event.chunk_id, event.audio_path, event.recorded_at)),
-          chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
-          status: "failed",
-          text: entry?.text ?? "",
-          recorded_at: recordedAt,
-          audio_path: event.audio_path,
-          error: event.error,
-        };
-      });
+      return updateOrAppendByAudio(
+        entries,
+        event.chunk_id,
+        event.audio_path,
+        event,
+        (entry) => {
+          const recordedAt =
+            entry?.recorded_at ||
+            entry?.started_at ||
+            event.recorded_at ||
+            new Date().toISOString();
+          return {
+            ...(entry ??
+              defaultEntry(
+                event.chunk_id,
+                event.audio_path,
+                event.recorded_at,
+              )),
+            ...sourceIdentity(event),
+            chunk_id: event.chunk_id ?? entry?.chunk_id ?? -1,
+            status: "failed",
+            text: entry?.text ?? "",
+            recorded_at: recordedAt,
+            audio_path: event.audio_path,
+            error: event.error,
+          };
+        },
+      );
   }
 }
 
@@ -149,34 +188,50 @@ function appendOrReplace(
   chunk_id: number,
   build: () => TranscriptEntry,
 ): TranscriptEntry[] {
-  const existingIndex = entries.findIndex((entry) => entry.chunk_id === chunk_id);
   const nextEntry = build();
-  const next = existingIndex >= 0
-    ? entries.map((entry, index) => (index === existingIndex ? nextEntry : entry))
-    : [...entries, nextEntry];
+  const existingIndex = entries.findIndex(
+    (entry) =>
+      entry.chunk_id === chunk_id &&
+      (entry.source_key ?? "microphone") ===
+        (nextEntry.source_key ?? "microphone"),
+  );
+  const next =
+    existingIndex >= 0
+      ? entries.map((entry, index) =>
+          index === existingIndex ? nextEntry : entry,
+        )
+      : [...entries, nextEntry];
   return trimToLimit(next);
 }
 
 function updateEntry(
   entries: TranscriptEntry[],
-  chunk_id: number,
+  event: SourceIdentity & { chunk_id: number },
   patch: (entry: TranscriptEntry) => TranscriptEntry,
 ): TranscriptEntry[] {
-  if (!entries.some((entry) => entry.chunk_id === chunk_id)) {
+  if (!entries.some((entry) => sameChunk(entry, event))) {
     return entries;
   }
-  return entries.map((entry) => (entry.chunk_id === chunk_id ? patch(entry) : entry));
+  return entries.map((entry) =>
+    sameChunk(entry, event) ? patch(entry) : entry,
+  );
 }
 
 function updateOrAppendByAudio(
   entries: TranscriptEntry[],
   chunk_id: number | null,
   audio_path: string,
+  identity: SourceIdentity,
   patch: (entry: TranscriptEntry | undefined) => TranscriptEntry,
 ): TranscriptEntry[] {
   let index = -1;
   if (chunk_id != null) {
-    index = entries.findIndex((entry) => entry.chunk_id === chunk_id);
+    index = entries.findIndex(
+      (entry) =>
+        entry.chunk_id === chunk_id &&
+        (entry.source_key ?? "microphone") ===
+          (identity.source_key ?? "microphone"),
+    );
   }
   if (index < 0) {
     index = entries.findIndex((entry) => entry.audio_path === audio_path);
@@ -188,6 +243,24 @@ function updateOrAppendByAudio(
   }
 
   return trimToLimit([...entries, patch(undefined)]);
+}
+
+function sourceIdentity(event: SourceIdentity): SourceIdentity {
+  return {
+    source_key: event.source_key ?? "microphone",
+    source_label: event.source_label ?? "Mic",
+    microphone_slot: event.microphone_slot ?? null,
+  };
+}
+
+function sameChunk(
+  entry: TranscriptEntry,
+  event: SourceIdentity & { chunk_id: number },
+): boolean {
+  return (
+    entry.chunk_id === event.chunk_id &&
+    (entry.source_key ?? "microphone") === (event.source_key ?? "microphone")
+  );
 }
 
 function trimToLimit(entries: TranscriptEntry[]): TranscriptEntry[] {

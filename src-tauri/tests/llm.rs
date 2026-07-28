@@ -25,6 +25,9 @@ fn transcript(path: &str, recorded_at: &str, text: &str) -> RecentTranscript {
         text: text.to_string(),
         source: ChunkSource::Microphone,
         source_label: None,
+        device_id: None,
+        device_name: None,
+        microphone_slot: None,
     }
 }
 

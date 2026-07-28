@@ -65,10 +65,15 @@ export function deriveTrayState(
   }
 }
 
-function hasProcessablePendingTranscription(queue: QueueSnapshot, models: ModelDescriptor[]) {
+function hasProcessablePendingTranscription(
+  queue: QueueSnapshot,
+  models: ModelDescriptor[],
+) {
   const usableModelIds = new Set(
     models
-      .filter((model) => ["ready", "installed", "unloaded"].includes(model.status))
+      .filter((model) =>
+        ["ready", "installed", "unloaded"].includes(model.status),
+      )
       .map((model) => model.id),
   );
 
@@ -84,16 +89,20 @@ export function shouldPollSnapshot(
   options: { launchAutoStartPending?: boolean } = {},
 ) {
   const canProcessPendingTranscription =
-    status.mode === "recording_and_transcription" || status.mode === "transcription_only";
+    status.mode === "recording_and_transcription" ||
+    status.mode === "transcription_only";
 
   return (
     options.launchAutoStartPending ||
     ["listening", "recording", "transcribing"].includes(status.tray_state) ||
     status.live_input_active ||
     status.runtime_warning?.startsWith("Live input stream error:") ||
-    (canProcessPendingTranscription && hasProcessablePendingTranscription(queue, models)) ||
+    (canProcessPendingTranscription &&
+      hasProcessablePendingTranscription(queue, models)) ||
     queue.running_count > 0 ||
-    models.some((model) => ["downloading", "verifying", "extracting"].includes(model.status))
+    models.some((model) =>
+      ["downloading", "verifying", "extracting"].includes(model.status),
+    )
   );
 }
 
@@ -140,6 +149,7 @@ export function defaultSettings(): AppSettings {
     selected_microphone: "default",
     selected_microphone_label: "System Default",
     microphone_priority: [{ id: "default", label: "System Default" }],
+    capture_microphones: [{ id: "default", label: "System Default" }],
     save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     audio_format: "m4a",
@@ -395,6 +405,17 @@ export function mockSnapshot(): AppSnapshot {
       runtime_warning: null,
       threshold_dbfs: settings.threshold_dbfs,
       level: defaultLevelSnapshot(),
+      microphone_captures: settings.capture_microphones.map(
+        (microphone, index) => ({
+          slot: index === 0 ? "primary" : "secondary",
+          device_id: microphone.id,
+          label: microphone.label,
+          active: false,
+          reconnecting: false,
+          warning: null,
+          level: defaultLevelSnapshot(),
+        }),
+      ),
       queue,
     },
     microphones: [

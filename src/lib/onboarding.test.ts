@@ -3,13 +3,18 @@ import { defaultSettings, mockModels } from "./app-state";
 import { deriveOnboardingSteps } from "./onboarding";
 
 describe("onboarding setup steps", () => {
-  it("requires an available selected microphone or usable fallback before microphone setup is complete", () => {
+  it("requires the selected Primary and never substitutes an available fallback", () => {
     const settings = defaultSettings();
     const models = mockModels();
 
     expect(
       deriveOnboardingSteps(settings, models, [
-        { id: "default", label: "System Default", available: false, fallback: false },
+        {
+          id: "default",
+          label: "System Default",
+          available: false,
+          fallback: false,
+        },
       ]).find((step) => step.id === "microphone")?.complete,
     ).toBe(false);
 
@@ -19,32 +24,69 @@ describe("onboarding setup steps", () => {
           ...settings,
           selected_microphone: "input-missing-airpods",
           selected_microphone_label: "Missing AirPods",
+          capture_microphones: [
+            { id: "input-missing-airpods", label: "Missing AirPods" },
+            { id: "input-secondary", label: "Secondary" },
+          ],
         },
         models,
         [
-          { id: "default", label: "System Default", available: true, fallback: true },
-          { id: "input-missing-airpods", label: "Missing AirPods", available: false, fallback: false },
+          {
+            id: "default",
+            label: "System Default",
+            available: true,
+            fallback: true,
+          },
+          {
+            id: "input-missing-airpods",
+            label: "Missing AirPods",
+            available: false,
+            fallback: false,
+          },
+          {
+            id: "input-secondary",
+            label: "Secondary",
+            available: true,
+            fallback: false,
+          },
         ],
       ).find((step) => step.id === "microphone")?.complete,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("requires the selected model to be installed before model setup is complete", () => {
     const settings = defaultSettings();
     const missingModels = mockModels();
 
-    expect(deriveOnboardingSteps(settings, missingModels).find((step) => step.id === "model")?.complete).toBe(false);
+    expect(
+      deriveOnboardingSteps(settings, missingModels).find(
+        (step) => step.id === "model",
+      )?.complete,
+    ).toBe(false);
 
     const readyModels = missingModels.map((model) =>
-      model.id === settings.selected_model ? { ...model, status: "ready" as const } : model,
+      model.id === settings.selected_model
+        ? { ...model, status: "ready" as const }
+        : model,
     );
 
-    expect(deriveOnboardingSteps(settings, readyModels).find((step) => step.id === "model")?.complete).toBe(true);
+    expect(
+      deriveOnboardingSteps(settings, readyModels).find(
+        (step) => step.id === "model",
+      )?.complete,
+    ).toBe(true);
   });
 
   it("requires explicit save root confirmation before storage setup is complete", () => {
     const models = mockModels();
-    const microphones = [{ id: "default", label: "System Default", available: true, fallback: false }];
+    const microphones = [
+      {
+        id: "default",
+        label: "System Default",
+        available: true,
+        fallback: false,
+      },
+    ];
     const unconfirmedSettings = {
       ...defaultSettings(),
       save_root_confirmed: false,
@@ -68,7 +110,14 @@ describe("onboarding setup steps", () => {
 
   it("requires explicit threshold calibration before calibration setup is complete", () => {
     const models = mockModels();
-    const microphones = [{ id: "default", label: "System Default", available: true, fallback: false }];
+    const microphones = [
+      {
+        id: "default",
+        label: "System Default",
+        available: true,
+        fallback: false,
+      },
+    ];
     const uncalibratedSettings = {
       ...defaultSettings(),
       calibration_completed: false,

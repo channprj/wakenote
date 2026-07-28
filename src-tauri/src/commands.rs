@@ -28,8 +28,11 @@ use crate::queue::{
 };
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, TranscriptionSidecar, TranscriptionStatus,
+    microphone_output_label,
 };
-use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
+use crate::settings::{
+    AppSettings, MicrophoneSlot, SettingsPatch, TranscriptionLanguage, expand_user_path,
+};
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
     RuntimeTranscriber, Transcriber, TranscriptionJobOutcome, TranscriptionWorker,
@@ -46,11 +49,17 @@ const LIVE_CHUNK_HISTORY_LIMIT: usize = 256;
 #[derive(Debug, Clone)]
 pub enum LiveTranscriptEvent {
     Started {
+        source_key: String,
+        source_label: String,
+        microphone_slot: Option<MicrophoneSlot>,
         chunk_id: u64,
         started_at: DateTime<Utc>,
         overlay_position: crate::settings::FloatingOverlayPosition,
     },
     SamplesReady {
+        source_key: String,
+        source_label: String,
+        microphone_slot: Option<MicrophoneSlot>,
         chunk_id: u64,
         model_id: String,
         language: TranscriptionLanguage,
@@ -59,6 +68,9 @@ pub enum LiveTranscriptEvent {
         samples: Arc<Vec<f32>>,
     },
     Committed {
+        source_key: String,
+        source_label: String,
+        microphone_slot: Option<MicrophoneSlot>,
         chunk_id: u64,
         audio_path: PathBuf,
         overlay_position: crate::settings::FloatingOverlayPosition,
@@ -196,12 +208,17 @@ pub fn tray_runtime_presentation(
 }
 
 fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {
-    status.microphone_warning.is_some()
-        || status
-            .runtime_warning
-            .as_deref()
-            .map(|warning| warning.starts_with("Live input stream error:"))
-            .unwrap_or(false)
+    !status.live_input_active
+        && (status.microphone_warning.is_some()
+            || status
+                .microphone_captures
+                .iter()
+                .any(|microphone| microphone.warning.is_some())
+            || status
+                .runtime_warning
+                .as_deref()
+                .map(|warning| warning.starts_with("Live input stream error:"))
+                .unwrap_or(false))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,7 +429,19 @@ pub struct AppStatus {
     pub runtime_warning: Option<String>,
     pub threshold_dbfs: f32,
     pub level: LevelSnapshot,
+    pub microphone_captures: Vec<MicrophoneCaptureStatus>,
     pub queue: QueueSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MicrophoneCaptureStatus {
+    pub slot: MicrophoneSlot,
+    pub device_id: String,
+    pub label: String,
+    pub active: bool,
+    pub reconnecting: bool,
+    pub warning: Option<String>,
+    pub level: LevelSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +452,9 @@ pub struct RecentTranscript {
     pub text: String,
     pub source: ChunkSource,
     pub source_label: Option<String>,
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub microphone_slot: Option<MicrophoneSlot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -496,6 +528,7 @@ pub struct AppBackend {
     settings: AppSettings,
     queue: TranscriptionQueue,
     capture: Option<CaptureController>,
+    secondary_capture: Option<CaptureController>,
     /// Parallel capture session for system-audio frames. Mirrors `capture`
     /// but has no level/health monitoring and tags chunks `source = System`.
     system_capture: Option<CaptureController>,
@@ -503,8 +536,13 @@ pub struct AppBackend {
     finished_system_meeting_jobs: Vec<FinishedSystemMeetingJob>,
     last_system_audio_frame_at: Option<Instant>,
     level_monitor: LevelMonitor,
+    secondary_level_monitor: LevelMonitor,
+    active_microphone_id: Option<String>,
     active_microphone_label: Option<String>,
+    active_secondary_microphone_id: Option<String>,
+    active_secondary_microphone_label: Option<String>,
     microphone_warning: Option<String>,
+    secondary_microphone_warning: Option<String>,
     silence_warning: Option<SilenceWarning>,
     persistence: Option<AppPersistence>,
     live_event_handler: Option<LiveEventHandler>,
@@ -524,6 +562,7 @@ impl std::fmt::Debug for AppBackend {
             .field("settings", &self.settings)
             .field("queue", &self.queue)
             .field("capture", &self.capture)
+            .field("secondary_capture", &self.secondary_capture)
             .field("system_capture", &self.system_capture)
             .field(
                 "system_meeting_capture",
@@ -538,8 +577,18 @@ impl std::fmt::Debug for AppBackend {
                 &self.last_system_audio_frame_at,
             )
             .field("level_monitor", &self.level_monitor)
+            .field("secondary_level_monitor", &self.secondary_level_monitor)
+            .field("active_microphone_id", &self.active_microphone_id)
             .field("active_microphone_label", &self.active_microphone_label)
+            .field(
+                "active_secondary_microphone_label",
+                &self.active_secondary_microphone_label,
+            )
             .field("microphone_warning", &self.microphone_warning)
+            .field(
+                "secondary_microphone_warning",
+                &self.secondary_microphone_warning,
+            )
             .field("silence_warning", &self.silence_warning)
             .field("persistence", &self.persistence)
             .field(
@@ -560,13 +609,19 @@ impl Default for AppBackend {
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
             capture: None,
+            secondary_capture: None,
             system_capture: None,
             system_meeting_capture: None,
             finished_system_meeting_jobs: Vec::new(),
             last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
+            secondary_level_monitor: LevelMonitor::default(),
+            active_microphone_id: None,
             active_microphone_label: None,
+            active_secondary_microphone_id: None,
+            active_secondary_microphone_label: None,
             microphone_warning: None,
+            secondary_microphone_warning: None,
             silence_warning: None,
             persistence: None,
             live_event_handler: None,
@@ -586,13 +641,19 @@ impl AppBackend {
             settings: persistence.load_settings()?.unwrap_or_default(),
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
+            secondary_capture: None,
             system_capture: None,
             system_meeting_capture: None,
             finished_system_meeting_jobs: Vec::new(),
             last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
+            secondary_level_monitor: LevelMonitor::default(),
+            active_microphone_id: None,
             active_microphone_label: None,
+            active_secondary_microphone_id: None,
+            active_secondary_microphone_label: None,
             microphone_warning: None,
+            secondary_microphone_warning: None,
             silence_warning: None,
             persistence: Some(persistence),
             live_event_handler: None,
@@ -897,13 +958,58 @@ impl AppBackend {
         device_name: impl Into<String>,
         used_fallback_device: bool,
     ) -> Result<AppStatus, String> {
+        self.start_capture_session_for_slot(
+            MicrophoneSlot::Primary,
+            sample_rate,
+            base_time,
+            device_id,
+            device_name,
+            used_fallback_device,
+        )
+    }
+
+    pub fn start_capture_session_for_slot(
+        &mut self,
+        slot: MicrophoneSlot,
+        sample_rate: u32,
+        base_time: chrono::DateTime<chrono::Utc>,
+        device_id: impl Into<String>,
+        device_name: impl Into<String>,
+        used_fallback_device: bool,
+    ) -> Result<AppStatus, String> {
         let device_id = device_id.into();
         let device_name = device_name.into();
+        if slot == MicrophoneSlot::Secondary {
+            if let Some(capture) = self.secondary_capture.as_mut() {
+                let events = capture.flush().map_err(|error| error.to_string())?;
+                self.handle_capture_events_for_slot(MicrophoneSlot::Secondary, events);
+            }
+            self.secondary_level_monitor = LevelMonitor::default();
+            self.active_secondary_microphone_id = Some(device_id.clone());
+            self.active_secondary_microphone_label = Some(device_name.clone());
+            self.secondary_microphone_warning = used_fallback_device
+                .then(|| format!("Secondary microphone {device_name} is unavailable"));
+            self.secondary_capture = Some(CaptureController::new(CaptureControllerConfig {
+                save_root: self.save_root_path(),
+                settings: self.settings.clone(),
+                sample_rate,
+                device_id,
+                device_name: device_name.clone(),
+                used_fallback_device,
+                base_time,
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                source: ChunkSource::Microphone,
+                source_label: Some(microphone_output_label(slot, &device_name)),
+            }));
+            return Ok(self.app_status());
+        }
+
         if let Some(capture) = self.capture.as_mut() {
             let events = capture.flush().map_err(|error| error.to_string())?;
             self.handle_capture_events(events);
         }
         self.level_monitor = LevelMonitor::default();
+        self.active_microphone_id = Some(device_id.clone());
         self.active_microphone_label = Some(device_name.clone());
         self.microphone_warning = if used_fallback_device {
             Some(format!(
@@ -928,12 +1034,7 @@ impl AppBackend {
                 device_id, device_name, used_fallback_device, self.microphone_warning
             ),
         );
-        let priority_ids: Vec<String> = self
-            .settings
-            .microphone_priority
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect();
+        let priority_ids = vec![device_id.clone()];
         let active_index = priority_ids
             .iter()
             .position(|id| id == &device_id)
@@ -945,12 +1046,13 @@ impl AppBackend {
             settings: self.settings.clone(),
             sample_rate,
             device_id,
-            device_name,
+            device_name: device_name.clone(),
             used_fallback_device,
             base_time,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             source: ChunkSource::Microphone,
-            source_label: None,
+            source_label: (self.settings.capture_microphones.len() > 1)
+                .then(|| microphone_output_label(slot, &device_name)),
         }));
         Ok(self.app_status())
     }
@@ -980,20 +1082,64 @@ impl AppBackend {
     }
 
     pub fn stop_capture_session(&mut self) -> Result<AppStatus, String> {
-        if let Some(capture) = self.capture.as_mut() {
-            let events = capture.flush().map_err(|error| error.to_string())?;
-            self.handle_capture_events(events);
-        }
-        self.clear_capture_session_state();
+        self.stop_capture_slot(MicrophoneSlot::Primary)?;
+        self.stop_capture_slot(MicrophoneSlot::Secondary)?;
         Ok(self.app_status())
+    }
+
+    pub fn stop_capture_slot(&mut self, slot: MicrophoneSlot) -> Result<AppStatus, String> {
+        let events = match slot {
+            MicrophoneSlot::Primary => self
+                .capture
+                .as_mut()
+                .map(CaptureController::flush)
+                .transpose()
+                .map_err(|error| error.to_string())?,
+            MicrophoneSlot::Secondary => self
+                .secondary_capture
+                .as_mut()
+                .map(CaptureController::flush)
+                .transpose()
+                .map_err(|error| error.to_string())?,
+        };
+        if let Some(events) = events {
+            self.handle_capture_events_for_slot(slot, events);
+        }
+        self.clear_capture_slot_state(slot);
+        Ok(self.app_status())
+    }
+
+    pub fn capture_slot_active(&self, slot: MicrophoneSlot) -> bool {
+        match slot {
+            MicrophoneSlot::Primary => self.capture.is_some(),
+            MicrophoneSlot::Secondary => self.secondary_capture.is_some(),
+        }
+    }
+
+    pub fn capture_slot_matches(
+        &self,
+        slot: MicrophoneSlot,
+        device_id: &str,
+        _label: &str,
+    ) -> bool {
+        match slot {
+            MicrophoneSlot::Primary => {
+                self.capture.is_some() && self.active_microphone_id.as_deref() == Some(device_id)
+            }
+            MicrophoneSlot::Secondary => {
+                self.secondary_capture.is_some()
+                    && self.active_secondary_microphone_id.as_deref() == Some(device_id)
+            }
+        }
     }
 
     /// Mark the most recent live-capture start as failed. The capture
     /// controller is torn down, but mic_health stays alive in
-    /// `AwaitingRestart` so the watchdog keeps cycling through the priority
-    /// list with backoff until a start succeeds.
+    /// `AwaitingRestart` so the watchdog keeps retrying the same configured
+    /// physical device with backoff until a start succeeds.
     pub fn capture_start_failed(&mut self, warning: impl Into<String>) -> AppStatus {
         self.capture = None;
+        self.active_microphone_id = None;
         self.active_microphone_label = None;
         self.level_monitor = LevelMonitor::default();
         self.silence_warning = None;
@@ -1001,7 +1147,8 @@ impl AppBackend {
         let warning = warning.into();
         let priority_ids: Vec<String> = self
             .settings
-            .microphone_priority
+            .capture_microphones
+            .first()
             .iter()
             .map(|entry| entry.id.clone())
             .collect();
@@ -1011,6 +1158,39 @@ impl AppBackend {
 
         self.microphone_warning = Some(warning);
         self.app_status()
+    }
+
+    pub fn capture_slot_start_failed(
+        &mut self,
+        slot: MicrophoneSlot,
+        warning: impl Into<String>,
+    ) -> AppStatus {
+        if slot == MicrophoneSlot::Primary {
+            return self.capture_start_failed(warning);
+        }
+        self.clear_capture_slot_state(slot);
+        self.secondary_microphone_warning = Some(warning.into());
+        self.app_status()
+    }
+
+    pub fn set_microphone_slot_warning(
+        &mut self,
+        slot: MicrophoneSlot,
+        warning: impl Into<String>,
+    ) {
+        match slot {
+            MicrophoneSlot::Primary => self.microphone_warning = Some(warning.into()),
+            MicrophoneSlot::Secondary => {
+                self.secondary_microphone_warning = Some(warning.into());
+            }
+        }
+    }
+
+    pub fn clear_microphone_slot_warning(&mut self, slot: MicrophoneSlot) {
+        match slot {
+            MicrophoneSlot::Primary => self.microphone_warning = None,
+            MicrophoneSlot::Secondary => self.secondary_microphone_warning = None,
+        }
     }
 
     /// Inspect microphone-input health and decide whether the watchdog should
@@ -1141,6 +1321,32 @@ impl AppBackend {
         }
     }
 
+    pub fn reconcile_capture_microphone_device_id(
+        &mut self,
+        slot: MicrophoneSlot,
+        requested_id: &str,
+        resolved_id: &str,
+        resolved_label: &str,
+    ) {
+        let index = match slot {
+            MicrophoneSlot::Primary => 0,
+            MicrophoneSlot::Secondary => 1,
+        };
+        let Some(entry) = self.settings.capture_microphones.get_mut(index) else {
+            return;
+        };
+        if entry.id == requested_id && entry.id != resolved_id && entry.label == resolved_label {
+            entry.id = resolved_id.to_string();
+            if slot == MicrophoneSlot::Primary {
+                self.settings.selected_microphone = resolved_id.to_string();
+                if let Some(priority) = self.settings.microphone_priority.first_mut() {
+                    priority.id = resolved_id.to_string();
+                }
+            }
+            self.persist_settings();
+        }
+    }
+
     /// Surface a warning directly (used by the watchdog when recovery is
     /// exhausted) without tearing down the active capture session.
     pub fn set_microphone_warning(&mut self, warning: impl Into<String>) {
@@ -1154,6 +1360,30 @@ impl AppBackend {
     }
 
     pub fn process_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
+        self.process_audio_frame_for_slot(MicrophoneSlot::Primary, frame)
+    }
+
+    pub fn process_audio_frame_for_slot(
+        &mut self,
+        slot: MicrophoneSlot,
+        frame: AudioFrame,
+    ) -> Result<AppStatus, String> {
+        if slot == MicrophoneSlot::Secondary {
+            let capture = self
+                .secondary_capture
+                .as_mut()
+                .ok_or_else(|| "secondary capture session is not running".to_string())?;
+            self.secondary_level_monitor.observe_samples(&frame.samples);
+            if dbfs_from_samples(&frame.samples) > MIC_NONZERO_DBFS {
+                self.secondary_microphone_warning = None;
+            }
+            let events = capture
+                .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
+                .map_err(|error| error.to_string())?;
+            self.handle_capture_events_for_slot(MicrophoneSlot::Secondary, events);
+            return Ok(self.app_status());
+        }
+
         let capture = self
             .capture
             .as_mut()
@@ -1333,6 +1563,9 @@ impl AppBackend {
                 } => {
                     eprintln!("[wakenote] system-capture: ChunkStarted chunk_id={chunk_id}");
                     self.emit_live_event(LiveTranscriptEvent::Started {
+                        source_key: "system".to_string(),
+                        source_label: "System".to_string(),
+                        microphone_slot: None,
                         chunk_id,
                         started_at,
                         overlay_position: self.settings.effective_floating_overlay_position(),
@@ -1348,6 +1581,9 @@ impl AppBackend {
                         samples.len()
                     );
                     self.emit_live_event(LiveTranscriptEvent::SamplesReady {
+                        source_key: "system".to_string(),
+                        source_label: "System".to_string(),
+                        microphone_slot: None,
                         chunk_id,
                         model_id: self.settings.selected_model.clone(),
                         language: self.settings.transcription_language,
@@ -1382,6 +1618,9 @@ impl AppBackend {
                         queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
+                        source_key: "system".to_string(),
+                        source_label: "System".to_string(),
+                        microphone_slot: None,
                         chunk_id,
                         audio_path: chunk.audio_path.clone(),
                         overlay_position: self.settings.effective_floating_overlay_position(),
@@ -1650,12 +1889,20 @@ impl AppBackend {
             .map(|capture| capture.is_recording())
             .unwrap_or(false)
             || self
+                .secondary_capture
+                .as_ref()
+                .map(|capture| capture.is_recording())
+                .unwrap_or(false)
+            || self
                 .system_capture
                 .as_ref()
                 .map(|capture| capture.is_recording())
                 .unwrap_or(false);
-        let is_monitoring = self.capture.is_some();
-        let has_error = self.microphone_warning.is_some() || queue.failed_count > 0;
+        let is_monitoring = self.capture.is_some() || self.secondary_capture.is_some();
+        let has_active_microphone = is_monitoring;
+        let has_error = (!has_active_microphone
+            && (self.microphone_warning.is_some() || self.secondary_microphone_warning.is_some()))
+            || queue.failed_count > 0;
         let tray_state = derive_tray_state(
             mode,
             queue.running_count > 0,
@@ -1679,8 +1926,55 @@ impl AppBackend {
             runtime_warning,
             threshold_dbfs: self.settings.threshold_dbfs,
             level: self.level_monitor.snapshot(),
+            microphone_captures: self.microphone_capture_statuses(),
             queue,
         }
+    }
+
+    fn microphone_capture_statuses(&self) -> Vec<MicrophoneCaptureStatus> {
+        self.settings
+            .capture_microphones
+            .iter()
+            .enumerate()
+            .filter_map(|(index, configured)| {
+                let slot = MicrophoneSlot::from_index(index)?;
+                let status = match slot {
+                    MicrophoneSlot::Primary => MicrophoneCaptureStatus {
+                        slot,
+                        device_id: self
+                            .active_microphone_id
+                            .clone()
+                            .unwrap_or_else(|| configured.id.clone()),
+                        label: self
+                            .active_microphone_label
+                            .clone()
+                            .unwrap_or_else(|| configured.label.clone()),
+                        active: self.capture.is_some(),
+                        reconnecting: self.capture.is_none()
+                            && self.mic_health.is_awaiting_restart(),
+                        warning: self.microphone_warning.clone(),
+                        level: self.level_monitor.snapshot(),
+                    },
+                    MicrophoneSlot::Secondary => MicrophoneCaptureStatus {
+                        slot,
+                        device_id: self
+                            .active_secondary_microphone_id
+                            .clone()
+                            .unwrap_or_else(|| configured.id.clone()),
+                        label: self
+                            .active_secondary_microphone_label
+                            .clone()
+                            .unwrap_or_else(|| configured.label.clone()),
+                        active: self.secondary_capture.is_some(),
+                        reconnecting: self.secondary_capture.is_none()
+                            && self.secondary_microphone_warning.is_some(),
+                        warning: self.secondary_microphone_warning.clone(),
+                        level: self.secondary_level_monitor.snapshot(),
+                    },
+                };
+                Some(status)
+            })
+            .collect()
     }
 
     /// Surface a runtime warning when the queue has pending jobs but the
@@ -1728,12 +2022,15 @@ impl AppBackend {
     }
 
     fn sync_capture_settings(&mut self) {
-        let Some(capture) = self.capture.as_mut() else {
-            return;
-        };
-
-        if let Ok(events) = capture.update_settings(self.settings.clone()) {
-            self.handle_capture_events(events);
+        if let Some(capture) = self.capture.as_mut() {
+            if let Ok(events) = capture.update_settings(self.settings.clone()) {
+                self.handle_capture_events(events);
+            }
+        }
+        if let Some(capture) = self.secondary_capture.as_mut() {
+            if let Ok(events) = capture.update_settings(self.settings.clone()) {
+                self.handle_capture_events_for_slot(MicrophoneSlot::Secondary, events);
+            }
         }
         if self.settings.pause_all || !self.settings.recording_enabled {
             self.clear_capture_session_state();
@@ -1763,14 +2060,73 @@ impl AppBackend {
     }
 
     fn clear_capture_session_state(&mut self) {
-        self.capture = None;
-        self.active_microphone_label = None;
-        self.level_monitor = LevelMonitor::default();
-        self.mic_health.capture_stopped();
-        self.silence_warning = None;
+        self.clear_capture_slot_state(MicrophoneSlot::Primary);
+        self.clear_capture_slot_state(MicrophoneSlot::Secondary);
+    }
+
+    fn clear_capture_slot_state(&mut self, slot: MicrophoneSlot) {
+        match slot {
+            MicrophoneSlot::Primary => {
+                self.capture = None;
+                self.active_microphone_id = None;
+                self.active_microphone_label = None;
+                self.level_monitor = LevelMonitor::default();
+                self.mic_health.capture_stopped();
+                self.silence_warning = None;
+            }
+            MicrophoneSlot::Secondary => {
+                self.secondary_capture = None;
+                self.active_secondary_microphone_id = None;
+                self.active_secondary_microphone_label = None;
+                self.secondary_level_monitor = LevelMonitor::default();
+            }
+        }
     }
 
     fn handle_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
+        self.handle_capture_events_for_slot(MicrophoneSlot::Primary, events);
+    }
+
+    fn handle_capture_events_for_slot(
+        &mut self,
+        slot: MicrophoneSlot,
+        events: Vec<CaptureControllerEvent>,
+    ) {
+        let configured = self
+            .settings
+            .capture_microphones
+            .get(match slot {
+                MicrophoneSlot::Primary => 0,
+                MicrophoneSlot::Secondary => 1,
+            })
+            .cloned();
+        let (active_device_id, active_device_label) = match slot {
+            MicrophoneSlot::Primary => (
+                self.active_microphone_id.as_ref(),
+                self.active_microphone_label.as_ref(),
+            ),
+            MicrophoneSlot::Secondary => (
+                self.active_secondary_microphone_id.as_ref(),
+                self.active_secondary_microphone_label.as_ref(),
+            ),
+        };
+        let source_label = active_device_label
+            .cloned()
+            .or_else(|| configured.as_ref().map(|entry| entry.label.clone()))
+            .unwrap_or_else(|| {
+                if slot == MicrophoneSlot::Primary {
+                    self.settings.selected_microphone_label.clone()
+                } else {
+                    "Secondary".to_string()
+                }
+            });
+        let source_key = format!(
+            "microphone:{}",
+            active_device_id
+                .map(String::as_str)
+                .or_else(|| configured.as_ref().map(|entry| entry.id.as_str()))
+                .unwrap_or(slot.as_str())
+        );
         let mut queue_changed = false;
         for event in events {
             match event {
@@ -1780,6 +2136,9 @@ impl AppBackend {
                 } => {
                     eprintln!("[wakenote] capture: ChunkStarted chunk_id={chunk_id}");
                     self.emit_live_event(LiveTranscriptEvent::Started {
+                        source_key: source_key.clone(),
+                        source_label: source_label.clone(),
+                        microphone_slot: Some(slot),
                         chunk_id,
                         started_at,
                         overlay_position: self.settings.effective_floating_overlay_position(),
@@ -1795,6 +2154,9 @@ impl AppBackend {
                         samples.len()
                     );
                     self.emit_live_event(LiveTranscriptEvent::SamplesReady {
+                        source_key: source_key.clone(),
+                        source_label: source_label.clone(),
+                        microphone_slot: Some(slot),
                         chunk_id,
                         model_id: self.settings.selected_model.clone(),
                         language: self.settings.transcription_language,
@@ -1820,6 +2182,9 @@ impl AppBackend {
                         queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
+                        source_key: source_key.clone(),
+                        source_label: source_label.clone(),
+                        microphone_slot: Some(slot),
                         chunk_id,
                         audio_path: chunk.audio_path.clone(),
                         overlay_position: self.settings.effective_floating_overlay_position(),
@@ -2292,17 +2657,36 @@ fn recent_transcript_from_sidecar(path: &Path) -> Option<RecentTranscript> {
     }
     let metadata = metadata_for_transcript(path);
 
+    let source = metadata
+        .as_ref()
+        .map(|metadata| metadata.source)
+        .unwrap_or_default();
+    let source_label = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.source_label.clone());
+    let device_id = metadata
+        .as_ref()
+        .map(|metadata| metadata.device_id.clone())
+        .filter(|value| !value.is_empty());
+    let device_name = metadata
+        .as_ref()
+        .map(|metadata| metadata.device_name.clone())
+        .filter(|value| !value.is_empty());
+    let microphone_slot = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.microphone_slot);
+
     Some(RecentTranscript {
         transcript_path: path.to_string_lossy().to_string(),
         audio_path: audio_path_for_transcript(path)
             .map(|audio_path| audio_path.to_string_lossy().to_string()),
         recorded_at: recorded_at_for_transcript(path, metadata.as_ref()),
         text,
-        source: metadata
-            .as_ref()
-            .map(|metadata| metadata.source)
-            .unwrap_or_default(),
-        source_label: metadata.and_then(|metadata| metadata.source_label),
+        source,
+        source_label,
+        device_id,
+        device_name,
+        microphone_slot,
     })
 }
 
@@ -2982,6 +3366,7 @@ mod tests {
             live_capture_chunk_id: Some(42),
             source: ChunkSource::Microphone,
             source_label: None,
+            microphone_slot: None,
             transcribed_at: None,
         };
         std::fs::write(

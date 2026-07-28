@@ -61,10 +61,16 @@ export function LiveTranscriptList({
     <ol data-slot="live-transcript-list" aria-label="Live transcription">
       {visibleEntries.map((entry) => (
         <li
-          key={`${entry.chunk_id}:${entry.audio_path ?? entry.started_at}`}
+          key={`${entry.source_key ?? "microphone"}:${entry.chunk_id}:${entry.audio_path ?? entry.started_at}`}
           data-status={entry.status}
         >
-          <span data-slot="transcript-meta">{labelForEntry(entry)}</span>
+          <span data-slot="transcript-meta">
+            {entry.source_label ? (
+              <span data-slot="transcript-source">{entry.source_label}</span>
+            ) : null}
+            {entry.source_label ? " · " : null}
+            {labelForEntry(entry)}
+          </span>
           <span data-slot="transcript-text">{textForEntry(entry, now)}</span>
         </li>
       ))}
@@ -77,7 +83,8 @@ function labelForEntry(entry: TranscriptEntry): ReactNode {
     return STATUS_LABEL[entry.status];
   }
 
-  const timestamp = formatLocalTimestamp(entry.recorded_at || entry.started_at) || "Final";
+  const timestamp =
+    formatLocalTimestamp(entry.recorded_at || entry.started_at) || "Final";
   if (!entry.audio_path) {
     return timestamp;
   }
@@ -92,5 +99,9 @@ function textForEntry(entry: TranscriptEntry, now: Date): string {
   if (entry.status !== "final") {
     return entry.text;
   }
-  return appendRecentAge(entry.text, entry.recorded_at || entry.started_at, now);
+  return appendRecentAge(
+    entry.text,
+    entry.recorded_at || entry.started_at,
+    now,
+  );
 }
