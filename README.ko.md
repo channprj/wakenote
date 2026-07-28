@@ -4,13 +4,14 @@
 
 **macOS 전용 음성 활성화 로컬 transcription 앱.**
 
-WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링하다가 dBFS 임계값을 넘으면 자동으로 녹음 청크를 시작하고, 청크가 끝나면 로컬 Whisper로 transcription을 수행합니다. 오디오, 텍스트, 메타데이터는 모두 같은 폴더(날짜별 디렉터리) 안에 나란히 저장되어 노트·스크립트·백업 도구로 바로 grep할 수 있습니다.
+WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 Secondary 마이크 한 대를 모니터링하다가 어느 입력이든 dBFS 임계값을 넘으면 독립된 녹음 청크를 시작하고, 청크가 끝나면 로컬 Whisper로 transcription을 수행합니다. 오디오, 텍스트, 메타데이터는 모두 같은 폴더(날짜별 디렉터리) 안에 나란히 저장되어 노트·스크립트·백업 도구로 바로 grep할 수 있습니다.
 
 기술 스택은 Tauri 2 (Rust 백엔드) + React 19 + TypeScript + Tailwind CSS v4입니다. Transcription은 macOS 빌드에서 Metal GPU 가속이 켜진 `whisper-rs` (whisper.cpp)로 오프라인 추론하며, 오디오 캡처는 `cpal`을 사용합니다. 기본 테마 색상은 블랙 `#000`입니다.
 
 ## 핵심 특징
 
 - **음성 활성화 캡처** — RMS dBFS가 임계값 위로 *attack* 시간 이상 유지되어야 녹음이 시작되고, 임계값 아래로 *release* 시간 이상 유지되어야 종료됩니다. pre-roll / post-roll 버퍼로 발화의 시작과 끝이 잘리지 않게 보존합니다.
+- **독립 듀얼 마이크** — 설정에서 Primary 한 대와 선택 Secondary 한 대를 지정합니다. 각 마이크는 스트림, 프레임 큐, 녹음 파일, 전사 식별자, 레벨, 경고, 동일 장치 재연결 루프를 따로 가지므로 한쪽 장애가 다른 쪽을 중지하지 않습니다. 입력 모니터링은 Primary에만 적용됩니다.
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
 - **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
@@ -41,6 +42,7 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - `src-tauri/src/audio.rs` — `SpeechGate` (attack / release / pre-roll / post-roll / min·max chunk), `LevelMonitor` (current / peak dBFS, noise floor, suggested threshold).
 - `src-tauri/src/capture.rs` — `CaptureController` / `CaptureProcessor`가 raw 프레임을 완성된 `RecordedChunk`로 변환.
 - `src-tauri/src/live_capture.rs` — `LiveCaptureRuntime` + `CpalAudioInput`. bounded `FrameDispatcher`가 back-pressure 상황에서 stale 프레임을 drop.
+- `src-tauri/src/multi_capture.rs` — Primary / Secondary 런타임을 서로 다른 스트림과 dispatcher로 조정.
 - `src-tauri/src/recorder.rs` — `hound`로 `.wav` 작성, macOS `afconvert`로 `.m4a` 작성 (PCM → WAV → AAC/M4A), `.json` 메타데이터 및 transcript / error sidecar.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, 단일 실행 `start_next`, retry / skip / cancel.
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
@@ -50,6 +52,13 @@ WakeNote은 메뉴바 앱입니다. 선택한 마이크 입력을 모니터링�
 - `src/overlay/*` — click-through live caption window용 별도 Tauri overlay entrypoint.
 
 ## 출력 파일 구조
+
+마이크 두 대를 켜면 `142301-mic-primary-wired.m4a`,
+`142301-mic-secondary-wireless.m4a`처럼 결정적인 source suffix가 붙습니다.
+JSON에는 `device_id`, `device_name`, `microphone_slot`이 기록되고,
+Transcripts 화면은 두 입력을 시간순으로 섞어 실제 장치 이름 badge와 filter로
+구분합니다. `System Default`는 마이크 한 대 구성에서만 사용할 수 있고, 두 대
+구성은 서로 다른 명시적 물리 장치 두 대를 선택해야 합니다.
 
 ```
 ~/Documents/WakeNote/
