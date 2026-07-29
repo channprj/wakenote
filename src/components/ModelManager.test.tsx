@@ -185,6 +185,21 @@ describe("model acquire action", () => {
       modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
     ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
   });
+
+  it("offers setup for built-in Qwen3-ASR models", () => {
+    expect(
+      modelAcquireAction({
+        provider_runtime: "qwen3-asr",
+        download_url: null,
+        status: "missing",
+      }),
+    ).toMatchObject({
+      kind: "download",
+      enabled: true,
+      label: "Set up Qwen3-ASR",
+      reason: null,
+    });
+  });
 });
 
 describe("formatModelSize", () => {

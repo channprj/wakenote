@@ -620,11 +620,87 @@ impl Transcriber for RuntimeTranscriber {
 
         match self.model_runtime(request.model_id).as_str() {
             "sherpa-onnx" => transcribe_with_sherpa(&self.model_directory, request),
+            "qwen3-asr" => Qwen3AsrTranscriber::new(&self.model_directory).transcribe(request),
             "external-command" => {
                 ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
             }
             _ => WhisperTranscriber::new(&self.model_directory).transcribe(request),
         }
+    }
+}
+
+fn qwen3_asr_language_name(language: TranscriptionLanguage) -> Option<&'static str> {
+    match language {
+        TranscriptionLanguage::Auto => None,
+        TranscriptionLanguage::Ko => Some("Korean"),
+        TranscriptionLanguage::En => Some("English"),
+        TranscriptionLanguage::Ja => Some("Japanese"),
+        TranscriptionLanguage::Zh => Some("Chinese"),
+        TranscriptionLanguage::Es => Some("Spanish"),
+        TranscriptionLanguage::Fr => Some("French"),
+        TranscriptionLanguage::De => Some("German"),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Qwen3AsrTranscriber {
+    model_directory: PathBuf,
+}
+
+impl Qwen3AsrTranscriber {
+    pub fn new(model_directory: impl AsRef<Path>) -> Self {
+        Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+        }
+    }
+}
+
+impl Transcriber for Qwen3AsrTranscriber {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        let store = ModelStore::new(&self.model_directory);
+        let python = store.qwen3_asr_python_path();
+        let runner = store.qwen3_asr_runner_path();
+        let model_path = store.qwen3_asr_model_dir(request.model_id).ok_or_else(|| {
+            TranscriptionError::Engine(format!("unknown Qwen3-ASR model {}", request.model_id))
+        })?;
+        for (label, path) in [
+            ("Python runtime", &python),
+            ("WakeNote runner", &runner),
+            ("model directory", &model_path),
+        ] {
+            if !path.exists() {
+                return Err(TranscriptionError::Engine(format!(
+                    "Qwen3-ASR {label} is missing at {}; run Set up Qwen3-ASR in Models",
+                    path.display()
+                )));
+            }
+        }
+
+        let mut command = Command::new(&python);
+        command
+            .arg(&runner)
+            .env("WAKENOTE_AUDIO_PATH", request.audio_path)
+            .env("WAKENOTE_QWEN3_ASR_MODEL_PATH", &model_path)
+            .env(
+                "WAKENOTE_QWEN3_ASR_LANGUAGE",
+                qwen3_asr_language_name(request.language).unwrap_or(""),
+            )
+            .env("HF_HUB_OFFLINE", "1")
+            .env("TRANSFORMERS_OFFLINE", "1")
+            .env("TOKENIZERS_PARALLELISM", "false")
+            .env("PYTHONNOUSERSITE", "1");
+        let output = command
+            .output()
+            .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(TranscriptionError::Engine(if stderr.is_empty() {
+            format!("Qwen3-ASR exited with {}", output.status)
+        } else {
+            stderr
+        }))
     }
 }
 
@@ -1193,8 +1269,63 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "asr-sherpa")]
     use super::*;
+
+    #[test]
+    fn qwen3_asr_language_names_match_the_official_api() {
+        assert_eq!(qwen3_asr_language_name(TranscriptionLanguage::Auto), None);
+        assert_eq!(
+            qwen3_asr_language_name(TranscriptionLanguage::Ko),
+            Some("Korean")
+        );
+        assert_eq!(
+            qwen3_asr_language_name(TranscriptionLanguage::En),
+            Some("English")
+        );
+        assert_eq!(
+            qwen3_asr_language_name(TranscriptionLanguage::Zh),
+            Some("Chinese")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_transcriber_routes_qwen_to_the_local_isolated_runner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let python = store.qwen3_asr_python_path();
+        let runner = store.qwen3_asr_runner_path();
+        let model = store
+            .qwen3_asr_model_dir("qwen3-asr-0.6b")
+            .expect("model dir");
+        std::fs::create_dir_all(python.parent().expect("runtime bin")).expect("runtime");
+        std::fs::create_dir_all(&model).expect("model");
+        std::fs::write(
+            &python,
+            "#!/bin/sh\nprintf '%s|%s' \"$WAKENOTE_QWEN3_ASR_LANGUAGE\" \"$WAKENOTE_QWEN3_ASR_MODEL_PATH\"\n",
+        )
+        .expect("fake python");
+        let mut permissions = std::fs::metadata(&python)
+            .expect("python metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&python, permissions).expect("executable python");
+        std::fs::write(&runner, "runner").expect("runner");
+        let audio = tmp.path().join("dictation.wav");
+        std::fs::write(&audio, b"audio").expect("audio");
+
+        let text = RuntimeTranscriber::new(tmp.path())
+            .transcribe(TranscriptionRequest {
+                audio_path: &audio,
+                model_id: "qwen3-asr-0.6b",
+                language: TranscriptionLanguage::Ko,
+            })
+            .expect("Qwen route");
+
+        assert_eq!(text, format!("Korean|{}", model.display()));
+    }
 
     #[cfg(feature = "asr-sherpa")]
     #[test]

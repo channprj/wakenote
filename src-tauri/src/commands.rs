@@ -797,9 +797,15 @@ impl AppBackend {
     pub fn download_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
         let prepared = self.prepare_model_download(model_id)?;
         let store = ModelStore::new(prepared.model_directory);
-        store
-            .download_model(&prepared.model)
-            .map_err(|error| error.to_string())?;
+        if prepared.model.provider_runtime == "qwen3-asr" {
+            store
+                .install_qwen3_asr_model(&prepared.model)
+                .map_err(|error| error.to_string())?;
+        } else {
+            store
+                .download_model(&prepared.model)
+                .map_err(|error| error.to_string())?;
+        }
         Ok(self.model_registry())
     }
 
@@ -812,7 +818,7 @@ impl AppBackend {
             .get(model_id)
             .ok_or_else(|| format!("unknown model {model_id}"))?
             .clone();
-        if model.download_url.is_none() {
+        if model.download_url.is_none() && model.provider_runtime != "qwen3-asr" {
             return Err(format!("model {model_id} has no download URL"));
         }
         let mut refreshed_models: Vec<ModelDescriptor> = registry.values().cloned().collect();
@@ -3189,7 +3195,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "sherpa-onnx" | "external-command" => store
+        "sherpa-onnx" | "external-command" | "qwen3-asr" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
         _ => store.model_path(&model.id).exists(),

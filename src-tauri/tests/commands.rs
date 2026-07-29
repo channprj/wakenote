@@ -2135,6 +2135,33 @@ fn backend_prepare_model_download_marks_model_downloading_before_fetch() {
 }
 
 #[test]
+fn backend_prepares_qwen3_asr_setup_without_a_direct_download_url() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let prepared = backend
+        .prepare_model_download("qwen3-asr-0.6b")
+        .expect("prepare Qwen setup");
+
+    assert_eq!(prepared.model.provider_runtime, "qwen3-asr");
+    assert_eq!(prepared.model.download_url, None);
+    assert_eq!(
+        prepared
+            .registry
+            .iter()
+            .find(|model| model.id == "qwen3-asr-0.6b")
+            .expect("Qwen model")
+            .status,
+        ModelStatus::Downloading
+    );
+}
+
+#[test]
 fn backend_prepare_model_download_rejects_active_downloads() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

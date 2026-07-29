@@ -15,7 +15,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 - **단축키 받아쓰기** — 선택 기능을 켜면 설정한 전역 단축키를 누르고 있는 동안 녹음하고 손을 떼면 로컬 전사한 뒤, 포커스된 커서에 최종 결과를 입력합니다. 받아쓰기 언어는 별도의 자동 감지를 지원하며 오디오는 보관함에 추가하지 않습니다.
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
-- **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
+- **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능 레지스트리는 Whisper, 내장 sherpa-onnx 모델과 Qwen3-ASR 0.6B/1.7B를 제공합니다. Qwen은 Models 화면에서 격리된 Transformers 런타임과 로컬 모델 snapshot을 준비합니다.
 - **AI 요약 / 상세 보고서** — 원하는 캡처를 골라 OpenRouter로 Markdown 문서를 만듭니다. 초안을 쓰고, 스스로 품질 기준에 맞춰 평가하고, 기준을 충족하거나 반복 예산이 끝날 때까지 다듬습니다. [AI 요약과 보고서](#ai-요약과-보고서) 참고.
 - **단일 실행 transcription queue** — 동시에 한 작업만 실행. 실패한 작업은 복구 가능한 오류로 표시되고 retry / skip 가능. 이전 세션에서 running 상태였던 작업은 시작 시 pending으로 자동 복구됩니다.
 - **견고한 라이브 캡처** — 오디오 콜백은 프레임을 bounded 백그라운드 큐에 넘깁니다. 처리가 입력 속도를 못 따라가면 오래된 프레임을 drop하고 입력 스레드를 막지 않으며, UI에는 runtime warning을 띄웁니다.
@@ -48,7 +48,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 - `src-tauri/src/multi_capture.rs` — Primary / Secondary 런타임을 서로 다른 스트림과 dispatcher로 조정하고, 병합을 켜면 프레임의 시간축과 sample rate를 맞춰 하나의 입력으로 만듭니다.
 - `src-tauri/src/recorder.rs` — `hound`로 `.wav` 작성, macOS `afconvert`로 `.m4a` 작성 (PCM → WAV → AAC/M4A), `.json` 메타데이터 및 transcript / error sidecar.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, 단일 실행 `start_next`, retry / skip / cancel.
-- `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
+- `src-tauri/src/transcription.rs` — Whisper, sherpa-onnx, Qwen3-ASR, external-command 런타임 routing과 `TranscriptionWorker`.
 - `src-tauri/src/dictation.rs` — 단축키 검증, push-to-talk 상태, 독립 마이크 캡처, 임시 16 kHz 전사 입력, 최종 결과의 포커스된 커서 입력.
 - `src-tauri/src/models.rs` — 모델 레지스트리, 진행률 / 취소 / 체크섬 검증을 포함한 다운로드, 디스크 `ModelStore`.
 - `src-tauri/src/persistence.rs` — app data 디렉터리 아래의 `settings.json`과 `transcription-queue.json`을 atomic하게 저장. 시작 시 in-flight 작업을 pending으로 복구.
@@ -183,17 +183,31 @@ Markdown을 **Copy**하거나 **Download Markdown**으로 저장하거나 **Run 
 
 ## 추가 ASR provider
 
-WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b` 항목이 포함됩니다.
+WakeNote 기본 레지스트리에는 `parakeet-tdt-0.6b-v3`, `sensevoice-small`,
+`nemotron-3.5-asr-streaming-0.6b`, `qwen3-asr-0.6b`,
+`qwen3-asr-1.7b` 항목이 포함됩니다.
 
-### Parakeet V3 / SenseVoice (온디바이스, 외부 도구 불필요)
+### Parakeet V3 / SenseVoice / Nemotron 3.5 (온디바이스, 외부 도구 불필요)
 
-두 모델은 **앱에 내장된 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)(onnxruntime) 엔진으로 in-process 실행**됩니다 — 내장 whisper.cpp 엔진처럼 외부 CLI나 Python 설치가 전혀 필요 없습니다. 모델 목록에서 **Download**를 누르면 WakeNote가 sherpa-onnx 릴리스의 공식 ONNX 아카이브를 받아 모델 디렉터리에 압축 해제하고, 모델이 Ready가 되어 선택할 수 있습니다. `Delete`는 압축 해제된 모델을 제거합니다.
+이 모델들은 **앱에 내장된 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)(onnxruntime) 엔진으로 in-process 실행**됩니다 — 내장 whisper.cpp 엔진처럼 외부 CLI나 Python 설치가 전혀 필요 없습니다. 모델 목록에서 **Download**를 누르면 WakeNote가 sherpa-onnx 릴리스의 공식 ONNX 아카이브를 받아 모델 디렉터리에 압축 해제하고, 모델이 Ready가 되어 선택할 수 있습니다. `Delete`는 압축 해제된 모델을 제거합니다.
 
 엔진은 `asr-sherpa` Cargo feature로 빌드됩니다. 배포 빌드(`pnpm build`)는 이를 자동으로 켜며, 일반 `cargo build`/`cargo test`는 가볍게 유지하려고 이를 제외합니다(이 경우 해당 모델 선택 시 "asr-sherpa feature" 오류를 반환). prebuilt onnxruntime + sherpa-onnx dylib은 빌드 시 내려받아 앱의 `Contents/Frameworks`에 번들로 포함되며(바이너리에 `@executable_path/../Frameworks` rpath 추가), 따라서 배포된 `.app`은 자체 완결적입니다. 정적 링크를 원하면 sherpa-rs의 `static` feature로 바꾸면 됩니다.
 
-### Nemotron 3.5 ASR (external command)
+### Qwen3-ASR 0.6B / 1.7B
 
-NVIDIA는 Nemotron 3.5 ASR을 NeMo 체크포인트로만 배포하고 ONNX export가 없어 내장 sherpa-onnx 엔진으로는 돌릴 수 없습니다. 대신 external-command adapter로 실행합니다: 원하는 NeMo runner를 설치한 뒤 `<model_directory>/nemotron-3.5-asr-streaming-0.6b.command` 파일로 연결하세요. 파일이 존재하면 WakeNote가 모델을 Ready로 표시하며, command는 `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, `WAKENOTE_LANGUAGE` 환경변수를 읽고 transcript를 stdout으로 출력합니다.
+Qwen 항목은 공식 Transformers-native
+[`Qwen/Qwen3-ASR-0.6B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf)와
+1.7B snapshot을 사용합니다. Models에서 **Set up Qwen3-ASR**를 누르면
+WakeNote가 모델 디렉터리 아래에 격리된 Python 환경을 만들고 Transformers
+5.13+와 선택한 snapshot을 설치한 뒤 필수 로컬 파일을 검증합니다. Ready가
+된 뒤에는 네트워크 없이 실행하며 Auto-detect 또는 선택한 WakeNote 언어를
+적용합니다.
+
+설정에는 `uv` 또는 Python 3.10+와 PyTorch용 추가 공간이 필요합니다.
+WakeNote는 일반적인 Homebrew/`~/.local/bin` 경로를 찾으며, 고급 환경에서는
+`WAKENOTE_QWEN3_ASR_UV` 또는 `WAKENOTE_QWEN3_ASR_PYTHON`으로 경로를 지정할
+수 있습니다. 공유 Python 런타임을 제외한 모델 가중치는 0.6B 약 1.5 GB,
+1.7B 약 3.9 GB입니다.
 
 ### 커스텀 external-command 모델 (고급)
 

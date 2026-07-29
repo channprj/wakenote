@@ -1824,10 +1824,10 @@ fn download_model(
         // models download a single .bin. Both paths record an Error status into
         // the store on failure (surfaced via the registry snapshot); log here so
         // a failed background download is observable in the app log too.
-        let result = if model.provider_runtime == "sherpa-onnx" {
-            store.download_and_extract_sherpa_model(&model)
-        } else {
-            store.download_model(&model)
+        let result = match model.provider_runtime.as_str() {
+            "sherpa-onnx" => store.download_and_extract_sherpa_model(&model),
+            "qwen3-asr" => store.install_qwen3_asr_model(&model),
+            _ => store.download_model(&model),
         };
         if let Err(error) = result {
             eprintln!("[models] download {} failed: {error}", model.id);

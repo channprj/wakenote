@@ -105,6 +105,62 @@ pub struct SherpaModelSpec {
     pub files: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Qwen3AsrSpec {
+    pub repo_id: &'static str,
+    pub directory: &'static str,
+}
+
+pub fn qwen3_asr_spec(model_id: &str) -> Option<Qwen3AsrSpec> {
+    match model_id {
+        "qwen3-asr-0.6b" => Some(Qwen3AsrSpec {
+            repo_id: "Qwen/Qwen3-ASR-0.6B-hf",
+            directory: "qwen3-asr-0.6b",
+        }),
+        "qwen3-asr-1.7b" => Some(Qwen3AsrSpec {
+            repo_id: "Qwen/Qwen3-ASR-1.7B-hf",
+            directory: "qwen3-asr-1.7b",
+        }),
+        _ => None,
+    }
+}
+
+const QWEN3_ASR_RUNNER: &str = r#"import os
+import torch
+from transformers import AutoModelForMultimodalLM, AutoProcessor
+
+audio_path = os.environ["WAKENOTE_AUDIO_PATH"]
+model_path = os.environ["WAKENOTE_QWEN3_ASR_MODEL_PATH"]
+language = os.environ.get("WAKENOTE_QWEN3_ASR_LANGUAGE") or None
+
+processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
+model = AutoModelForMultimodalLM.from_pretrained(
+    model_path,
+    device_map="auto",
+    local_files_only=True,
+).eval()
+inputs = processor.apply_transcription_request(
+    audio=audio_path,
+    language=language,
+).to(model.device, model.dtype)
+with torch.inference_mode():
+    output_ids = model.generate(**inputs, max_new_tokens=256, do_sample=False)
+generated_ids = output_ids[:, inputs["input_ids"].shape[1]:]
+text = processor.decode(
+    generated_ids,
+    return_format="transcription_only",
+)[0]
+print(text.strip())
+"#;
+
+const QWEN3_ASR_PACKAGES: [&str; 5] = [
+    "torch",
+    "transformers>=5.13.0,<6",
+    "accelerate",
+    "librosa",
+    "soundfile",
+];
+
 impl SherpaModelSpec {
     fn new(kind: SherpaModelKind, dir: &str, files: &[&str]) -> Self {
         Self {
@@ -184,6 +240,35 @@ impl ModelStore {
     /// if the model isn't a sherpa-onnx model.
     pub fn sherpa_model_dir(&self, model_id: &str) -> Option<PathBuf> {
         sherpa_model_spec(model_id).map(|spec| self.model_directory.join(spec.dir))
+    }
+
+    pub fn qwen3_asr_root(&self) -> PathBuf {
+        self.model_directory.join("qwen3-asr")
+    }
+
+    pub fn qwen3_asr_python_path(&self) -> PathBuf {
+        self.qwen3_asr_root().join("runtime/bin/python")
+    }
+
+    pub fn qwen3_asr_runner_path(&self) -> PathBuf {
+        self.qwen3_asr_root().join("wakenote_qwen3_asr.py")
+    }
+
+    pub fn qwen3_asr_model_dir(&self, model_id: &str) -> Option<PathBuf> {
+        qwen3_asr_spec(model_id)
+            .map(|spec| self.qwen3_asr_root().join("models").join(spec.directory))
+    }
+
+    fn qwen3_asr_model_ready(&self, model_id: &str) -> bool {
+        let Some(model_dir) = self.qwen3_asr_model_dir(model_id) else {
+            return false;
+        };
+        self.qwen3_asr_python_path().is_file()
+            && self.qwen3_asr_runner_path().is_file()
+            && model_dir.join("config.json").is_file()
+            && model_dir.join("model.safetensors").is_file()
+            && model_dir.join("processor_config.json").is_file()
+            && model_dir.join("tokenizer.json").is_file()
     }
 
     /// Whether every file the sherpa-onnx model needs is present on disk.
@@ -513,6 +598,14 @@ impl ModelStore {
             });
         }
 
+        if model.provider_runtime == "qwen3-asr" {
+            return Ok(if self.qwen3_asr_model_ready(&model.id) {
+                ModelStatus::Ready
+            } else {
+                ModelStatus::Missing
+            });
+        }
+
         if model.provider_runtime == "external-command" {
             return Ok(if self.command_path(&model.id).exists() {
                 ModelStatus::Ready
@@ -536,6 +629,180 @@ impl ModelStore {
             Ok(ModelStatus::Ready)
         } else {
             Ok(ModelStatus::Error)
+        }
+    }
+
+    pub fn install_qwen3_asr_model(
+        &self,
+        model: &ModelDescriptor,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        let spec = qwen3_asr_spec(&model.id).ok_or_else(|| {
+            ModelStoreError::Registry(format!("no Qwen3-ASR specification for {}", model.id))
+        })?;
+        let total_bytes = model.size_mb.saturating_mul(1024 * 1024);
+        let result = (|| {
+            std::fs::create_dir_all(self.qwen3_asr_root().join("models"))?;
+            let required_bytes = total_bytes.saturating_add(2 * 1024 * 1024 * 1024);
+            Self::validate_download_space(required_bytes, self.available_disk_space()?)?;
+            self.record_download_progress(&model.id, 0, Some(total_bytes))?;
+            self.install_qwen3_asr_model_inner(model, &spec, total_bytes)
+        })();
+        if let Err(error) = &result
+            && !matches!(error, ModelStoreError::Cancelled { .. })
+        {
+            self.record_download_error(&model.id, 0, Some(total_bytes), error);
+        }
+        result
+    }
+
+    fn install_qwen3_asr_model_inner(
+        &self,
+        model: &ModelDescriptor,
+        spec: &Qwen3AsrSpec,
+        total_bytes: u64,
+    ) -> Result<ModelStatus, ModelStoreError> {
+        let runtime_dir = self.qwen3_asr_root().join("runtime");
+        let python_path = self.qwen3_asr_python_path();
+        let uv_path = find_qwen_uv();
+
+        if !python_path.is_file() {
+            if let Some(uv_path) = uv_path.as_ref() {
+                let mut command = Command::new(uv_path);
+                command
+                    .arg("venv")
+                    .arg("--python")
+                    .arg("3.12")
+                    .arg(&runtime_dir);
+                self.run_qwen_setup_command(&model.id, &mut command)?;
+            } else {
+                let python = find_qwen_python().ok_or_else(|| {
+                    ModelStoreError::Download(
+                        "Qwen3-ASR setup requires uv or Python 3.10+. Install uv, or set WAKENOTE_QWEN3_ASR_PYTHON."
+                            .to_string(),
+                    )
+                })?;
+                let mut command = Command::new(python);
+                command.arg("-m").arg("venv").arg(&runtime_dir);
+                self.run_qwen_setup_command(&model.id, &mut command)?;
+            }
+        }
+
+        if !python_path.is_file() {
+            return Err(ModelStoreError::Download(format!(
+                "Qwen3-ASR Python environment was not created at {}",
+                python_path.display()
+            )));
+        }
+
+        if let Some(uv_path) = uv_path.as_ref() {
+            let mut command = Command::new(uv_path);
+            command
+                .arg("pip")
+                .arg("install")
+                .arg("--python")
+                .arg(&python_path)
+                .args(QWEN3_ASR_PACKAGES);
+            self.run_qwen_setup_command(&model.id, &mut command)?;
+        } else {
+            let mut command = Command::new(&python_path);
+            command
+                .arg("-m")
+                .arg("pip")
+                .arg("install")
+                .args(QWEN3_ASR_PACKAGES);
+            self.run_qwen_setup_command(&model.id, &mut command)?;
+        }
+
+        std::fs::write(self.qwen3_asr_runner_path(), QWEN3_ASR_RUNNER)?;
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Downloading,
+            total_bytes / 20,
+            Some(total_bytes),
+            None,
+        )?;
+
+        let model_dir = self
+            .qwen3_asr_model_dir(&model.id)
+            .ok_or_else(|| ModelStoreError::NotFound(model.id.clone()))?;
+        std::fs::create_dir_all(&model_dir)?;
+        let download_script = concat!(
+            "from huggingface_hub import snapshot_download\n",
+            "import sys\n",
+            "snapshot_download(repo_id=sys.argv[1], local_dir=sys.argv[2])\n"
+        );
+        let mut command = Command::new(&python_path);
+        command
+            .arg("-c")
+            .arg(download_script)
+            .arg(spec.repo_id)
+            .arg(&model_dir);
+        self.run_qwen_setup_command(&model.id, &mut command)?;
+
+        self.record_download_status(
+            &model.id,
+            ModelStatus::Verifying,
+            total_bytes,
+            Some(total_bytes),
+            None,
+        )?;
+        let status = self.verify_model(model)?;
+        let error = (status != ModelStatus::Ready)
+            .then(|| "Qwen3-ASR runtime or model files are incomplete".to_string());
+        self.record_download_status(&model.id, status, total_bytes, Some(total_bytes), error)?;
+        if status != ModelStatus::Ready {
+            return Err(ModelStoreError::Download(
+                "Qwen3-ASR setup verification failed".to_string(),
+            ));
+        }
+        Ok(status)
+    }
+
+    fn run_qwen_setup_command(
+        &self,
+        model_id: &str,
+        command: &mut Command,
+    ) -> Result<(), ModelStoreError> {
+        let log_path = self
+            .qwen3_asr_root()
+            .join(format!("{model_id}.install.log"));
+        let log = std::fs::File::create(&log_path)?;
+        let stderr = log.try_clone()?;
+        let mut child = command
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .map_err(|error| {
+                ModelStoreError::Download(format!("could not start Qwen3-ASR setup: {error}"))
+            })?;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                if status.success() {
+                    return Ok(());
+                }
+                let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+                let tail = log
+                    .chars()
+                    .rev()
+                    .take(4_000)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>();
+                return Err(ModelStoreError::Download(if tail.trim().is_empty() {
+                    format!("Qwen3-ASR setup exited with {status}")
+                } else {
+                    tail.trim().to_string()
+                }));
+            }
+            if self.is_download_cancelled(model_id)? {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ModelStoreError::Cancelled {
+                    model_id: model_id.to_string(),
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 
@@ -575,6 +842,12 @@ impl ModelStore {
         }
         if command_path.exists() {
             std::fs::remove_file(command_path)?;
+            removed_anything = true;
+        }
+        if let Some(qwen_dir) = self.qwen3_asr_model_dir(model_id)
+            && qwen_dir.is_dir()
+        {
+            std::fs::remove_dir_all(qwen_dir)?;
             removed_anything = true;
         }
         // sherpa-onnx models extract to a directory rather than a single file.
@@ -874,6 +1147,52 @@ fn download_error_message(error: &ModelStoreError) -> String {
         ModelStoreError::Download(message) => message.clone(),
         _ => error.to_string(),
     }
+}
+
+fn find_qwen_uv() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("WAKENOTE_QWEN3_ASR_UV") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/uv"),
+        PathBuf::from("/usr/local/bin/uv"),
+    ]);
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".local/bin/uv"));
+    }
+    candidates.push(PathBuf::from("uv"));
+
+    candidates.into_iter().find(|path| {
+        Command::new(path)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
+fn find_qwen_python() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("WAKENOTE_QWEN3_ASR_PYTHON") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/python3"),
+        PathBuf::from("/usr/local/bin/python3"),
+        PathBuf::from("python3"),
+    ]);
+
+    candidates.into_iter().find(|path| {
+        Command::new(path)
+            .arg("-c")
+            .arg("import sys; raise SystemExit(sys.version_info < (3, 10))")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
 }
 
 impl ModelStore {
@@ -1256,6 +1575,40 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         },
     );
 
+    for (id, display_name, size_mb, speed_score, accuracy_score) in [
+        ("qwen3-asr-0.6b", "Qwen3-ASR 0.6B", 1_505, 7, 9),
+        ("qwen3-asr-1.7b", "Qwen3-ASR 1.7B", 3_900, 4, 10),
+    ] {
+        registry.insert(
+            id.to_string(),
+            ModelDescriptor {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                engine: "Qwen".to_string(),
+                provider_runtime: "qwen3-asr".to_string(),
+                download_url: None,
+                checksum_sha256: None,
+                size_mb,
+                languages: vec![
+                    "ko".to_string(),
+                    "en".to_string(),
+                    "ja".to_string(),
+                    "zh".to_string(),
+                    "es".to_string(),
+                    "fr".to_string(),
+                    "de".to_string(),
+                    "multi".to_string(),
+                ],
+                speed_score,
+                accuracy_score,
+                offline: true,
+                status: ModelStatus::Missing,
+                download_progress: None,
+                download_error: None,
+            },
+        );
+    }
+
     registry
 }
 
@@ -1510,6 +1863,66 @@ mod tests {
                 .as_deref()
                 .is_some_and(|url| url.ends_with(".tar.bz2")),
             "nemotron should download a sherpa-onnx archive",
+        );
+    }
+
+    #[test]
+    fn default_registry_includes_official_qwen3_asr_models() {
+        assert!(QWEN3_ASR_PACKAGES.contains(&"torch"));
+        assert!(QWEN3_ASR_PACKAGES.contains(&"transformers>=5.13.0,<6"));
+        let registry = default_model_registry();
+
+        let small = registry
+            .get("qwen3-asr-0.6b")
+            .expect("Qwen3-ASR 0.6B entry");
+        assert_eq!(small.provider_runtime, "qwen3-asr");
+        assert_eq!(small.engine, "Qwen");
+        assert!(small.download_url.is_none());
+        assert!(small.languages.iter().any(|language| language == "ko"));
+
+        let large = registry
+            .get("qwen3-asr-1.7b")
+            .expect("Qwen3-ASR 1.7B entry");
+        assert_eq!(large.provider_runtime, "qwen3-asr");
+        assert!(large.accuracy_score > small.accuracy_score);
+
+        let spec = qwen3_asr_spec("qwen3-asr-0.6b").expect("Qwen spec");
+        assert_eq!(spec.repo_id, "Qwen/Qwen3-ASR-0.6B-hf");
+        assert!(qwen3_asr_spec("whisper-small").is_none());
+    }
+
+    #[test]
+    fn qwen3_asr_is_ready_only_with_runtime_and_complete_local_snapshot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ModelStore::new(tmp.path());
+        let model = default_model_registry()
+            .remove("qwen3-asr-0.6b")
+            .expect("Qwen model");
+        assert_eq!(
+            store.verify_model(&model).expect("missing status"),
+            ModelStatus::Missing
+        );
+
+        let model_dir = store
+            .qwen3_asr_model_dir(&model.id)
+            .expect("Qwen model directory");
+        std::fs::create_dir_all(store.qwen3_asr_python_path().parent().expect("runtime bin"))
+            .expect("runtime directory");
+        std::fs::create_dir_all(&model_dir).expect("model directory");
+        std::fs::write(store.qwen3_asr_python_path(), b"python").expect("python marker");
+        std::fs::write(store.qwen3_asr_runner_path(), b"runner").expect("runner marker");
+        for file in [
+            "config.json",
+            "model.safetensors",
+            "processor_config.json",
+            "tokenizer.json",
+        ] {
+            std::fs::write(model_dir.join(file), b"ready").expect("model marker");
+        }
+
+        assert_eq!(
+            store.verify_model(&model).expect("ready status"),
+            ModelStatus::Ready
         );
     }
 

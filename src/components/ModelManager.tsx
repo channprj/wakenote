@@ -61,15 +61,19 @@ function statusProgress(model: ModelDescriptor) {
   }
 }
 
-export function modelActionState(model: Pick<ModelDescriptor, "download_url" | "status">) {
+export function modelActionState(
+  model: Pick<ModelDescriptor, "download_url" | "status"> &
+    Partial<Pick<ModelDescriptor, "provider_runtime">>,
+) {
   const activeDownload = ["downloading", "verifying", "extracting"].includes(model.status);
   const usableModel = ["ready", "installed", "unloaded"].includes(model.status);
+  const canSetUpQwen = model.provider_runtime === "qwen3-asr";
 
   return {
     canSwitch: usableModel,
-    canDownload: Boolean(model.download_url) && model.status === "missing",
+    canDownload: (Boolean(model.download_url) || canSetUpQwen) && model.status === "missing",
     canVerify: !activeDownload,
-    canRetry: Boolean(model.download_url) && model.status === "error",
+    canRetry: (Boolean(model.download_url) || canSetUpQwen) && model.status === "error",
     canCancelDownload: activeDownload,
     canDelete: !activeDownload && model.status !== "missing",
   };
@@ -83,7 +87,12 @@ export function modelAcquireAction(
   model: Pick<ModelDescriptor, "provider_runtime" | "download_url" | "status">,
 ): { kind: ModelAcquireKind; enabled: boolean; label: string; reason: string | null } {
   const reason = modelDownloadDisabledReason(model);
-  return { kind: "download", enabled: reason === null, label: "Download", reason };
+  return {
+    kind: "download",
+    enabled: reason === null,
+    label: model.provider_runtime === "qwen3-asr" ? "Set up Qwen3-ASR" : "Download",
+    reason,
+  };
 }
 
 function isActiveDownload(status: ModelStatus): boolean {
@@ -107,11 +116,14 @@ export function modelSwitchDisabledReason(
 }
 
 export function modelDownloadDisabledReason(
-  model: Pick<ModelDescriptor, "status" | "download_url">,
+  model: Pick<ModelDescriptor, "status" | "download_url"> &
+    Partial<Pick<ModelDescriptor, "provider_runtime">>,
 ): string | null {
   if (modelActionState(model).canDownload) return null;
   if (isActiveDownload(model.status)) return "Download already in progress";
-  if (!model.download_url) return "No download URL available";
+  if (!model.download_url && model.provider_runtime !== "qwen3-asr") {
+    return "No download URL available";
+  }
   if (isUsable(model.status)) return "Model is already installed";
   if (model.status === "error") return "Download failed — use Retry";
   return null;
@@ -125,11 +137,18 @@ export function modelVerifyDisabledReason(
 }
 
 export function modelRetryDisabledReason(
-  model: Pick<ModelDescriptor, "status" | "download_url">,
+  model: Pick<ModelDescriptor, "status" | "download_url"> &
+    Partial<Pick<ModelDescriptor, "provider_runtime">>,
 ): string | null {
   if (modelActionState(model).canRetry) return null;
   if (isActiveDownload(model.status)) return "Download already in progress";
-  if (model.status === "error" && !model.download_url) return "No download URL available";
+  if (
+    model.status === "error" &&
+    !model.download_url &&
+    model.provider_runtime !== "qwen3-asr"
+  ) {
+    return "No download URL available";
+  }
   return "Nothing to retry";
 }
 

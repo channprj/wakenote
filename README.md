@@ -15,7 +15,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - **Shortcut dictation** — optionally hold a configurable global shortcut to record and release it to transcribe locally, then WakeNote types the final result at the focused cursor. Dictation has its own Auto-detect language setting and does not add audio to the archive.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
-- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; Parakeet V3 and SenseVoice download and run fully on-device via a bundled sherpa-onnx engine (no external tools), and Nemotron 3.5 ASR runs through an external-command adapter.
+- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. The Korean-capable registry includes Whisper, bundled sherpa-onnx models, and Qwen3-ASR 0.6B/1.7B. Qwen setup creates an isolated Transformers runtime and local model snapshot from the Models screen.
 - **AI summaries and detailed reports** — turn any set of captures into a Markdown document through OpenRouter. The runner drafts, grades its own output against success criteria, and refines until the criteria are met or the iteration budget runs out. See [AI summaries and reports](#ai-summaries-and-reports).
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
@@ -48,7 +48,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - `src-tauri/src/multi_capture.rs` — coordinates fixed Primary / Secondary runtimes without sharing streams or dispatch queues, then time-aligns and resamples their frames into one input when merging is enabled.
 - `src-tauri/src/recorder.rs` — writes `.wav` via `hound`, `.m4a` via macOS `afconvert` (PCM → WAV → AAC/M4A), `.json` metadata, transcript / error sidecars.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, single-flight `start_next`, retry/skip/cancel.
-- `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
+- `src-tauri/src/transcription.rs` — Whisper, sherpa-onnx, Qwen3-ASR and external-command runtime routing plus `TranscriptionWorker`.
 - `src-tauri/src/dictation.rs` — shortcut validation, push-to-talk state, dedicated microphone capture, ephemeral 16 kHz transcription input, and final-result focused-cursor typing.
 - `src-tauri/src/models.rs` — model registry, download with progress/cancel/checksum, on-disk `ModelStore`.
 - `src-tauri/src/persistence.rs` — atomic JSON writes for `settings.json` and `transcription-queue.json` under the app data dir; in-flight jobs recovered as pending on startup.
@@ -187,17 +187,30 @@ report removes it from the list only — nothing is deleted.
 
 ## Additional ASR providers
 
-WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`, `sensevoice-small`, and `nemotron-3.5-asr-streaming-0.6b`.
+WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`,
+`sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b`, `qwen3-asr-0.6b`,
+and `qwen3-asr-1.7b`.
 
-### Parakeet V3 and SenseVoice (on-device, no external tools)
+### Parakeet V3, SenseVoice, and Nemotron 3.5 (on-device, no external tools)
 
-Both run **in-process via a bundled [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (onnxruntime) engine** — like the bundled whisper.cpp engine, there is no external CLI or Python to install. Click **Download** in the model list: WakeNote fetches the official ONNX archive from the sherpa-onnx releases, extracts it under the model directory, and the model is then Ready to select. `Delete` removes the extracted model.
+These models run **in-process via a bundled [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (onnxruntime) engine** — like the bundled whisper.cpp engine, there is no external CLI or Python to install. Click **Download** in the model list: WakeNote fetches the official ONNX archive from the sherpa-onnx releases, extracts it under the model directory, and the model is then Ready to select. `Delete` removes the extracted model.
 
 The engine is built behind the `asr-sherpa` Cargo feature. The shipped app (`pnpm build`) enables it automatically; a plain `cargo build`/`cargo test` stays light and omits it (selecting one of these models without it returns an "asr-sherpa feature" error). The prebuilt onnxruntime + sherpa-onnx dylibs are downloaded at build time and bundled into the app's `Contents/Frameworks` (with an `@executable_path/../Frameworks` rpath) so the shipped `.app` is self-contained — switch sherpa-rs to its `static` feature to link statically instead.
 
-### Nemotron 3.5 ASR (external command)
+### Qwen3-ASR 0.6B / 1.7B
 
-NVIDIA ships Nemotron 3.5 ASR as a NeMo checkpoint with no ONNX export, so it can't run on the bundled sherpa-onnx engine. Instead it runs through the external-command adapter: install your preferred NeMo runner, then connect it with a `<model_directory>/nemotron-3.5-asr-streaming-0.6b.command` file. WakeNote marks the model Ready once that file exists; the command reads `WAKENOTE_AUDIO_PATH`, `WAKENOTE_MODEL_ID`, `WAKENOTE_MODEL_DIRECTORY`, and `WAKENOTE_LANGUAGE`, then writes the transcript to stdout.
+The Qwen entries use the official Transformers-native
+[`Qwen/Qwen3-ASR-0.6B-hf`](https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf)
+and 1.7B snapshots. Click **Set up Qwen3-ASR** in Models. WakeNote creates an
+isolated Python environment under the model directory, installs Transformers
+5.13+, downloads the selected snapshot, verifies the required local files, and
+then enables **Switch**. Once ready, transcription is forced offline and honors
+Auto-detect or the selected WakeNote language.
+
+Setup needs `uv` or Python 3.10+ and additional space for PyTorch. WakeNote
+finds common Homebrew/`~/.local/bin` installations; advanced setups can set
+`WAKENOTE_QWEN3_ASR_UV` or `WAKENOTE_QWEN3_ASR_PYTHON`. The model weights are
+about 1.5 GB (0.6B) or 3.9 GB (1.7B), excluding the shared Python runtime.
 
 ### Custom external-command models (advanced)
 

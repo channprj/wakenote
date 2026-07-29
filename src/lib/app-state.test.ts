@@ -69,6 +69,8 @@ describe("app state derivation", () => {
       "parakeet-tdt-0.6b-v3",
       "sensevoice-small",
       "nemotron-3.5-asr-streaming-0.6b",
+      "qwen3-asr-0.6b",
+      "qwen3-asr-1.7b",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
@@ -77,6 +79,7 @@ describe("app state derivation", () => {
     expect(
       models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")?.languages,
     ).toContain("ko");
+    expect(models.find((model) => model.id === "qwen3-asr-0.6b")?.languages).toContain("ko");
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {
