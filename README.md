@@ -98,7 +98,7 @@ two explicit, distinct physical devices.
 | Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
 | Transcription language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Shortcut dictation | `off` | `on` / `off` |
-| Dictation shortcut | `Option+Space` | modifier + supported key, or `F1` … `F24` |
+| Dictation shortcut | `Option+Space` | two modifiers, modifier + supported key, or `F1` … `F24` |
 | Dictation language | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start input on launch | `on` | `on` / `off` |
@@ -121,7 +121,8 @@ independent of the archival transcription language. The capture is dedicated to
 dictation: it does not interrupt the voice-activated recorder and its temporary
 16 kHz WAV is removed after success or failure. Very quiet input is ignored,
 presses during transcription are ignored, and a recording automatically stops
-after 10 minutes.
+after 10 minutes. Modifier-only pairs such as `Control+Shift` are supported and
+trigger once per complete press-and-release cycle.
 
 macOS must grant WakeNote microphone access. Focused-cursor typing also requires
 Accessibility permission for System Events under **System Settings › Privacy &

@@ -98,7 +98,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 | 모델 디렉터리 | `~/Library/Application Support/WakeNote/models` | 임의 디렉터리 |
 | Transcription 언어 | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | 단축키 받아쓰기 | `off` | `on` / `off` |
-| 받아쓰기 단축키 | `Option+Space` | 보조 키 + 지원 키 또는 `F1` … `F24` |
+| 받아쓰기 단축키 | `Option+Space` | 보조 키 2개, 보조 키 + 지원 키 또는 `F1` … `F24` |
 | 받아쓰기 언어 | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | 저신뢰 transcript 숨기기 | `on` | `on` / `off` |
 | 실행 시 입력 자동 시작 | `on` | `on` / `off` |
@@ -120,6 +120,8 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 스트림을 사용해 음성 활성화 녹음을 중단하지 않으며, 임시 16 kHz WAV는
 성공·실패와 관계없이 삭제됩니다. 신호가 너무 작으면 입력하지 않고,
 전사 중 누른 단축키는 무시하며, 녹음은 10분 뒤 자동으로 종료됩니다.
+`Control+Shift`처럼 보조 키 2개만 사용하는 조합도 지원하며, 두 키를
+눌렀다가 놓는 한 주기마다 한 번만 실행됩니다.
 
 macOS에서 WakeNote의 마이크 접근을 허용해야 합니다. 포커스된 커서에
 입력하려면 **시스템 설정 › 개인정보 보호 및 보안 › 손쉬운 사용**에서
