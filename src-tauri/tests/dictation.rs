@@ -266,6 +266,28 @@ fn hold_to_talk_stops_only_on_release() {
 }
 
 #[test]
+fn hold_to_talk_plays_stop_cue_after_capture_start_failure() {
+    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+        DictationAction::StartRecording
+    );
+    runtime.fail();
+    assert!(runtime.reset_error());
+    assert_eq!(runtime.stage(), DictationStage::Idle);
+
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::PlayStopCue
+    );
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::Ignore
+    );
+}
+
+#[test]
 fn dedicated_capture_collects_frames_until_stopped() {
     let frame = AudioFrame {
         samples: vec![0.25; 16_000],
@@ -401,6 +423,10 @@ fn automatic_stop_only_finishes_the_matching_recording() {
         .expect("capture result");
     assert_eq!(recording.samples.len(), 16_000);
     assert_eq!(runtime.stage(), DictationStage::Transcribing);
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::Ignore
+    );
 }
 
 #[test]

@@ -1211,6 +1211,10 @@ fn handle_dictation_shortcut_event(
     };
     match action {
         DictationAction::Ignore => Ok(()),
+        DictationAction::PlayStopCue => {
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop);
+            Ok(())
+        }
         DictationAction::StartRecording => {
             let payload = state
                 .lock()

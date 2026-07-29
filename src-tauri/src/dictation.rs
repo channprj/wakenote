@@ -36,6 +36,7 @@ pub struct DictationStatePayload {
 pub enum DictationAction {
     StartRecording,
     StopAndTranscribe,
+    PlayStopCue,
     Ignore,
 }
 
@@ -172,6 +173,7 @@ pub struct DictationRuntime<B: AudioInputBackend> {
     sample_rate: Option<u32>,
     next_recording_id: u64,
     active_recording_id: Option<u64>,
+    stop_cue_armed: bool,
 }
 
 impl<B: AudioInputBackend> DictationRuntime<B> {
@@ -184,6 +186,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             sample_rate: None,
             next_recording_id: 1,
             active_recording_id: None,
+            stop_cue_armed: false,
         }
     }
 
@@ -212,14 +215,20 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
     }
 
     pub fn handle_shortcut_event(&mut self, event: DictationShortcutEvent) -> DictationAction {
-        match (self.stage, event) {
-            (DictationStage::Idle, DictationShortcutEvent::Pressed) => {
+        match event {
+            DictationShortcutEvent::Pressed if self.stage == DictationStage::Idle => {
                 self.stage = DictationStage::Recording;
+                self.stop_cue_armed = true;
                 DictationAction::StartRecording
             }
-            (DictationStage::Recording, DictationShortcutEvent::Released) => {
-                self.stage = DictationStage::Transcribing;
-                DictationAction::StopAndTranscribe
+            DictationShortcutEvent::Released if self.stop_cue_armed => {
+                self.stop_cue_armed = false;
+                if self.stage == DictationStage::Recording {
+                    self.stage = DictationStage::Transcribing;
+                    DictationAction::StopAndTranscribe
+                } else {
+                    DictationAction::PlayStopCue
+                }
             }
             _ => DictationAction::Ignore,
         }
@@ -301,6 +310,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         {
             return None;
         }
+        self.stop_cue_armed = false;
         self.stage = DictationStage::Transcribing;
         Some(self.stop_recording())
     }
