@@ -3,6 +3,16 @@ import { useEffect, useState } from "react";
 
 export type OverlayCaptionPhase = "idle" | "partial" | "refining" | "final";
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type DictationOverlayState =
+  | "hidden"
+  | "recording"
+  | "transcribing"
+  | "error";
+
+export interface DictationOverlaySnapshot {
+  state: DictationOverlayState;
+  message: string | null;
+}
 
 export interface OverlayCaptionSnapshot {
   generation: number;
@@ -83,7 +93,113 @@ function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
   } as CSSProperties;
 }
 
-export function OverlayContent({ caption }: { caption: OverlayCaptionSnapshot }) {
+function emptyDictationSnapshot(): DictationOverlaySnapshot {
+  return {
+    state: "hidden",
+    message: null,
+  };
+}
+
+function dictationSnapshotFromPayload(
+  payload: unknown,
+): DictationOverlaySnapshot {
+  const data = payload as Partial<DictationOverlaySnapshot> | null;
+  const state = data?.state;
+  return {
+    state:
+      state === "recording" ||
+      state === "transcribing" ||
+      state === "error"
+        ? state
+        : "hidden",
+    message: typeof data?.message === "string" ? data.message : null,
+  };
+}
+
+function levelsFromPayload(payload: unknown): number[] {
+  const levels = (payload as { levels?: unknown } | null)?.levels;
+  if (!Array.isArray(levels)) {
+    return [];
+  }
+  return levels.map((level) =>
+    typeof level === "number" && Number.isFinite(level)
+      ? Math.max(0, Math.min(1, level))
+      : 0,
+  );
+}
+
+function formatElapsed(elapsedSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedSeconds));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function OverlayContent({
+  caption,
+  dictation,
+  levels,
+  elapsedSeconds,
+}: {
+  caption: OverlayCaptionSnapshot;
+  dictation: DictationOverlaySnapshot;
+  levels: number[];
+  elapsedSeconds: number;
+}) {
+  if (dictation.state === "recording") {
+    return (
+      <div
+        className="overlay-dictation"
+        data-dictation-state="recording"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="overlay-dictation__dot" aria-hidden="true" />
+        <span className="overlay-dictation__waveform" aria-hidden="true">
+          {levels.map((level, index) => (
+            <i
+              key={index}
+              style={{ "--level": level } as CSSProperties}
+            />
+          ))}
+        </span>
+        <span className="overlay-dictation__elapsed">
+          {formatElapsed(elapsedSeconds)}
+        </span>
+      </div>
+    );
+  }
+
+  if (dictation.state === "transcribing") {
+    return (
+      <div
+        className="overlay-dictation"
+        data-dictation-state="transcribing"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="overlay-dictation__spinner" aria-hidden="true" />
+        <span className="overlay-dictation__message">
+          {dictation.message ?? "Transcribing…"}
+        </span>
+      </div>
+    );
+  }
+
+  if (dictation.state === "error") {
+    return (
+      <div
+        className="overlay-dictation"
+        data-dictation-state="error"
+        role="status"
+        aria-live="assertive"
+      >
+        <span className="overlay-dictation__dot" aria-hidden="true" />
+        <span className="overlay-dictation__message">
+          {dictation.message ?? "Dictation failed"}
+        </span>
+      </div>
+    );
+  }
+
   if (!caption.visible || !caption.text) {
     return null;
   }
@@ -103,6 +219,26 @@ export function OverlayContent({ caption }: { caption: OverlayCaptionSnapshot })
 
 export function RecordingOverlay() {
   const [caption, setCaption] = useState<OverlayCaptionSnapshot>(() => emptyCaptionSnapshot());
+  const [dictation, setDictation] = useState<DictationOverlaySnapshot>(() =>
+    emptyDictationSnapshot(),
+  );
+  const [levels, setLevels] = useState<number[]>(() => Array(11).fill(0));
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(
+    null,
+  );
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (dictation.state !== "recording" || recordingStartedAt === null) {
+      return;
+    }
+    const updateElapsed = () => {
+      setElapsedSeconds((Date.now() - recordingStartedAt) / 1_000);
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 250);
+    return () => window.clearInterval(timer);
+  }, [dictation.state, recordingStartedAt]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
@@ -126,6 +262,40 @@ export function RecordingOverlay() {
         }
       }
 
+      const unlistenDictation = await listen(
+        "dictation-overlay-state",
+        (event) => {
+          const next = dictationSnapshotFromPayload(event.payload);
+          setDictation(next);
+          if (next.state === "recording") {
+            setRecordingStartedAt(Date.now());
+            setElapsedSeconds(0);
+            setLevels(Array(11).fill(0));
+          } else {
+            setRecordingStartedAt(null);
+          }
+        },
+      );
+      if (cancelled) {
+        unlistenDictation();
+      } else {
+        unlisteners.push(unlistenDictation);
+      }
+
+      const unlistenLevels = await listen(
+        "dictation-overlay-level",
+        (event) => {
+          if (!cancelled) {
+            setLevels(levelsFromPayload(event.payload));
+          }
+        },
+      );
+      if (cancelled) {
+        unlistenLevels();
+      } else {
+        unlisteners.push(unlistenLevels);
+      }
+
       try {
         const snapshot = await invoke<OverlayCaptionSnapshot>("overlay_caption_snapshot");
         if (!cancelled) {
@@ -145,5 +315,12 @@ export function RecordingOverlay() {
     };
   }, []);
 
-  return <OverlayContent caption={caption} />;
+  return (
+    <OverlayContent
+      caption={caption}
+      dictation={dictation}
+      levels={levels}
+      elapsedSeconds={elapsedSeconds}
+    />
+  );
 }

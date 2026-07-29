@@ -16,4 +16,18 @@ describe("overlay caption css", () => {
     expect(css).toMatch(/#overlay-root\s*\{[^}]*box-sizing:\s*border-box/);
     expect(css).toMatch(/\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/);
   });
+
+  it("styles a compact dictation capsule and responsive waveform bars", () => {
+    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*height:\s*44px/);
+    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*backdrop-filter:\s*blur/);
+    expect(css).toMatch(
+      /\.overlay-dictation__waveform\s+i\s*\{[^}]*height:\s*calc\(4px \+ var\(--level\) \* 20px\)/,
+    );
+  });
+
+  it("removes dictation motion when reduced motion is requested", () => {
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.overlay-dictation[\s\S]*animation:\s*none/,
+    );
+  });
 });

@@ -67,11 +67,127 @@ body {
     0 0 18px rgba(0, 0, 0, 0.55);
 }
 
+.overlay-dictation {
+  --dictation-accent: #34d399;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: fit-content;
+  min-width: 220px;
+  max-width: calc(100vw - 24px);
+  height: 44px;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 52%),
+    rgba(10, 10, 13, 0.88);
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-sizing: border-box;
+  animation: dictation-capsule-in 160ms ease-out both;
+}
+
+.overlay-dictation[data-dictation-state="transcribing"] {
+  --dictation-accent: #f59e0b;
+}
+
+.overlay-dictation[data-dictation-state="error"] {
+  --dictation-accent: #ef4444;
+}
+
+.overlay-dictation__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dictation-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--dictation-accent) 72%, transparent);
+}
+
+.overlay-dictation__waveform {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 26px;
+}
+
+.overlay-dictation__waveform i {
+  display: block;
+  width: 3px;
+  height: calc(4px + var(--level) * 20px);
+  min-height: 4px;
+  max-height: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: height 70ms linear;
+}
+
+.overlay-dictation__elapsed {
+  min-width: 36px;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: right;
+}
+
+.overlay-dictation__message {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 590;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.overlay-dictation__spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(245, 158, 11, 0.28);
+  border-top-color: var(--dictation-accent);
+  border-radius: 50%;
+  animation: dictation-spinner 700ms linear infinite;
+}
+
 @keyframes overlay-fade-in {
   from {
     opacity: 0;
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes dictation-capsule-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dictation-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-dictation,
+  .overlay-dictation__spinner {
+    animation: none;
+  }
+
+  .overlay-dictation__waveform i {
+    transition: none;
   }
 }

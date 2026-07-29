@@ -8,10 +8,13 @@ pub const OVERLAY_LABEL: &str = "overlay";
 pub const OVERLAY_EVENT: &str = "overlay-state";
 pub const OVERLAY_LEVEL_EVENT: &str = "overlay-level";
 pub const OVERLAY_WAVEFORM_BAR_COUNT: usize = 11;
+pub const DICTATION_OVERLAY_EVENT: &str = "dictation-overlay-state";
+pub const DICTATION_OVERLAY_LEVEL_EVENT: &str = "dictation-overlay-level";
 
 const OVERLAY_MAX_WIDTH_LOGICAL: f64 = 720.0;
 const OVERLAY_MIN_WIDTH_LOGICAL: f64 = 280.0;
 const OVERLAY_HEIGHT_LOGICAL: f64 = 104.0;
+const DICTATION_OVERLAY_WIDTH_LOGICAL: f64 = 280.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
 const OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL: f64 = 36.0;
 const OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL: f64 = 28.0;
@@ -56,6 +59,15 @@ pub enum OverlayState {
     Transcribing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DictationOverlayState {
+    Hidden,
+    Recording,
+    Transcribing,
+    Error,
+}
+
 pub fn overlay_state_for_tray_state(tray_state: TrayState) -> OverlayState {
     match tray_state {
         TrayState::Recording => OverlayState::Recording,
@@ -85,6 +97,12 @@ struct OverlayStatePayload {
 #[derive(Serialize, Clone)]
 struct OverlayLevelPayload {
     levels: Vec<f32>,
+}
+
+#[derive(Serialize, Clone)]
+struct DictationOverlayPayload {
+    state: DictationOverlayState,
+    message: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -248,6 +266,55 @@ pub fn emit_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
     let _ = app.emit(OVERLAY_LEVEL_EVENT, payload);
 }
 
+pub fn show_dictation_overlay(
+    app: &AppHandle,
+    state: DictationOverlayState,
+    message: Option<String>,
+) -> tauri::Result<()> {
+    if state == DictationOverlayState::Hidden {
+        return hide_dictation_overlay_state(app);
+    }
+    if app.get_webview_window(OVERLAY_LABEL).is_none() {
+        create_overlay_window(app)?;
+    }
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Ok(());
+    };
+
+    if let Some(rect) = monitor_with_cursor(&window) {
+        let overlay_size = dictation_overlay_size_for_monitor(rect);
+        let logical = calculate_position(rect, OverlayAnchor::Top, overlay_size);
+        window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
+        window.set_position(logical)?;
+    }
+
+    window.show()?;
+    let payload = DictationOverlayPayload { state, message };
+    let _ = window.emit(DICTATION_OVERLAY_EVENT, payload.clone());
+    let _ = app.emit(DICTATION_OVERLAY_EVENT, payload);
+    Ok(())
+}
+
+pub fn emit_dictation_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
+    let payload = OverlayLevelPayload { levels };
+    if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
+        let _ = window.emit(DICTATION_OVERLAY_LEVEL_EVENT, payload.clone());
+    }
+    let _ = app.emit(DICTATION_OVERLAY_LEVEL_EVENT, payload);
+}
+
+pub fn hide_dictation_overlay_state(app: &AppHandle) -> tauri::Result<()> {
+    let payload = DictationOverlayPayload {
+        state: DictationOverlayState::Hidden,
+        message: None,
+    };
+    if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
+        let _ = window.emit(DICTATION_OVERLAY_EVENT, payload.clone());
+    }
+    let _ = app.emit(DICTATION_OVERLAY_EVENT, payload);
+    Ok(())
+}
+
 pub fn show_overlay_on_main_thread(
     app: &AppHandle,
     state: OverlayState,
@@ -355,6 +422,10 @@ fn overlay_size_for_monitor(monitor: MonitorRect) -> (f64, f64) {
         .min(OVERLAY_MAX_WIDTH_LOGICAL)
         .max(OVERLAY_MIN_WIDTH_LOGICAL.min(available_w));
     (width, OVERLAY_HEIGHT_LOGICAL)
+}
+
+fn dictation_overlay_size_for_monitor(_monitor: MonitorRect) -> (f64, f64) {
+    (DICTATION_OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL)
 }
 
 pub(crate) fn caption_overlay_size_for_monitor(
@@ -502,6 +573,17 @@ mod tests {
 
         assert!(size.0 <= 592.0);
         assert_eq!(size.1, OVERLAY_HEIGHT_LOGICAL);
+    }
+
+    #[test]
+    fn dictation_overlay_size_is_fixed_and_top_centered() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let size = dictation_overlay_size_for_monitor(monitor);
+        let position = calculate_position(monitor, OverlayAnchor::Top, size);
+
+        assert_eq!(size, (280.0, 104.0));
+        assert_eq!(position.x, 820.0);
+        assert_eq!(position.y, TOP_OFFSET_LOGICAL);
     }
 
     #[test]
