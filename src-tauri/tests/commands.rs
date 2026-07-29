@@ -19,7 +19,8 @@ use wakenote::models::{ModelStatus, ModelStore};
 use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
-    AudioFormat, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch, TranscriptionLanguage,
+    AudioFormat, CaptureMicrophoneEntry, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch,
+    TranscriptionLanguage,
 };
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
@@ -329,6 +330,7 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
         source: ChunkSource::System,
         source_label: Some("youtube".into()),
         microphone_slot: None,
+        microphone_inputs: Vec::new(),
     };
     let metadata_path = tmp.path().join("20260510/010203-youtube.json");
     std::fs::write(
@@ -381,6 +383,7 @@ fn recent_transcript_preserves_microphone_identity() {
         source: ChunkSource::Microphone,
         source_label: Some("mic-primary-wired".into()),
         microphone_slot: Some(MicrophoneSlot::Primary),
+        microphone_inputs: Vec::new(),
     };
     std::fs::write(
         tmp.path().join("20260510/010203-mic-primary-wired.json"),
@@ -444,6 +447,332 @@ fn backend_enqueues_completed_capture_chunks_when_transcription_is_enabled() {
         snapshot.jobs[0]
             .audio_path
             .ends_with(format!("{dir}/{stem}.wav"))
+    );
+}
+
+#[test]
+fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        capture_microphones: Some(vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ]),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        lead_in_padding_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Primary,
+            10,
+            base_time,
+            "input-1-wired",
+            "Wired",
+            false,
+        )
+        .expect("start primary");
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Secondary,
+            10,
+            base_time,
+            "input-2-wireless",
+            "Wireless",
+            false,
+        )
+        .expect("start secondary");
+    assert!(
+        backend
+            .app_status()
+            .microphone_captures
+            .iter()
+            .all(|status| status.active)
+    );
+
+    for step in 1..=5 {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        backend
+            .process_audio_frame_for_slot(
+                MicrophoneSlot::Primary,
+                AudioFrame {
+                    samples: vec![0.8],
+                    duration_ms: 100,
+                    captured_at,
+                },
+            )
+            .expect("primary speech");
+        backend
+            .process_audio_frame_for_slot(
+                MicrophoneSlot::Secondary,
+                AudioFrame {
+                    samples: vec![0.2],
+                    duration_ms: 100,
+                    captured_at,
+                },
+            )
+            .expect("secondary speech");
+    }
+    for step in 6..=10 {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+            backend
+                .process_audio_frame_for_slot(
+                    slot,
+                    AudioFrame {
+                        samples: vec![0.0],
+                        duration_ms: 100,
+                        captured_at,
+                    },
+                )
+                .expect("silence");
+        }
+    }
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.jobs.len(), 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .to_string_lossy()
+            .contains("mic-merged")
+    );
+    let live_events = backend.drain_live_events();
+    assert_eq!(
+        live_events
+            .iter()
+            .filter(|event| matches!(event, LiveTranscriptEvent::Started { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        live_events
+            .iter()
+            .filter(|event| matches!(event, LiveTranscriptEvent::Committed { .. }))
+            .count(),
+        1
+    );
+    for event in live_events {
+        match event {
+            LiveTranscriptEvent::Started {
+                source_label,
+                microphone_slot,
+                ..
+            }
+            | LiveTranscriptEvent::SamplesReady {
+                source_label,
+                microphone_slot,
+                ..
+            }
+            | LiveTranscriptEvent::Committed {
+                source_label,
+                microphone_slot,
+                ..
+            } => {
+                assert_eq!(source_label, "Wired + Wireless");
+                assert_eq!(microphone_slot, None);
+            }
+        }
+    }
+    let metadata: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(snapshot.jobs[0].audio_path.with_extension("json"))
+            .expect("merged metadata"),
+    )
+    .expect("parse merged metadata");
+    assert_eq!(metadata.device_name, "Wired + Wireless");
+    assert_eq!(metadata.source_label.as_deref(), Some("mic-merged"));
+    assert_eq!(metadata.microphone_slot, None);
+    assert_eq!(
+        metadata.microphone_inputs,
+        vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn backend_merged_capture_continues_when_secondary_stops() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        capture_microphones: Some(vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ]),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        lead_in_padding_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Primary,
+            10,
+            base_time,
+            "input-1-wired",
+            "Wired",
+            false,
+        )
+        .expect("start primary");
+    backend
+        .start_capture_session_for_slot(
+            MicrophoneSlot::Secondary,
+            10,
+            base_time,
+            "input-2-wireless",
+            "Wireless",
+            false,
+        )
+        .expect("start secondary");
+
+    backend
+        .process_audio_frame_for_slot(
+            MicrophoneSlot::Primary,
+            AudioFrame {
+                samples: vec![0.8],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(100),
+            },
+        )
+        .expect("buffer primary");
+    backend
+        .stop_capture_slot(MicrophoneSlot::Secondary)
+        .expect("stop secondary");
+    assert!(backend.capture_slot_active(MicrophoneSlot::Primary));
+    assert!(!backend.capture_slot_active(MicrophoneSlot::Secondary));
+
+    for step in 2..=10 {
+        let samples = if step <= 5 { vec![0.8] } else { vec![0.0] };
+        backend
+            .process_audio_frame_for_slot(
+                MicrophoneSlot::Primary,
+                AudioFrame {
+                    samples,
+                    duration_ms: 100,
+                    captured_at: base_time + chrono::Duration::milliseconds(step * 100),
+                },
+            )
+            .expect("remaining primary frame");
+    }
+    backend
+        .stop_capture_slot(MicrophoneSlot::Primary)
+        .expect("stop primary");
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .to_string_lossy()
+            .contains("mic-merged")
+    );
+}
+
+#[test]
+fn backend_keeps_independent_dual_microphone_artifacts_when_merge_is_off() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        capture_microphones: Some(vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ]),
+        merge_microphone_inputs: Some(false),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        lead_in_padding_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    for (slot, id, label) in [
+        (MicrophoneSlot::Primary, "input-1-wired", "Wired"),
+        (MicrophoneSlot::Secondary, "input-2-wireless", "Wireless"),
+    ] {
+        backend
+            .start_capture_session_for_slot(slot, 10, base_time, id, label, false)
+            .expect("start microphone");
+    }
+
+    for step in 1..=10 {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        let samples = if step <= 5 { vec![0.8] } else { vec![0.0] };
+        for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+            backend
+                .process_audio_frame_for_slot(
+                    slot,
+                    AudioFrame {
+                        samples: samples.clone(),
+                        duration_ms: 100,
+                        captured_at,
+                    },
+                )
+                .expect("microphone frame");
+        }
+    }
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 2);
+    let paths = snapshot
+        .jobs
+        .iter()
+        .map(|job| job.audio_path.to_string_lossy())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.contains("mic-primary-wired")));
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.contains("mic-secondary-wireless"))
     );
 }
 
@@ -773,6 +1102,7 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
         source: ChunkSource::System,
         source_label: Some("Spotify".into()),
         microphone_slot: None,
+        microphone_inputs: Vec::new(),
     };
     std::fs::write(
         audio_path.with_extension("json"),

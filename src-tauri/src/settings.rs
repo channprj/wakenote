@@ -239,6 +239,8 @@ pub struct AppSettings {
     pub microphone_priority: Vec<MicrophonePriorityEntry>,
     #[serde(default)]
     pub capture_microphones: Vec<CaptureMicrophoneEntry>,
+    #[serde(default = "default_merge_microphone_inputs")]
+    pub merge_microphone_inputs: bool,
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
@@ -320,6 +322,7 @@ pub struct SettingsPatch {
     pub selected_microphone_label: Option<String>,
     pub microphone_priority: Option<Vec<MicrophonePriorityEntry>>,
     pub capture_microphones: Option<Vec<CaptureMicrophoneEntry>>,
+    pub merge_microphone_inputs: Option<bool>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
@@ -390,6 +393,10 @@ pub fn default_capture_microphones() -> Vec<CaptureMicrophoneEntry> {
         id: "default".to_string(),
         label: "System Default".to_string(),
     }]
+}
+
+pub const fn default_merge_microphone_inputs() -> bool {
+    true
 }
 
 pub fn normalize_capture_microphones(
@@ -478,6 +485,9 @@ pub fn live_capture_runtime_action_for_patch(
     let capture_microphones_changed = patch.capture_microphones.as_ref().is_some_and(|entries| {
         normalize_capture_microphones(entries.clone()) != settings.capture_microphones
     });
+    let merge_microphone_inputs_changed = patch
+        .merge_microphone_inputs
+        .is_some_and(|value| value != settings.merge_microphone_inputs);
     let microphone_changed = patch
         .selected_microphone
         .as_ref()
@@ -492,11 +502,12 @@ pub fn live_capture_runtime_action_for_patch(
         should_run,
         microphone_changed,
         capture_microphones_changed,
+        merge_microphone_inputs_changed,
     ) {
-        (false, true, _, _) => LiveCaptureRuntimeAction::Start,
-        (true, false, _, _) => LiveCaptureRuntimeAction::Stop,
-        (true, true, _, true) => LiveCaptureRuntimeAction::Reconcile,
-        (true, true, true, false) => LiveCaptureRuntimeAction::Restart,
+        (false, true, _, _, _) => LiveCaptureRuntimeAction::Start,
+        (true, false, _, _, _) => LiveCaptureRuntimeAction::Stop,
+        (true, true, _, true, _) | (true, true, _, _, true) => LiveCaptureRuntimeAction::Reconcile,
+        (true, true, true, false, false) => LiveCaptureRuntimeAction::Restart,
         _ => LiveCaptureRuntimeAction::Unchanged,
     }
 }
@@ -802,6 +813,9 @@ impl AppSettings {
             }];
         }
         self.normalize_capture_microphones();
+        if let Some(value) = patch.merge_microphone_inputs {
+            self.merge_microphone_inputs = value;
+        }
         if let Some(value) = patch.save_root {
             self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
@@ -960,6 +974,7 @@ impl Default for AppSettings {
             selected_microphone_label: "System Default".to_string(),
             microphone_priority: default_microphone_priority(),
             capture_microphones: default_capture_microphones(),
+            merge_microphone_inputs: default_merge_microphone_inputs(),
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,

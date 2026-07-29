@@ -152,6 +152,33 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({ launch_at_login: true });
   });
 
+  it("keeps merged microphone input on by default and patches the exact key", async () => {
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "input-1-wired", label: "Wired" },
+      { id: "input-2-wireless", label: "Wireless" },
+    ];
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const mergeSwitch = screen.getByRole("switch", {
+      name: "Merge microphone inputs",
+    });
+    expect(mergeSwitch.getAttribute("aria-checked")).toBe("true");
+
+    await userEvent.click(mergeSwitch);
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      merge_microphone_inputs: false,
+    });
+  });
+
   it("preserves the Save Root patch key", () => {
     const actions = makeActions();
     render(

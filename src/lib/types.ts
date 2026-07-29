@@ -67,6 +67,7 @@ export interface AppSettings {
   selected_microphone_label: string;
   microphone_priority: MicrophonePriorityEntry[];
   capture_microphones: CaptureMicrophoneEntry[];
+  merge_microphone_inputs: boolean;
   save_root: string;
   save_root_confirmed: boolean;
   audio_format: AudioFormat;

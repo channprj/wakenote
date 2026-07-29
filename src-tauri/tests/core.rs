@@ -375,6 +375,7 @@ fn default_settings_seed_microphone_priority_with_system_default() {
 fn default_settings_seed_one_system_default_capture_microphone() {
     let settings = AppSettings::default();
 
+    assert!(settings.merge_microphone_inputs);
     assert_eq!(
         settings.capture_microphones,
         vec![CaptureMicrophoneEntry {
@@ -382,6 +383,19 @@ fn default_settings_seed_one_system_default_capture_microphone() {
             label: "System Default".to_string(),
         }],
     );
+}
+
+#[test]
+fn legacy_settings_without_merge_microphone_inputs_default_on() {
+    let mut value = serde_json::to_value(AppSettings::default()).expect("settings json");
+    value
+        .as_object_mut()
+        .expect("settings object")
+        .remove("merge_microphone_inputs");
+
+    let settings: AppSettings = serde_json::from_value(value).expect("legacy settings");
+
+    assert!(settings.merge_microphone_inputs);
 }
 
 #[test]
@@ -640,6 +654,34 @@ fn capture_microphone_patch_reconciles_live_capture_slots() {
                         label: "Wireless".to_string(),
                     },
                 ]),
+                ..SettingsPatch::default()
+            },
+        ),
+        LiveCaptureRuntimeAction::Reconcile,
+    );
+}
+
+#[test]
+fn merge_microphone_input_patch_reconciles_live_capture_slots() {
+    let active = AppSettings {
+        capture_microphones: vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+            },
+        ],
+        ..AppSettings::default()
+    };
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(
+            &active,
+            &SettingsPatch {
+                merge_microphone_inputs: Some(false),
                 ..SettingsPatch::default()
             },
         ),

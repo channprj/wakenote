@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultSettings,
   deriveProductMode,
   deriveTrayState,
   mockModels,
@@ -10,6 +11,10 @@ import {
 } from "./app-state";
 
 describe("app state derivation", () => {
+  it("merges two microphone inputs by default", () => {
+    expect(defaultSettings().merge_microphone_inputs).toBe(true);
+  });
+
   it("maps independent recording/transcription toggles to PRD product modes", () => {
     expect(
       deriveProductMode({ recording_enabled: true, transcription_enabled: true, pause_all: false }),

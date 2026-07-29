@@ -132,6 +132,14 @@ export function AudioSettings({
             actions.onPatch({ capture_microphones })
           }
         />
+        <SettingSwitch
+          label="Merge microphone inputs"
+          description="Combine Primary and Secondary into one recording and transcription."
+          checked={settings.merge_microphone_inputs}
+          onCheckedChange={(merge_microphone_inputs) =>
+            actions.onPatch({ merge_microphone_inputs })
+          }
+        />
         <MicrophoneStatusRows settings={settings} status={status} />
         {availability.warning ? (
           <Alert

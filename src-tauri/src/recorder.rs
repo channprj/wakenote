@@ -7,7 +7,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::settings::{AppSettings, AudioFormat, MicrophoneSlot, clamp_audio_bitrate_kbps};
+use crate::settings::{
+    AppSettings, AudioFormat, CaptureMicrophoneEntry, MicrophoneSlot, clamp_audio_bitrate_kbps,
+};
 use crate::storage::{OutputTarget, next_available_output};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +66,8 @@ pub struct ChunkMetadata {
     pub source_label: Option<String>,
     #[serde(default)]
     pub microphone_slot: Option<MicrophoneSlot>,
+    #[serde(default)]
+    pub microphone_inputs: Vec<CaptureMicrophoneEntry>,
     /// Wall-clock time transcription last ran for this chunk (success or failure).
     /// Recorded for debugging clock/latency issues and is absent until the chunk
     /// has been transcribed; `#[serde(default)]` keeps older sidecars loading.
@@ -193,6 +197,13 @@ impl Recorder {
                 request.source,
                 request.source_label,
             ),
+            microphone_inputs: if request.source == ChunkSource::Microphone
+                && request.source_label == Some("mic-merged")
+            {
+                request.settings.capture_microphones.clone()
+            } else {
+                Vec::new()
+            },
             transcribed_at: None,
         };
         write_metadata(&target.metadata_path, &metadata)?;
@@ -443,6 +454,7 @@ mod tests {
             source,
             source_label,
             microphone_slot: None,
+            microphone_inputs: Vec::new(),
             transcribed_at: None,
         }
     }
