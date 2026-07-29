@@ -181,20 +181,14 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             Ok(transcript) => {
                 let suppress_artifacts = self.suppress_low_confidence_transcripts
                     && should_apply_artifact_suppression(&chunk);
-                let transcript = if suppress_artifacts {
-                    if let Some(reason) = transcript_artifact_reason(&transcript) {
-                        eprintln!(
-                            "[wakenote] transcription: suppressed artifact reason={} path={}",
-                            reason.code(),
-                            job.audio_path.display()
-                        );
-                        String::new()
-                    } else {
-                        transcript
-                    }
-                } else {
-                    transcript
-                };
+                if suppress_artifacts && let Some(reason) = transcript_artifact_reason(&transcript)
+                {
+                    eprintln!(
+                        "[wakenote] transcription: flagged artifact reason={} path={}; preserving archival transcript",
+                        reason.code(),
+                        job.audio_path.display()
+                    );
+                }
                 TranscriptionSidecar::write_success(&chunk, &transcript)?;
                 Ok(TranscriptionJobOutcome::completed(job.id))
             }

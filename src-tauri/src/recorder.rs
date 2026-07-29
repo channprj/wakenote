@@ -73,6 +73,10 @@ pub struct ChunkMetadata {
     /// has been transcribed; `#[serde(default)]` keeps older sidecars loading.
     #[serde(default)]
     pub transcribed_at: Option<DateTime<Utc>>,
+    /// The archival transcript. This duplicates the human-readable `.txt`
+    /// sidecar intentionally so each JSON record remains self-contained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_text: Option<String>,
 }
 
 #[derive(Debug)]
@@ -205,6 +209,7 @@ impl Recorder {
                 Vec::new()
             },
             transcribed_at: None,
+            transcript_text: None,
         };
         write_metadata(&target.metadata_path, &metadata)?;
 
@@ -241,7 +246,11 @@ impl TranscriptionSidecar {
         if chunk.error_path.exists() {
             fs::remove_file(&chunk.error_path)?;
         }
-        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Completed)
+        update_metadata_status_if_present(
+            &chunk.metadata_path,
+            TranscriptionStatus::Completed,
+            Some(transcript),
+        )
     }
 
     pub fn write_error(chunk: &RecordedChunk, error: &str) -> Result<(), RecorderError> {
@@ -249,13 +258,13 @@ impl TranscriptionSidecar {
         if chunk.transcript_path.exists() {
             fs::remove_file(&chunk.transcript_path)?;
         }
-        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Failed)
+        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Failed, None)
     }
 
     pub fn reset_for_regenerate(chunk: &RecordedChunk) -> Result<(), RecorderError> {
         remove_file_if_present(&chunk.transcript_path)?;
         remove_file_if_present(&chunk.error_path)?;
-        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Queued)
+        update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Queued, None)
     }
 }
 
@@ -402,7 +411,11 @@ fn remove_file_if_present(path: &Path) -> Result<(), RecorderError> {
     }
 }
 
-fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<(), RecorderError> {
+fn update_metadata_status(
+    path: &Path,
+    status: TranscriptionStatus,
+    transcript: Option<&str>,
+) -> Result<(), RecorderError> {
     let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
     // Stamp when transcription actually ran (success or failure); clear it when a
     // chunk is requeued so a regenerated transcript gets a fresh timestamp.
@@ -411,15 +424,17 @@ fn update_metadata_status(path: &Path, status: TranscriptionStatus) -> Result<()
         TranscriptionStatus::Queued | TranscriptionStatus::NotRequested => None,
     };
     metadata.transcription_status = status;
+    metadata.transcript_text = transcript.map(str::to_string);
     write_metadata(path, &metadata)
 }
 
 fn update_metadata_status_if_present(
     path: &Path,
     status: TranscriptionStatus,
+    transcript: Option<&str>,
 ) -> Result<(), RecorderError> {
     if path.exists() {
-        update_metadata_status(path, status)?;
+        update_metadata_status(path, status, transcript)?;
     }
     Ok(())
 }
@@ -456,6 +471,7 @@ mod tests {
             microphone_slot: None,
             microphone_inputs: Vec::new(),
             transcribed_at: None,
+            transcript_text: None,
         }
     }
 
@@ -514,6 +530,7 @@ mod tests {
         assert_eq!(meta.attack_ms, 0);
         assert_eq!(meta.lead_in_padding_ms, 0);
         assert_eq!(meta.transcribed_at, None);
+        assert_eq!(meta.transcript_text, None);
     }
 
     fn seeded_chunk(tmp: &tempfile::TempDir, status: TranscriptionStatus) -> RecordedChunk {
@@ -536,6 +553,7 @@ mod tests {
         let stored: ChunkMetadata =
             serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
         assert_eq!(stored.transcription_status, TranscriptionStatus::Completed);
+        assert_eq!(stored.transcript_text.as_deref(), Some("hello"));
         let transcribed_at = stored.transcribed_at.expect("transcribed_at recorded");
         assert!(transcribed_at >= before && transcribed_at <= after);
     }
@@ -545,12 +563,14 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let chunk = seeded_chunk(&tmp, TranscriptionStatus::Queued);
 
+        TranscriptionSidecar::write_success(&chunk, "stale transcript").expect("seed success");
         TranscriptionSidecar::write_error(&chunk, "boom").expect("write error");
 
         let stored: ChunkMetadata =
             serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
         assert_eq!(stored.transcription_status, TranscriptionStatus::Failed);
         assert!(stored.transcribed_at.is_some());
+        assert_eq!(stored.transcript_text, None);
     }
 
     #[test]
@@ -560,6 +580,7 @@ mod tests {
         let mut meta = sample_metadata(ChunkSource::Microphone, None);
         meta.transcription_status = TranscriptionStatus::Completed;
         meta.transcribed_at = Some(Utc::now());
+        meta.transcript_text = Some("stale transcript".into());
         write_metadata(&chunk.metadata_path, &meta).expect("seed completed metadata");
 
         TranscriptionSidecar::reset_for_regenerate(&chunk).expect("reset");
@@ -568,5 +589,6 @@ mod tests {
             serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
         assert_eq!(stored.transcription_status, TranscriptionStatus::Queued);
         assert_eq!(stored.transcribed_at, None);
+        assert_eq!(stored.transcript_text, None);
     }
 }

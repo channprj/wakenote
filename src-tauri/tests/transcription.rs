@@ -74,7 +74,7 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
 }
 
 #[test]
-fn transcription_worker_suppresses_bracketed_artifact_transcripts() {
+fn transcription_worker_preserves_bracketed_artifact_transcripts_in_txt() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230710.wav");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
@@ -99,15 +99,13 @@ fn transcription_worker_suppresses_bracketed_artifact_transcripts() {
         QueueJobStatus::Completed
     );
     assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt"))
-            .expect("suppressed transcript")
-            .trim(),
-        ""
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("preserved transcript"),
+        "[감사합니다]\n"
     );
 }
 
 #[test]
-fn transcription_worker_suppresses_degenerate_repetition() {
+fn transcription_worker_preserves_degenerate_repetition_in_txt() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230713.wav");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
@@ -133,10 +131,8 @@ fn transcription_worker_suppresses_degenerate_repetition() {
         QueueJobStatus::Completed
     );
     assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt"))
-            .expect("suppressed transcript")
-            .trim(),
-        ""
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("preserved transcript"),
+        format!("{transcript}\n")
     );
 }
 
@@ -192,6 +188,7 @@ fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
         duration_ms: 1000,
         transcription_status: TranscriptionStatus::Queued,
         transcribed_at: None,
+        transcript_text: None,
         app_version: "0.0.0".into(),
         used_fallback_device: false,
         live_capture_chunk_id: None,

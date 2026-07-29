@@ -2535,9 +2535,9 @@ fn accumulate_day_counts(parent: &Path, counts: &mut BTreeMap<String, usize>) {
 
 /// Counts transcript sidecars in a single day directory using file SIZE only
 /// (no content read). A sidecar counts when it is a non-`.error.txt` `.txt`
-/// larger than one byte. Empty/suppressed transcripts are written as a lone
-/// `"\n"` (one byte) by `write_text_sidecar`, so `len > 1` excludes them,
-/// keeping the count aligned with what the day view (which trims) renders.
+/// larger than one byte. Legacy empty/suppressed transcripts were written as
+/// a lone `"\n"` (one byte), so `len > 1` excludes those stubs and keeps the
+/// count aligned with what the day view (which trims) renders.
 ///
 /// Size comes from `stat`, which returns the logical size of an iCloud
 /// "dataless" (evicted) file WITHOUT downloading it. Reading content here would
@@ -2563,7 +2563,7 @@ fn count_transcript_sidecars(dir: &Path) -> usize {
 
 /// Whether a sidecar holds real content, judged from size alone so it works on
 /// iCloud dataless files without downloading them. One byte or less is the
-/// empty/suppressed `"\n"` stub and counts as contentless.
+/// legacy empty/suppressed `"\n"` stub and counts as contentless.
 fn sidecar_has_content(path: &Path) -> bool {
     fs::metadata(path)
         .map(|meta| meta.len() > 1)
@@ -3571,8 +3571,8 @@ mod tests {
 
     #[test]
     fn transcript_days_excludes_empty_sidecars_to_match_day_view() {
-        // Suppressed (low-confidence) transcripts are written as a lone "\n"
-        // (one byte) by `write_text_sidecar`. The size-based count must exclude
+        // Legacy suppressed (low-confidence) transcripts were written as a
+        // lone "\n" (one byte). The size-based count must continue to exclude
         // them, otherwise a day would look selectable but open to "No
         // transcripts for this day".
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -3632,6 +3632,7 @@ mod tests {
             microphone_slot: None,
             microphone_inputs: Vec::new(),
             transcribed_at: None,
+            transcript_text: None,
         };
         std::fs::write(
             audio_path.with_extension("json"),

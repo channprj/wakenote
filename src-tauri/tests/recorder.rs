@@ -190,6 +190,10 @@ fn transcription_sidecar_writes_txt_and_updates_metadata_on_success() {
         metadata.transcription_status,
         TranscriptionStatus::Completed
     );
+    assert_eq!(
+        metadata.transcript_text.as_deref(),
+        Some("안녕하세요 hello")
+    );
 }
 
 #[test]
