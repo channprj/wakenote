@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use wakenote::dictation::{
-    DictationAction, DictationRuntime, DictationStage, ModifierShortcut, ModifierShortcutRuntime,
-    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
-    prepare_dictation_audio, shortcut_registration_change, transcribe_dictation_recording,
-    validate_dictation_shortcut,
+    DictationAction, DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
+    ModifierShortcutRuntime, ShortcutRegistrationChange, candidate_dictation_settings,
+    modifier_shortcut, prepare_dictation_audio, shortcut_registration_change,
+    transcribe_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
@@ -80,7 +79,7 @@ fn shortcut_validation_rejects_unsafe_or_ambiguous_combinations() {
 }
 
 #[test]
-fn modifier_shortcut_triggers_once_per_complete_press_cycle() {
+fn modifier_shortcut_emits_one_press_and_release_per_exact_cycle() {
     assert!(
         modifier_shortcut("alt+d")
             .expect("valid keyed shortcut")
@@ -92,14 +91,34 @@ fn modifier_shortcut_triggers_once_per_complete_press_cycle() {
     let mut runtime = ModifierShortcutRuntime::default();
     runtime.register(chord).expect("shortcut registers");
 
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)));
-    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
-
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)));
-    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        Some(DictationShortcutEvent::Pressed)
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)),
+        Some(DictationShortcutEvent::Released)
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        Some(DictationShortcutEvent::Pressed)
+    );
 }
 
 #[test]
@@ -110,14 +129,32 @@ fn modifier_shortcut_requires_an_exact_chord_and_rearms_after_required_release()
     let mut runtime = ModifierShortcutRuntime::default();
     runtime.register(chord).expect("shortcut registers");
 
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, false, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(false, false, true, false)));
-    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, true, false, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(false, false, true, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        Some(DictationShortcutEvent::Pressed)
+    );
 
     runtime.unregister(chord);
-    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        None
+    );
 }
 
 #[test]
@@ -165,26 +202,29 @@ fn backend_parses_every_main_key_emitted_by_the_frontend_capture_helper() {
 }
 
 #[test]
-fn toggle_state_machine_debounces_repeat_and_ignores_transcribing_presses() {
+fn hold_to_talk_stops_only_on_release() {
     let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
-    let started_at = Instant::now();
 
     assert_eq!(
-        runtime.handle_press_at(started_at),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
     assert_eq!(runtime.stage(), DictationStage::Recording);
     assert_eq!(
-        runtime.handle_press_at(started_at + Duration::from_millis(299)),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::Ignore
     );
     assert_eq!(
-        runtime.handle_press_at(started_at + Duration::from_millis(600)),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
         DictationAction::StopAndTranscribe
     );
     assert_eq!(runtime.stage(), DictationStage::Transcribing);
     assert_eq!(
-        runtime.handle_press_at(started_at + Duration::from_secs(1)),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::Ignore
+    );
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::Ignore
     );
 
@@ -202,9 +242,8 @@ fn dedicated_capture_collects_frames_until_stopped() {
     let mut runtime = DictationRuntime::new(FakeInput {
         frames: vec![frame],
     });
-    let started_at = Instant::now();
     assert_eq!(
-        runtime.handle_press_at(started_at),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
 
@@ -218,7 +257,7 @@ fn dedicated_capture_collects_frames_until_stopped() {
     assert!(recording_id > 0);
 
     assert_eq!(
-        runtime.handle_press_at(started_at + Duration::from_secs(1)),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
         DictationAction::StopAndTranscribe
     );
     let recording = runtime.stop_recording().expect("capture stops");
@@ -275,9 +314,8 @@ fn automatic_stop_only_finishes_the_matching_recording() {
     let mut runtime = DictationRuntime::new(FakeInput {
         frames: vec![frame],
     });
-    let started_at = Instant::now();
     assert_eq!(
-        runtime.handle_press_at(started_at),
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
     let recording_id = runtime

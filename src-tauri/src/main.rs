@@ -34,10 +34,10 @@ use wakenote::commands::{
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction, DictationRecording,
-    DictationRuntime, DictationStage, DictationStatePayload, ModifierShortcut,
-    ModifierShortcutRuntime, ShortcutRegistrationChange, candidate_dictation_settings,
-    modifier_shortcut, normalize_dictation_patch, shortcut_registration_change,
-    transcribe_dictation_recording, validate_dictation_shortcut,
+    DictationRuntime, DictationShortcutEvent, DictationStage, DictationStatePayload,
+    ModifierShortcut, ModifierShortcutRuntime, ShortcutRegistrationChange,
+    candidate_dictation_settings, modifier_shortcut, normalize_dictation_patch,
+    shortcut_registration_change, transcribe_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
@@ -792,11 +792,11 @@ fn handle_modifier_shortcut_event(
         flags.contains(CGEventFlags::MaskShift),
         flags.contains(CGEventFlags::MaskCommand),
     );
-    let should_trigger = runtime
+    let event = runtime
         .lock()
         .map(|mut runtime| runtime.handle_modifiers(pressed))
-        .unwrap_or(false);
-    if should_trigger {
+        .unwrap_or(None);
+    if event == Some(DictationShortcutEvent::Pressed) {
         if let Some(settings) = app
             .try_state::<BackendState>()
             .and_then(|state| state.lock().ok().map(|backend| backend.settings()))

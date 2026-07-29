@@ -23,6 +23,7 @@ pub enum DictationStage {
     Idle,
     Recording,
     Transcribing,
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -36,6 +37,12 @@ pub enum DictationAction {
     StartRecording,
     StopAndTranscribe,
     Ignore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictationShortcutEvent {
+    Pressed,
+    Released,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +80,7 @@ impl ModifierShortcut {
 pub struct ModifierShortcutRuntime {
     shortcut: Option<ModifierShortcut>,
     latched: bool,
+    active: bool,
 }
 
 impl ModifierShortcutRuntime {
@@ -82,6 +90,7 @@ impl ModifierShortcutRuntime {
         }
         self.shortcut = Some(shortcut);
         self.latched = true;
+        self.active = false;
         Ok(())
     }
 
@@ -89,6 +98,7 @@ impl ModifierShortcutRuntime {
         if self.shortcut == Some(shortcut) {
             self.shortcut = None;
             self.latched = false;
+            self.active = false;
         }
     }
 
@@ -96,19 +106,34 @@ impl ModifierShortcutRuntime {
         self.shortcut == Some(shortcut)
     }
 
-    pub fn handle_modifiers(&mut self, pressed: ModifierShortcut) -> bool {
+    pub fn handle_modifiers(
+        &mut self,
+        pressed: ModifierShortcut,
+    ) -> Option<DictationShortcutEvent> {
         let Some(shortcut) = self.shortcut else {
-            return false;
+            return None;
+        };
+        if self.active {
+            if pressed == shortcut {
+                return None;
+            }
+            self.active = false;
+            self.latched = true;
+            return Some(DictationShortcutEvent::Released);
         };
         if !pressed.contains(shortcut) {
             self.latched = false;
-            return false;
+            return None;
         }
         if self.latched {
-            return false;
+            return None;
         }
         self.latched = true;
-        pressed == shortcut
+        if pressed != shortcut {
+            return None;
+        }
+        self.active = true;
+        Some(DictationShortcutEvent::Pressed)
     }
 }
 
@@ -161,6 +186,21 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 DictationAction::StopAndTranscribe
             }
             DictationStage::Transcribing => DictationAction::Ignore,
+            DictationStage::Error => DictationAction::Ignore,
+        }
+    }
+
+    pub fn handle_shortcut_event(&mut self, event: DictationShortcutEvent) -> DictationAction {
+        match (self.stage, event) {
+            (DictationStage::Idle, DictationShortcutEvent::Pressed) => {
+                self.stage = DictationStage::Recording;
+                DictationAction::StartRecording
+            }
+            (DictationStage::Recording, DictationShortcutEvent::Released) => {
+                self.stage = DictationStage::Transcribing;
+                DictationAction::StopAndTranscribe
+            }
+            _ => DictationAction::Ignore,
         }
     }
 
@@ -240,6 +280,24 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         if let Ok(mut samples) = self.samples.lock() {
             samples.clear();
         }
+    }
+
+    pub fn fail(&mut self) {
+        self.capture.stop();
+        self.stage = DictationStage::Error;
+        self.sample_rate = None;
+        self.active_recording_id = None;
+        if let Ok(mut samples) = self.samples.lock() {
+            samples.clear();
+        }
+    }
+
+    pub fn reset_error(&mut self) -> bool {
+        if self.stage != DictationStage::Error {
+            return false;
+        }
+        self.stage = DictationStage::Idle;
+        true
     }
 }
 
