@@ -75,6 +75,50 @@ fn shortcut_validation_rejects_unsafe_or_ambiguous_combinations() {
 }
 
 #[test]
+fn backend_parses_every_main_key_emitted_by_the_frontend_capture_helper() {
+    let mut main_keys = (b'a'..=b'z')
+        .map(|value| char::from(value).to_string())
+        .chain((b'0'..=b'9').map(|value| char::from(value).to_string()))
+        .chain((1..=24).map(|value| format!("f{value}")))
+        .collect::<Vec<_>>();
+    main_keys.extend(
+        [
+            "space",
+            "enter",
+            "tab",
+            "backspace",
+            "delete",
+            "arrowup",
+            "arrowdown",
+            "arrowleft",
+            "arrowright",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+        ]
+        .map(str::to_string),
+    );
+
+    for main_key in main_keys {
+        let function_key = main_key
+            .strip_prefix('f')
+            .and_then(|value| value.parse::<u8>().ok())
+            .is_some_and(|value| (1..=24).contains(&value));
+        let shortcut = if function_key {
+            main_key.clone()
+        } else {
+            format!("alt+{main_key}")
+        };
+        assert_eq!(
+            validate_dictation_shortcut(&shortcut).as_deref(),
+            Ok(shortcut.as_str()),
+            "{shortcut} should parse"
+        );
+    }
+}
+
+#[test]
 fn toggle_state_machine_debounces_repeat_and_ignores_transcribing_presses() {
     let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
     let started_at = Instant::now();

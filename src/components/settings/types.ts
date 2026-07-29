@@ -1,7 +1,9 @@
 import type { AppSettings } from "@/lib/types";
 
 export interface SettingsActions {
-  onPatch: (patch: Partial<AppSettings>) => void;
+  onPatch: (patch: Partial<AppSettings>) => void | Promise<void>;
+  onSuspendDictationShortcut: () => void | Promise<void>;
+  onResumeDictationShortcut: () => void | Promise<void>;
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;

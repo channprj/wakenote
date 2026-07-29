@@ -52,6 +52,8 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
       snapshot={snapshot}
       actions={{
         onPatch: () => {},
+        onSuspendDictationShortcut: () => {},
+        onResumeDictationShortcut: () => {},
         onChooseSaveRoot: () => {},
         onRevealSaveFolder: () => {},
         onChooseModelDirectory: () => {},

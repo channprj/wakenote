@@ -5,6 +5,7 @@ import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
 import type { AppSnapshot } from "@/lib/types";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { AudioSettings } from "./AudioSettings";
+import { DictationSettings } from "./DictationSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { IntegrationsSettings } from "./IntegrationsSettings";
 import { ModelsSettings } from "./ModelsSettings";
@@ -36,7 +37,7 @@ export function SettingsPage({
       <PageHeader
         eyebrow="Application"
         title="Settings"
-        description="Configure capture, models, storage, and integrations."
+        description="Configure capture, dictation, models, storage, and integrations."
       />
       <Tabs
         value={section}
@@ -78,6 +79,8 @@ export function SettingsSectionContent({
       return <GeneralSettings settings={snapshot.settings} onPatch={actions.onPatch} />;
     case "audio":
       return <AudioSettings snapshot={snapshot} actions={actions} />;
+    case "dictation":
+      return <DictationSettings settings={snapshot.settings} actions={actions} />;
     case "models":
       return <ModelsSettings snapshot={snapshot} actions={actions} />;
     case "storage":

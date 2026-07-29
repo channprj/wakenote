@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { normalizeDictationShortcut } from "./dictation-shortcut";
 import { formatLocalTimestamp } from "./transcript-history";
 import {
   applyListVisibilityRequest,
@@ -86,6 +87,18 @@ function permissionSnapshotFromBrowser(): AppPermissions {
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
+}
+
+export async function suspendDictationShortcut(): Promise<void> {
+  if (isTauriRuntime()) {
+    await invoke("suspend_dictation_shortcut");
+  }
+}
+
+export async function resumeDictationShortcut(): Promise<void> {
+  if (isTauriRuntime()) {
+    await invoke("resume_dictation_shortcut");
+  }
 }
 
 /**
@@ -464,11 +477,9 @@ export async function saveSettingsPatch(
       );
     }
     if (typeof safePatch.dictation_shortcut === "string") {
-      const normalized = safePatch.dictation_shortcut.trim().toLowerCase();
-      safePatch.dictation_shortcut =
-        normalized.length > 0
-          ? normalized
-          : defaultSettings().dictation_shortcut;
+      safePatch.dictation_shortcut = normalizeDictationShortcut(
+        safePatch.dictation_shortcut,
+      );
     }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (

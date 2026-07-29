@@ -8,6 +8,8 @@ import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
   onPatch: vi.fn(),
+  onSuspendDictationShortcut: vi.fn(),
+  onResumeDictationShortcut: vi.fn(),
   onChooseSaveRoot: vi.fn(),
   onRevealSaveFolder: vi.fn(),
   onChooseModelDirectory: vi.fn(),
@@ -59,6 +61,16 @@ describe("SettingsPage ownership", () => {
     expect(renderSection("storage")).toContain("Save Root");
   });
 
+  it("keeps shortcut dictation in its own settings section", () => {
+    const markup = renderSection("dictation");
+
+    expect(markup).toContain("Shortcut dictation");
+    expect(markup).toContain("Enable shortcut dictation");
+    expect(markup).toContain("Dictation shortcut");
+    expect(markup).toContain("Dictation language");
+    expect(markup).toContain("Auto-detect");
+  });
+
   it("keeps external behavior in Integrations and expert controls in Advanced", () => {
     const integrations = renderSection("integrations");
     const advanced = renderSection("advanced");
@@ -69,12 +81,13 @@ describe("SettingsPage ownership", () => {
     expect(advanced).not.toContain("OpenRouter");
   });
 
-  it("renders six compact settings tabs without Library", () => {
+  it("renders seven compact settings tabs without Library", () => {
     const markup = renderSection("general");
 
     for (const label of [
       "General",
       "Audio",
+      "Dictation",
       "Models",
       "Storage",
       "Integrations",
@@ -93,6 +106,7 @@ describe("SettingsPage balanced masonry", () => {
     ["storage", "3"],
     ["integrations", "3"],
     ["audio", "3"],
+    ["dictation", "1"],
   ] as const)(
     "caps the %s grid by its rendered card count",
     (section, maxColumns) => {

@@ -707,6 +707,31 @@ fn unregister_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), Strin
         .map_err(|error| format!("could not unregister dictation shortcut '{normalized}': {error}"))
 }
 
+#[tauri::command]
+fn suspend_dictation_shortcut(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> Result<(), String> {
+    let settings = state.lock().map_err(|error| error.to_string())?.settings();
+    if settings.dictation_enabled {
+        unregister_dictation_shortcut(&app, &settings.dictation_shortcut)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn resume_dictation_shortcut(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
+    let settings = state.lock().map_err(|error| error.to_string())?.settings();
+    if !settings.dictation_enabled {
+        return Ok(());
+    }
+    let (_, shortcut) = parse_dictation_shortcut(&settings.dictation_shortcut)?;
+    if app.global_shortcut().is_registered(shortcut) {
+        return Ok(());
+    }
+    register_dictation_shortcut(&app, &settings.dictation_shortcut)
+}
+
 fn reconcile_dictation_shortcut_registration(
     app: &AppHandle,
     previous: &AppSettings,
@@ -4843,6 +4868,8 @@ fn main() {
             overlay_caption_snapshot,
             debug_show_overlay_caption,
             debug_hide_overlay_caption,
+            suspend_dictation_shortcut,
+            resume_dictation_shortcut,
             update_settings,
             app_status,
             list_microphones,

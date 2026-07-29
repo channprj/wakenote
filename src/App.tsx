@@ -34,6 +34,7 @@ import {
   requestMicrophonePermission,
   openMicrophonePermissionSettings,
   requestScreenRecordingPermission,
+  resumeDictationShortcut,
   openScreenRecordingSettings,
   processNextTranscription,
   retryJob,
@@ -42,6 +43,7 @@ import {
   skipJob,
   startLiveCapture,
   stopLiveCapture,
+  suspendDictationShortcut,
   deleteOpenRouterApiKey,
   verifyModel,
 } from "./lib/tauri-client";
@@ -503,7 +505,9 @@ export default function App() {
         onSectionChange={setActiveSettingsSection}
         snapshot={snapshot}
         actions={{
-          onPatch: (patch) => void patchSettings(patch),
+          onPatch: patchSettings,
+          onSuspendDictationShortcut: suspendDictationShortcut,
+          onResumeDictationShortcut: resumeDictationShortcut,
           onChooseSaveRoot: () => void runAction(chooseSaveRoot),
           onRevealSaveFolder: () => void runAction(revealSaveFolder),
           onChooseModelDirectory: () => void runAction(chooseModelDirectory),

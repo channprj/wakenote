@@ -9,6 +9,7 @@ export type PrimaryRoute =
 export type SettingsSection =
   | "general"
   | "audio"
+  | "dictation"
   | "models"
   | "storage"
   | "integrations"
@@ -28,6 +29,7 @@ export const PRIMARY_NAV = [
 export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "audio", label: "Audio" },
+  { id: "dictation", label: "Dictation" },
   { id: "models", label: "Models" },
   { id: "storage", label: "Storage" },
   { id: "integrations", label: "Integrations" },

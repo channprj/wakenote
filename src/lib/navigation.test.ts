@@ -18,6 +18,7 @@ describe("navigation", () => {
     expect(SETTINGS_SECTIONS.map((item) => item.id)).toEqual([
       "general",
       "audio",
+      "dictation",
       "models",
       "storage",
       "integrations",

@@ -91,12 +91,24 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
-  it("normalizes browser fallback dictation shortcut patches like the backend", async () => {
-    const normalized = await saveSettingsPatch({ dictation_shortcut: "  Ctrl+Alt+D  " });
-    expect(normalized.settings.dictation_shortcut).toBe("ctrl+alt+d");
+  it("validates browser fallback dictation shortcut patches like the backend", async () => {
+    const normalized = await saveSettingsPatch({
+      dictation_shortcut: " Command + Alt + D ",
+    });
+    expect(normalized.settings.dictation_shortcut).toBe("alt+cmd+d");
 
-    const blank = await saveSettingsPatch({ dictation_shortcut: "   " });
-    expect(blank.settings.dictation_shortcut).toBe("alt+space");
+    await expect(
+      saveSettingsPatch({ dictation_shortcut: "   " }),
+    ).rejects.toThrow("cannot be empty");
+    await expect(
+      saveSettingsPatch({ dictation_shortcut: "space" }),
+    ).rejects.toThrow("must include a modifier");
+
+    const unchanged = await loadSnapshot();
+    expect(unchanged.settings.dictation_shortcut).toBe("alt+cmd+d");
+
+    const canonical = await saveSettingsPatch({ dictation_shortcut: "  Ctrl+Alt+D  " });
+    expect(canonical.settings.dictation_shortcut).toBe("ctrl+alt+d");
 
     const enabled = await saveSettingsPatch({
       dictation_enabled: true,

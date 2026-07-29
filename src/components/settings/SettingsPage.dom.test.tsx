@@ -85,6 +85,8 @@ function directSettingsCards(grid: HTMLElement): HTMLElement[] {
 function makeActions(): SettingsActions {
   return {
     onPatch: vi.fn(),
+    onSuspendDictationShortcut: vi.fn(),
+    onResumeDictationShortcut: vi.fn(),
     onChooseSaveRoot: vi.fn(),
     onRevealSaveFolder: vi.fn(),
     onChooseModelDirectory: vi.fn(),
@@ -100,6 +102,122 @@ function makeActions(): SettingsActions {
 }
 
 describe("SettingsPage interactions", () => {
+  it("keeps dictation controls unavailable until shortcut dictation is enabled", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={mockSnapshot()}
+        actions={actions}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole("button", { name: "Dictation shortcut" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("combobox", { name: "Dictation language" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    await user.click(
+      screen.getByRole("switch", { name: "Enable shortcut dictation" }),
+    );
+
+    expect(actions.onPatch).toHaveBeenCalledWith({ dictation_enabled: true });
+  });
+
+  it("suspends the active shortcut while capturing a physical key combination", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    await user.click(shortcut);
+    expect(actions.onSuspendDictationShortcut).toHaveBeenCalledOnce();
+
+    fireEvent.keyDown(shortcut, {
+      code: "KeyD",
+      key: "∂",
+      altKey: true,
+    });
+    fireEvent.keyDown(shortcut, {
+      code: "KeyD",
+      key: "∂",
+      altKey: true,
+      repeat: true,
+    });
+
+    expect(actions.onPatch).toHaveBeenCalledOnce();
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_shortcut: "alt+d",
+    });
+    await act(async () => {});
+    expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
+  it("restores the active shortcut when key capture is cancelled", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    await user.click(shortcut);
+    fireEvent.keyDown(shortcut, { code: "Escape", key: "Escape" });
+
+    expect(actions.onPatch).not.toHaveBeenCalled();
+    expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
+  it("restores the active shortcut when the dictation settings unmount", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+    const view = render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Dictation shortcut" }),
+    );
+    view.unmount();
+    await act(async () => {});
+
+    expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
   it("keeps a controlled active tab visible inside the compact tab scroller", () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
