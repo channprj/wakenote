@@ -33,10 +33,12 @@ describe("dictation shortcut helpers", () => {
     );
   });
 
-  it("rejects unsupported, modifier-only, and unmodified non-function shortcuts", () => {
+  it("accepts two-modifier shortcuts and rejects unsafe combinations", () => {
+    expect(normalizeDictationShortcut(" Shift + Control ")).toBe("ctrl+shift");
+
     for (const shortcut of [
       "",
-      "ctrl+shift",
+      "ctrl",
       "space",
       "fn+space",
       "ctrl+a+b",
@@ -69,11 +71,24 @@ describe("dictation shortcut helpers", () => {
     ).toBeNull();
   });
 
+  it("captures a modifier-only chord when the second modifier is pressed", () => {
+    expect(
+      dictationShortcutFromKeyboardEvent(
+        keyEvent("ShiftLeft", {
+          key: "Shift",
+          ctrlKey: true,
+          shiftKey: true,
+        }),
+      ),
+    ).toBe("ctrl+shift");
+  });
+
   it("formats canonical shortcuts for people", () => {
     expect(formatDictationShortcut("ctrl+alt+shift+cmd+d")).toBe(
       "Control + Option + Shift + Command + D",
     );
     expect(formatDictationShortcut("alt+space")).toBe("Option + Space");
+    expect(formatDictationShortcut("ctrl+shift")).toBe("Control + Shift");
   });
 
   it("emits only canonical shortcuts accepted by its own validator", () => {

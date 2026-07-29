@@ -153,20 +153,27 @@ describe("SettingsPage interactions", () => {
     expect(actions.onSuspendDictationShortcut).toHaveBeenCalledOnce();
 
     fireEvent.keyDown(shortcut, {
-      code: "KeyD",
-      key: "∂",
-      altKey: true,
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
     });
     fireEvent.keyDown(shortcut, {
-      code: "KeyD",
-      key: "∂",
-      altKey: true,
+      code: "ShiftLeft",
+      key: "Shift",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    fireEvent.keyDown(shortcut, {
+      code: "ShiftLeft",
+      key: "Shift",
+      ctrlKey: true,
+      shiftKey: true,
       repeat: true,
     });
 
     expect(actions.onPatch).toHaveBeenCalledOnce();
     expect(actions.onPatch).toHaveBeenCalledWith({
-      dictation_shortcut: "alt+d",
+      dictation_shortcut: "ctrl+shift",
     });
     await act(async () => {});
     expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();

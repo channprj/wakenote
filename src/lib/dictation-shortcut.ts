@@ -87,6 +87,11 @@ export function normalizeDictationShortcut(raw: string): string {
       mainKeys.push(part);
     }
   }
+  if (mainKeys.length === 0 && modifiers.size >= 2) {
+    return MODIFIER_ORDER.filter((modifier) => modifiers.has(modifier)).join(
+      "+",
+    );
+  }
   if (mainKeys.length !== 1) {
     throw new Error("Dictation shortcut must contain exactly one main key");
   }
@@ -116,7 +121,7 @@ export function dictationShortcutFromKeyboardEvent(
   event: DictationShortcutKeyEvent,
 ): string | null {
   const mainKey = mainKeyFromCode(event.code);
-  if (!mainKey) {
+  if (!mainKey && !isModifierCode(event.code)) {
     return null;
   }
   const parts = [
@@ -124,7 +129,7 @@ export function dictationShortcutFromKeyboardEvent(
     event.altKey ? "alt" : null,
     event.shiftKey ? "shift" : null,
     event.metaKey ? "cmd" : null,
-    mainKey,
+    mainKey ?? null,
   ].filter((part): part is string => Boolean(part));
   try {
     return normalizeDictationShortcut(parts.join("+"));
@@ -157,6 +162,10 @@ export function formatDictationShortcut(shortcut: string): string {
     .split("+")
     .map((part) => labels[part] ?? part.toUpperCase())
     .join(" + ");
+}
+
+function isModifierCode(code: string): boolean {
+  return /^(?:Control|Alt|Shift|Meta)(?:Left|Right)$/.test(code);
 }
 
 function mainKeyFromCode(code: string): string | null {

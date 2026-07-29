@@ -46,6 +46,72 @@ pub enum ShortcutRegistrationChange {
     Replace { previous: String, next: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModifierShortcut(u8);
+
+impl ModifierShortcut {
+    const CONTROL: u8 = 1 << 0;
+    const ALT: u8 = 1 << 1;
+    const SHIFT: u8 = 1 << 2;
+    const COMMAND: u8 = 1 << 3;
+
+    pub const fn new(control: bool, alt: bool, shift: bool, command: bool) -> Self {
+        Self(
+            (if control { Self::CONTROL } else { 0 })
+                | (if alt { Self::ALT } else { 0 })
+                | (if shift { Self::SHIFT } else { 0 })
+                | (if command { Self::COMMAND } else { 0 }),
+        )
+    }
+
+    fn contains(self, required: Self) -> bool {
+        self.0 & required.0 == required.0
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ModifierShortcutRuntime {
+    shortcut: Option<ModifierShortcut>,
+    latched: bool,
+}
+
+impl ModifierShortcutRuntime {
+    pub fn register(&mut self, shortcut: ModifierShortcut) -> Result<(), String> {
+        if self.shortcut.is_some() {
+            return Err("a modifier-only dictation shortcut is already registered".to_string());
+        }
+        self.shortcut = Some(shortcut);
+        self.latched = true;
+        Ok(())
+    }
+
+    pub fn unregister(&mut self, shortcut: ModifierShortcut) {
+        if self.shortcut == Some(shortcut) {
+            self.shortcut = None;
+            self.latched = false;
+        }
+    }
+
+    pub fn is_registered(&self, shortcut: ModifierShortcut) -> bool {
+        self.shortcut == Some(shortcut)
+    }
+
+    pub fn handle_modifiers(&mut self, pressed: ModifierShortcut) -> bool {
+        let Some(shortcut) = self.shortcut else {
+            return false;
+        };
+        if !pressed.contains(shortcut) {
+            self.latched = false;
+            return false;
+        }
+        if self.latched {
+            return false;
+        }
+        self.latched = true;
+        pressed == shortcut
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictationRecording {
     pub samples: Vec<f32>,
@@ -217,27 +283,51 @@ pub fn normalize_dictation_patch(patch: &mut SettingsPatch) -> Result<(), String
 }
 
 pub fn validate_dictation_shortcut(raw: &str) -> Result<String, String> {
-    let normalized = raw
+    let parts = raw
         .split('+')
         .map(|part| part.trim().to_lowercase())
         .collect::<Vec<_>>();
-    if normalized.is_empty() || normalized.iter().any(String::is_empty) {
+    if parts.is_empty() || parts.iter().any(String::is_empty) {
         return Err("dictation shortcut cannot be empty".to_string());
     }
 
-    let modifiers = [
-        "ctrl", "control", "alt", "option", "shift", "cmd", "command", "meta", "super",
-    ];
-    if normalized
+    if parts
         .iter()
         .any(|part| matches!(part.as_str(), "fn" | "function"))
     {
         return Err("the fn key is not supported for dictation shortcuts".to_string());
     }
-    let main_keys = normalized
-        .iter()
-        .filter(|part| !modifiers.contains(&part.as_str()))
-        .collect::<Vec<_>>();
+
+    let mut modifiers = Vec::new();
+    let mut main_keys = Vec::new();
+    for part in parts {
+        let modifier = match part.as_str() {
+            "ctrl" | "control" => Some("ctrl"),
+            "alt" | "option" => Some("alt"),
+            "shift" => Some("shift"),
+            "cmd" | "command" | "meta" | "super" => Some("cmd"),
+            _ => None,
+        };
+        if let Some(modifier) = modifier {
+            if modifiers.contains(&modifier) {
+                return Err(format!("duplicate dictation shortcut modifier: {modifier}"));
+            }
+            modifiers.push(modifier);
+        } else {
+            main_keys.push(part);
+        }
+    }
+    modifiers.sort_by_key(|modifier| match *modifier {
+        "ctrl" => 0,
+        "alt" => 1,
+        "shift" => 2,
+        "cmd" => 3,
+        _ => unreachable!(),
+    });
+
+    if main_keys.is_empty() && modifiers.len() >= 2 {
+        return Ok(modifiers.join("+"));
+    }
     if main_keys.len() != 1 {
         return Err("dictation shortcut must contain exactly one main key".to_string());
     }
@@ -246,20 +336,38 @@ pub fn validate_dictation_shortcut(raw: &str) -> Result<String, String> {
         .strip_prefix('f')
         .and_then(|value| value.parse::<u8>().ok())
         .is_some_and(|value| (1..=24).contains(&value));
-    let has_modifier = normalized
-        .iter()
-        .any(|part| modifiers.contains(&part.as_str()));
-    if !has_modifier && !function_key {
+    if modifiers.is_empty() && !function_key {
         return Err(
             "dictation shortcut must include a modifier unless it uses an F-key".to_string(),
         );
     }
 
-    let normalized = normalized.join("+");
+    let normalized = modifiers
+        .into_iter()
+        .chain(std::iter::once(main_key))
+        .collect::<Vec<_>>()
+        .join("+");
     normalized
         .parse::<Shortcut>()
         .map_err(|error| format!("invalid dictation shortcut: {error}"))?;
     Ok(normalized)
+}
+
+pub fn modifier_shortcut(raw: &str) -> Result<Option<ModifierShortcut>, String> {
+    let normalized = validate_dictation_shortcut(raw)?;
+    if normalized
+        .split('+')
+        .any(|part| !matches!(part, "ctrl" | "alt" | "shift" | "cmd"))
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(ModifierShortcut::new(
+        normalized.split('+').any(|part| part == "ctrl"),
+        normalized.split('+').any(|part| part == "alt"),
+        normalized.split('+').any(|part| part == "shift"),
+        normalized.split('+').any(|part| part == "cmd"),
+    )))
 }
 
 pub fn prepare_dictation_audio(

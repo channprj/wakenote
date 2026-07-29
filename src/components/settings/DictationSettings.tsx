@@ -107,7 +107,7 @@ export function DictationSettings({
     const shortcut = dictationShortcutFromKeyboardEvent(event);
     if (!shortcut) {
       setShortcutError(
-        "Use a modifier with a supported key, or press an F-key.",
+        "Use two modifiers, a modifier with a supported key, or an F-key.",
       );
       return;
     }
@@ -149,7 +149,7 @@ export function DictationSettings({
             <FieldLabel>Dictation shortcut</FieldLabel>
             <FieldDescription>
               {shortcutError ??
-                "Click the shortcut, then press a modifier and key. F-keys work alone."}
+                "Press two modifiers, or a modifier and key. F-keys work alone."}
             </FieldDescription>
           </FieldContent>
           <Button

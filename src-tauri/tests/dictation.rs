@@ -4,9 +4,10 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use wakenote::dictation::{
-    DictationAction, DictationRuntime, DictationStage, ShortcutRegistrationChange,
-    candidate_dictation_settings, prepare_dictation_audio, shortcut_registration_change,
-    transcribe_dictation_recording, validate_dictation_shortcut,
+    DictationAction, DictationRuntime, DictationStage, ModifierShortcut, ModifierShortcutRuntime,
+    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
+    prepare_dictation_audio, shortcut_registration_change, transcribe_dictation_recording,
+    validate_dictation_shortcut,
 };
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
@@ -53,7 +54,7 @@ impl AudioInputBackend for FakeInput {
 }
 
 #[test]
-fn shortcut_validation_accepts_modified_keys_and_function_keys() {
+fn shortcut_validation_accepts_modified_keys_function_keys_and_modifier_chords() {
     assert_eq!(
         validate_dictation_shortcut("  Ctrl+Alt+D  ").expect("valid shortcut"),
         "ctrl+alt+d"
@@ -62,16 +63,61 @@ fn shortcut_validation_accepts_modified_keys_and_function_keys() {
         validate_dictation_shortcut("F8").expect("function key"),
         "f8"
     );
+    assert_eq!(
+        validate_dictation_shortcut(" Shift + Control ").expect("modifier chord"),
+        "ctrl+shift"
+    );
 }
 
 #[test]
 fn shortcut_validation_rejects_unsafe_or_ambiguous_combinations() {
-    for shortcut in ["", "ctrl+shift", "space", "fn+space", "ctrl+a+b", "ctrl++d"] {
+    for shortcut in ["", "ctrl", "space", "fn+space", "ctrl+a+b", "ctrl++d"] {
         assert!(
             validate_dictation_shortcut(shortcut).is_err(),
             "{shortcut:?} should be rejected"
         );
     }
+}
+
+#[test]
+fn modifier_shortcut_triggers_once_per_complete_press_cycle() {
+    assert!(
+        modifier_shortcut("alt+d")
+            .expect("valid keyed shortcut")
+            .is_none()
+    );
+    let chord = modifier_shortcut("ctrl+shift")
+        .expect("valid shortcut")
+        .expect("modifier shortcut");
+    let mut runtime = ModifierShortcutRuntime::default();
+    runtime.register(chord).expect("shortcut registers");
+
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)));
+    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, false, false)));
+    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+}
+
+#[test]
+fn modifier_shortcut_requires_an_exact_chord_and_rearms_after_required_release() {
+    let chord = modifier_shortcut("ctrl+shift")
+        .expect("valid shortcut")
+        .expect("modifier shortcut");
+    let mut runtime = ModifierShortcutRuntime::default();
+    runtime.register(chord).expect("shortcut registers");
+
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, false, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, true, true, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(false, false, true, false)));
+    assert!(runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
+
+    runtime.unregister(chord);
+    assert!(!runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)));
 }
 
 #[test]

@@ -9,6 +9,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{
@@ -32,8 +34,9 @@ use wakenote::commands::{
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction, DictationRecording,
-    DictationRuntime, DictationStage, DictationStatePayload, ShortcutRegistrationChange,
-    candidate_dictation_settings, normalize_dictation_patch, shortcut_registration_change,
+    DictationRuntime, DictationStage, DictationStatePayload, ModifierShortcut,
+    ModifierShortcutRuntime, ShortcutRegistrationChange, candidate_dictation_settings,
+    modifier_shortcut, normalize_dictation_patch, shortcut_registration_change,
     transcribe_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::input_monitor::InputMonitorRuntime;
@@ -78,6 +81,7 @@ use wakenote::transcription::{
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
+type ModifierShortcutState = Arc<Mutex<ModifierShortcutRuntime>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
@@ -667,16 +671,37 @@ fn emit_dictation_state(app: &AppHandle, payload: DictationStatePayload) {
     let _ = app.emit(DICTATION_STATE_EVENT, payload);
 }
 
-fn parse_dictation_shortcut(raw: &str) -> Result<(String, Shortcut), String> {
+enum ParsedDictationShortcut {
+    Keyed(Shortcut),
+    Modifiers(ModifierShortcut),
+}
+
+fn parse_dictation_shortcut(raw: &str) -> Result<(String, ParsedDictationShortcut), String> {
     let normalized = validate_dictation_shortcut(raw)?;
+    if let Some(shortcut) = modifier_shortcut(&normalized)? {
+        return Ok((normalized, ParsedDictationShortcut::Modifiers(shortcut)));
+    }
     let shortcut = normalized
         .parse::<Shortcut>()
         .map_err(|error| format!("invalid dictation shortcut: {error}"))?;
-    Ok((normalized, shortcut))
+    Ok((normalized, ParsedDictationShortcut::Keyed(shortcut)))
 }
 
 fn register_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String> {
     let (normalized, shortcut) = parse_dictation_shortcut(raw)?;
+    let shortcut = match shortcut {
+        ParsedDictationShortcut::Keyed(shortcut) => shortcut,
+        ParsedDictationShortcut::Modifiers(shortcut) => {
+            return app
+                .state::<ModifierShortcutState>()
+                .lock()
+                .map_err(|error| error.to_string())?
+                .register(shortcut)
+                .map_err(|error| {
+                    format!("could not register dictation shortcut '{normalized}': {error}")
+                });
+        }
+    };
     if app.global_shortcut().is_registered(shortcut) {
         return Err(format!(
             "dictation shortcut '{normalized}' is already registered"
@@ -699,6 +724,16 @@ fn register_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String>
 
 fn unregister_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String> {
     let (normalized, shortcut) = parse_dictation_shortcut(raw)?;
+    let shortcut = match shortcut {
+        ParsedDictationShortcut::Keyed(shortcut) => shortcut,
+        ParsedDictationShortcut::Modifiers(shortcut) => {
+            app.state::<ModifierShortcutState>()
+                .lock()
+                .map_err(|error| error.to_string())?
+                .unregister(shortcut);
+            return Ok(());
+        }
+    };
     if !app.global_shortcut().is_registered(shortcut) {
         return Ok(());
     }
@@ -725,11 +760,83 @@ fn resume_dictation_shortcut(app: AppHandle, state: State<'_, BackendState>) -> 
     if !settings.dictation_enabled {
         return Ok(());
     }
-    let (_, shortcut) = parse_dictation_shortcut(&settings.dictation_shortcut)?;
-    if app.global_shortcut().is_registered(shortcut) {
+    if is_dictation_shortcut_registered(&app, &settings.dictation_shortcut)? {
         return Ok(());
     }
     register_dictation_shortcut(&app, &settings.dictation_shortcut)
+}
+
+fn is_dictation_shortcut_registered(app: &AppHandle, raw: &str) -> Result<bool, String> {
+    let (_, shortcut) = parse_dictation_shortcut(raw)?;
+    match shortcut {
+        ParsedDictationShortcut::Keyed(shortcut) => {
+            Ok(app.global_shortcut().is_registered(shortcut))
+        }
+        ParsedDictationShortcut::Modifiers(shortcut) => app
+            .state::<ModifierShortcutState>()
+            .lock()
+            .map_err(|error| error.to_string())
+            .map(|runtime| runtime.is_registered(shortcut)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn handle_modifier_shortcut_event(
+    app: &AppHandle,
+    runtime: &ModifierShortcutState,
+    flags: CGEventFlags,
+) {
+    let pressed = ModifierShortcut::new(
+        flags.contains(CGEventFlags::MaskControl),
+        flags.contains(CGEventFlags::MaskAlternate),
+        flags.contains(CGEventFlags::MaskShift),
+        flags.contains(CGEventFlags::MaskCommand),
+    );
+    let should_trigger = runtime
+        .lock()
+        .map(|mut runtime| runtime.handle_modifiers(pressed))
+        .unwrap_or(false);
+    if should_trigger {
+        if let Some(settings) = app
+            .try_state::<BackendState>()
+            .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
+        {
+            append_runtime_debug_log(&settings, "[dictation] modifier shortcut triggered");
+        }
+        let app = app.clone();
+        thread::spawn(move || {
+            if let Err(error) = handle_dictation_press(&app) {
+                finish_dictation(&app, Some(error));
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_modifier_shortcut_monitors(
+    app: &AppHandle,
+    runtime: ModifierShortcutState,
+) -> Result<(), String> {
+    let app = app.clone();
+    thread::Builder::new()
+        .name("dictation-modifier-shortcut".to_string())
+        .spawn(move || {
+            loop {
+                let flags = CGEventSource::flags_state(CGEventSourceStateID::CombinedSessionState);
+                handle_modifier_shortcut_event(&app, &runtime, flags);
+                thread::sleep(Duration::from_millis(15));
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("could not start the modifier shortcut monitor: {error}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_modifier_shortcut_monitors(
+    _app: &AppHandle,
+    _runtime: ModifierShortcutState,
+) -> Result<(), String> {
+    Ok(())
 }
 
 fn reconcile_dictation_shortcut_registration(
@@ -4706,6 +4813,8 @@ fn main() {
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
             let dictation_state: DictationState =
                 Arc::new(Mutex::new(DictationRuntime::new(CpalAudioInput)));
+            let modifier_shortcut_state: ModifierShortcutState =
+                Arc::new(Mutex::new(ModifierShortcutRuntime::default()));
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(
@@ -4713,6 +4822,7 @@ fn main() {
             ));
             app.manage(input_monitor_state);
             app.manage(dictation_state);
+            app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
             app.manage(overlay_caption_state);
             app.manage(intentional_quit_state);
@@ -4722,6 +4832,8 @@ fn main() {
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
             app.manage(llm_run_state);
+
+            install_modifier_shortcut_monitors(app.handle(), modifier_shortcut_state)?;
 
             if initial_settings_for_runtime.dictation_enabled
                 && let Err(error) = register_dictation_shortcut(
