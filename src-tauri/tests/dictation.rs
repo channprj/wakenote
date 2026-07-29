@@ -158,6 +158,22 @@ fn modifier_shortcut_requires_an_exact_chord_and_rearms_after_required_release()
 }
 
 #[test]
+fn modifier_shortcut_serializes_supported_chords_in_canonical_order() {
+    assert_eq!(
+        ModifierShortcut::new(true, false, true, false).canonical_string(),
+        Some("ctrl+shift".to_string())
+    );
+    assert_eq!(
+        ModifierShortcut::new(true, true, true, true).canonical_string(),
+        Some("ctrl+alt+shift+cmd".to_string())
+    );
+    assert_eq!(
+        ModifierShortcut::new(true, false, false, false).canonical_string(),
+        None
+    );
+}
+
+#[test]
 fn backend_parses_every_main_key_emitted_by_the_frontend_capture_helper() {
     let mut main_keys = (b'a'..=b'z')
         .map(|value| char::from(value).to_string())

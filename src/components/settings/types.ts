@@ -4,6 +4,7 @@ export interface SettingsActions {
   onPatch: (patch: Partial<AppSettings>) => void | Promise<void>;
   onSuspendDictationShortcut: () => void | Promise<void>;
   onResumeDictationShortcut: () => void | Promise<void>;
+  onPressedModifierShortcut: () => Promise<string | null>;
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;

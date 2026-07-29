@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
@@ -87,6 +94,7 @@ function makeActions(): SettingsActions {
     onPatch: vi.fn(),
     onSuspendDictationShortcut: vi.fn(),
     onResumeDictationShortcut: vi.fn(),
+    onPressedModifierShortcut: vi.fn().mockResolvedValue(null),
     onChooseSaveRoot: vi.fn(),
     onRevealSaveFolder: vi.fn(),
     onChooseModelDirectory: vi.fn(),
@@ -176,6 +184,37 @@ describe("SettingsPage interactions", () => {
       dictation_shortcut: "ctrl+shift",
     });
     await act(async () => {});
+    expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
+  it("captures a modifier-only shortcut from native flags without DOM keydown", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    actions.onPressedModifierShortcut = vi
+      .fn()
+      .mockResolvedValueOnce("ctrl+shift")
+      .mockResolvedValue(null);
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Dictation shortcut" }),
+    );
+
+    await waitFor(() => {
+      expect(actions.onPatch).toHaveBeenCalledWith({
+        dictation_shortcut: "ctrl+shift",
+      });
+    });
     expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
   });
 

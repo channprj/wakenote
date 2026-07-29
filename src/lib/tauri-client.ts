@@ -101,6 +101,13 @@ export async function resumeDictationShortcut(): Promise<void> {
   }
 }
 
+export async function pressedModifierShortcut(): Promise<string | null> {
+  if (!isTauriRuntime()) {
+    return null;
+  }
+  return invoke<string | null>("pressed_modifier_shortcut");
+}
+
 /**
  * Loads sample content into the browser mock so the UI can be reviewed with
  * realistic notes, reports, and an in-flight run.

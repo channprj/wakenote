@@ -10,6 +10,7 @@ const actions: SettingsActions = {
   onPatch: vi.fn(),
   onSuspendDictationShortcut: vi.fn(),
   onResumeDictationShortcut: vi.fn(),
+  onPressedModifierShortcut: vi.fn().mockResolvedValue(null),
   onChooseSaveRoot: vi.fn(),
   onRevealSaveFolder: vi.fn(),
   onChooseModelDirectory: vi.fn(),

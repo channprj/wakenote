@@ -74,6 +74,21 @@ impl ModifierShortcut {
     fn contains(self, required: Self) -> bool {
         self.0 & required.0 == required.0
     }
+
+    pub fn canonical_string(self) -> Option<String> {
+        let mut parts = Vec::new();
+        for (mask, name) in [
+            (Self::CONTROL, "ctrl"),
+            (Self::ALT, "alt"),
+            (Self::SHIFT, "shift"),
+            (Self::COMMAND, "cmd"),
+        ] {
+            if self.0 & mask != 0 {
+                parts.push(name);
+            }
+        }
+        (parts.len() >= 2).then(|| parts.join("+"))
+    }
 }
 
 #[derive(Debug, Default)]

@@ -92,6 +92,64 @@ export function DictationSettings({
     }
   }
 
+  async function commitShortcut(shortcut: string) {
+    if (!captureActiveRef.current) {
+      return;
+    }
+    captureActiveRef.current = false;
+    setCapturingShortcut(false);
+    setShortcutError(null);
+    try {
+      await actions.onPatch({ dictation_shortcut: shortcut });
+    } catch (error) {
+      setShortcutError(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      try {
+        await actions.onResumeDictationShortcut();
+      } catch (error) {
+        setShortcutError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!capturingShortcut) {
+      return;
+    }
+    let cancelled = false;
+    let polling = false;
+    const poll = async () => {
+      if (polling) {
+        return;
+      }
+      polling = true;
+      try {
+        const shortcut = await actions.onPressedModifierShortcut();
+        if (!cancelled && shortcut) {
+          await commitShortcut(shortcut);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setShortcutError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 30);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [capturingShortcut, actions.onPressedModifierShortcut]);
+
   async function captureShortcut(event: KeyboardEvent<HTMLButtonElement>) {
     if (!capturingShortcut || !captureActiveRef.current) {
       return;
@@ -112,17 +170,7 @@ export function DictationSettings({
       return;
     }
 
-    captureActiveRef.current = false;
-    setCapturingShortcut(false);
-    setShortcutError(null);
-    await actions.onPatch({ dictation_shortcut: shortcut });
-    try {
-      await actions.onResumeDictationShortcut();
-    } catch (error) {
-      setShortcutError(
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    await commitShortcut(shortcut);
   }
 
   return (

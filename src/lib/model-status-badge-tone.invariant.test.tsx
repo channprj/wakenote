@@ -54,6 +54,7 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
         onPatch: () => {},
         onSuspendDictationShortcut: () => {},
         onResumeDictationShortcut: () => {},
+        onPressedModifierShortcut: async () => null,
         onChooseSaveRoot: () => {},
         onRevealSaveFolder: () => {},
         onChooseModelDirectory: () => {},

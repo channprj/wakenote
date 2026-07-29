@@ -766,6 +766,28 @@ fn resume_dictation_shortcut(app: AppHandle, state: State<'_, BackendState>) -> 
     register_dictation_shortcut(&app, &settings.dictation_shortcut)
 }
 
+#[cfg(target_os = "macos")]
+fn current_pressed_modifier_shortcut() -> Option<String> {
+    let flags = CGEventSource::flags_state(CGEventSourceStateID::CombinedSessionState);
+    ModifierShortcut::new(
+        flags.contains(CGEventFlags::MaskControl),
+        flags.contains(CGEventFlags::MaskAlternate),
+        flags.contains(CGEventFlags::MaskShift),
+        flags.contains(CGEventFlags::MaskCommand),
+    )
+    .canonical_string()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_pressed_modifier_shortcut() -> Option<String> {
+    None
+}
+
+#[tauri::command]
+fn pressed_modifier_shortcut() -> Option<String> {
+    current_pressed_modifier_shortcut()
+}
+
 fn is_dictation_shortcut_registered(app: &AppHandle, raw: &str) -> Result<bool, String> {
     let (_, shortcut) = parse_dictation_shortcut(raw)?;
     match shortcut {
@@ -4982,6 +5004,7 @@ fn main() {
             debug_hide_overlay_caption,
             suspend_dictation_shortcut,
             resume_dictation_shortcut,
+            pressed_modifier_shortcut,
             update_settings,
             app_status,
             list_microphones,
