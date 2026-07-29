@@ -158,6 +158,12 @@ pub struct DictationRecording {
     pub sample_rate: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DictationProcessOutcome {
+    Typed(String),
+    NoSpeech,
+}
+
 pub struct DictationRuntime<B: AudioInputBackend> {
     capture: LiveCaptureRuntime<B>,
     stage: DictationStage,
@@ -493,6 +499,25 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
         });
     let _ = std::fs::remove_file(&path);
     result
+}
+
+pub fn transcribe_and_type_dictation_recording<T, F>(
+    recording: &DictationRecording,
+    model_id: &str,
+    language: TranscriptionLanguage,
+    transcriber: T,
+    type_text: F,
+) -> Result<DictationProcessOutcome, String>
+where
+    T: Transcriber,
+    F: FnOnce(&str) -> Result<(), String>,
+{
+    let Some(text) = transcribe_dictation_recording(recording, model_id, language, transcriber)?
+    else {
+        return Ok(DictationProcessOutcome::NoSpeech);
+    };
+    type_text(&text)?;
+    Ok(DictationProcessOutcome::Typed(text))
 }
 
 fn next_temp_wav_path() -> PathBuf {

@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use wakenote::dictation::{
-    DictationAction, DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
-    ModifierShortcutRuntime, ShortcutRegistrationChange, candidate_dictation_settings,
-    modifier_shortcut, prepare_dictation_audio, shortcut_registration_change,
+    DictationAction, DictationProcessOutcome, DictationRecording, DictationRuntime,
+    DictationShortcutEvent, DictationStage, ModifierShortcut, ModifierShortcutRuntime,
+    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
+    prepare_dictation_audio, shortcut_registration_change, transcribe_and_type_dictation_recording,
     transcribe_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::live_capture::{
@@ -21,6 +22,22 @@ struct FakeInput {
 struct FakeStream;
 
 impl AudioStreamHandle for FakeStream {}
+
+#[derive(Clone)]
+struct OrderedFakeTranscriber {
+    events: Arc<Mutex<Vec<String>>>,
+    text: String,
+}
+
+impl Transcriber for OrderedFakeTranscriber {
+    fn transcribe(&self, _request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        self.events
+            .lock()
+            .expect("events")
+            .push("transcribed".to_string());
+        Ok(self.text.clone())
+    }
+}
 
 #[derive(Clone)]
 struct FakeTranscriber {
@@ -422,6 +439,64 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
         !audio_path.exists(),
         "temporary dictation audio should be removed"
     );
+}
+
+#[test]
+fn dictation_types_only_after_transcription_returns() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let transcriber = OrderedFakeTranscriber {
+        events: events.clone(),
+        text: "  hello  ".to_string(),
+    };
+    let sink_events = events.clone();
+    let recording = DictationRecording {
+        samples: vec![0.1; 48_000],
+        sample_rate: 48_000,
+    };
+
+    let outcome = transcribe_and_type_dictation_recording(
+        &recording,
+        "whisper-medium",
+        TranscriptionLanguage::Auto,
+        transcriber,
+        move |text| {
+            sink_events
+                .lock()
+                .expect("events")
+                .push(format!("typed:{text}"));
+            Ok(())
+        },
+    )
+    .expect("operation succeeds");
+
+    assert_eq!(outcome, DictationProcessOutcome::Typed("hello".to_string()));
+    assert_eq!(
+        *events.lock().expect("events"),
+        vec!["transcribed".to_string(), "typed:hello".to_string()]
+    );
+}
+
+#[test]
+fn quiet_dictation_never_calls_the_text_sink() {
+    let transcriber = OrderedFakeTranscriber {
+        events: Arc::new(Mutex::new(Vec::new())),
+        text: "unused".to_string(),
+    };
+    let recording = DictationRecording {
+        samples: vec![0.0; 48_000],
+        sample_rate: 48_000,
+    };
+
+    let outcome = transcribe_and_type_dictation_recording(
+        &recording,
+        "whisper-medium",
+        TranscriptionLanguage::Auto,
+        transcriber,
+        |_| panic!("quiet audio must not type"),
+    )
+    .expect("quiet recording is handled");
+
+    assert_eq!(outcome, DictationProcessOutcome::NoSpeech);
 }
 
 #[test]

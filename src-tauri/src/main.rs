@@ -35,11 +35,12 @@ use wakenote::commands::{
 };
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
-    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction, DictationRecording,
-    DictationRuntime, DictationShortcutEvent, DictationStage, DictationStatePayload,
-    ModifierShortcut, ModifierShortcutRuntime, ShortcutRegistrationChange,
-    candidate_dictation_settings, modifier_shortcut, normalize_dictation_patch,
-    shortcut_registration_change, transcribe_dictation_recording, validate_dictation_shortcut,
+    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
+    DictationProcessOutcome, DictationRecording, DictationRuntime, DictationShortcutEvent,
+    DictationStage, DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime,
+    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
+    normalize_dictation_patch, shortcut_registration_change,
+    transcribe_and_type_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
@@ -394,6 +395,10 @@ struct LiveFailedPayload {
     error: String,
 }
 
+fn dictation_allows_caption_window_mutation(stage: DictationStage) -> bool {
+    matches!(stage, DictationStage::Idle)
+}
+
 fn publish_overlay_caption_snapshot(
     app: &AppHandle,
     snapshot: OverlayCaptionSnapshot,
@@ -401,10 +406,28 @@ fn publish_overlay_caption_snapshot(
 ) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        if snapshot.visible
+        let is_visible = snapshot.visible
             && !snapshot.text.is_empty()
-            && !matches!(snapshot.position, FloatingOverlayPosition::Off)
-        {
+            && !matches!(snapshot.position, FloatingOverlayPosition::Off);
+        let event_name = if is_visible {
+            OVERLAY_CAPTION_UPDATED_EVENT
+        } else {
+            OVERLAY_CAPTION_HIDDEN_EVENT
+        };
+        if let Some(window) = app_for_task.get_webview_window(overlay::OVERLAY_LABEL) {
+            let _ = window.emit(event_name, snapshot.clone());
+        }
+        let _ = app_for_task.emit(event_name, snapshot.clone());
+
+        let dictation_stage = app_for_task
+            .try_state::<DictationState>()
+            .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
+            .unwrap_or(DictationStage::Idle);
+        if !dictation_allows_caption_window_mutation(dictation_stage) {
+            return;
+        }
+
+        if is_visible {
             if let Err(error) = overlay::show_caption_overlay(
                 &app_for_task,
                 snapshot.position,
@@ -414,15 +437,7 @@ fn publish_overlay_caption_snapshot(
                 eprintln!("[overlay-caption] {context} show failed: {error}");
                 return;
             }
-            if let Some(window) = app_for_task.get_webview_window(overlay::OVERLAY_LABEL) {
-                let _ = window.emit(OVERLAY_CAPTION_UPDATED_EVENT, snapshot.clone());
-            }
-            let _ = app_for_task.emit(OVERLAY_CAPTION_UPDATED_EVENT, snapshot);
         } else {
-            if let Some(window) = app_for_task.get_webview_window(overlay::OVERLAY_LABEL) {
-                let _ = window.emit(OVERLAY_CAPTION_HIDDEN_EVENT, snapshot.clone());
-            }
-            let _ = app_for_task.emit(OVERLAY_CAPTION_HIDDEN_EVENT, snapshot);
             if let Err(error) = overlay::hide_overlay(&app_for_task) {
                 eprintln!("[overlay-caption] {context} hide failed: {error}");
             }
@@ -1000,6 +1015,23 @@ fn refresh_tray_from_backend(app: &AppHandle) {
 }
 
 fn restore_overlay_after_dictation(app: &AppHandle) {
+    let _ = overlay::hide_dictation_overlay_state(app);
+    let caption = app
+        .try_state::<OverlayCaptionState>()
+        .and_then(|state| state.lock().ok().map(|runtime| runtime.snapshot()));
+    if caption.as_ref().is_some_and(|snapshot| {
+        snapshot.visible
+            && !snapshot.text.is_empty()
+            && !matches!(snapshot.position, FloatingOverlayPosition::Off)
+    }) {
+        publish_overlay_caption_snapshot(
+            app,
+            caption.expect("visible caption snapshot"),
+            "dictation finish",
+        );
+        return;
+    }
+
     let restored = app.try_state::<BackendState>().and_then(|state| {
         state.lock().ok().map(|backend| {
             let settings = backend.settings();
@@ -1010,7 +1042,6 @@ fn restore_overlay_after_dictation(app: &AppHandle) {
     if let Some((settings, status)) = restored
         && matches!(status.tray_state, TrayState::Recording)
     {
-        let _ = overlay::hide_dictation_overlay_state(app);
         if let Err(error) = overlay::show_overlay_on_main_thread(
             app,
             overlay::OverlayState::Recording,
@@ -1021,37 +1052,78 @@ fn restore_overlay_after_dictation(app: &AppHandle) {
         }
         return;
     }
-    let _ = overlay::hide_dictation_overlay_state(app);
-    if let Err(error) = overlay::hide_overlay_on_main_thread(app, "dictation finish") {
+
+    if let Some(caption) = caption {
+        publish_overlay_caption_snapshot(app, caption, "dictation finish");
+    } else if let Err(error) = overlay::hide_overlay_on_main_thread(app, "dictation finish") {
         eprintln!("[dictation] overlay hide failed: {error}");
     }
 }
 
-fn finish_dictation(app: &AppHandle, error: Option<String>) {
+fn complete_dictation(app: &AppHandle) {
     let payload = app
         .try_state::<DictationState>()
         .and_then(|state| {
             state.lock().ok().map(|mut runtime| {
                 runtime.finish();
-                runtime.payload(error.clone())
+                runtime.payload(None)
             })
         })
         .unwrap_or(DictationStatePayload {
             state: DictationStage::Idle,
-            error: error.clone(),
+            error: None,
         });
-    if let Some(message) = error.as_deref() {
-        eprintln!("[dictation] {message}");
-        if let Some(settings) = app
-            .try_state::<BackendState>()
-            .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
-        {
-            append_runtime_debug_log(&settings, format!("[dictation] error={message}"));
-        }
-    }
     emit_dictation_state(app, payload);
     refresh_tray_from_backend(app);
     restore_overlay_after_dictation(app);
+}
+
+fn show_dictation_error(app: &AppHandle, error: String) {
+    eprintln!("[dictation] {error}");
+    log_dictation_runtime(app, format!("[dictation] error={error}"));
+    let payload = app
+        .try_state::<DictationState>()
+        .and_then(|state| {
+            state.lock().ok().map(|mut runtime| {
+                runtime.fail();
+                runtime.payload(Some(error.clone()))
+            })
+        })
+        .unwrap_or(DictationStatePayload {
+            state: DictationStage::Error,
+            error: Some(error.clone()),
+        });
+    emit_dictation_state(app, payload);
+    let message = if error == "No speech detected" {
+        error
+    } else {
+        "Dictation failed".to_string()
+    };
+    show_dictation_overlay(app, overlay::DictationOverlayState::Error, Some(message));
+    refresh_tray_from_backend(app);
+
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1_500));
+        let reset = app.try_state::<DictationState>().and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .and_then(|mut runtime| runtime.reset_error().then(|| runtime.payload(None)))
+        });
+        if let Some(payload) = reset {
+            emit_dictation_state(&app, payload);
+            refresh_tray_from_backend(&app);
+            restore_overlay_after_dictation(&app);
+        }
+    });
+}
+
+fn finish_dictation(app: &AppHandle, error: Option<String>) {
+    match error {
+        Some(error) => show_dictation_error(app, error),
+        None => complete_dictation(app),
+    }
 }
 
 fn process_dictation_recording(
@@ -1060,19 +1132,25 @@ fn process_dictation_recording(
     recording: DictationRecording,
 ) {
     let transcriber = RuntimeTranscriber::new(&settings.model_directory);
-    let result = transcribe_dictation_recording(
+    let result = transcribe_and_type_dictation_recording(
         &recording,
         &settings.selected_model,
         settings.dictation_language,
         transcriber,
-    )
-    .and_then(|text| {
-        if let Some(text) = text {
-            wakenote::text_input::type_text_into_focused_cursor(&text)?;
+        |text| {
+            log_dictation_runtime(app, "[dictation] transcription=completed");
+            wakenote::text_input::type_text_into_focused_cursor(text)?;
+            log_dictation_runtime(app, "[dictation] text_input=completed");
+            Ok(())
+        },
+    );
+    match result {
+        Ok(DictationProcessOutcome::Typed(_)) => complete_dictation(app),
+        Ok(DictationProcessOutcome::NoSpeech) => {
+            show_dictation_error(app, "No speech detected".to_string())
         }
-        Ok(())
-    });
-    finish_dictation(app, result.err());
+        Err(error) => show_dictation_error(app, error),
+    }
 }
 
 async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings: AppSettings) {
@@ -6579,6 +6657,22 @@ mod tests {
     }
 
     #[test]
+    fn active_dictation_stage_suppresses_caption_window_mutation() {
+        assert!(!dictation_allows_caption_window_mutation(
+            DictationStage::Recording
+        ));
+        assert!(!dictation_allows_caption_window_mutation(
+            DictationStage::Transcribing
+        ));
+        assert!(!dictation_allows_caption_window_mutation(
+            DictationStage::Error
+        ));
+        assert!(dictation_allows_caption_window_mutation(
+            DictationStage::Idle
+        ));
+    }
+
+    #[test]
     fn unchanged_tray_presentation_is_not_dispatched_again() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
@@ -6593,6 +6687,15 @@ mod tests {
         assert!(
             next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle,)
                 .is_none()
+        );
+        assert!(
+            next_tray_presentation_update(
+                &mut cache,
+                &settings,
+                &status,
+                DictationStage::Recording,
+            )
+            .is_some()
         );
     }
 
