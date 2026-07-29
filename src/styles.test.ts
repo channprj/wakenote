@@ -668,13 +668,27 @@ describe("storage path pattern styling", () => {
 describe("transcript archive density", () => {
   it("keeps transcript rows compact for dense transcript lists", () => {
     const entryRule = cssRule(".transcript-entry");
+    const dividerRule = cssRule(".transcript-entry:not(:last-child)");
+    const actionsRule = cssRule(".transcript-entry__actions");
+    const buttonRule = cssRule(
+      ".transcript-entry__play,\n.transcript-entry__folder",
+    );
     const textRule = cssRule(".transcript-entry__text");
     const selectedRule = cssRule(".transcript-entry[data-selected=\"true\"]");
 
-    expect(entryRule).toContain("gap: 6px;");
+    expect(entryRule).toContain("display: grid;");
+    expect(entryRule).toContain(
+      "grid-template-columns: var(--size-selection-control) 116px 112px minmax(0, 1fr) 51px;",
+    );
+    expect(entryRule).toContain("column-gap: var(--space-1);");
     expect(entryRule).toContain("border-left: 2px solid transparent;");
-    expect(entryRule).toContain("padding: 2px 6px 2px 4px;");
+    expect(entryRule).toContain("padding: 1px 4px 1px 3px;");
     expect(entryRule).toContain("border-radius: 0;");
+    expect(dividerRule).toContain("border-bottom: 1px solid");
+    expect(actionsRule).toContain("min-width: 51px;");
+    expect(buttonRule).toContain("width: var(--space-6);");
+    expect(buttonRule).toContain("height: var(--space-6);");
+    expect(buttonRule).toContain("min-width: var(--space-6);");
     expect(selectedRule).toContain("border-left-color: var(--primary);");
     expect(selectedRule).not.toContain("box-shadow");
     expect(textRule).toContain("line-height: var(--leading-body);");

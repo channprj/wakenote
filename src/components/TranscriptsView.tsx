@@ -1396,9 +1396,13 @@ function transcriptSourcePresentation(
 } {
   if ((entry.source ?? "microphone") !== "system") {
     const label = transcriptSourceLabel(entry, sourceLabels);
+    const mergedDeviceName =
+      entry.source_label === "mic-merged" ? entry.device_name?.trim() : "";
     return {
       label,
-      title: `${label} microphone transcript`,
+      title: mergedDeviceName
+        ? `${label} · ${mergedDeviceName}`
+        : `${label} microphone transcript`,
       tone: "microphone",
       icon: Mic,
     };

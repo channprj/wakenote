@@ -53,6 +53,9 @@ export function transcriptSourceLabel(
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
   if ((entry.source ?? "microphone") !== "system") {
+    if (entry.source_label === "mic-merged") {
+      return "Merged Mic";
+    }
     return entry.device_name?.trim() || "Mic";
   }
   if (entry.source_label && sourceLabels[entry.source_label]) {

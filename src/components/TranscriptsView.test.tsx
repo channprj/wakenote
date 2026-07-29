@@ -363,7 +363,7 @@ describe("TranscriptsView", () => {
   it("renders source badges inline between timestamp and transcript text", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
-      days: [{ day: "2026-05-10", count: 3 }],
+      days: [{ day: "2026-05-10", count: 4 }],
       entriesByDay: new Map([
         [
           "2026-05-10",
@@ -388,6 +388,17 @@ describe("TranscriptsView", () => {
               source_label: "meet",
               text: "meet transcript",
             }),
+            transcript({
+              transcript_path:
+                "/tmp/WakeNote/20260510/010206-mic-merged.txt",
+              recorded_at: "2026-05-10T01:02:06+09:00",
+              source: "microphone",
+              source_label: "mic-merged",
+              device_id: "input-1-boya-cm40+input-2-by-v",
+              device_name: "BOYA CM40 + BY-V",
+              microphone_slot: null,
+              text: "merged transcript",
+            }),
           ],
         ],
       ]),
@@ -396,6 +407,10 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("Mic");
     expect(markup).toContain("YouTube");
     expect(markup).toContain("Meet");
+    expect(markup).toContain(">Merged Mic</span>");
+    expect(markup).toContain(
+      'title="Merged Mic · BOYA CM40 + BY-V"',
+    );
     expect(markup).toContain("transcript-source-badge--youtube");
     expect(markup).toContain("transcript-source-badge--meet");
     expect(markup).not.toContain("transcript-entry__meta");
@@ -648,6 +663,15 @@ describe("TranscriptsView", () => {
           microphone_slot: "secondary",
         }),
         transcript({
+          transcript_path:
+            "/tmp/WakeNote/20260510/010203-mic-merged.txt",
+          source: "microphone",
+          source_label: "mic-merged",
+          device_id: "input-1-boya-cm40+input-2-by-v",
+          device_name: "BOYA CM40 + BY-V",
+          microphone_slot: null,
+        }),
+        transcript({
           transcript_path: "/tmp/WakeNote/20260510/010204-youtube.txt",
           source: "system",
           source_label: "youtube",
@@ -662,9 +686,14 @@ describe("TranscriptsView", () => {
     );
 
     expect(options).toEqual([
-      { id: "all", label: "All sources", count: 4 },
+      { id: "all", label: "All sources", count: 5 },
       { id: "microphone:input-1-wired", label: "Wired", count: 1 },
       { id: "microphone:input-2-wireless", label: "Wireless", count: 1 },
+      {
+        id: "microphone:input-1-boya-cm40+input-2-by-v",
+        label: "Merged Mic",
+        count: 1,
+      },
       { id: "system:youtube", label: "YouTube", count: 1 },
       { id: "system:custom-source-2", label: "Spotify", count: 1 },
     ]);

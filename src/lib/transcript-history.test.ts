@@ -1021,6 +1021,27 @@ describe("formatTranscriptForCopy", () => {
     ).toBe("Wired");
   });
 
+  it("labels merged microphone captures without hiding their device metadata", () => {
+    const merged: RecentTranscript = {
+      transcript_path:
+        "/tmp/WakeNote/20260729/162908-mic-merged.txt",
+      audio_path: "/tmp/WakeNote/20260729/162908-mic-merged.m4a",
+      recorded_at: "2026-07-29T16:29:08+09:00",
+      text: "merged transcript",
+      source: "microphone",
+      source_label: "mic-merged",
+      device_id: "input-1-boya-cm40+input-2-by-v",
+      device_name: "BOYA CM40 + BY-V",
+      microphone_slot: null,
+    };
+
+    expect(transcriptSourceLabel(merged)).toBe("Merged Mic");
+    expect(formatTranscriptForCopy(merged)).toBe(
+      "2026-07-29 16:29:08 [Merged Mic] - merged transcript",
+    );
+    expect(merged.device_name).toBe("BOYA CM40 + BY-V");
+  });
+
   it("formats a single entry as `YYYY-MM-DD HH:mm:SS [source] - text`", () => {
     const entry: RecentTranscript = {
       transcript_path: "/tmp/WakeNote/20260519/155323.txt",
