@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
-use crate::live_capture::{AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
+use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage};
 use crate::transcription::{
     Transcriber, TranscriptionRequest, resample_linear, should_skip_low_signal_audio,
@@ -231,6 +231,17 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
     }
 
     pub fn start_recording(&mut self, config: AudioInputConfig) -> Result<u64, String> {
+        self.start_recording_with_frame_handler(config, |_| {})
+    }
+
+    pub fn start_recording_with_frame_handler<F>(
+        &mut self,
+        config: AudioInputConfig,
+        on_frame: F,
+    ) -> Result<u64, String>
+    where
+        F: Fn(&AudioFrame) + Send + Sync + 'static,
+    {
         if self.stage != DictationStage::Recording {
             return Err("dictation is not ready to record".to_string());
         }
@@ -248,6 +259,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 if let Ok(mut samples) = callback_samples.lock() {
                     samples.extend_from_slice(&frame.samples);
                 }
+                on_frame(&frame);
             })
             .map_err(|error| error.to_string())?;
 

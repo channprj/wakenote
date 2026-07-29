@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::sync::{
-    Arc, Mutex, TryLockError,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
@@ -17,6 +17,7 @@ use tauri::menu::{
     AboutMetadata, CheckMenuItem, HELP_SUBMENU_ID, Menu, MenuItem, PredefinedMenuItem, Submenu,
     WINDOW_SUBMENU_ID,
 };
+use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -28,8 +29,9 @@ use wakenote::commands::{
     TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio,
     main_window_close_action, microphone_devices_from_input_devices,
     open_containing_folder_request, recorded_at_for_audio_path, reveal_save_folder_request,
-    tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
+    tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_dictation,
+    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
+    with_live_runtime_warning,
 };
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
@@ -81,6 +83,7 @@ use wakenote::transcription::{
 type BackendState = Arc<Mutex<AppBackend>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
+type DictationShortcutDispatcher = mpsc::Sender<DictationShortcutEvent>;
 type ModifierShortcutState = Arc<Mutex<ModifierShortcutRuntime>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
@@ -179,6 +182,7 @@ fn complete_meeting_job(
 struct TrayPresentationUpdate {
     settings: AppSettings,
     status: AppStatus,
+    dictation_stage: DictationStage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +190,7 @@ struct TrayPresentationSnapshot {
     runtime: TrayRuntimePresentation,
     menu: TrayMenuPresentation,
     show_menu_on_left_click: bool,
+    dictation_stage: DictationStage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,6 +676,82 @@ fn emit_dictation_state(app: &AppHandle, payload: DictationStatePayload) {
     let _ = app.emit(DICTATION_STATE_EVENT, payload);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DictationCue {
+    Start,
+    Stop,
+}
+
+fn dictation_cue_resource_name(cue: DictationCue) -> &'static str {
+    match cue {
+        DictationCue::Start => "dictation-start.wav",
+        DictationCue::Stop => "dictation-stop.wav",
+    }
+}
+
+fn play_dictation_cue(app: &AppHandle, cue: DictationCue) -> Result<(), String> {
+    let path = app
+        .path()
+        .resolve(dictation_cue_resource_name(cue), BaseDirectory::Resource)
+        .map_err(|error| error.to_string())?;
+    let status = Command::new("/usr/bin/afplay")
+        .arg(path)
+        .status()
+        .map_err(|error| error.to_string())?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| format!("afplay exited with {status}"))
+}
+
+fn log_dictation_runtime(app: &AppHandle, message: impl AsRef<str>) {
+    let message = message.as_ref();
+    if let Some(settings) = app
+        .try_state::<BackendState>()
+        .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
+    {
+        append_runtime_debug_log(&settings, message);
+    }
+}
+
+fn play_dictation_cue_nonblocking_on_failure(app: &AppHandle, cue: DictationCue) {
+    let cue_name = match cue {
+        DictationCue::Start => "start",
+        DictationCue::Stop => "stop",
+    };
+    match play_dictation_cue(app, cue) {
+        Ok(()) => log_dictation_runtime(app, format!("[dictation] cue={cue_name} completed")),
+        Err(error) => {
+            let message = format!("[dictation] cue={cue_name} failed error={error}");
+            eprintln!("{message}");
+            log_dictation_runtime(app, message);
+        }
+    }
+}
+
+fn dispatch_dictation_shortcut_event(app: &AppHandle, event: DictationShortcutEvent) {
+    if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>() {
+        if let Err(error) = dispatcher.send(event) {
+            eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
+        }
+    }
+}
+
+fn spawn_dictation_shortcut_worker(app: AppHandle) -> Result<DictationShortcutDispatcher, String> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("dictation-shortcut-events".to_string())
+        .spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                if let Err(error) = handle_dictation_shortcut_event(&app, event) {
+                    finish_dictation(&app, Some(error));
+                }
+            }
+        })
+        .map_err(|error| format!("could not start the dictation shortcut worker: {error}"))?;
+    Ok(sender)
+}
+
 enum ParsedDictationShortcut {
     Keyed(Shortcut),
     Modifiers(ModifierShortcut),
@@ -709,15 +790,14 @@ fn register_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String>
     }
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, registered, event| {
-            if registered != &shortcut || event.state != ShortcutState::Pressed {
+            if registered != &shortcut {
                 return;
             }
-            let app = app.clone();
-            thread::spawn(move || {
-                if let Err(error) = handle_dictation_press(&app) {
-                    finish_dictation(&app, Some(error));
-                }
-            });
+            let event = match event.state {
+                ShortcutState::Pressed => DictationShortcutEvent::Pressed,
+                ShortcutState::Released => DictationShortcutEvent::Released,
+            };
+            dispatch_dictation_shortcut_event(app, event);
         })
         .map_err(|error| format!("could not register dictation shortcut '{normalized}': {error}"))
 }
@@ -818,19 +898,17 @@ fn handle_modifier_shortcut_event(
         .lock()
         .map(|mut runtime| runtime.handle_modifiers(pressed))
         .unwrap_or(None);
-    if event == Some(DictationShortcutEvent::Pressed) {
+    if let Some(event) = event {
         if let Some(settings) = app
             .try_state::<BackendState>()
             .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
         {
-            append_runtime_debug_log(&settings, "[dictation] modifier shortcut triggered");
+            append_runtime_debug_log(
+                &settings,
+                format!("[dictation] modifier shortcut event={event:?}"),
+            );
         }
-        let app = app.clone();
-        thread::spawn(move || {
-            if let Err(error) = handle_dictation_press(&app) {
-                finish_dictation(&app, Some(error));
-            }
-        });
+        dispatch_dictation_shortcut_event(app, event);
     }
 }
 
@@ -894,14 +972,30 @@ fn reconcile_dictation_shortcut_registration(
     }
 }
 
-fn show_dictation_overlay(app: &AppHandle, settings: &AppSettings, state: overlay::OverlayState) {
-    if let Err(error) = overlay::show_overlay_on_main_thread(
-        app,
-        state,
-        settings.effective_floating_overlay_position(),
-        "dictation",
-    ) {
-        eprintln!("[dictation] overlay update failed: {error}");
+fn show_dictation_overlay(
+    app: &AppHandle,
+    state: overlay::DictationOverlayState,
+    message: Option<String>,
+) {
+    let app_for_task = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if let Err(error) = overlay::show_dictation_overlay(&app_for_task, state, message) {
+            eprintln!("[dictation] overlay update failed: {error}");
+        }
+    }) {
+        eprintln!("[dictation] overlay scheduling failed: {error}");
+    }
+}
+
+fn refresh_tray_from_backend(app: &AppHandle) {
+    let snapshot = app.try_state::<BackendState>().and_then(|state| {
+        state
+            .lock()
+            .ok()
+            .map(|backend| (backend.settings(), backend.app_status()))
+    });
+    if let Some((settings, status)) = snapshot {
+        update_tray_presentation(app, &settings, &status);
     }
 }
 
@@ -916,9 +1010,18 @@ fn restore_overlay_after_dictation(app: &AppHandle) {
     if let Some((settings, status)) = restored
         && matches!(status.tray_state, TrayState::Recording)
     {
-        show_dictation_overlay(app, &settings, overlay::OverlayState::Recording);
+        let _ = overlay::hide_dictation_overlay_state(app);
+        if let Err(error) = overlay::show_overlay_on_main_thread(
+            app,
+            overlay::OverlayState::Recording,
+            settings.effective_floating_overlay_position(),
+            "dictation restore",
+        ) {
+            eprintln!("[dictation] overlay restore failed: {error}");
+        }
         return;
     }
+    let _ = overlay::hide_dictation_overlay_state(app);
     if let Err(error) = overlay::hide_overlay_on_main_thread(app, "dictation finish") {
         eprintln!("[dictation] overlay hide failed: {error}");
     }
@@ -947,6 +1050,7 @@ fn finish_dictation(app: &AppHandle, error: Option<String>) {
         }
     }
     emit_dictation_state(app, payload);
+    refresh_tray_from_backend(app);
     restore_overlay_after_dictation(app);
 }
 
@@ -992,11 +1096,20 @@ async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings:
         }
     };
     emit_dictation_state(&app, payload);
-    show_dictation_overlay(&app, &settings, overlay::OverlayState::Transcribing);
+    show_dictation_overlay(
+        &app,
+        overlay::DictationOverlayState::Transcribing,
+        Some("Transcribing…".to_string()),
+    );
+    refresh_tray_from_backend(&app);
+    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop);
     process_dictation_recording(&app, settings, recording);
 }
 
-fn handle_dictation_press(app: &AppHandle) -> Result<(), String> {
+fn handle_dictation_shortcut_event(
+    app: &AppHandle,
+    event: DictationShortcutEvent,
+) -> Result<(), String> {
     let settings = app
         .try_state::<BackendState>()
         .ok_or_else(|| "dictation backend is unavailable".to_string())?
@@ -1006,17 +1119,34 @@ fn handle_dictation_press(app: &AppHandle) -> Result<(), String> {
     if !settings.dictation_enabled {
         return Ok(());
     }
+    let event_name = match event {
+        DictationShortcutEvent::Pressed => "pressed",
+        DictationShortcutEvent::Released => "released",
+    };
+    log_dictation_runtime(app, format!("[dictation] shortcut={event_name}"));
     let state = app
         .try_state::<DictationState>()
         .ok_or_else(|| "dictation runtime is unavailable".to_string())?;
-    let mut runtime = match state.try_lock() {
-        Ok(runtime) => runtime,
-        Err(TryLockError::WouldBlock) => return Ok(()),
-        Err(TryLockError::Poisoned(error)) => return Err(error.to_string()),
+    let action = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.handle_shortcut_event(event)
     };
-    match runtime.handle_press_at(Instant::now()) {
+    match action {
         DictationAction::Ignore => Ok(()),
         DictationAction::StartRecording => {
+            let payload = state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .payload(None);
+            emit_dictation_state(app, payload);
+            show_dictation_overlay(
+                app,
+                overlay::DictationOverlayState::Recording,
+                Some("Listening…".to_string()),
+            );
+            refresh_tray_from_backend(app);
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Start);
+
             let microphone = settings
                 .capture_microphones
                 .first()
@@ -1035,15 +1165,33 @@ fn handle_dictation_press(app: &AppHandle) -> Result<(), String> {
                     microphone.label
                 ));
             }
-            let recording_id = runtime.start_recording(AudioInputConfig {
-                device_id: resolved.device_id,
-                sample_rate: Some(resolved.sample_rate),
-                label_hint,
-            })?;
-            let payload = runtime.payload(None);
-            drop(runtime);
-            emit_dictation_state(app, payload);
-            show_dictation_overlay(app, &settings, overlay::OverlayState::Recording);
+            let callback_app = app.clone();
+            let callback_throttle =
+                Arc::new(Mutex::new(Instant::now() - OVERLAY_LEVEL_EMIT_INTERVAL));
+            let recording_id = state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .start_recording_with_frame_handler(
+                    AudioInputConfig {
+                        device_id: resolved.device_id,
+                        sample_rate: Some(resolved.sample_rate),
+                        label_hint,
+                    },
+                    move |frame| {
+                        if !overlay_level_emit_due(&callback_throttle) {
+                            return;
+                        }
+                        let levels = overlay::waveform_levels_from_samples(
+                            &frame.samples,
+                            overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+                        );
+                        overlay::emit_dictation_waveform_levels(&callback_app, levels);
+                    },
+                )?;
+            log_dictation_runtime(
+                app,
+                format!("[dictation] capture=started recording_id={recording_id}"),
+            );
             let app_for_limit = app.clone();
             tauri::async_runtime::spawn(async move {
                 stop_dictation_after_limit(app_for_limit, recording_id, settings).await;
@@ -1051,11 +1199,27 @@ fn handle_dictation_press(app: &AppHandle) -> Result<(), String> {
             Ok(())
         }
         DictationAction::StopAndTranscribe => {
-            let recording = runtime.stop_recording()?;
-            let payload = runtime.payload(None);
-            drop(runtime);
+            let (recording, payload) = {
+                let mut runtime = state.lock().map_err(|error| error.to_string())?;
+                let recording = runtime.stop_recording()?;
+                let payload = runtime.payload(None);
+                (recording, payload)
+            };
+            log_dictation_runtime(
+                app,
+                format!(
+                    "[dictation] capture=stopped samples={}",
+                    recording.samples.len()
+                ),
+            );
             emit_dictation_state(app, payload);
-            show_dictation_overlay(app, &settings, overlay::OverlayState::Transcribing);
+            show_dictation_overlay(
+                app,
+                overlay::DictationOverlayState::Transcribing,
+                Some("Transcribing…".to_string()),
+            );
+            refresh_tray_from_backend(app);
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop);
             process_dictation_recording(app, settings, recording);
             Ok(())
         }
@@ -4837,6 +5001,8 @@ fn main() {
                 Arc::new(Mutex::new(DictationRuntime::new(CpalAudioInput)));
             let modifier_shortcut_state: ModifierShortcutState =
                 Arc::new(Mutex::new(ModifierShortcutRuntime::default()));
+            let dictation_shortcut_dispatcher =
+                spawn_dictation_shortcut_worker(app.handle().clone())?;
             app.manage(backend_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(
@@ -4844,6 +5010,7 @@ fn main() {
             ));
             app.manage(input_monitor_state);
             app.manage(dictation_state);
+            app.manage(dictation_shortcut_dispatcher);
             app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
             app.manage(overlay_caption_state);
@@ -4915,7 +5082,9 @@ fn main() {
                 initial_settings
                     .as_ref()
                     .zip(initial_status.as_ref())
-                    .map(|(settings, status)| tray_presentation_snapshot(settings, status)),
+                    .map(|(settings, status)| {
+                        tray_presentation_snapshot(settings, status, DictationStage::Idle)
+                    }),
             ));
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
@@ -5267,21 +5436,25 @@ fn setup_tray(
 fn tray_presentation_update_payload(
     settings: &AppSettings,
     status: &AppStatus,
+    dictation_stage: DictationStage,
 ) -> TrayPresentationUpdate {
     TrayPresentationUpdate {
         settings: settings.clone(),
         status: status.clone(),
+        dictation_stage,
     }
 }
 
 fn tray_presentation_snapshot(
     settings: &AppSettings,
     status: &AppStatus,
+    dictation_stage: DictationStage,
 ) -> TrayPresentationSnapshot {
     TrayPresentationSnapshot {
         runtime: tray_runtime_presentation(settings, status),
         menu: tray_menu_presentation(settings, status),
         show_menu_on_left_click: tray_show_menu_on_left_click(settings),
+        dictation_stage,
     }
 }
 
@@ -5289,32 +5462,56 @@ fn next_tray_presentation_update(
     cache: &mut Option<TrayPresentationSnapshot>,
     settings: &AppSettings,
     status: &AppStatus,
+    dictation_stage: DictationStage,
 ) -> Option<TrayPresentationUpdate> {
-    let snapshot = tray_presentation_snapshot(settings, status);
+    let snapshot = tray_presentation_snapshot(settings, status, dictation_stage);
     if cache.as_ref() == Some(&snapshot) {
         return None;
     }
 
     *cache = Some(snapshot);
-    Some(tray_presentation_update_payload(settings, status))
+    Some(tray_presentation_update_payload(
+        settings,
+        status,
+        dictation_stage,
+    ))
 }
 
 fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
     let app_handle = app.clone();
+    let dictation_stage = app
+        .try_state::<DictationState>()
+        .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
+        .unwrap_or(DictationStage::Idle);
     let payload = if let Some(cache) = app.try_state::<TrayPresentationCache>() {
         match cache.lock() {
-            Ok(mut cache) => next_tray_presentation_update(&mut cache, settings, status),
-            Err(_) => Some(tray_presentation_update_payload(settings, status)),
+            Ok(mut cache) => {
+                next_tray_presentation_update(&mut cache, settings, status, dictation_stage)
+            }
+            Err(_) => Some(tray_presentation_update_payload(
+                settings,
+                status,
+                dictation_stage,
+            )),
         }
     } else {
-        Some(tray_presentation_update_payload(settings, status))
+        Some(tray_presentation_update_payload(
+            settings,
+            status,
+            dictation_stage,
+        ))
     };
     let Some(payload) = payload else {
         return;
     };
     let log_settings = payload.settings.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        apply_tray_presentation(&app_handle, &payload.settings, &payload.status);
+        apply_tray_presentation(
+            &app_handle,
+            &payload.settings,
+            &payload.status,
+            payload.dictation_stage,
+        );
     }) {
         append_runtime_debug_log(
             &log_settings,
@@ -5324,18 +5521,24 @@ fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, stat
     }
 }
 
-fn apply_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
+fn apply_tray_presentation(
+    app: &tauri::AppHandle,
+    settings: &AppSettings,
+    status: &AppStatus,
+    dictation_stage: DictationStage,
+) {
     let Some(tray) = app.tray_by_id("wakenote") else {
         return;
     };
     let presentation = tray_runtime_presentation(settings, status);
-    let icon_image = tray_icon_image_for_presentation(presentation.icon);
+    let icon = tray_presentation_for_dictation(dictation_stage).unwrap_or(presentation.icon);
+    let icon_image = tray_icon_image_for_presentation(icon);
     let _ = tray.set_icon(Some(Image::new_owned(
         icon_image.rgba,
         icon_image.width,
         icon_image.height,
     )));
-    let _ = tray.set_tooltip(Some(presentation.icon.tooltip));
+    let _ = tray.set_tooltip(Some(icon.tooltip));
     let _ = tray.set_visible(presentation.visible);
     let _ = tray.set_show_menu_on_left_click(tray_show_menu_on_left_click(settings));
 
@@ -6356,11 +6559,23 @@ mod tests {
         let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
         let settings = backend.settings();
         let status = backend.app_status();
-        let payload = tray_presentation_update_payload(&settings, &status);
+        let payload = tray_presentation_update_payload(&settings, &status, DictationStage::Idle);
 
         assert_send_static(&payload);
         assert_eq!(payload.settings, settings);
         assert_eq!(payload.status, status);
+    }
+
+    #[test]
+    fn dictation_cues_use_bundled_resource_names() {
+        assert_eq!(
+            dictation_cue_resource_name(DictationCue::Start),
+            "dictation-start.wav"
+        );
+        assert_eq!(
+            dictation_cue_resource_name(DictationCue::Stop),
+            "dictation-stop.wav"
+        );
     }
 
     #[test]
@@ -6371,8 +6586,14 @@ mod tests {
         let status = backend.app_status();
         let mut cache = None;
 
-        assert!(next_tray_presentation_update(&mut cache, &settings, &status).is_some());
-        assert!(next_tray_presentation_update(&mut cache, &settings, &status).is_none());
+        assert!(
+            next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle,)
+                .is_some()
+        );
+        assert!(
+            next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle,)
+                .is_none()
+        );
     }
 
     #[test]

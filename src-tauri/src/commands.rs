@@ -16,6 +16,7 @@ use crate::audio::{
 };
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::debug_log::{append_debug_log, append_debug_log_nonblocking};
+use crate::dictation::DictationStage;
 use crate::live_capture::AudioFrame;
 use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
@@ -155,6 +156,24 @@ pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
             rgba: TRAY_ICON_DISCONNECTED_RGBA,
             tooltip: "WakeNote: Error",
         },
+    }
+}
+
+pub fn tray_presentation_for_dictation(stage: DictationStage) -> Option<TrayPresentation> {
+    match stage {
+        DictationStage::Recording => Some(TrayPresentation {
+            rgba: TRAY_ICON_RECORDING_RGBA,
+            tooltip: "WakeNote: Dictation recording",
+        }),
+        DictationStage::Transcribing => Some(TrayPresentation {
+            rgba: TRAY_ICON_TRANSCRIBING_RGBA,
+            tooltip: "WakeNote: Dictation transcribing",
+        }),
+        DictationStage::Error => Some(TrayPresentation {
+            rgba: TRAY_ICON_DISCONNECTED_RGBA,
+            tooltip: "WakeNote: Dictation failed",
+        }),
+        DictationStage::Idle => None,
     }
 }
 
@@ -3306,6 +3325,29 @@ mod tests {
             derive_tray_state(AppMode::RecordingAndTranscription, true, true, true, false),
             TrayState::Transcribing
         );
+    }
+
+    #[test]
+    fn tray_presentation_for_dictation_overrides_active_stages() {
+        assert_eq!(
+            tray_presentation_for_dictation(DictationStage::Recording)
+                .expect("recording override")
+                .tooltip,
+            "WakeNote: Dictation recording"
+        );
+        assert_eq!(
+            tray_presentation_for_dictation(DictationStage::Transcribing)
+                .expect("transcribing override")
+                .tooltip,
+            "WakeNote: Dictation transcribing"
+        );
+        assert_eq!(
+            tray_presentation_for_dictation(DictationStage::Error)
+                .expect("error override")
+                .tooltip,
+            "WakeNote: Dictation failed"
+        );
+        assert!(tray_presentation_for_dictation(DictationStage::Idle).is_none());
     }
 
     #[test]

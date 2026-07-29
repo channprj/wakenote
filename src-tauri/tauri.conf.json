@@ -40,6 +40,10 @@
     ],
     "targets": ["app"],
     "category": "Productivity",
+    "resources": {
+      "resources/dictation-start.wav": "dictation-start.wav",
+      "resources/dictation-stop.wav": "dictation-stop.wav"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0"
     }

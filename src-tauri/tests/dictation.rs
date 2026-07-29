@@ -282,6 +282,39 @@ fn dedicated_capture_collects_frames_until_stopped() {
 }
 
 #[test]
+fn dictation_capture_forwards_each_frame_for_global_feedback() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let observed_for_callback = observed.clone();
+    let mut runtime = DictationRuntime::new(FakeInput {
+        frames: vec![AudioFrame {
+            samples: vec![0.25; 16_000],
+            duration_ms: 1_000,
+            captured_at: Utc::now(),
+        }],
+    });
+    runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
+    runtime
+        .start_recording_with_frame_handler(
+            AudioInputConfig {
+                device_id: "fake".to_string(),
+                sample_rate: Some(16_000),
+                label_hint: None,
+            },
+            move |frame| {
+                observed_for_callback
+                    .lock()
+                    .expect("observed")
+                    .push(frame.samples.len());
+            },
+        )
+        .expect("capture starts");
+    runtime.handle_shortcut_event(DictationShortcutEvent::Released);
+    runtime.stop_recording().expect("capture stops");
+
+    assert_eq!(*observed.lock().expect("observed"), vec![16_000]);
+}
+
+#[test]
 fn transcription_audio_is_resampled_and_low_signal_is_skipped() {
     let audible = vec![0.1; 48_000];
     let prepared = prepare_dictation_audio(&audible, 48_000)
