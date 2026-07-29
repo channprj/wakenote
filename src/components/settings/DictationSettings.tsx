@@ -177,7 +177,7 @@ export function DictationSettings({
     <SettingsGrid maxColumns={1}>
       <SettingsCard
         title="Shortcut dictation"
-        description="Press once to record, then press again to transcribe and type at the cursor."
+        description="Hold the shortcut to record. Release it to transcribe and type at the cursor."
       >
         <SettingSwitch
           label="Enable shortcut dictation"

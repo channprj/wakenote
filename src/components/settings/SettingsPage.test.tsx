@@ -70,6 +70,10 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain("Dictation shortcut");
     expect(markup).toContain("Dictation language");
     expect(markup).toContain("Auto-detect");
+    expect(markup).toContain(
+      "Hold the shortcut to record. Release it to transcribe and type at the cursor.",
+    );
+    expect(markup).not.toContain("Press once to record");
   });
 
   it("keeps external behavior in Integrations and expert controls in Advanced", () => {
