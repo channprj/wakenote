@@ -12,6 +12,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 
 - **음성 활성화 캡처** — RMS dBFS가 임계값 위로 *attack* 시간 이상 유지되어야 녹음이 시작되고, 임계값 아래로 *release* 시간 이상 유지되어야 종료됩니다. pre-roll / post-roll 버퍼로 발화의 시작과 끝이 잘리지 않게 보존합니다.
 - **견고한 듀얼 마이크** — 설정에서 Primary 한 대와 선택 Secondary 한 대를 지정합니다. 각 마이크는 스트림, 프레임 큐, 레벨, 경고, 동일 장치 재연결 루프를 따로 가지므로 한쪽 장애가 다른 쪽을 중지하지 않습니다. 마이크가 두 대면 **Merge microphone inputs**가 기본으로 켜져 녹음 하나와 전사 하나를 만들며, 끄면 마이크별 녹음과 전사 식별자를 분리하는 기존 동작을 유지합니다. 입력 모니터링은 Primary에만 적용됩니다.
+- **단축키 받아쓰기** — 선택 기능을 켜면 설정한 전역 단축키를 한 번 눌러 녹음을 시작하고 다시 눌러 로컬 전사한 뒤, 포커스된 커서에 결과를 입력합니다. 받아쓰기 언어는 별도의 자동 감지를 지원하며 오디오는 보관함에 추가하지 않습니다.
 - **녹음 / transcription / 일시정지 토글 분리** — 텍스트 없이 오디오만 저장, 신규 녹음 없이 기존 backlog만 transcription, 또는 트레이에서 전체 일시정지 가능.
 - **로컬 우선 저장** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` 오디오, `.txt` 전사, `.json` 메타데이터, 복구 가능한 transcription 오류는 `.error.txt`. 파일명이 충돌하면 `-001`, `-002` 식으로 자동 롤오버.
 - **모델 매니저** — UI에서 모델을 다운로드 / 검증(SHA-256) / 취소 / 삭제 / 전환할 수 있습니다. 한국어 사용 가능한 기본 Whisper 레지스트리는 `whisper-small`, `whisper-medium`, `whisper-turbo`, `whisper-large`를 제공합니다. Parakeet V3, SenseVoice는 내장 sherpa-onnx 엔진으로 외부 도구 없이 온디바이스로 다운로드·실행되고, Nemotron 3.5 ASR은 external-command adapter로 실행됩니다.
@@ -48,6 +49,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 - `src-tauri/src/recorder.rs` — `hound`로 `.wav` 작성, macOS `afconvert`로 `.m4a` 작성 (PCM → WAV → AAC/M4A), `.json` 메타데이터 및 transcript / error sidecar.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, 단일 실행 `start_next`, retry / skip / cancel.
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
+- `src-tauri/src/dictation.rs` — 단축키 검증, 토글·디바운스 상태, 독립 마이크 캡처, 임시 16 kHz 전사 입력, 포커스된 커서 입력.
 - `src-tauri/src/models.rs` — 모델 레지스트리, 진행률 / 취소 / 체크섬 검증을 포함한 다운로드, 디스크 `ModelStore`.
 - `src-tauri/src/persistence.rs` — app data 디렉터리 아래의 `settings.json`과 `transcription-queue.json`을 atomic하게 저장. 시작 시 in-flight 작업을 pending으로 복구.
 - `src/App.tsx`, `src/components/*` — 설정 UI, onboarding strip, level meter, queue panel, 모델 매니저, 트레이 프리뷰.
@@ -95,10 +97,33 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 | 기본 모델 | `whisper-medium` | 레지스트리 내 모델 |
 | 모델 디렉터리 | `~/Library/Application Support/WakeNote/models` | 임의 디렉터리 |
 | Transcription 언어 | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
+| 단축키 받아쓰기 | `off` | `on` / `off` |
+| 받아쓰기 단축키 | `Option+Space` | 보조 키 + 지원 키 또는 `F1` … `F24` |
+| 받아쓰기 언어 | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | 저신뢰 transcript 숨기기 | `on` | `on` / `off` |
 | 실행 시 입력 자동 시작 | `on` | `on` / `off` |
 
 설정은 `<app_data_dir>/settings.json`에 저장되며, patch가 적용될 때마다 안전 범위로 clamp됩니다.
+
+## 단축키 받아쓰기
+
+**Settings › Dictation › Shortcut dictation**을 켜고 단축키와 언어를 고른
+다음, 텍스트를 입력할 앱에 커서를 둡니다.
+
+1. 단축키를 한 번 눌러 설정된 Primary 마이크 녹음을 시작합니다.
+2. 말한 뒤 같은 단축키를 다시 누릅니다.
+3. WakeNote가 선택한 로컬 모델로 전사해 비어 있지 않은 결과를 포커스된
+   커서에 입력하고, 기존 클립보드 내용을 복원합니다.
+
+받아쓰기는 기본적으로 꺼져 있습니다. 언어 기본값은 **Auto-detect**이며
+보관용 transcription 언어와 서로 독립적입니다. 받아쓰기 캡처는 별도
+스트림을 사용해 음성 활성화 녹음을 중단하지 않으며, 임시 16 kHz WAV는
+성공·실패와 관계없이 삭제됩니다. 신호가 너무 작으면 입력하지 않고,
+전사 중 누른 단축키는 무시하며, 녹음은 10분 뒤 자동으로 종료됩니다.
+
+macOS에서 WakeNote의 마이크 접근을 허용해야 합니다. 포커스된 커서에
+입력하려면 **시스템 설정 › 개인정보 보호 및 보안 › 손쉬운 사용**에서
+System Events를 통한 입력 권한도 허용해야 합니다.
 
 ## AI 요약과 보고서
 

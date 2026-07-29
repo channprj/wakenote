@@ -12,6 +12,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Resilient dual microphones** — select one Primary and an optional Secondary physical input in Settings. Each microphone owns its stream, frame queue, level, warning, and same-device reconnect loop, so one failure never stops the other. With two inputs, **Merge microphone inputs** is on by default and produces one recording and one transcription; turn it off to preserve separate per-microphone recordings and transcript identities. Input monitoring uses Primary only.
+- **Shortcut dictation** — optionally press a configurable global shortcut once to record and again to transcribe locally, then WakeNote types the result at the focused cursor. Dictation has its own Auto-detect language setting and does not add audio to the archive.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
 - **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; Parakeet V3 and SenseVoice download and run fully on-device via a bundled sherpa-onnx engine (no external tools), and Nemotron 3.5 ASR runs through an external-command adapter.
@@ -48,6 +49,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - `src-tauri/src/recorder.rs` — writes `.wav` via `hound`, `.m4a` via macOS `afconvert` (PCM → WAV → AAC/M4A), `.json` metadata, transcript / error sidecars.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, single-flight `start_next`, retry/skip/cancel.
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
+- `src-tauri/src/dictation.rs` — shortcut validation, toggle/debounce state, dedicated microphone capture, ephemeral 16 kHz transcription input, and focused-cursor typing.
 - `src-tauri/src/models.rs` — model registry, download with progress/cancel/checksum, on-disk `ModelStore`.
 - `src-tauri/src/persistence.rs` — atomic JSON writes for `settings.json` and `transcription-queue.json` under the app data dir; in-flight jobs recovered as pending on startup.
 - `src/App.tsx`, `src/components/*` — settings UI, onboarding strip, level meter, queue panel, model manager, tray preview.
@@ -95,10 +97,35 @@ two explicit, distinct physical devices.
 | Default model | `whisper-medium` | from registry |
 | Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
 | Transcription language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
+| Shortcut dictation | `off` | `on` / `off` |
+| Dictation shortcut | `Option+Space` | modifier + supported key, or `F1` … `F24` |
+| Dictation language | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start input on launch | `on` | `on` / `off` |
 
 Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ranges on every patch.
+
+## Shortcut dictation
+
+Enable **Settings › Dictation › Shortcut dictation**, choose a shortcut and
+language, then keep the cursor in the app where text should appear:
+
+1. Press the shortcut once to start recording from the configured Primary
+   microphone.
+2. Speak, then press the same shortcut again.
+3. WakeNote transcribes with the selected local model, types non-empty text at
+   the focused cursor, and restores the previous clipboard contents.
+
+Dictation is off by default. Its language defaults to **Auto-detect** and is
+independent of the archival transcription language. The capture is dedicated to
+dictation: it does not interrupt the voice-activated recorder and its temporary
+16 kHz WAV is removed after success or failure. Very quiet input is ignored,
+presses during transcription are ignored, and a recording automatically stops
+after 10 minutes.
+
+macOS must grant WakeNote microphone access. Focused-cursor typing also requires
+Accessibility permission for System Events under **System Settings › Privacy &
+Security › Accessibility**.
 
 ## AI summaries and reports
 
