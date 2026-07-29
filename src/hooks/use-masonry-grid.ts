@@ -22,20 +22,20 @@ function pixelLength(value: string): number | null {
 export function masonryRowSpan(
   height: number,
   rowHeight: number,
-  rowGap: number,
+  cardGap: number,
 ): number | null {
   if (
     !Number.isFinite(height) ||
     height <= 0 ||
     !Number.isFinite(rowHeight) ||
     rowHeight <= 0 ||
-    !Number.isFinite(rowGap) ||
-    rowGap < 0
+    !Number.isFinite(cardGap) ||
+    cardGap < 0
   ) {
     return null;
   }
 
-  const span = Math.ceil((height + rowGap) / (rowHeight + rowGap));
+  const span = Math.ceil((height + cardGap) / rowHeight);
   return Number.isFinite(span) && span > 0 ? span : null;
 }
 
@@ -58,8 +58,10 @@ export function measureMasonryGrid(grid: HTMLElement): boolean {
     const rowHeight = pixelLength(
       computedStyle.getPropertyValue("--masonry-row-size"),
     );
-    const rowGap = pixelLength(computedStyle.rowGap);
-    if (rowHeight === null || rowGap === null) {
+    const cardGap = pixelLength(
+      computedStyle.getPropertyValue("--masonry-card-gap"),
+    );
+    if (rowHeight === null || cardGap === null) {
       resetMasonryGrid(grid);
       return false;
     }
@@ -69,7 +71,7 @@ export function measureMasonryGrid(grid: HTMLElement): boolean {
       const span = masonryRowSpan(
         item.getBoundingClientRect().height,
         rowHeight,
-        rowGap,
+        cardGap,
       );
       if (span === null) {
         resetMasonryGrid(grid);

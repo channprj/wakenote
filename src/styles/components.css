@@ -1277,12 +1277,13 @@ svg {
 }
 
 .model-list {
-  --masonry-row-size: 4px;
+  --masonry-row-size: 1px;
+  --masonry-card-gap: var(--page-gap);
 
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: var(--page-gap);
+  gap: var(--masonry-card-gap);
 }
 
 .model-list > * {
@@ -1293,6 +1294,8 @@ svg {
 .model-list[data-masonry-ready="true"] {
   grid-auto-flow: dense;
   grid-auto-rows: var(--masonry-row-size);
+  row-gap: 0;
+  column-gap: var(--masonry-card-gap);
 }
 
 .model-row {

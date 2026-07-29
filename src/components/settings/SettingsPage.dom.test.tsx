@@ -253,8 +253,8 @@ describe("SettingsPage interactions", () => {
     if (!grid) {
       throw new Error("Audio settings grid not found");
     }
-    grid.style.setProperty("--masonry-row-size", "4px");
-    grid.style.rowGap = "12px";
+    grid.style.setProperty("--masonry-row-size", "1px");
+    grid.style.setProperty("--masonry-card-gap", "12px");
     const enabledCards = directSettingsCards(grid);
     for (const card of enabledCards) {
       vi.spyOn(card, "getBoundingClientRect").mockReturnValue(rect(100));
@@ -283,7 +283,7 @@ describe("SettingsPage interactions", () => {
 
     expect(grid.dataset.masonryReady).toBe("true");
     for (const card of enabledCards) {
-      expect(card.style.gridRowEnd).toBe("span 7");
+      expect(card.style.gridRowEnd).toBe("span 112");
     }
 
     const disabled = mockSnapshot();
@@ -326,7 +326,7 @@ describe("SettingsPage interactions", () => {
 
     expect(grid.dataset.masonryReady).toBe("true");
     for (const card of remainingCards) {
-      expect(card.style.gridRowEnd).toBe("span 7");
+      expect(card.style.gridRowEnd).toBe("span 112");
     }
   });
 });

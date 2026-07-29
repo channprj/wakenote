@@ -206,7 +206,11 @@ describe("balanced Settings masonry", () => {
   it("uses a safe one-column fallback before measurement", () => {
     const gridRule = cssRule(".settings-grid", pagesCss);
 
-    expect(gridRule).toContain("--masonry-row-size: 4px;");
+    expect(gridRule).toContain("--masonry-row-size: 1px;");
+    expect(gridRule).toContain(
+      "--masonry-card-gap: var(--page-gap);",
+    );
+    expect(gridRule).toContain("gap: var(--masonry-card-gap);");
     expect(gridRule).toContain("grid-template-columns: minmax(0, 1fr);");
   });
 
@@ -219,6 +223,10 @@ describe("balanced Settings masonry", () => {
     expect(measuredRule).toContain("grid-auto-flow: dense;");
     expect(measuredRule).toContain(
       "grid-auto-rows: var(--masonry-row-size);",
+    );
+    expect(measuredRule).toContain("row-gap: 0;");
+    expect(measuredRule).toContain(
+      "column-gap: var(--masonry-card-gap);",
     );
   });
 
@@ -325,7 +333,11 @@ describe("balanced Settings masonry", () => {
       componentsCss,
     );
 
-    expect(listRule).toContain("--masonry-row-size: 4px;");
+    expect(listRule).toContain("--masonry-row-size: 1px;");
+    expect(listRule).toContain(
+      "--masonry-card-gap: var(--page-gap);",
+    );
+    expect(listRule).toContain("gap: var(--masonry-card-gap);");
     expect(listRule).toContain("display: grid;");
     expect(listRule).toContain(
       "grid-template-columns: minmax(0, 1fr);",
@@ -336,6 +348,10 @@ describe("balanced Settings masonry", () => {
     expect(measuredRule).toContain("grid-auto-flow: dense;");
     expect(measuredRule).toContain(
       "grid-auto-rows: var(--masonry-row-size);",
+    );
+    expect(measuredRule).toContain("row-gap: 0;");
+    expect(measuredRule).toContain(
+      "column-gap: var(--masonry-card-gap);",
     );
   });
 

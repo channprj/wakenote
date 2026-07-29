@@ -77,8 +77,8 @@ function createGrid(...heights: number[]): {
   items: HTMLDivElement[];
 } {
   const grid = document.createElement("div");
-  grid.style.setProperty("--masonry-row-size", "4px");
-  grid.style.rowGap = "12px";
+  grid.style.setProperty("--masonry-row-size", "1px");
+  grid.style.setProperty("--masonry-card-gap", "12px");
   const items = heights.map((height) => {
     const item = document.createElement("div");
     setHeight(item, height);
@@ -101,8 +101,8 @@ function MasonryFixture({
     itemIdentity,
   );
   const style = {
-    "--masonry-row-size": "4px",
-    rowGap: "12px",
+    "--masonry-row-size": "1px",
+    "--masonry-card-gap": "12px",
   } as CSSProperties;
 
   useLayoutEffect(() => {
@@ -134,17 +134,18 @@ afterEach(() => {
 
 describe("masonryRowSpan", () => {
   it("calculates row spans and rejects invalid inputs", () => {
-    expect(masonryRowSpan(100, 4, 12)).toBe(7);
-    expect(masonryRowSpan(116, 4, 12)).toBe(8);
+    expect(masonryRowSpan(100, 1, 12)).toBe(112);
+    expect(masonryRowSpan(100.25, 1, 12)).toBe(113);
+    expect(masonryRowSpan(52, 1, 12)).toBe(64);
 
-    expect(masonryRowSpan(0, 4, 12)).toBeNull();
-    expect(masonryRowSpan(Number.NaN, 4, 12)).toBeNull();
-    expect(masonryRowSpan(Number.POSITIVE_INFINITY, 4, 12)).toBeNull();
+    expect(masonryRowSpan(0, 1, 12)).toBeNull();
+    expect(masonryRowSpan(Number.NaN, 1, 12)).toBeNull();
+    expect(masonryRowSpan(Number.POSITIVE_INFINITY, 1, 12)).toBeNull();
     expect(masonryRowSpan(100, 0, 12)).toBeNull();
-    expect(masonryRowSpan(100, -4, 12)).toBeNull();
+    expect(masonryRowSpan(100, -1, 12)).toBeNull();
     expect(masonryRowSpan(100, Number.NaN, 12)).toBeNull();
-    expect(masonryRowSpan(100, 4, -1)).toBeNull();
-    expect(masonryRowSpan(100, 4, Number.POSITIVE_INFINITY)).toBeNull();
+    expect(masonryRowSpan(100, 1, -1)).toBeNull();
+    expect(masonryRowSpan(100, 1, Number.POSITIVE_INFINITY)).toBeNull();
   });
 });
 
@@ -171,18 +172,18 @@ describe("masonry grid measurement", () => {
 
     expect(measureMasonryGrid(grid)).toBe(true);
 
-    expect(items[0].style.gridRowEnd).toBe("span 7");
-    expect(items[1].style.gridRowEnd).toBe("span 4");
+    expect(items[0].style.gridRowEnd).toBe("span 112");
+    expect(items[1].style.gridRowEnd).toBe("span 64");
     expect(grid.dataset.masonryReady).toBe("true");
   });
 
   it("accepts complete decimal pixel tokens with surrounding whitespace", () => {
     const { grid, items } = createGrid(6);
     grid.style.setProperty("--masonry-row-size", " 2.5px ");
-    grid.style.rowGap = "1.5px";
+    grid.style.setProperty("--masonry-card-gap", " 1.5px ");
 
     expect(measureMasonryGrid(grid)).toBe(true);
-    expect(items[0].style.gridRowEnd).toBe("span 2");
+    expect(items[0].style.gridRowEnd).toBe("span 3");
     expect(grid.dataset.masonryReady).toBe("true");
   });
 
@@ -204,9 +205,9 @@ describe("masonry grid measurement", () => {
     expect(grid.dataset.masonryReady).toBeUndefined();
   });
 
-  it("rejects a percentage row gap", () => {
+  it("rejects a percentage card gap", () => {
     const { grid, items } = createGrid(100);
-    grid.style.rowGap = "10%";
+    grid.style.setProperty("--masonry-card-gap", "10%");
 
     expect(measureMasonryGrid(grid)).toBe(false);
     expect(items[0].style.gridRowEnd).toBe("");
@@ -216,8 +217,8 @@ describe("masonry grid measurement", () => {
   it("returns to the ordinary-grid fallback when an item measurement throws", () => {
     const { grid, items } = createGrid(100, 52);
     grid.dataset.masonryReady = "true";
-    items[0].style.gridRowEnd = "span 7";
-    items[1].style.gridRowEnd = "span 4";
+    items[0].style.gridRowEnd = "span 112";
+    items[1].style.gridRowEnd = "span 64";
     vi.spyOn(items[1], "getBoundingClientRect").mockImplementation(() => {
       throw new Error("layout unavailable");
     });
@@ -271,8 +272,8 @@ describe("useMasonryGrid", () => {
     act(() => animationFrames.flush());
 
     expect(grid.dataset.masonryReady).toBe("true");
-    expect(items[0].style.gridRowEnd).toBe("span 7");
-    expect(items[1].style.gridRowEnd).toBe("span 4");
+    expect(items[0].style.gridRowEnd).toBe("span 112");
+    expect(items[1].style.gridRowEnd).toBe("span 64");
     expect(animationFrames.request).toHaveBeenCalledOnce();
 
     firstRect.mockReturnValue(rect(148));
@@ -286,8 +287,8 @@ describe("useMasonryGrid", () => {
 
     act(() => animationFrames.flush());
 
-    expect(items[0].style.gridRowEnd).toBe("span 10");
-    expect(items[1].style.gridRowEnd).toBe("span 4");
+    expect(items[0].style.gridRowEnd).toBe("span 160");
+    expect(items[1].style.gridRowEnd).toBe("span 64");
     expect(grid.dataset.masonryReady).toBe("true");
   });
 
@@ -324,8 +325,8 @@ describe("useMasonryGrid", () => {
     act(() => animationFrames.flush());
 
     expect(grid.dataset.masonryReady).toBe("true");
-    expect(originalItems[0].style.gridRowEnd).toBe("span 7");
-    expect(originalItems[1].style.gridRowEnd).toBe("span 4");
+    expect(originalItems[0].style.gridRowEnd).toBe("span 112");
+    expect(originalItems[1].style.gridRowEnd).toBe("span 64");
 
     const originalObserver = ControlledResizeObserver.instances[0];
     layoutReadiness.mockClear();
@@ -358,8 +359,8 @@ describe("useMasonryGrid", () => {
     act(() => animationFrames.flush());
 
     expect(grid.dataset.masonryReady).toBe("true");
-    expect(replacementItems[0].style.gridRowEnd).toBe("span 6");
-    expect(replacementItems[1].style.gridRowEnd).toBe("span 8");
+    expect(replacementItems[0].style.gridRowEnd).toBe("span 96");
+    expect(replacementItems[1].style.gridRowEnd).toBe("span 128");
   });
 
   it("leaves the ordinary-grid fallback untouched without ResizeObserver", () => {
