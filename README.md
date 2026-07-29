@@ -4,14 +4,14 @@
 
 **Voice-activated local transcription for macOS.**
 
-WakeNote is a menu-bar app that listens to one required Primary microphone and an optional Secondary microphone, automatically opens recording chunks when either input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
+WakeNote is a menu-bar app that listens to one required Primary microphone and an optional Secondary microphone, automatically opens recording chunks when the input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. When both microphones are configured, WakeNote keeps their physical capture streams independent but merges them into one time-aligned recording and transcription input by default. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
 
 The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp) with Metal GPU acceleration on macOS builds; audio capture goes through `cpal`. The default theme color is black `#000`.
 
 ## Highlights
 
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
-- **Independent dual microphones** — select one Primary and an optional Secondary physical input in Settings. Each microphone owns its stream, frame queue, recording files, transcript identity, level, warning, and same-device reconnect loop; one failure never stops the other. Input monitoring uses Primary only.
+- **Resilient dual microphones** — select one Primary and an optional Secondary physical input in Settings. Each microphone owns its stream, frame queue, level, warning, and same-device reconnect loop, so one failure never stops the other. With two inputs, **Merge microphone inputs** is on by default and produces one recording and one transcription; turn it off to preserve separate per-microphone recordings and transcript identities. Input monitoring uses Primary only.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
 - **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. Default Korean-capable Whisper registry ships `whisper-small`, `whisper-medium`, `whisper-turbo`, and `whisper-large`; Parakeet V3 and SenseVoice download and run fully on-device via a bundled sherpa-onnx engine (no external tools), and Nemotron 3.5 ASR runs through an external-command adapter.
@@ -25,7 +25,9 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 ```
   ┌──────────────────────────────────────────────────────────────────┐
-  │ macOS mic ─► cpal stream ─► bounded frame queue ─► SpeechGate ─► │
+  │ macOS mics ─► independent cpal streams ─► MicrophoneMixer ─────► │
+  │                                   (two inputs, default on)       │
+  │                                                   SpeechGate ─► │
   │                                                          │       │
   │                              ┌───────────────────────────┘       │
   │                              ▼                                   │
@@ -42,7 +44,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - `src-tauri/src/audio.rs` — `SpeechGate` (attack/release/pre-roll/post-roll/min/max chunk), `LevelMonitor` (current/peak dBFS, noise floor, suggested threshold).
 - `src-tauri/src/capture.rs` — `CaptureController` / `CaptureProcessor` turn raw frames into completed `RecordedChunk`s.
 - `src-tauri/src/live_capture.rs` — `LiveCaptureRuntime` + `CpalAudioInput`; bounded `FrameDispatcher` drops stale frames under back-pressure.
-- `src-tauri/src/multi_capture.rs` — coordinates the fixed Primary / Secondary runtimes without sharing streams or dispatch queues.
+- `src-tauri/src/multi_capture.rs` — coordinates fixed Primary / Secondary runtimes without sharing streams or dispatch queues, then time-aligns and resamples their frames into one input when merging is enabled.
 - `src-tauri/src/recorder.rs` — writes `.wav` via `hound`, `.m4a` via macOS `afconvert` (PCM → WAV → AAC/M4A), `.json` metadata, transcript / error sidecars.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, single-flight `start_next`, retry/skip/cancel.
 - `src-tauri/src/transcription.rs` — `WhisperTranscriber` + `TranscriptionWorker`.
@@ -53,13 +55,15 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 ## Output layout
 
-With two microphones enabled, filenames include deterministic source suffixes
-such as `142301-mic-primary-wired.m4a` and
-`142301-mic-secondary-wireless.m4a`. Their JSON metadata includes
-`device_id`, `device_name`, and `microphone_slot`, and Transcripts interleaves
-both sources chronologically with device-name badges and filters. `System Default`
-is supported for a single-microphone setup only; a two-microphone
-setup requires two explicit, distinct physical devices.
+With two microphones enabled, the default merged mode writes one file such as
+`142301-mic-merged.m4a` and one transcription job. Its JSON metadata includes
+both configured devices in `microphone_inputs`. Turning **Merge microphone
+inputs** off writes separate files such as `142301-mic-primary-wired.m4a` and
+`142301-mic-secondary-wireless.m4a`; those sidecars include `device_id`,
+`device_name`, and `microphone_slot`, and Transcripts interleaves both sources
+chronologically with device-name badges and filters. `System Default` is
+supported for a single-microphone setup only; a two-microphone setup requires
+two explicit, distinct physical devices.
 
 ```
 ~/Documents/WakeNote/
@@ -86,6 +90,7 @@ setup requires two explicit, distinct physical devices.
 | Min chunk | `800 ms` | `100 … 5 000` |
 | Max chunk | `180 000 ms` (3 min) | `10 000 … 900 000` |
 | Audio format | `m4a` | `m4a` / `wav` |
+| Merge microphone inputs | `on` | `on` / `off` |
 | Save root | `~/Documents/WakeNote` | any directory |
 | Default model | `whisper-medium` | from registry |
 | Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
