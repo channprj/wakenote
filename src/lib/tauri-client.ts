@@ -463,6 +463,13 @@ export async function saveSettingsPatch(
         Math.min(30, Math.round(safePatch.llm_max_iterations)),
       );
     }
+    if (typeof safePatch.dictation_shortcut === "string") {
+      const normalized = safePatch.dictation_shortcut.trim().toLowerCase();
+      safePatch.dictation_shortcut =
+        normalized.length > 0
+          ? normalized
+          : defaultSettings().dictation_shortcut;
+    }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (
       safePatch.recording_enabled === false ||

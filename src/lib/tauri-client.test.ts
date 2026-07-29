@@ -91,6 +91,22 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
+  it("normalizes browser fallback dictation shortcut patches like the backend", async () => {
+    const normalized = await saveSettingsPatch({ dictation_shortcut: "  Ctrl+Alt+D  " });
+    expect(normalized.settings.dictation_shortcut).toBe("ctrl+alt+d");
+
+    const blank = await saveSettingsPatch({ dictation_shortcut: "   " });
+    expect(blank.settings.dictation_shortcut).toBe("alt+space");
+
+    const enabled = await saveSettingsPatch({
+      dictation_enabled: true,
+      dictation_language: "en",
+    });
+    expect(enabled.settings.dictation_enabled).toBe(true);
+    expect(enabled.settings.dictation_language).toBe("en");
+    await saveSettingsPatch({ dictation_enabled: false, dictation_language: "auto" });
+  });
+
   it("persists browser fallback theme mode patches", async () => {
     const light = await saveSettingsPatch({ theme_mode: "light" });
     expect(light.settings.theme_mode).toBe("light");

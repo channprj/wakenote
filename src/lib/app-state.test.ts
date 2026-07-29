@@ -15,6 +15,13 @@ describe("app state derivation", () => {
     expect(defaultSettings().merge_microphone_inputs).toBe(true);
   });
 
+  it("ships dictation off by default with Handy's shortcut and auto-detect language", () => {
+    const settings = defaultSettings();
+    expect(settings.dictation_enabled).toBe(false);
+    expect(settings.dictation_shortcut).toBe("alt+space");
+    expect(settings.dictation_language).toBe("auto");
+  });
+
   it("maps independent recording/transcription toggles to PRD product modes", () => {
     expect(
       deriveProductMode({ recording_enabled: true, transcription_enabled: true, pause_all: false }),

@@ -90,6 +90,9 @@ export interface AppSettings {
   input_monitoring_enabled: boolean;
   auto_transcript_input_enabled: boolean;
   auto_transcript_input_trailing_space: boolean;
+  dictation_enabled: boolean;
+  dictation_shortcut: string;
+  dictation_language: TranscriptionLanguage;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;

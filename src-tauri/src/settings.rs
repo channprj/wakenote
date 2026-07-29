@@ -269,6 +269,14 @@ pub struct AppSettings {
     pub auto_transcript_input_enabled: bool,
     #[serde(default)]
     pub auto_transcript_input_trailing_space: bool,
+    /// Handy-style shortcut dictation: press the global shortcut, speak, press
+    /// again — the transcript is typed into the focused app. Off by default.
+    #[serde(default)]
+    pub dictation_enabled: bool,
+    #[serde(default = "default_dictation_shortcut")]
+    pub dictation_shortcut: String,
+    #[serde(default = "default_dictation_language")]
+    pub dictation_language: TranscriptionLanguage,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     #[serde(default = "default_tray_left_click_action")]
@@ -344,6 +352,9 @@ pub struct SettingsPatch {
     pub input_monitoring_enabled: Option<bool>,
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
+    pub dictation_enabled: Option<bool>,
+    pub dictation_shortcut: Option<String>,
+    pub dictation_language: Option<TranscriptionLanguage>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
@@ -397,6 +408,14 @@ pub fn default_capture_microphones() -> Vec<CaptureMicrophoneEntry> {
 
 pub const fn default_merge_microphone_inputs() -> bool {
     true
+}
+
+pub fn default_dictation_shortcut() -> String {
+    "alt+space".to_string()
+}
+
+pub const fn default_dictation_language() -> TranscriptionLanguage {
+    TranscriptionLanguage::Auto
 }
 
 pub fn normalize_capture_microphones(
@@ -880,6 +899,20 @@ impl AppSettings {
         if let Some(value) = patch.auto_transcript_input_trailing_space {
             self.auto_transcript_input_trailing_space = value;
         }
+        if let Some(value) = patch.dictation_enabled {
+            self.dictation_enabled = value;
+        }
+        if let Some(value) = patch.dictation_shortcut {
+            let normalized = value.trim().to_lowercase();
+            self.dictation_shortcut = if normalized.is_empty() {
+                default_dictation_shortcut()
+            } else {
+                normalized
+            };
+        }
+        if let Some(value) = patch.dictation_language {
+            self.dictation_language = value;
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
@@ -997,6 +1030,9 @@ impl Default for AppSettings {
             input_monitoring_enabled: false,
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
+            dictation_enabled: false,
+            dictation_shortcut: default_dictation_shortcut(),
+            dictation_language: default_dictation_language(),
             show_dock_icon: true,
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
@@ -1199,6 +1235,45 @@ mod tests {
     }
 
     #[test]
+    fn dictation_defaults_are_off_with_auto_language() {
+        let settings = AppSettings::default();
+        assert!(!settings.dictation_enabled);
+        assert_eq!(settings.dictation_shortcut, "alt+space");
+        assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+    }
+
+    #[test]
+    fn patch_sets_dictation_fields() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            dictation_enabled: Some(true),
+            dictation_shortcut: Some("ctrl+shift+d".to_string()),
+            dictation_language: Some(TranscriptionLanguage::En),
+            ..Default::default()
+        });
+
+        assert!(settings.dictation_enabled);
+        assert_eq!(settings.dictation_shortcut, "ctrl+shift+d");
+        assert_eq!(settings.dictation_language, TranscriptionLanguage::En);
+    }
+
+    #[test]
+    fn patch_normalizes_dictation_shortcut() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            dictation_shortcut: Some("  Ctrl+Alt+D  ".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(settings.dictation_shortcut, "ctrl+alt+d");
+
+        settings.apply_patch(SettingsPatch {
+            dictation_shortcut: Some("   ".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(settings.dictation_shortcut, default_dictation_shortcut());
+    }
+
+    #[test]
     fn default_audio_bitrate_is_96_kbps() {
         assert_eq!(AppSettings::default().audio_bitrate_kbps, 96);
     }
@@ -1361,6 +1436,9 @@ mod tests {
         assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
         assert!(!settings.auto_transcript_input_trailing_space);
+        assert!(!settings.dictation_enabled);
+        assert_eq!(settings.dictation_shortcut, "alt+space");
+        assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
         assert_eq!(settings.openrouter_model, OPENROUTER_DEFAULT_MODEL_ID);
