@@ -633,10 +633,7 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
             language,
         })
         .map_err(|error| error.to_string())
-        .map(|text| {
-            let text = text.trim();
-            (!text.is_empty()).then(|| text.to_string())
-        });
+        .map(|text| (!text.trim().is_empty()).then_some(text));
     let _ = std::fs::remove_file(&path);
     result
 }

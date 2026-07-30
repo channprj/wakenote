@@ -510,7 +510,7 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
         transcriber,
     )
     .expect("transcription succeeds");
-    assert_eq!(text.as_deref(), Some("hello world"));
+    assert_eq!(text.as_deref(), Some("  hello world  "));
 
     let (audio_path, model_id, language) = request
         .lock()
@@ -560,10 +560,13 @@ fn dictation_types_only_after_transcription_returns() {
     )
     .expect("operation succeeds");
 
-    assert_eq!(outcome, DictationProcessOutcome::Typed("hello".to_string()));
+    assert_eq!(
+        outcome,
+        DictationProcessOutcome::Typed("  hello  ".to_string())
+    );
     assert_eq!(
         *events.lock().expect("events"),
-        vec!["transcribed".to_string(), "typed:hello".to_string()]
+        vec!["transcribed".to_string(), "typed:  hello  ".to_string()]
     );
 }
 
