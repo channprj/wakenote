@@ -1293,6 +1293,46 @@ fn preload_dictation_model(app: &AppHandle, settings: &AppSettings) {
     }
 }
 
+fn should_request_accessibility_for_dictation(
+    dictation_enabled: bool,
+    status: wakenote::permissions::PermissionGrantStatus,
+) -> bool {
+    dictation_enabled
+        && matches!(
+            status,
+            wakenote::permissions::PermissionGrantStatus::NotDetermined
+                | wakenote::permissions::PermissionGrantStatus::Denied
+                | wakenote::permissions::PermissionGrantStatus::Unknown
+        )
+}
+
+fn schedule_accessibility_request_for_dictation(settings: &AppSettings) {
+    let status = permissions::permission_snapshot().accessibility.status;
+    if !should_request_accessibility_for_dictation(settings.dictation_enabled, status) {
+        return;
+    }
+
+    let settings_for_log = settings.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        match tauri::async_runtime::spawn_blocking(permissions::request_accessibility_permission)
+            .await
+        {
+            Ok(snapshot) => append_runtime_debug_log(
+                &settings_for_log,
+                format!(
+                    "[dictation] accessibility_request status={:?}",
+                    snapshot.accessibility.status
+                ),
+            ),
+            Err(error) => append_runtime_debug_log(
+                &settings_for_log,
+                format!("[dictation] accessibility_request failed: {error}"),
+            ),
+        }
+    });
+}
+
 async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings: AppSettings) {
     tokio::time::sleep(DICTATION_MAX_RECORDING_DURATION).await;
     let Some(state) = app.try_state::<DictationState>() else {
@@ -5306,6 +5346,7 @@ fn main() {
                 backend_state.clone(),
                 live_transcriber_state.clone(),
             );
+            schedule_accessibility_request_for_dictation(&initial_settings_for_runtime);
             spawn_mic_recovery_watchdog(
                 app.handle().clone(),
                 backend_state.clone(),
@@ -6306,6 +6347,28 @@ mod tests {
 
         settings.selected_model = "qwen3-asr-0.6b".to_string();
         assert_eq!(dictation_model_to_preload(&settings), None);
+    }
+
+    #[test]
+    fn enabled_dictation_requests_missing_accessibility_at_launch() {
+        use wakenote::permissions::PermissionGrantStatus;
+
+        assert!(should_request_accessibility_for_dictation(
+            true,
+            PermissionGrantStatus::NotDetermined,
+        ));
+        assert!(should_request_accessibility_for_dictation(
+            true,
+            PermissionGrantStatus::Denied,
+        ));
+        assert!(!should_request_accessibility_for_dictation(
+            true,
+            PermissionGrantStatus::Granted,
+        ));
+        assert!(!should_request_accessibility_for_dictation(
+            false,
+            PermissionGrantStatus::NotDetermined,
+        ));
     }
 
     struct FakeSystemAudioStream;
