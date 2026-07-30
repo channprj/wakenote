@@ -2,6 +2,7 @@ use std::ffi::{CStr, c_char, c_uint, c_void};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Once;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 use whisper_rs::{
@@ -28,6 +29,7 @@ const MIN_REPEATED_NGRAM_COVERAGE_PERCENT: usize = 60;
 const MIN_BRACKET_GROUPS: usize = 4;
 const MIN_BRACKET_COVERAGE_PERCENT: usize = 50;
 const MAX_LOW_DIVERSITY_PERCENT: usize = 35;
+static NEXT_QWEN_INPUT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy)]
 pub struct TranscriptionRequest<'a> {
@@ -676,10 +678,16 @@ impl Transcriber for Qwen3AsrTranscriber {
             }
         }
 
+        let samples = decode_audio_for_whisper(request.audio_path)?;
+        if should_skip_low_signal_audio(&samples) {
+            return Ok(String::new());
+        }
+        let audio_path = next_qwen_input_path();
+        write_qwen_input_wav(&audio_path, &samples)?;
         let mut command = Command::new(&python);
         command
             .arg(&runner)
-            .env("WAKENOTE_AUDIO_PATH", request.audio_path)
+            .env("WAKENOTE_AUDIO_PATH", &audio_path)
             .env("WAKENOTE_QWEN3_ASR_MODEL_PATH", &model_path)
             .env(
                 "WAKENOTE_QWEN3_ASR_LANGUAGE",
@@ -689,9 +697,9 @@ impl Transcriber for Qwen3AsrTranscriber {
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("TOKENIZERS_PARALLELISM", "false")
             .env("PYTHONNOUSERSITE", "1");
-        let output = command
-            .output()
-            .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+        let output = command.output();
+        let _ = std::fs::remove_file(&audio_path);
+        let output = output.map_err(|error| TranscriptionError::Engine(error.to_string()))?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
@@ -702,6 +710,35 @@ impl Transcriber for Qwen3AsrTranscriber {
             stderr
         }))
     }
+}
+
+fn next_qwen_input_path() -> PathBuf {
+    let id = NEXT_QWEN_INPUT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "wakenote-qwen3-asr-{}-{id}.wav",
+        std::process::id()
+    ))
+}
+
+fn write_qwen_input_wav(path: &Path, samples: &[f32]) -> Result<(), TranscriptionError> {
+    let mut writer = hound::WavWriter::create(
+        path,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: WHISPER_SAMPLE_RATE as u32,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .map_err(|error| TranscriptionError::Wav(error.to_string()))?;
+    for sample in samples {
+        writer
+            .write_sample((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            .map_err(|error| TranscriptionError::Wav(error.to_string()))?;
+    }
+    writer
+        .finalize()
+        .map_err(|error| TranscriptionError::Wav(error.to_string()))
 }
 
 /// Map the requested transcription language to a SenseVoice language code.
@@ -1288,9 +1325,9 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     #[test]
-    fn runtime_transcriber_routes_qwen_to_the_local_isolated_runner() {
+    fn runtime_transcriber_decodes_m4a_before_routing_qwen_to_the_local_runner() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1304,7 +1341,7 @@ mod tests {
         std::fs::create_dir_all(&model).expect("model");
         std::fs::write(
             &python,
-            "#!/bin/sh\nprintf '%s|%s' \"$WAKENOTE_QWEN3_ASR_LANGUAGE\" \"$WAKENOTE_QWEN3_ASR_MODEL_PATH\"\n",
+            "#!/bin/sh\nprintf '%s|%s|%s' \"$WAKENOTE_QWEN3_ASR_LANGUAGE\" \"$WAKENOTE_QWEN3_ASR_MODEL_PATH\" \"$WAKENOTE_AUDIO_PATH\"\n",
         )
         .expect("fake python");
         let mut permissions = std::fs::metadata(&python)
@@ -1313,8 +1350,33 @@ mod tests {
         permissions.set_mode(0o755);
         std::fs::set_permissions(&python, permissions).expect("executable python");
         std::fs::write(&runner, "runner").expect("runner");
-        let audio = tmp.path().join("dictation.wav");
-        std::fs::write(&audio, b"audio").expect("audio");
+        let source_wav = tmp.path().join("source.wav");
+        let mut writer = hound::WavWriter::create(
+            &source_wav,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 16_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .expect("source wav");
+        for _ in 0..16_000 {
+            writer.write_sample(8_192_i16).expect("source sample");
+        }
+        writer.finalize().expect("source wav finalized");
+        let audio = tmp.path().join("capture.m4a");
+        let conversion = Command::new("/usr/bin/afconvert")
+            .args(["-f", "m4af", "-d", "aac@44100"])
+            .arg(&source_wav)
+            .arg(&audio)
+            .output()
+            .expect("create m4a fixture");
+        assert!(
+            conversion.status.success(),
+            "{}",
+            String::from_utf8_lossy(&conversion.stderr)
+        );
 
         let text = RuntimeTranscriber::new(tmp.path())
             .transcribe(TranscriptionRequest {
@@ -1324,7 +1386,20 @@ mod tests {
             })
             .expect("Qwen route");
 
-        assert_eq!(text, format!("Korean|{}", model.display()));
+        let mut fields = text.split('|');
+        assert_eq!(fields.next(), Some("Korean"));
+        assert_eq!(fields.next(), Some(model.to_string_lossy().as_ref()));
+        let runner_audio = PathBuf::from(fields.next().expect("runner audio path"));
+        assert_eq!(
+            runner_audio.extension().and_then(|value| value.to_str()),
+            Some("wav")
+        );
+        assert_ne!(runner_audio, audio);
+        assert!(
+            !runner_audio.exists(),
+            "temporary Qwen input must be removed after transcription"
+        );
+        assert!(audio.exists(), "archival m4a input must be preserved");
     }
 
     #[cfg(feature = "asr-sherpa")]
