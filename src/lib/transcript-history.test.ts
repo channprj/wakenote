@@ -1023,8 +1023,7 @@ describe("formatTranscriptForCopy", () => {
 
   it("labels merged microphone captures without hiding their device metadata", () => {
     const merged: RecentTranscript = {
-      transcript_path:
-        "/tmp/WakeNote/20260729/162908-mic-merged.txt",
+      transcript_path: "/tmp/WakeNote/20260729/162908-mic-merged.txt",
       audio_path: "/tmp/WakeNote/20260729/162908-mic-merged.m4a",
       recorded_at: "2026-07-29T16:29:08+09:00",
       text: "merged transcript",
@@ -1040,6 +1039,25 @@ describe("formatTranscriptForCopy", () => {
       "2026-07-29 16:29:08 [Merged Mic] - merged transcript",
     );
     expect(merged.device_name).toBe("BOYA CM40 + BY-V");
+  });
+
+  it("labels Dictation captures from their persisted source label", () => {
+    const dictation: RecentTranscript = {
+      transcript_path: "/tmp/WakeNote/20260731/031500-dictation.txt",
+      audio_path: "/tmp/WakeNote/20260731/031500-dictation.m4a",
+      recorded_at: "2026-07-31T03:15:00+09:00",
+      text: "dictated text",
+      source: "microphone",
+      source_label: "dictation",
+      device_id: "input-0-boya-cm40",
+      device_name: "BOYA CM40",
+      microphone_slot: null,
+    };
+
+    expect(transcriptSourceLabel(dictation)).toBe("Dict");
+    expect(formatTranscriptForCopy(dictation)).toBe(
+      "2026-07-31 03:15:00 [Dict] - dictated text",
+    );
   });
 
   it("formats a single entry as `YYYY-MM-DD HH:mm:SS [source] - text`", () => {

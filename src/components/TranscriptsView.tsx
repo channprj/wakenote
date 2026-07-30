@@ -26,6 +26,7 @@ import {
   fileUrlFromPath,
   formatLocalTimestamp,
   formatTranscriptsForCopy,
+  isDictationTranscript,
   transcriptSourceLabel,
 } from "../lib/transcript-history";
 import { formatModelLabel } from "../lib/models";
@@ -1226,15 +1227,19 @@ export function transcriptSourceFilterOptions(
   }
 
   const microphone = byId.get("microphone");
+  const dictation = byId.get("dictation");
   const microphoneDevices = [...byId.values()].filter((option) =>
     option.id.startsWith("microphone:"),
   );
   const ordered = [
     ...(microphone ? [microphone] : []),
     ...microphoneDevices,
+    ...(dictation ? [dictation] : []),
     ...[...byId.values()].filter(
       (option) =>
-        option.id !== "microphone" && !option.id.startsWith("microphone:"),
+        option.id !== "microphone" &&
+        option.id !== "dictation" &&
+        !option.id.startsWith("microphone:"),
     ),
   ];
 
@@ -1350,6 +1355,9 @@ function isKeyboardCopyIgnoredTarget(target: HTMLElement | null): boolean {
 }
 
 function transcriptSourceFilterKey(entry: RecentTranscript): string {
+  if (isDictationTranscript(entry)) {
+    return "dictation";
+  }
   if ((entry.source ?? "microphone") !== "system") {
     return entry.device_id ? `microphone:${entry.device_id}` : "microphone";
   }
@@ -1391,9 +1399,17 @@ function transcriptSourcePresentation(
 ): {
   label: string;
   title: string;
-  tone: "microphone" | "youtube" | "meet" | "system";
+  tone: "dictation" | "microphone" | "youtube" | "meet" | "system";
   icon: typeof Mic;
 } {
+  if (isDictationTranscript(entry)) {
+    return {
+      label: "Dict",
+      title: "Dictation transcript",
+      tone: "dictation",
+      icon: Mic,
+    };
+  }
   if ((entry.source ?? "microphone") !== "system") {
     const label = transcriptSourceLabel(entry, sourceLabels);
     const mergedDeviceName =

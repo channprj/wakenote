@@ -629,9 +629,12 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
             .and_then(|value| value.to_str())
             .is_some_and(|stem| stem.ends_with("-dictation"))
     );
-    let metadata: ChunkMetadata =
-        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata"))
-            .expect("valid metadata");
+    let metadata_bytes = std::fs::read(&chunk.metadata_path).expect("metadata");
+    let metadata_json: serde_json::Value =
+        serde_json::from_slice(&metadata_bytes).expect("valid metadata JSON");
+    assert_eq!(metadata_json["source"], "microphone");
+    assert_eq!(metadata_json["source_label"], "dictation");
+    let metadata: ChunkMetadata = serde_json::from_slice(&metadata_bytes).expect("valid metadata");
     assert_eq!(metadata.source, ChunkSource::Microphone);
     assert_eq!(metadata.source_label.as_deref(), Some("dictation"));
     assert_eq!(metadata.device_id, "input-0-boya-cm40");

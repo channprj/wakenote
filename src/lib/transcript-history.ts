@@ -53,6 +53,9 @@ export function transcriptSourceLabel(
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
   if ((entry.source ?? "microphone") !== "system") {
+    if (isDictationTranscript(entry)) {
+      return "Dict";
+    }
     if (entry.source_label === "mic-merged") {
       return "Merged Mic";
     }
@@ -62,6 +65,15 @@ export function transcriptSourceLabel(
     return sourceLabels[entry.source_label];
   }
   return humanSourceLabel(entry.source_label);
+}
+
+export function isDictationTranscript(
+  entry: Pick<RecentTranscript, "source" | "source_label">,
+): boolean {
+  return (
+    (entry.source ?? "microphone") === "microphone" &&
+    entry.source_label === "dictation"
+  );
 }
 
 function humanSourceLabel(sourceLabel?: string | null): string {

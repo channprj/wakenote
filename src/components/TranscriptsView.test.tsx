@@ -363,7 +363,7 @@ describe("TranscriptsView", () => {
   it("renders source badges inline between timestamp and transcript text", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
-      days: [{ day: "2026-05-10", count: 4 }],
+      days: [{ day: "2026-05-10", count: 5 }],
       entriesByDay: new Map([
         [
           "2026-05-10",
@@ -389,8 +389,7 @@ describe("TranscriptsView", () => {
               text: "meet transcript",
             }),
             transcript({
-              transcript_path:
-                "/tmp/WakeNote/20260510/010206-mic-merged.txt",
+              transcript_path: "/tmp/WakeNote/20260510/010206-mic-merged.txt",
               recorded_at: "2026-05-10T01:02:06+09:00",
               source: "microphone",
               source_label: "mic-merged",
@@ -398,6 +397,16 @@ describe("TranscriptsView", () => {
               device_name: "BOYA CM40 + BY-V",
               microphone_slot: null,
               text: "merged transcript",
+            }),
+            transcript({
+              transcript_path: "/tmp/WakeNote/20260510/010207-dictation.txt",
+              recorded_at: "2026-05-10T01:02:07+09:00",
+              source: "microphone",
+              source_label: "dictation",
+              device_id: "input-1-boya-cm40",
+              device_name: "BOYA CM40",
+              microphone_slot: null,
+              text: "dictation transcript",
             }),
           ],
         ],
@@ -408,9 +417,10 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("YouTube");
     expect(markup).toContain("Meet");
     expect(markup).toContain(">Merged Mic</span>");
-    expect(markup).toContain(
-      'title="Merged Mic · BOYA CM40 + BY-V"',
-    );
+    expect(markup).toContain('title="Merged Mic · BOYA CM40 + BY-V"');
+    expect(markup).toContain(">Dict</span>");
+    expect(markup).toContain('title="Dictation transcript"');
+    expect(markup).toContain("transcript-source-badge--dictation");
     expect(markup).toContain("transcript-source-badge--youtube");
     expect(markup).toContain("transcript-source-badge--meet");
     expect(markup).not.toContain("transcript-entry__meta");
@@ -663,8 +673,7 @@ describe("TranscriptsView", () => {
           microphone_slot: "secondary",
         }),
         transcript({
-          transcript_path:
-            "/tmp/WakeNote/20260510/010203-mic-merged.txt",
+          transcript_path: "/tmp/WakeNote/20260510/010203-mic-merged.txt",
           source: "microphone",
           source_label: "mic-merged",
           device_id: "input-1-boya-cm40+input-2-by-v",
@@ -697,6 +706,31 @@ describe("TranscriptsView", () => {
       { id: "system:youtube", label: "YouTube", count: 1 },
       { id: "system:custom-source-2", label: "Spotify", count: 1 },
     ]);
+  });
+
+  it("keeps Dictation in its own source filter instead of its physical microphone", () => {
+    const microphone = transcript({
+      source: "microphone",
+      source_label: "mic-primary-wired",
+      device_id: "input-1-wired",
+      device_name: "Wired",
+    });
+    const dictation = transcript({
+      transcript_path: "/tmp/WakeNote/20260510/010204-dictation.txt",
+      source: "microphone",
+      source_label: "dictation",
+      device_id: "input-1-wired",
+      device_name: "Wired",
+    });
+
+    expect(transcriptSourceFilterOptions([microphone, dictation])).toEqual([
+      { id: "all", label: "All sources", count: 2 },
+      { id: "microphone:input-1-wired", label: "Wired", count: 1 },
+      { id: "dictation", label: "Dict", count: 1 },
+    ]);
+    expect(
+      filterTranscriptsBySource([microphone, dictation], "dictation"),
+    ).toEqual([dictation]);
   });
 
   it("shows pause and folder controls for the active playable row", () => {
