@@ -163,24 +163,48 @@ fn request_accessibility_access_if_needed() -> PermissionGrantStatus {
 }
 
 #[cfg(target_os = "macos")]
-#[link(name = "CoreGraphics", kind = "framework")]
+use core_foundation::{
+    base::TCFType,
+    boolean::CFBoolean,
+    dictionary::{CFDictionary, CFDictionaryRef},
+    string::{CFString, CFStringRef},
+};
+
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
-    fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+
+    #[link_name = "kAXTrustedCheckOptionPrompt"]
+    static AX_TRUSTED_CHECK_OPTION_PROMPT: CFStringRef;
 }
 
 #[cfg(target_os = "macos")]
 pub fn accessibility_access_is_granted() -> bool {
-    // SAFETY: CoreGraphics exposes this parameterless process permission query
-    // on every macOS version supported by WakeNote.
-    unsafe { CGPreflightPostEventAccess() }
+    accessibility_access_is_granted_with_prompt(false)
 }
 
 #[cfg(target_os = "macos")]
 pub fn request_accessibility_access() -> bool {
-    // SAFETY: CoreGraphics exposes this parameterless process permission
-    // request on every macOS version supported by WakeNote.
-    unsafe { CGRequestPostEventAccess() }
+    accessibility_access_is_granted_with_prompt(true)
+}
+
+#[cfg(target_os = "macos")]
+fn accessibility_access_is_granted_with_prompt(open_prompt: bool) -> bool {
+    // SAFETY: The key is a process-lifetime Core Foundation constant. The
+    // get-rule wrapper balances its temporary retain when dropped.
+    let prompt_key = unsafe { CFString::wrap_under_get_rule(AX_TRUSTED_CHECK_OPTION_PROMPT) };
+    let prompt_value = if open_prompt {
+        CFBoolean::true_value()
+    } else {
+        CFBoolean::false_value()
+    };
+    let options = CFDictionary::from_CFType_pairs(&[(prompt_key, prompt_value)]);
+
+    // SAFETY: AXIsProcessTrustedWithOptions only reads this valid dictionary
+    // during the call. This is also the permission gate used by Enigo, the
+    // native input backend that emits Dictation's Command+V.
+    unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
 }
 
 pub fn open_screen_recording_permission_settings() -> Result<(), String> {
@@ -460,5 +484,19 @@ mod tests {
     fn accessibility_settings_link_targets_accessibility_pane() {
         let request = accessibility_permission_settings_request();
         assert!(request.target.contains("Privacy_Accessibility"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn accessibility_check_matches_native_text_input_permission() {
+        let settings = enigo::Settings {
+            open_prompt_to_get_permissions: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            accessibility_access_is_granted(),
+            enigo::Enigo::new(&settings).is_ok()
+        );
     }
 }

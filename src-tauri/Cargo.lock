@@ -5162,6 +5162,7 @@ dependencies = [
  "async-trait",
  "block2",
  "chrono",
+ "core-foundation",
  "cpal",
  "dispatch2",
  "enigo",
