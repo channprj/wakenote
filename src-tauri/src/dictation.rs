@@ -3,11 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
 use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
-use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage};
+use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
+use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
     Transcriber, TranscriptionRequest, resample_linear, should_skip_low_signal_audio,
 };
@@ -211,6 +213,8 @@ impl ModifierShortcutRuntime {
 pub struct DictationRecording {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +229,7 @@ pub struct DictationRuntime<B: AudioInputBackend> {
     last_press: Option<Instant>,
     samples: Arc<Mutex<Vec<f32>>>,
     sample_rate: Option<u32>,
+    started_at: Option<DateTime<Utc>>,
     next_recording_id: u64,
     active_recording_id: Option<u64>,
     stop_cue_armed: bool,
@@ -238,6 +243,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             last_press: None,
             samples: Arc::new(Mutex::new(Vec::new())),
             sample_rate: None,
+            started_at: None,
             next_recording_id: 1,
             active_recording_id: None,
             stop_cue_armed: false,
@@ -336,6 +342,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.next_recording_id = self.next_recording_id.saturating_add(1);
         self.active_recording_id = Some(recording_id);
         self.sample_rate = Some(sample_rate);
+        self.started_at = Some(Utc::now());
         Ok(recording_id)
     }
 
@@ -349,10 +356,25 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             .sample_rate
             .take()
             .ok_or_else(|| "dictation sample rate is unavailable".to_string())?;
+        let ended_at = Utc::now();
+        let started_at = self.started_at.take().unwrap_or_else(|| {
+            ended_at
+                - chrono::Duration::milliseconds(
+                    (self
+                        .samples
+                        .lock()
+                        .map(|samples| samples.len())
+                        .unwrap_or_default() as i64
+                        * 1_000)
+                        / i64::from(sample_rate),
+                )
+        });
         let samples = std::mem::take(&mut *self.samples.lock().map_err(|error| error.to_string())?);
         Ok(DictationRecording {
             samples,
             sample_rate,
+            started_at,
+            ended_at,
         })
     }
 
@@ -373,6 +395,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.capture.stop();
         self.stage = DictationStage::Idle;
         self.sample_rate = None;
+        self.started_at = None;
         self.active_recording_id = None;
         if let Ok(mut samples) = self.samples.lock() {
             samples.clear();
@@ -383,6 +406,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.capture.stop();
         self.stage = DictationStage::Error;
         self.sample_rate = None;
+        self.started_at = None;
         self.active_recording_id = None;
         if let Ok(mut samples) = self.samples.lock() {
             samples.clear();
@@ -559,6 +583,34 @@ pub fn prepare_dictation_audio(
         return Ok(None);
     }
     Ok(Some(samples))
+}
+
+pub fn archive_dictation_recording(
+    recording: &DictationRecording,
+    settings: &AppSettings,
+    device_id: &str,
+    device_name: &str,
+    used_fallback_device: bool,
+    app_version: &str,
+) -> Result<RecordedChunk, String> {
+    let save_root = expand_user_path(&settings.save_root);
+    Recorder::write_chunk(RecordingRequest {
+        save_root: &save_root,
+        settings,
+        samples: &recording.samples,
+        sample_rate: recording.sample_rate,
+        started_at: recording.started_at,
+        ended_at: recording.ended_at,
+        device_id,
+        device_name,
+        used_fallback_device,
+        transcription_enabled: true,
+        app_version,
+        live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: Some("dictation"),
+    })
+    .map_err(|error| error.to_string())
 }
 
 pub fn transcribe_dictation_recording<T: Transcriber>(

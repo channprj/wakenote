@@ -5,14 +5,16 @@ use chrono::Utc;
 use wakenote::dictation::{
     DictationAction, DictationProcessOutcome, DictationRecording, DictationRuntime,
     DictationShortcutEvent, DictationStage, ModifierShortcut, ModifierShortcutRuntime,
-    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
-    prepare_dictation_audio, shortcut_registration_change, transcribe_and_type_dictation_recording,
-    transcribe_dictation_recording, validate_dictation_shortcut,
+    ShortcutRegistrationChange, archive_dictation_recording, candidate_dictation_settings,
+    modifier_shortcut, prepare_dictation_audio, shortcut_registration_change,
+    transcribe_and_type_dictation_recording, transcribe_dictation_recording,
+    validate_dictation_shortcut,
 };
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
 };
-use wakenote::settings::{AppSettings, SettingsPatch, TranscriptionLanguage};
+use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
+use wakenote::settings::{AppSettings, AudioFormat, SettingsPatch, TranscriptionLanguage};
 use wakenote::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
 struct FakeInput {
@@ -488,6 +490,7 @@ fn automatic_stop_only_finishes_the_matching_recording() {
 
 #[test]
 fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
+    let started_at = Utc::now();
     let request = Arc::new(Mutex::new(None));
     let transcriber = FakeTranscriber {
         request: request.clone(),
@@ -496,6 +499,8 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
     let recording = wakenote::dictation::DictationRecording {
         samples: vec![0.1; 48_000],
         sample_rate: 48_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
     };
 
     let text = transcribe_dictation_recording(
@@ -526,6 +531,7 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
 
 #[test]
 fn dictation_types_only_after_transcription_returns() {
+    let started_at = Utc::now();
     let events = Arc::new(Mutex::new(Vec::new()));
     let transcriber = OrderedFakeTranscriber {
         events: events.clone(),
@@ -535,6 +541,8 @@ fn dictation_types_only_after_transcription_returns() {
     let recording = DictationRecording {
         samples: vec![0.1; 48_000],
         sample_rate: 48_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
     };
 
     let outcome = transcribe_and_type_dictation_recording(
@@ -561,6 +569,7 @@ fn dictation_types_only_after_transcription_returns() {
 
 #[test]
 fn quiet_dictation_never_calls_the_text_sink() {
+    let started_at = Utc::now();
     let transcriber = OrderedFakeTranscriber {
         events: Arc::new(Mutex::new(Vec::new())),
         text: "unused".to_string(),
@@ -568,6 +577,8 @@ fn quiet_dictation_never_calls_the_text_sink() {
     let recording = DictationRecording {
         samples: vec![0.0; 48_000],
         sample_rate: 48_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
     };
 
     let outcome = transcribe_and_type_dictation_recording(
@@ -580,6 +591,54 @@ fn quiet_dictation_never_calls_the_text_sink() {
     .expect("quiet recording is handled");
 
     assert_eq!(outcome, DictationProcessOutcome::NoSpeech);
+}
+
+#[test]
+fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let started_at = Utc::now();
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+    };
+    let settings = AppSettings {
+        save_root: tmp.path().to_string_lossy().into_owned(),
+        audio_format: AudioFormat::Wav,
+        selected_model: "qwen3-asr-0.6b".to_string(),
+        ..AppSettings::default()
+    };
+
+    let chunk = archive_dictation_recording(
+        &recording,
+        &settings,
+        "input-0-boya-cm40",
+        "BOYA CM40",
+        false,
+        "0.260730.1",
+    )
+    .expect("dictation archive");
+
+    assert!(chunk.audio_path.exists());
+    assert!(
+        chunk
+            .audio_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(|stem| stem.ends_with("-dictation"))
+    );
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata"))
+            .expect("valid metadata");
+    assert_eq!(metadata.source, ChunkSource::Microphone);
+    assert_eq!(metadata.source_label.as_deref(), Some("dictation"));
+    assert_eq!(metadata.device_id, "input-0-boya-cm40");
+    assert_eq!(metadata.device_name, "BOYA CM40");
+    assert_eq!(metadata.model_id, "qwen3-asr-0.6b");
+    assert_eq!(metadata.transcription_status, TranscriptionStatus::Queued);
+    assert_eq!(metadata.started_at, recording.started_at);
+    assert_eq!(metadata.ended_at, recording.ended_at);
 }
 
 #[test]

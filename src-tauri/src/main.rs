@@ -35,12 +35,12 @@ use wakenote::commands::{
 };
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
-    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
-    DictationProcessOutcome, DictationRecording, DictationRuntime, DictationShortcutEvent,
-    DictationStage, DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime,
-    PhysicalModifierKey, ShortcutRegistrationChange, candidate_dictation_settings,
-    modifier_shortcut, normalize_dictation_patch, shortcut_registration_change,
-    transcribe_and_type_dictation_recording, validate_dictation_shortcut,
+    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction, DictationRecording,
+    DictationRuntime, DictationShortcutEvent, DictationStage, DictationStatePayload,
+    ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey, ShortcutRegistrationChange,
+    archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
+    normalize_dictation_patch, shortcut_registration_change, transcribe_dictation_recording,
+    validate_dictation_shortcut,
 };
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
@@ -62,7 +62,7 @@ use wakenote::overlay_caption::{
 use wakenote::permissions::{self, AppPermissions};
 use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
-use wakenote::recorder::ChunkMetadata;
+use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
 use wakenote::settings::{
     AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
     MicrophoneSlot, SettingsPatch, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
@@ -1164,25 +1164,65 @@ fn process_dictation_recording(
     settings: AppSettings,
     recording: DictationRecording,
 ) {
-    let transcriber = RuntimeTranscriber::new(&settings.model_directory);
-    let result = transcribe_and_type_dictation_recording(
+    let microphone = settings
+        .capture_microphones
+        .first()
+        .cloned()
+        .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
+            id: settings.selected_microphone.clone(),
+            label: settings.selected_microphone_label.clone(),
+        });
+    let archive = match archive_dictation_recording(
+        &recording,
+        &settings,
+        &microphone.id,
+        &microphone.label,
+        false,
+        env!("CARGO_PKG_VERSION"),
+    ) {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            show_dictation_error(app, format!("Could not save dictation: {error}"));
+            return;
+        }
+    };
+    log_dictation_runtime(
+        app,
+        format!(
+            "[dictation] archive=created audio_path={}",
+            archive.audio_path.display()
+        ),
+    );
+
+    let transcriber = RuntimeTranscriber::for_dictation(&settings.model_directory);
+    let result = transcribe_dictation_recording(
         &recording,
         &settings.selected_model,
         settings.dictation_language,
         transcriber,
-        |text| {
-            log_dictation_runtime(app, "[dictation] transcription=completed");
-            wakenote::text_input::type_text_into_focused_cursor(text)?;
-            log_dictation_runtime(app, "[dictation] text_input=completed");
-            Ok(())
-        },
     );
     match result {
-        Ok(DictationProcessOutcome::Typed(_)) => complete_dictation(app),
-        Ok(DictationProcessOutcome::NoSpeech) => {
+        Ok(Some(text)) => {
+            if let Err(error) = TranscriptionSidecar::write_success(&archive, &text) {
+                show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
+                return;
+            }
+            log_dictation_runtime(app, "[dictation] transcription=completed");
+            if let Err(error) = wakenote::text_input::type_text_into_focused_cursor(&text) {
+                show_dictation_error(app, error);
+                return;
+            }
+            log_dictation_runtime(app, "[dictation] text_input=completed");
+            complete_dictation(app);
+        }
+        Ok(None) => {
+            let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
             show_dictation_error(app, "No speech detected".to_string())
         }
-        Err(error) => show_dictation_error(app, error),
+        Err(error) => {
+            let _ = TranscriptionSidecar::write_error(&archive, &error);
+            show_dictation_error(app, error);
+        }
     }
 }
 

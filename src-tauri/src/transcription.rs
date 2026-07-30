@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
+    get_lang_str,
 };
 
 use crate::models::{ModelStore, default_model_registry};
@@ -552,12 +553,14 @@ pub fn apply_outcome(
 #[derive(Debug, Clone)]
 pub struct WhisperTranscriber {
     model_directory: PathBuf,
+    suppress_low_confidence_decode: bool,
 }
 
 impl WhisperTranscriber {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            suppress_low_confidence_decode: true,
         }
     }
 
@@ -577,19 +580,33 @@ impl Transcriber for WhisperTranscriber {
         if should_skip_low_signal_audio(&samples) {
             return Ok(String::new());
         }
-        run_whisper(&model_path, &samples, request.language)
+        run_whisper(
+            &model_path,
+            &samples,
+            request.language,
+            self.suppress_low_confidence_decode,
+        )
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct RuntimeTranscriber {
     model_directory: PathBuf,
+    suppress_low_confidence_decode: bool,
 }
 
 impl RuntimeTranscriber {
     pub fn new(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            suppress_low_confidence_decode: true,
+        }
+    }
+
+    pub fn for_dictation(model_directory: impl AsRef<Path>) -> Self {
+        Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            suppress_low_confidence_decode: false,
         }
     }
 
@@ -626,7 +643,11 @@ impl Transcriber for RuntimeTranscriber {
             "external-command" => {
                 ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
             }
-            _ => WhisperTranscriber::new(&self.model_directory).transcribe(request),
+            _ => {
+                let mut transcriber = WhisperTranscriber::new(&self.model_directory);
+                transcriber.suppress_low_confidence_decode = self.suppress_low_confidence_decode;
+                transcriber.transcribe(request)
+            }
         }
     }
 }
@@ -1110,9 +1131,39 @@ fn run_whisper(
     model_path: &Path,
     samples: &[f32],
     language: TranscriptionLanguage,
+    suppress_low_confidence_decode: bool,
 ) -> Result<String, TranscriptionError> {
     let context = WhisperContext::new_with_params(model_path, default_whisper_context_parameters())
         .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    let (language_code, detect_language) = match language.whisper_code() {
+        Some(code) => (Some(code), false),
+        None => (None, true),
+    };
+    let (mut transcript, mut qualities, detected_language) =
+        run_whisper_pass(&context, samples, language_code, detect_language)?;
+    if let Some(retry_language) = dictation_whisper_retry_language(
+        language,
+        suppress_low_confidence_decode,
+        &transcript,
+        detected_language,
+    ) {
+        (transcript, qualities, _) =
+            run_whisper_pass(&context, samples, Some(retry_language), false)?;
+    }
+
+    Ok(finalize_whisper_transcript(
+        &transcript,
+        &qualities,
+        suppress_low_confidence_decode,
+    ))
+}
+
+fn run_whisper_pass(
+    context: &WhisperContext,
+    samples: &[f32],
+    language: Option<&str>,
+    detect_language: bool,
+) -> Result<(String, Vec<DecodedSegmentQuality>, Option<&'static str>), TranscriptionError> {
     let mut state = context
         .create_state()
         .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
@@ -1122,7 +1173,8 @@ fn run_whisper(
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_no_context(true);
-    configure_whisper_language(&mut params, language);
+    params.set_language(language);
+    params.set_detect_language(detect_language);
 
     state
         .full(params, samples)
@@ -1134,11 +1186,35 @@ fn run_whisper(
         transcript.push_str(&segment.to_string());
         qualities.push(decoded_segment_quality(&segment));
     }
-    let transcript = transcript.trim().to_string();
-    if should_suppress_low_confidence_decode(&transcript, &qualities) {
-        Ok(String::new())
+    let detected_language = get_lang_str(state.full_lang_id_from_state());
+    Ok((transcript.trim().to_string(), qualities, detected_language))
+}
+
+fn dictation_whisper_retry_language(
+    language: TranscriptionLanguage,
+    suppress_low_confidence_decode: bool,
+    transcript: &str,
+    detected_language: Option<&'static str>,
+) -> Option<&'static str> {
+    (language == TranscriptionLanguage::Auto
+        && !suppress_low_confidence_decode
+        && transcript.trim().is_empty())
+    .then_some(detected_language)
+    .flatten()
+}
+
+fn finalize_whisper_transcript(
+    transcript: &str,
+    qualities: &[DecodedSegmentQuality],
+    suppress_low_confidence_decode: bool,
+) -> String {
+    let transcript = transcript.trim();
+    if suppress_low_confidence_decode
+        && should_suppress_low_confidence_decode(transcript, qualities)
+    {
+        String::new()
     } else {
-        Ok(transcript)
+        transcript.to_string()
     }
 }
 
@@ -1307,6 +1383,48 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_whisper_profile_keeps_explicit_low_confidence_speech() {
+        let qualities = [DecodedSegmentQuality {
+            no_speech_probability: 0.12,
+            average_token_probability: 0.12,
+        }];
+
+        assert_eq!(
+            finalize_whisper_transcript("마이크 테스트", &qualities, true),
+            ""
+        );
+        assert_eq!(
+            finalize_whisper_transcript("마이크 테스트", &qualities, false),
+            "마이크 테스트"
+        );
+    }
+
+    #[test]
+    fn empty_auto_dictation_retries_with_whispers_detected_language() {
+        assert_eq!(
+            dictation_whisper_retry_language(TranscriptionLanguage::Auto, false, "", Some("ko"),),
+            Some("ko")
+        );
+        assert_eq!(
+            dictation_whisper_retry_language(
+                TranscriptionLanguage::Auto,
+                false,
+                "already decoded",
+                Some("ko"),
+            ),
+            None
+        );
+        assert_eq!(
+            dictation_whisper_retry_language(TranscriptionLanguage::Auto, true, "", Some("ko"),),
+            None
+        );
+        assert_eq!(
+            dictation_whisper_retry_language(TranscriptionLanguage::Ko, false, "", Some("ko"),),
+            None
+        );
+    }
 
     #[test]
     fn qwen3_asr_language_names_match_the_official_api() {
