@@ -38,8 +38,8 @@ use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
     DictationProcessOutcome, DictationRecording, DictationRuntime, DictationShortcutEvent,
     DictationStage, DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime,
-    ShortcutRegistrationChange, candidate_dictation_settings, modifier_shortcut,
-    normalize_dictation_patch, shortcut_registration_change,
+    PhysicalModifierKey, ShortcutRegistrationChange, candidate_dictation_settings,
+    modifier_shortcut, normalize_dictation_patch, shortcut_registration_change,
     transcribe_and_type_dictation_recording, validate_dictation_shortcut,
 };
 use wakenote::input_monitor::InputMonitorRuntime;
@@ -916,12 +916,32 @@ fn handle_modifier_shortcut_event(
     runtime: &ModifierShortcutState,
     flags: CGEventFlags,
 ) {
-    let pressed = ModifierShortcut::new(
+    let logical = ModifierShortcut::new(
         flags.contains(CGEventFlags::MaskControl),
         flags.contains(CGEventFlags::MaskAlternate),
         flags.contains(CGEventFlags::MaskShift),
         flags.contains(CGEventFlags::MaskCommand),
     );
+    let physical = [
+        (PhysicalModifierKey::LeftControl, 59_u16),
+        (PhysicalModifierKey::RightControl, 62_u16),
+        (PhysicalModifierKey::LeftAlt, 58_u16),
+        (PhysicalModifierKey::RightAlt, 61_u16),
+        (PhysicalModifierKey::LeftShift, 56_u16),
+        (PhysicalModifierKey::RightShift, 60_u16),
+        (PhysicalModifierKey::LeftCommand, 55_u16),
+        (PhysicalModifierKey::RightCommand, 54_u16),
+    ]
+    .into_iter()
+    .filter_map(|(key, key_code)| {
+        CGEventSource::key_state(CGEventSourceStateID::CombinedSessionState, key_code)
+            .then_some(key)
+    })
+    .collect::<Vec<_>>();
+    let pressed = match physical.as_slice() {
+        [key] => ModifierShortcut::Physical(*key),
+        _ => logical,
+    };
     let event = runtime
         .lock()
         .map(|mut runtime| runtime.handle_modifiers(pressed))

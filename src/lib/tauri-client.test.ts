@@ -100,12 +100,15 @@ describe("tauri live capture client", () => {
     await expect(
       saveSettingsPatch({ dictation_shortcut: "   " }),
     ).rejects.toThrow("cannot be empty");
-    await expect(
-      saveSettingsPatch({ dictation_shortcut: "space" }),
-    ).rejects.toThrow("must include a modifier");
+    const singleKey = await saveSettingsPatch({ dictation_shortcut: "space" });
+    expect(singleKey.settings.dictation_shortcut).toBe("space");
+    const physicalModifier = await saveSettingsPatch({
+      dictation_shortcut: "LeftControl",
+    });
+    expect(physicalModifier.settings.dictation_shortcut).toBe("leftctrl");
 
     const unchanged = await loadSnapshot();
-    expect(unchanged.settings.dictation_shortcut).toBe("alt+cmd+d");
+    expect(unchanged.settings.dictation_shortcut).toBe("leftctrl");
 
     const canonical = await saveSettingsPatch({ dictation_shortcut: "  Ctrl+Alt+D  " });
     expect(canonical.settings.dictation_shortcut).toBe("ctrl+alt+d");

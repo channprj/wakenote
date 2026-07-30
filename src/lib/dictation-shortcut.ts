@@ -49,6 +49,40 @@ const MODIFIER_ALIASES: Readonly<Record<string, "ctrl" | "alt" | "shift" | "cmd"
 };
 
 const MODIFIER_ORDER = ["ctrl", "alt", "shift", "cmd"] as const;
+const PHYSICAL_MODIFIER_ALIASES: Readonly<Record<string, string>> = {
+  leftctrl: "leftctrl",
+  leftcontrol: "leftctrl",
+  ctrlleft: "leftctrl",
+  controlleft: "leftctrl",
+  rightctrl: "rightctrl",
+  rightcontrol: "rightctrl",
+  ctrlright: "rightctrl",
+  controlright: "rightctrl",
+  leftalt: "leftalt",
+  leftoption: "leftalt",
+  altleft: "leftalt",
+  optionleft: "leftalt",
+  rightalt: "rightalt",
+  rightoption: "rightalt",
+  altright: "rightalt",
+  optionright: "rightalt",
+  leftshift: "leftshift",
+  shiftleft: "leftshift",
+  rightshift: "rightshift",
+  shiftright: "rightshift",
+  leftcmd: "leftcmd",
+  leftcommand: "leftcmd",
+  cmdleft: "leftcmd",
+  commandleft: "leftcmd",
+  leftmeta: "leftcmd",
+  metaleft: "leftcmd",
+  rightcmd: "rightcmd",
+  rightcommand: "rightcmd",
+  cmdright: "rightcmd",
+  commandright: "rightcmd",
+  rightmeta: "rightcmd",
+  metaright: "rightcmd",
+};
 const NAMED_MAIN_KEYS = new Set([
   "space",
   "enter",
@@ -72,6 +106,15 @@ export function normalizeDictationShortcut(raw: string): string {
   }
   if (parts.some((part) => part === "fn" || part === "function")) {
     throw new Error("The fn key is not supported for dictation shortcuts");
+  }
+  if (parts.length === 1) {
+    const physicalModifier = PHYSICAL_MODIFIER_ALIASES[parts[0] ?? ""];
+    if (physicalModifier) {
+      return physicalModifier;
+    }
+  }
+  if (parts.some((part) => PHYSICAL_MODIFIER_ALIASES[part])) {
+    throw new Error("A physical modifier shortcut must be used alone");
   }
 
   const modifiers = new Set<(typeof MODIFIER_ORDER)[number]>();
@@ -105,12 +148,6 @@ export function normalizeDictationShortcut(raw: string): string {
   if (!supportedMainKey) {
     throw new Error(`Unsupported dictation shortcut key: ${mainKey}`);
   }
-  if (modifiers.size === 0 && !functionKey) {
-    throw new Error(
-      "Dictation shortcut must include a modifier unless it uses an F-key",
-    );
-  }
-
   return [
     ...MODIFIER_ORDER.filter((modifier) => modifiers.has(modifier)),
     mainKey,
@@ -121,16 +158,22 @@ export function dictationShortcutFromKeyboardEvent(
   event: DictationShortcutKeyEvent,
 ): string | null {
   const mainKey = mainKeyFromCode(event.code);
-  if (!mainKey && !isModifierCode(event.code)) {
+  const physicalModifier = physicalModifierFromCode(event.code);
+  if (!mainKey && !physicalModifier) {
     return null;
   }
-  const parts = [
+  const modifiers = [
     event.ctrlKey ? "ctrl" : null,
     event.altKey ? "alt" : null,
     event.shiftKey ? "shift" : null,
     event.metaKey ? "cmd" : null,
-    mainKey ?? null,
   ].filter((part): part is string => Boolean(part));
+  if (!mainKey && modifiers.length < 2) {
+    return physicalModifier;
+  }
+  const parts = [...modifiers, mainKey ?? null].filter(
+    (part): part is string => Boolean(part),
+  );
   try {
     return normalizeDictationShortcut(parts.join("+"));
   } catch {
@@ -144,6 +187,14 @@ export function formatDictationShortcut(shortcut: string): string {
     alt: "Option",
     shift: "Shift",
     cmd: "Command",
+    leftctrl: "Left Control",
+    rightctrl: "Right Control",
+    leftalt: "Left Option",
+    rightalt: "Right Option",
+    leftshift: "Left Shift",
+    rightshift: "Right Shift",
+    leftcmd: "Left Command",
+    rightcmd: "Right Command",
     space: "Space",
     enter: "Enter",
     tab: "Tab",
@@ -164,8 +215,18 @@ export function formatDictationShortcut(shortcut: string): string {
     .join(" + ");
 }
 
-function isModifierCode(code: string): boolean {
-  return /^(?:Control|Alt|Shift|Meta)(?:Left|Right)$/.test(code);
+function physicalModifierFromCode(code: string): string | null {
+  const modifiers: Readonly<Record<string, string>> = {
+    ControlLeft: "leftctrl",
+    ControlRight: "rightctrl",
+    AltLeft: "leftalt",
+    AltRight: "rightalt",
+    ShiftLeft: "leftshift",
+    ShiftRight: "rightshift",
+    MetaLeft: "leftcmd",
+    MetaRight: "rightcmd",
+  };
+  return modifiers[code] ?? null;
 }
 
 function mainKeyFromCode(code: string): string | null {

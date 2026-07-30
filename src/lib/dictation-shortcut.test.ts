@@ -33,13 +33,18 @@ describe("dictation shortcut helpers", () => {
     );
   });
 
-  it("accepts two-modifier shortcuts and rejects unsafe combinations", () => {
+  it("accepts modifier chords, modified keys, physical modifiers, and single keys", () => {
     expect(normalizeDictationShortcut(" Shift + Control ")).toBe("ctrl+shift");
+    expect(normalizeDictationShortcut("Control+V")).toBe("ctrl+v");
+    expect(normalizeDictationShortcut("Option+Command")).toBe("alt+cmd");
+    expect(normalizeDictationShortcut("Shift+Z")).toBe("shift+z");
+    expect(normalizeDictationShortcut("Z")).toBe("z");
+    expect(normalizeDictationShortcut("Space")).toBe("space");
+    expect(normalizeDictationShortcut("LeftControl")).toBe("leftctrl");
 
     for (const shortcut of [
       "",
       "ctrl",
-      "space",
       "fn+space",
       "ctrl+a+b",
       "ctrl++d",
@@ -58,12 +63,12 @@ describe("dictation shortcut helpers", () => {
     expect(dictationShortcutFromKeyboardEvent(keyEvent("F8"))).toBe("f8");
   });
 
-  it("returns null while only a modifier or an unsupported key is pressed", () => {
+  it("captures a physical modifier key and rejects unsupported keys", () => {
     expect(
       dictationShortcutFromKeyboardEvent(
         keyEvent("AltLeft", { key: "Alt", altKey: true }),
       ),
-    ).toBeNull();
+    ).toBe("leftalt");
     expect(
       dictationShortcutFromKeyboardEvent(
         keyEvent("MediaPlayPause", { altKey: true }),
@@ -89,13 +94,12 @@ describe("dictation shortcut helpers", () => {
     );
     expect(formatDictationShortcut("alt+space")).toBe("Option + Space");
     expect(formatDictationShortcut("ctrl+shift")).toBe("Control + Shift");
+    expect(formatDictationShortcut("leftctrl")).toBe("Left Control");
   });
 
   it("emits only canonical shortcuts accepted by its own validator", () => {
     for (const code of SUPPORTED_DICTATION_KEY_CODES) {
-      const event = code.startsWith("F")
-        ? keyEvent(code)
-        : keyEvent(code, { altKey: true });
+      const event = keyEvent(code);
       const shortcut = dictationShortcutFromKeyboardEvent(event);
       expect(shortcut, code).not.toBeNull();
       expect(normalizeDictationShortcut(shortcut ?? ""), code).toBe(shortcut);

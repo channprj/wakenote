@@ -55,7 +55,22 @@ pub enum ShortcutRegistrationChange {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModifierShortcut(u8);
+pub enum PhysicalModifierKey {
+    LeftControl,
+    RightControl,
+    LeftAlt,
+    RightAlt,
+    LeftShift,
+    RightShift,
+    LeftCommand,
+    RightCommand,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModifierShortcut {
+    Chord(u8),
+    Physical(PhysicalModifierKey),
+}
 
 impl ModifierShortcut {
     const CONTROL: u8 = 1 << 0;
@@ -64,7 +79,7 @@ impl ModifierShortcut {
     const COMMAND: u8 = 1 << 3;
 
     pub const fn new(control: bool, alt: bool, shift: bool, command: bool) -> Self {
-        Self(
+        Self::Chord(
             (if control { Self::CONTROL } else { 0 })
                 | (if alt { Self::ALT } else { 0 })
                 | (if shift { Self::SHIFT } else { 0 })
@@ -73,10 +88,20 @@ impl ModifierShortcut {
     }
 
     fn contains(self, required: Self) -> bool {
-        self.0 & required.0 == required.0
+        match (self, required) {
+            (Self::Chord(pressed), Self::Chord(required)) => pressed & required == required,
+            (Self::Physical(pressed), Self::Physical(required)) => pressed == required,
+            _ => false,
+        }
     }
 
     pub fn canonical_string(self) -> Option<String> {
+        if let Self::Physical(key) = self {
+            return Some(key.canonical_name().to_string());
+        }
+        let Self::Chord(bits) = self else {
+            unreachable!()
+        };
         let mut parts = Vec::new();
         for (mask, name) in [
             (Self::CONTROL, "ctrl"),
@@ -84,11 +109,40 @@ impl ModifierShortcut {
             (Self::SHIFT, "shift"),
             (Self::COMMAND, "cmd"),
         ] {
-            if self.0 & mask != 0 {
+            if bits & mask != 0 {
                 parts.push(name);
             }
         }
         (parts.len() >= 2).then(|| parts.join("+"))
+    }
+}
+
+impl PhysicalModifierKey {
+    fn from_canonical_name(raw: &str) -> Option<Self> {
+        match raw {
+            "leftctrl" => Some(Self::LeftControl),
+            "rightctrl" => Some(Self::RightControl),
+            "leftalt" => Some(Self::LeftAlt),
+            "rightalt" => Some(Self::RightAlt),
+            "leftshift" => Some(Self::LeftShift),
+            "rightshift" => Some(Self::RightShift),
+            "leftcmd" => Some(Self::LeftCommand),
+            "rightcmd" => Some(Self::RightCommand),
+            _ => None,
+        }
+    }
+
+    fn canonical_name(self) -> &'static str {
+        match self {
+            Self::LeftControl => "leftctrl",
+            Self::RightControl => "rightctrl",
+            Self::LeftAlt => "leftalt",
+            Self::RightAlt => "rightalt",
+            Self::LeftShift => "leftshift",
+            Self::RightShift => "rightshift",
+            Self::LeftCommand => "leftcmd",
+            Self::RightCommand => "rightcmd",
+        }
     }
 }
 
@@ -398,6 +452,17 @@ pub fn validate_dictation_shortcut(raw: &str) -> Result<String, String> {
     {
         return Err("the fn key is not supported for dictation shortcuts".to_string());
     }
+    if parts.len() == 1
+        && let Some(physical_modifier) = canonical_physical_modifier(&parts[0])
+    {
+        return Ok(physical_modifier.to_string());
+    }
+    if parts
+        .iter()
+        .any(|part| canonical_physical_modifier(part).is_some())
+    {
+        return Err("a physical modifier shortcut must be used alone".to_string());
+    }
 
     let mut modifiers = Vec::new();
     let mut main_keys = Vec::new();
@@ -433,16 +498,6 @@ pub fn validate_dictation_shortcut(raw: &str) -> Result<String, String> {
         return Err("dictation shortcut must contain exactly one main key".to_string());
     }
     let main_key = main_keys[0].as_str();
-    let function_key = main_key
-        .strip_prefix('f')
-        .and_then(|value| value.parse::<u8>().ok())
-        .is_some_and(|value| (1..=24).contains(&value));
-    if modifiers.is_empty() && !function_key {
-        return Err(
-            "dictation shortcut must include a modifier unless it uses an F-key".to_string(),
-        );
-    }
-
     let normalized = modifiers
         .into_iter()
         .chain(std::iter::once(main_key))
@@ -454,8 +509,29 @@ pub fn validate_dictation_shortcut(raw: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+fn canonical_physical_modifier(raw: &str) -> Option<&'static str> {
+    match raw {
+        "leftctrl" | "leftcontrol" | "ctrlleft" | "controlleft" => Some("leftctrl"),
+        "rightctrl" | "rightcontrol" | "ctrlright" | "controlright" => Some("rightctrl"),
+        "leftalt" | "leftoption" | "altleft" | "optionleft" => Some("leftalt"),
+        "rightalt" | "rightoption" | "altright" | "optionright" => Some("rightalt"),
+        "leftshift" | "shiftleft" => Some("leftshift"),
+        "rightshift" | "shiftright" => Some("rightshift"),
+        "leftcmd" | "leftcommand" | "cmdleft" | "commandleft" | "leftmeta" | "metaleft" => {
+            Some("leftcmd")
+        }
+        "rightcmd" | "rightcommand" | "cmdright" | "commandright" | "rightmeta" | "metaright" => {
+            Some("rightcmd")
+        }
+        _ => None,
+    }
+}
+
 pub fn modifier_shortcut(raw: &str) -> Result<Option<ModifierShortcut>, String> {
     let normalized = validate_dictation_shortcut(raw)?;
+    if let Some(key) = PhysicalModifierKey::from_canonical_name(&normalized) {
+        return Ok(Some(ModifierShortcut::Physical(key)));
+    }
     if normalized
         .split('+')
         .any(|part| !matches!(part, "ctrl" | "alt" | "shift" | "cmd"))

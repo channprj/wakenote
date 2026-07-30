@@ -70,7 +70,7 @@ impl AudioInputBackend for FakeInput {
 }
 
 #[test]
-fn shortcut_validation_accepts_modified_keys_function_keys_and_modifier_chords() {
+fn shortcut_validation_accepts_requested_combinations_and_single_keys() {
     assert_eq!(
         validate_dictation_shortcut("  Ctrl+Alt+D  ").expect("valid shortcut"),
         "ctrl+alt+d"
@@ -83,11 +83,25 @@ fn shortcut_validation_accepts_modified_keys_function_keys_and_modifier_chords()
         validate_dictation_shortcut(" Shift + Control ").expect("modifier chord"),
         "ctrl+shift"
     );
+    for (shortcut, normalized) in [
+        ("Control+V", "ctrl+v"),
+        ("Option+Command", "alt+cmd"),
+        ("Shift+Z", "shift+z"),
+        ("Z", "z"),
+        ("Space", "space"),
+        ("LeftControl", "leftctrl"),
+    ] {
+        assert_eq!(
+            validate_dictation_shortcut(shortcut).as_deref(),
+            Ok(normalized),
+            "{shortcut} should be supported"
+        );
+    }
 }
 
 #[test]
 fn shortcut_validation_rejects_unsafe_or_ambiguous_combinations() {
-    for shortcut in ["", "ctrl", "space", "fn+space", "ctrl+a+b", "ctrl++d"] {
+    for shortcut in ["", "ctrl", "fn+space", "ctrl+a+b", "ctrl++d"] {
         assert!(
             validate_dictation_shortcut(shortcut).is_err(),
             "{shortcut:?} should be rejected"
@@ -134,6 +148,49 @@ fn modifier_shortcut_emits_one_press_and_release_per_exact_cycle() {
     );
     assert_eq!(
         runtime.handle_modifiers(ModifierShortcut::new(true, false, true, false)),
+        Some(DictationShortcutEvent::Pressed)
+    );
+}
+
+#[test]
+fn physical_modifier_shortcut_is_routed_to_the_native_monitor() {
+    let shortcut = modifier_shortcut("LeftControl")
+        .expect("valid physical shortcut")
+        .expect("native shortcut");
+
+    assert_eq!(shortcut.canonical_string().as_deref(), Some("leftctrl"));
+}
+
+#[test]
+fn physical_modifier_shortcut_emits_edges_only_for_the_selected_side() {
+    let shortcut = modifier_shortcut("leftctrl")
+        .expect("valid physical shortcut")
+        .expect("native shortcut");
+    let mut runtime = ModifierShortcutRuntime::default();
+    runtime.register(shortcut).expect("shortcut registers");
+
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(false, false, false, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(shortcut),
+        Some(DictationShortcutEvent::Pressed)
+    );
+    assert_eq!(runtime.handle_modifiers(shortcut), None);
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::Physical(
+            wakenote::dictation::PhysicalModifierKey::RightControl,
+        )),
+        Some(DictationShortcutEvent::Released)
+    );
+    assert_eq!(runtime.handle_modifiers(shortcut), None);
+    assert_eq!(
+        runtime.handle_modifiers(ModifierShortcut::new(false, false, false, false)),
+        None
+    );
+    assert_eq!(
+        runtime.handle_modifiers(shortcut),
         Some(DictationShortcutEvent::Pressed)
     );
 }

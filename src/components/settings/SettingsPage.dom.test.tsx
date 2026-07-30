@@ -218,6 +218,43 @@ describe("SettingsPage interactions", () => {
     expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
   });
 
+  it("waits for keyup before saving a single physical modifier", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    await user.click(shortcut);
+    fireEvent.keyDown(shortcut, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
+    });
+    expect(actions.onPatch).not.toHaveBeenCalled();
+
+    fireEvent.keyUp(shortcut, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: false,
+    });
+
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_shortcut: "leftctrl",
+    });
+    await act(async () => {});
+    expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
   it("restores the active shortcut when key capture is cancelled", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

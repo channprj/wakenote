@@ -31,6 +31,10 @@ const DICTATION_LANGUAGES = [
   { value: "de", label: "German" },
 ] as const satisfies ReadonlyArray<SelectOption<TranscriptionLanguage>>;
 
+function isPhysicalModifierShortcut(shortcut: string): boolean {
+  return /^(?:left|right)(?:ctrl|alt|shift|cmd)$/.test(shortcut);
+}
+
 export function DictationSettings({
   settings,
   actions,
@@ -165,11 +169,29 @@ export function DictationSettings({
     const shortcut = dictationShortcutFromKeyboardEvent(event);
     if (!shortcut) {
       setShortcutError(
-        "Use two modifiers, a modifier with a supported key, or an F-key.",
+        "Press a key, a modified key, a modifier chord, or one physical modifier.",
       );
       return;
     }
+    if (isPhysicalModifierShortcut(shortcut)) {
+      return;
+    }
 
+    await commitShortcut(shortcut);
+  }
+
+  async function capturePhysicalModifierRelease(
+    event: KeyboardEvent<HTMLButtonElement>,
+  ) {
+    if (!capturingShortcut || !captureActiveRef.current) {
+      return;
+    }
+    const shortcut = dictationShortcutFromKeyboardEvent(event);
+    if (!shortcut || !isPhysicalModifierShortcut(shortcut)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
     await commitShortcut(shortcut);
   }
 
@@ -197,7 +219,7 @@ export function DictationSettings({
             <FieldLabel>Dictation shortcut</FieldLabel>
             <FieldDescription>
               {shortcutError ??
-                "Press two modifiers, or a modifier and key. F-keys work alone."}
+                "Use a single key, a modified key, a modifier chord, or one physical modifier."}
             </FieldDescription>
           </FieldContent>
           <Button
@@ -210,6 +232,7 @@ export function DictationSettings({
             disabled={!settings.dictation_enabled}
             onClick={() => void startShortcutCapture()}
             onKeyDown={(event) => void captureShortcut(event)}
+            onKeyUp={(event) => void capturePhysicalModifierRelease(event)}
             onBlur={() => {
               if (capturingShortcut) {
                 void cancelShortcutCapture();
