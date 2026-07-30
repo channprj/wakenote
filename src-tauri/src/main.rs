@@ -729,18 +729,31 @@ fn log_dictation_runtime(app: &AppHandle, message: impl AsRef<str>) {
     }
 }
 
+fn spawn_dictation_cue_task(task: impl FnOnce() + Send + 'static) -> Result<(), String> {
+    thread::Builder::new()
+        .name("dictation-audio-cue".to_string())
+        .spawn(task)
+        .map(|_| ())
+        .map_err(|error| format!("could not start dictation cue: {error}"))
+}
+
 fn play_dictation_cue_nonblocking_on_failure(app: &AppHandle, cue: DictationCue) {
-    let cue_name = match cue {
-        DictationCue::Start => "start",
-        DictationCue::Stop => "stop",
-    };
-    match play_dictation_cue(app, cue) {
-        Ok(()) => log_dictation_runtime(app, format!("[dictation] cue={cue_name} completed")),
-        Err(error) => {
-            let message = format!("[dictation] cue={cue_name} failed error={error}");
-            eprintln!("{message}");
-            log_dictation_runtime(app, message);
+    let app = app.clone();
+    if let Err(error) = spawn_dictation_cue_task(move || {
+        let cue_name = match cue {
+            DictationCue::Start => "start",
+            DictationCue::Stop => "stop",
+        };
+        match play_dictation_cue(&app, cue) {
+            Ok(()) => log_dictation_runtime(&app, format!("[dictation] cue={cue_name} completed")),
+            Err(error) => {
+                let message = format!("[dictation] cue={cue_name} failed error={error}");
+                eprintln!("{message}");
+                log_dictation_runtime(&app, message);
+            }
         }
+    }) {
+        eprintln!("[dictation] cue worker failed: {error}");
     }
 }
 
@@ -6657,6 +6670,35 @@ mod tests {
         assert_eq!(
             dictation_cue_resource_name(DictationCue::Stop),
             "dictation-stop.wav"
+        );
+    }
+
+    #[test]
+    fn dictation_cue_task_returns_before_audio_playback_finishes() {
+        let (task_started_tx, task_started_rx) = mpsc::channel();
+        let (release_task_tx, release_task_rx) = mpsc::channel();
+        let (caller_returned_tx, caller_returned_rx) = mpsc::channel();
+
+        let caller = thread::spawn(move || {
+            spawn_dictation_cue_task(move || {
+                task_started_tx.send(()).expect("announce cue start");
+                release_task_rx.recv().expect("release cue task");
+            })
+            .expect("cue task starts");
+            caller_returned_tx.send(()).expect("announce caller return");
+        });
+
+        task_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("cue task started");
+        let returned_before_playback_finished =
+            caller_returned_rx.recv_timeout(Duration::from_millis(100));
+        release_task_tx.send(()).expect("release cue task");
+        caller.join().expect("cue caller completed");
+
+        assert!(
+            returned_before_playback_finished.is_ok(),
+            "shortcut worker must not wait for cue playback"
         );
     }
 
