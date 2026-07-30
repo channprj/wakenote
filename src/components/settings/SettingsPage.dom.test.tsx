@@ -98,6 +98,7 @@ function makeActions(): SettingsActions {
     onChooseSaveRoot: vi.fn(),
     onRevealSaveFolder: vi.fn(),
     onChooseModelDirectory: vi.fn(),
+    onRequestAccessibilityPermission: vi.fn(),
     onRequestMicrophonePermission: vi.fn(),
     onRequestScreenRecordingPermission: vi.fn(),
     onVerifyModel: vi.fn(),
@@ -349,7 +350,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("switch", { name: "Launch at login" }));
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Launch at login" }),
+    );
     expect(actions.onPatch).toHaveBeenCalledWith({ launch_at_login: true });
   });
 
@@ -391,7 +394,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Save Root"), { target: { value: "/tmp/notes" } });
+    fireEvent.change(screen.getByLabelText("Save Root"), {
+      target: { value: "/tmp/notes" },
+    });
     expect(actions.onPatch).toHaveBeenCalledWith({ save_root: "/tmp/notes" });
   });
 
@@ -409,7 +414,9 @@ describe("SettingsPage interactions", () => {
     await userEvent.click(
       screen.getByRole("switch", { name: "Auto-type transcripts into cursor" }),
     );
-    expect(actions.onPatch).toHaveBeenCalledWith({ auto_transcript_input_enabled: true });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      auto_transcript_input_enabled: true,
+    });
   });
 
   it("disables the floating overlay position when the overlay is hidden", () => {
@@ -425,7 +432,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const position = screen.getByRole("combobox", { name: "Floating overlay position" });
+    const position = screen.getByRole("combobox", {
+      name: "Floating overlay position",
+    });
     expect((position as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -474,9 +483,7 @@ describe("SettingsPage interactions", () => {
     expect(initialObserver.observe).toHaveBeenCalledTimes(6);
     expect(
       new Set(initialObserver.observe.mock.calls.map(([target]) => target)),
-    ).toEqual(
-      new Set([grid, ...enabledCards]),
-    );
+    ).toEqual(new Set([grid, ...enabledCards]));
     expect(frames.callbacks.size).toBe(1);
     expect(frames.request).toHaveBeenCalledOnce();
 

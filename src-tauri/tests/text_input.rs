@@ -1,5 +1,5 @@
 use wakenote::text_input::{
-    auto_transcript_input_should_type, auto_transcript_input_text, macos_auto_type_script,
+    accessibility_permission_error, auto_transcript_input_should_type, auto_transcript_input_text,
     should_type_transcript_text,
 };
 
@@ -36,13 +36,10 @@ fn auto_transcript_input_text_optionally_appends_one_trailing_space() {
 }
 
 #[test]
-fn macos_auto_type_script_pastes_argv_text_and_restores_clipboard() {
-    let script = macos_auto_type_script();
+fn native_text_input_permission_error_is_actionable() {
+    let error = accessibility_permission_error();
 
-    assert!(script.contains("set typedText to item 1 of argv"));
-    assert!(script.contains("set previousClipboard to the clipboard"));
-    assert!(script.contains("keystroke \"v\" using command down"));
-    assert!(!script.contains("delay 0.05"));
-    assert!(script.contains("delay 0.01"));
-    assert!(script.contains("set the clipboard to previousClipboard"));
+    assert!(error.contains("WakeNote"));
+    assert!(error.contains("Accessibility"));
+    assert!(error.contains("System Settings"));
 }

@@ -1035,6 +1035,23 @@ fn show_dictation_overlay(
     }
 }
 
+fn type_dictation_text_on_main_thread(app: &AppHandle, text: String) {
+    let app_for_task = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if let Err(error) = wakenote::text_input::type_text_into_focused_cursor(&text) {
+            show_dictation_error(&app_for_task, error);
+            return;
+        }
+        log_dictation_runtime(&app_for_task, "[dictation] text_input=completed");
+        complete_dictation(&app_for_task);
+    }) {
+        show_dictation_error(
+            app,
+            format!("Could not schedule Dictation text input: {error}"),
+        );
+    }
+}
+
 fn refresh_tray_from_backend(app: &AppHandle) {
     let snapshot = app.try_state::<BackendState>().and_then(|state| {
         state
@@ -1208,12 +1225,7 @@ fn process_dictation_recording(
                 return;
             }
             log_dictation_runtime(app, "[dictation] transcription=completed");
-            if let Err(error) = wakenote::text_input::type_text_into_focused_cursor(&text) {
-                show_dictation_error(app, error);
-                return;
-            }
-            log_dictation_runtime(app, "[dictation] text_input=completed");
-            complete_dictation(app);
+            type_dictation_text_on_main_thread(app, text);
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
@@ -1941,6 +1953,18 @@ fn queue_snapshot(state: State<'_, BackendState>) -> Result<QueueSnapshot, Strin
 #[tauri::command]
 fn permission_snapshot() -> AppPermissions {
     permissions::permission_snapshot()
+}
+
+#[tauri::command]
+async fn request_accessibility_permission() -> Result<AppPermissions, String> {
+    tauri::async_runtime::spawn_blocking(permissions::request_accessibility_permission)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_accessibility_permission_settings() -> Result<(), String> {
+    permissions::open_accessibility_permission_settings()
 }
 
 #[tauri::command]
@@ -4411,18 +4435,24 @@ fn emit_outcome_to_frontend(
                     &text,
                     settings_for_log.auto_transcript_input_trailing_space,
                 );
-                thread::spawn(move || {
+                let settings_for_input = settings_for_log.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
                     if let Some(text_for_input) = text_for_input {
                         if let Err(error) =
                             wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
                         {
                             append_runtime_debug_log(
-                                &settings_for_log,
+                                &settings_for_input,
                                 format!("[auto-input] failed to type transcript: {error}"),
                             );
                         }
                     }
-                });
+                }) {
+                    append_runtime_debug_log(
+                        &settings_for_log,
+                        format!("[auto-input] failed to schedule transcript input: {error}"),
+                    );
+                }
             }
             if let Err(error) = app.emit(
                 EVENT_LIVE_FINAL,
@@ -5339,6 +5369,8 @@ fn main() {
             delete_model,
             queue_snapshot,
             permission_snapshot,
+            request_accessibility_permission,
+            open_accessibility_permission_settings,
             request_microphone_permission,
             open_microphone_permission_settings,
             request_screen_recording_permission,

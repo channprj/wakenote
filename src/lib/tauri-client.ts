@@ -1100,6 +1100,37 @@ export async function requestMicrophonePermission(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function requestAccessibilityPermission(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      permissions: {
+        ...(browserSnapshot.permissions ?? defaultPermissions()),
+        accessibility: {
+          status: "granted",
+          label: "Allowed",
+          detail: "WakeNote can type Dictation results into the focused app.",
+          can_request: false,
+          can_open_settings: true,
+        },
+      },
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<AppPermissions>("request_accessibility_permission");
+  return loadSnapshot();
+}
+
+export async function openAccessibilityPermissionSettings(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+
+  await invoke("open_accessibility_permission_settings");
+  return loadSnapshot();
+}
+
 export async function openMicrophonePermissionSettings(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     return loadSnapshot();

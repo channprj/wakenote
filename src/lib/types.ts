@@ -458,6 +458,7 @@ export interface PermissionState {
 }
 
 export interface AppPermissions {
+  accessibility: PermissionState;
   microphone: PermissionState;
   screen_recording: PermissionState;
 }

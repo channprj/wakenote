@@ -406,6 +406,13 @@ export function defaultLevelSnapshot(): LevelSnapshot {
 
 export function defaultPermissions(): AppPermissions {
   return {
+    accessibility: {
+      status: "granted",
+      label: "Allowed",
+      detail: "WakeNote can type Dictation results into the focused app.",
+      can_request: false,
+      can_open_settings: true,
+    },
     microphone: {
       status: "granted",
       label: "Allowed",

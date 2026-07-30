@@ -31,6 +31,8 @@ import {
   enqueueBacklog,
   loadRecentTranscripts,
   loadSnapshot,
+  requestAccessibilityPermission,
+  openAccessibilityPermissionSettings,
   requestMicrophonePermission,
   openMicrophonePermissionSettings,
   requestScreenRecordingPermission,
@@ -513,6 +515,12 @@ export default function App() {
           onChooseSaveRoot: () => void runAction(chooseSaveRoot),
           onRevealSaveFolder: () => void runAction(revealSaveFolder),
           onChooseModelDirectory: () => void runAction(chooseModelDirectory),
+          onRequestAccessibilityPermission: () =>
+            void runAction(
+              snapshot.permissions.accessibility.can_request
+                ? requestAccessibilityPermission
+                : openAccessibilityPermissionSettings,
+            ),
           onRequestMicrophonePermission: () =>
             void runAction(
               snapshot.permissions.microphone.can_request

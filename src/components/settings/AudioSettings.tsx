@@ -60,6 +60,7 @@ export function AudioSettings({
   actions: SettingsActions;
 }) {
   const { settings, status, microphones } = snapshot;
+  const accessibilityPermission = snapshot.permissions.accessibility;
   const microphonePermission = snapshot.permissions.microphone;
   const screenRecordingPermission = snapshot.permissions.screen_recording;
   const availability = inputAvailability(settings, microphones);
@@ -70,6 +71,21 @@ export function AudioSettings({
         title="Permissions"
         description="Access required for live audio capture."
       >
+        <PermissionSetting
+          label="Accessibility Permission"
+          status={accessibilityPermission.label}
+          detail={accessibilityPermission.detail}
+          actionLabel={
+            accessibilityPermission.status === "granted"
+              ? null
+              : accessibilityPermission.can_request
+                ? "Allow Accessibility"
+                : accessibilityPermission.can_open_settings
+                  ? "Open System Settings"
+                  : null
+          }
+          onAction={actions.onRequestAccessibilityPermission}
+        />
         <PermissionSetting
           label="Microphone Permission"
           status={microphonePermission.label}

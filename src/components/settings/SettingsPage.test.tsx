@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
+import type { AppSnapshot } from "@/lib/types";
 import type { SettingsSection } from "@/lib/navigation";
 import { SettingsPage } from "./SettingsPage";
 import { SettingsGrid } from "./settings-controls";
@@ -14,6 +15,7 @@ const actions: SettingsActions = {
   onChooseSaveRoot: vi.fn(),
   onRevealSaveFolder: vi.fn(),
   onChooseModelDirectory: vi.fn(),
+  onRequestAccessibilityPermission: vi.fn(),
   onRequestMicrophonePermission: vi.fn(),
   onRequestScreenRecordingPermission: vi.fn(),
   onVerifyModel: vi.fn(),
@@ -24,12 +26,12 @@ const actions: SettingsActions = {
   onDeleteOpenRouterApiKey: vi.fn(),
 };
 
-function renderSection(section: SettingsSection) {
+function renderSection(section: SettingsSection, snapshot: AppSnapshot = mockSnapshot()) {
   return renderToStaticMarkup(
     <SettingsPage
       section={section}
       onSectionChange={() => {}}
-      snapshot={mockSnapshot()}
+      snapshot={snapshot}
       actions={actions}
     />,
   );
@@ -45,9 +47,21 @@ describe("SettingsPage ownership", () => {
   });
 
   it("keeps input, permission, and timing controls in Audio", () => {
-    const markup = renderSection("audio");
+    const snapshot = mockSnapshot();
+    snapshot.permissions.accessibility = {
+      status: "denied",
+      label: "Needs access",
+      detail: "WakeNote needs Accessibility access to type Dictation results at the cursor.",
+      can_request: true,
+      can_open_settings: true,
+    };
+    const markup = renderSection("audio", snapshot);
 
     expect(markup).toContain("Microphone Permission");
+    expect(markup).toContain("Accessibility Permission");
+    expect(markup).toContain(
+      "WakeNote needs Accessibility access to type Dictation results",
+    );
     expect(markup).toContain('aria-label="Primary microphone"');
     expect(markup).toContain('aria-label="Secondary microphone"');
     expect(markup).toContain("1 / 2 selected");

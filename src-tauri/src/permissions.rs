@@ -24,6 +24,7 @@ pub struct PermissionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppPermissions {
+    pub accessibility: PermissionState,
     pub microphone: PermissionState,
     pub screen_recording: PermissionState,
 }
@@ -36,6 +37,7 @@ pub struct PermissionSettingsRequest {
 
 pub fn permission_snapshot() -> AppPermissions {
     AppPermissions {
+        accessibility: accessibility_permission_state_for_status(accessibility_permission_status()),
         microphone: microphone_permission_state_for_status(microphone_permission_status()),
         screen_recording: screen_recording_permission_state_for_status(
             screen_recording_permission_status(),
@@ -45,6 +47,7 @@ pub fn permission_snapshot() -> AppPermissions {
 
 pub fn request_microphone_permission() -> AppPermissions {
     AppPermissions {
+        accessibility: accessibility_permission_state_for_status(accessibility_permission_status()),
         microphone: microphone_permission_state_for_status(request_microphone_access_if_needed()),
         screen_recording: screen_recording_permission_state_for_status(
             screen_recording_permission_status(),
@@ -54,11 +57,130 @@ pub fn request_microphone_permission() -> AppPermissions {
 
 pub fn request_screen_recording_permission() -> AppPermissions {
     AppPermissions {
+        accessibility: accessibility_permission_state_for_status(accessibility_permission_status()),
         microphone: microphone_permission_state_for_status(microphone_permission_status()),
         screen_recording: screen_recording_permission_state_for_status(
             request_screen_recording_access(),
         ),
     }
+}
+
+pub fn request_accessibility_permission() -> AppPermissions {
+    AppPermissions {
+        accessibility: accessibility_permission_state_for_status(
+            request_accessibility_access_if_needed(),
+        ),
+        microphone: microphone_permission_state_for_status(microphone_permission_status()),
+        screen_recording: screen_recording_permission_state_for_status(
+            screen_recording_permission_status(),
+        ),
+    }
+}
+
+pub fn open_accessibility_permission_settings() -> Result<(), String> {
+    let request = accessibility_permission_settings_request();
+    Command::new(request.program)
+        .arg(request.target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+pub fn accessibility_permission_settings_request() -> PermissionSettingsRequest {
+    PermissionSettingsRequest {
+        program: PathBuf::from("/usr/bin/open"),
+        target: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            .to_string(),
+    }
+}
+
+pub fn accessibility_permission_state_for_status(status: PermissionGrantStatus) -> PermissionState {
+    match status {
+        PermissionGrantStatus::Granted => PermissionState {
+            status,
+            label: "Allowed",
+            detail: "WakeNote can type Dictation results into the focused app.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::NotDetermined | PermissionGrantStatus::Denied => PermissionState {
+            status,
+            label: "Needs access",
+            detail: "WakeNote needs Accessibility access to type Dictation results at the cursor.",
+            can_request: true,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Restricted => PermissionState {
+            status,
+            label: "Restricted",
+            detail: "Accessibility access is restricted by macOS policy.",
+            can_request: false,
+            can_open_settings: true,
+        },
+        PermissionGrantStatus::Unsupported => PermissionState {
+            status,
+            label: "Unsupported",
+            detail: "This platform does not expose Accessibility permission status.",
+            can_request: false,
+            can_open_settings: false,
+        },
+        PermissionGrantStatus::Unknown => PermissionState {
+            status,
+            label: "Unknown",
+            detail: "WakeNote could not determine Accessibility permission status.",
+            can_request: true,
+            can_open_settings: true,
+        },
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn accessibility_permission_status() -> PermissionGrantStatus {
+    if accessibility_access_is_granted() {
+        PermissionGrantStatus::Granted
+    } else {
+        PermissionGrantStatus::NotDetermined
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accessibility_permission_status() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}
+
+#[cfg(target_os = "macos")]
+fn request_accessibility_access_if_needed() -> PermissionGrantStatus {
+    if request_accessibility_access() {
+        PermissionGrantStatus::Granted
+    } else {
+        PermissionGrantStatus::Denied
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_accessibility_access_if_needed() -> PermissionGrantStatus {
+    PermissionGrantStatus::Unsupported
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGPreflightPostEventAccess() -> bool;
+    fn CGRequestPostEventAccess() -> bool;
+}
+
+#[cfg(target_os = "macos")]
+pub fn accessibility_access_is_granted() -> bool {
+    // SAFETY: CoreGraphics exposes this parameterless process permission query
+    // on every macOS version supported by WakeNote.
+    unsafe { CGPreflightPostEventAccess() }
+}
+
+#[cfg(target_os = "macos")]
+pub fn request_accessibility_access() -> bool {
+    // SAFETY: CoreGraphics exposes this parameterless process permission
+    // request on every macOS version supported by WakeNote.
+    unsafe { CGRequestPostEventAccess() }
 }
 
 pub fn open_screen_recording_permission_settings() -> Result<(), String> {
@@ -324,5 +446,19 @@ mod tests {
     fn screen_recording_settings_link_targets_screen_capture_pane() {
         let request = screen_recording_permission_settings_request();
         assert!(request.target.contains("Privacy_ScreenCapture"));
+    }
+
+    #[test]
+    fn accessibility_permission_explains_dictation_input() {
+        let state = accessibility_permission_state_for_status(PermissionGrantStatus::NotDetermined);
+        assert!(state.detail.contains("Dictation"));
+        assert!(state.can_request);
+        assert!(state.can_open_settings);
+    }
+
+    #[test]
+    fn accessibility_settings_link_targets_accessibility_pane() {
+        let request = accessibility_permission_settings_request();
+        assert!(request.target.contains("Privacy_Accessibility"));
     }
 }

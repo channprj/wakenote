@@ -8,6 +8,7 @@ export interface SettingsActions {
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;
+  onRequestAccessibilityPermission: () => void;
   onRequestMicrophonePermission: () => void;
   onRequestScreenRecordingPermission: () => void;
   onVerifyModel: (modelId: string) => void;

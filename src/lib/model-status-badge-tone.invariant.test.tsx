@@ -18,7 +18,9 @@ import { ModelsSettings } from "../components/settings/ModelsSettings";
 function renderModelManagerSelectedRowBadgeTone(status: ModelStatus): string {
   const snapshot = mockSnapshot();
   const models = snapshot.models.map((model) =>
-    model.id === snapshot.settings.selected_model ? { ...model, status } : model,
+    model.id === snapshot.settings.selected_model
+      ? { ...model, status }
+      : model,
   );
   const markup = renderToStaticMarkup(
     <ModelManager
@@ -37,15 +39,22 @@ function renderModelManagerSelectedRowBadgeTone(status: ModelStatus): string {
   // value. For "missing" itself, every row carries the same status — the assertion still
   // holds because every Badge resolves to the same tone via the shared helper.
   const humanized = humanizeModelStatus(status);
-  const match = markup.match(new RegExp(`<span [^>]*data-tone="([a-z]+)">${humanized}</span>`));
-  expect(match, `expected ModelManager Badge with text "${humanized}"`).not.toBeNull();
+  const match = markup.match(
+    new RegExp(`<span [^>]*data-tone="([a-z]+)">${humanized}</span>`),
+  );
+  expect(
+    match,
+    `expected ModelManager Badge with text "${humanized}"`,
+  ).not.toBeNull();
   return match?.[1] ?? "";
 }
 
 function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
   const snapshot = mockSnapshot();
   snapshot.models = snapshot.models.map((model) =>
-    model.id === snapshot.settings.selected_model ? { ...model, status } : model,
+    model.id === snapshot.settings.selected_model
+      ? { ...model, status }
+      : model,
   );
   const markup = renderToStaticMarkup(
     <ModelsSettings
@@ -58,6 +67,7 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
         onChooseSaveRoot: () => {},
         onRevealSaveFolder: () => {},
         onChooseModelDirectory: () => {},
+        onRequestAccessibilityPermission: () => {},
         onRequestMicrophonePermission: () => {},
         onRequestScreenRecordingPermission: () => {},
         onVerifyModel: () => {},
@@ -75,7 +85,10 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
   const match = markup.match(
     /<span [^>]*data-tone="([a-z]+)">Whisper Medium<\/span>/,
   );
-  expect(match, 'expected ModelsSettings selected-model Badge "Whisper Medium"').not.toBeNull();
+  expect(
+    match,
+    'expected ModelsSettings selected-model Badge "Whisper Medium"',
+  ).not.toBeNull();
   return match?.[1] ?? "";
 }
 
