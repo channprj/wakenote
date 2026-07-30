@@ -2016,7 +2016,7 @@ impl AppBackend {
     }
 
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        let transcriber = RuntimeTranscriber::new(&self.settings.model_directory);
+        let transcriber = RuntimeTranscriber::for_archival(&self.settings.model_directory);
         self.process_next_transcription_with(transcriber)
     }
 
