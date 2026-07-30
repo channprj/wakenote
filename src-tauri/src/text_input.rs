@@ -8,6 +8,15 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "macos")]
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
+#[cfg(target_os = "macos")]
+const fn macos_paste_keycode() -> u16 {
+    // kVK_ANSI_V. A shortcut must use the physical ANSI keycode instead of
+    // asking the active input source to translate the character "v". Enigo's
+    // character lookup falls back to keycode 0 (ANSI A) when translation
+    // fails, which turns Command+V into Command+A.
+    0x09
+}
+
 pub fn should_type_transcript_text(text: &str) -> bool {
     !text.trim().is_empty()
 }
@@ -115,7 +124,7 @@ impl ClipboardPasteBackend for MacClipboardPasteBackend {
             .key(Key::Meta, Direction::Press)
             .map_err(|error| format!("Could not press Command for Dictation paste: {error}"))?;
         let paste_result = input
-            .key(Key::Unicode('v'), Direction::Click)
+            .raw(macos_paste_keycode(), Direction::Click)
             .map_err(|error| format!("Could not press V for Dictation paste: {error}"));
         let release_result = input
             .key(Key::Meta, Direction::Release)
@@ -196,6 +205,12 @@ mod tests {
         assert_eq!(error, accessibility_permission_error());
         assert!(error.contains("copied"));
         assert!(error.contains("clipboard"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn paste_shortcut_uses_layout_independent_ansi_v_keycode() {
+        assert_eq!(macos_paste_keycode(), 0x09);
     }
 
     #[test]
