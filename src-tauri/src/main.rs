@@ -1056,9 +1056,19 @@ fn show_dictation_overlay(
     state: overlay::DictationOverlayState,
     message: Option<String>,
 ) {
+    let position = app
+        .try_state::<BackendState>()
+        .and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .map(|backend| backend.settings().dictation_bubble_position)
+        })
+        .unwrap_or_default();
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        if let Err(error) = overlay::show_dictation_overlay(&app_for_task, state, message) {
+        if let Err(error) = overlay::show_dictation_overlay(&app_for_task, state, message, position)
+        {
             eprintln!("[dictation] overlay update failed: {error}");
         }
     }) {

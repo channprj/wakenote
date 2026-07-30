@@ -19,6 +19,9 @@ describe("overlay caption css", () => {
 
   it("styles a compact dictation capsule and responsive waveform bars", () => {
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*height:\s*44px/);
+    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*gap:\s*10px/);
+    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*min-width:\s*190px/);
+    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*padding:\s*0 12px/);
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*backdrop-filter:\s*blur/);
     expect(css).toMatch(
       /\.overlay-dictation__waveform\s+i\s*\{[^}]*height:\s*calc\(4px \+ var\(--level\) \* 20px\)/,

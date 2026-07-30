@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
 use crate::commands::TrayState;
-use crate::settings::FloatingOverlayPosition;
+use crate::settings::{DictationBubblePosition, FloatingOverlayPosition};
 
 pub const OVERLAY_LABEL: &str = "overlay";
 pub const OVERLAY_EVENT: &str = "overlay-state";
@@ -14,7 +14,11 @@ pub const DICTATION_OVERLAY_LEVEL_EVENT: &str = "dictation-overlay-level";
 const OVERLAY_MAX_WIDTH_LOGICAL: f64 = 720.0;
 const OVERLAY_MIN_WIDTH_LOGICAL: f64 = 280.0;
 const OVERLAY_HEIGHT_LOGICAL: f64 = 104.0;
-const DICTATION_OVERLAY_WIDTH_LOGICAL: f64 = 280.0;
+const DICTATION_OVERLAY_WIDTH_LOGICAL: f64 = 248.0;
+const DICTATION_OVERLAY_HEIGHT_LOGICAL: f64 = 76.0;
+const DICTATION_OVERLAY_HORIZONTAL_OFFSET_LOGICAL: f64 = 18.0;
+const DICTATION_OVERLAY_TOP_OFFSET_LOGICAL: f64 = 32.0;
+const DICTATION_OVERLAY_BOTTOM_OFFSET_LOGICAL: f64 = 18.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
 const OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL: f64 = 36.0;
 const OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL: f64 = 28.0;
@@ -270,6 +274,7 @@ pub fn show_dictation_overlay(
     app: &AppHandle,
     state: DictationOverlayState,
     message: Option<String>,
+    position: DictationBubblePosition,
 ) -> tauri::Result<()> {
     if state == DictationOverlayState::Hidden {
         return hide_dictation_overlay_state(app);
@@ -283,7 +288,7 @@ pub fn show_dictation_overlay(
 
     if let Some(rect) = monitor_with_cursor(&window) {
         let overlay_size = dictation_overlay_size_for_monitor(rect);
-        let logical = calculate_position(rect, OverlayAnchor::Top, overlay_size);
+        let logical = calculate_dictation_position(rect, position, overlay_size);
         window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
         window.set_position(logical)?;
     }
@@ -410,6 +415,47 @@ pub(crate) fn calculate_position(
     LogicalPosition::new(logical_x, logical_y)
 }
 
+pub(crate) fn calculate_dictation_position(
+    monitor: MonitorRect,
+    position: DictationBubblePosition,
+    size_logical: (f64, f64),
+) -> LogicalPosition<f64> {
+    let (overlay_w, overlay_h) = size_logical;
+    let scale = if monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let origin_x = monitor.origin_physical.0 as f64 / scale;
+    let origin_y = monitor.origin_physical.1 as f64 / scale;
+    let monitor_w = monitor.size_physical.0 as f64 / scale;
+    let monitor_h = monitor.size_physical.1 as f64 / scale;
+
+    let x = match position {
+        DictationBubblePosition::TopLeft | DictationBubblePosition::BottomLeft => {
+            origin_x + DICTATION_OVERLAY_HORIZONTAL_OFFSET_LOGICAL
+        }
+        DictationBubblePosition::TopCenter | DictationBubblePosition::BottomCenter => {
+            origin_x + (monitor_w - overlay_w) / 2.0
+        }
+        DictationBubblePosition::TopRight | DictationBubblePosition::BottomRight => {
+            origin_x + monitor_w - overlay_w - DICTATION_OVERLAY_HORIZONTAL_OFFSET_LOGICAL
+        }
+    };
+    let y = match position {
+        DictationBubblePosition::TopLeft
+        | DictationBubblePosition::TopCenter
+        | DictationBubblePosition::TopRight => origin_y + DICTATION_OVERLAY_TOP_OFFSET_LOGICAL,
+        DictationBubblePosition::BottomLeft
+        | DictationBubblePosition::BottomCenter
+        | DictationBubblePosition::BottomRight => {
+            origin_y + monitor_h - overlay_h - DICTATION_OVERLAY_BOTTOM_OFFSET_LOGICAL
+        }
+    };
+
+    LogicalPosition::new(x, y)
+}
+
 fn overlay_size_for_monitor(monitor: MonitorRect) -> (f64, f64) {
     let scale = if monitor.scale_factor > 0.0 {
         monitor.scale_factor
@@ -425,7 +471,10 @@ fn overlay_size_for_monitor(monitor: MonitorRect) -> (f64, f64) {
 }
 
 fn dictation_overlay_size_for_monitor(_monitor: MonitorRect) -> (f64, f64) {
-    (DICTATION_OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL)
+    (
+        DICTATION_OVERLAY_WIDTH_LOGICAL,
+        DICTATION_OVERLAY_HEIGHT_LOGICAL,
+    )
 }
 
 pub(crate) fn caption_overlay_size_for_monitor(
@@ -576,14 +625,33 @@ mod tests {
     }
 
     #[test]
-    fn dictation_overlay_size_is_fixed_and_top_centered() {
+    fn dictation_overlay_is_compact_at_each_configured_edge() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
         let size = dictation_overlay_size_for_monitor(monitor);
-        let position = calculate_position(monitor, OverlayAnchor::Top, size);
+        assert_eq!(size, (248.0, 76.0));
 
-        assert_eq!(size, (280.0, 104.0));
-        assert_eq!(position.x, 820.0);
-        assert_eq!(position.y, TOP_OFFSET_LOGICAL);
+        for (position, expected) in [
+            (DictationBubblePosition::TopLeft, (18.0, 32.0)),
+            (DictationBubblePosition::TopCenter, (836.0, 32.0)),
+            (DictationBubblePosition::TopRight, (1654.0, 32.0)),
+            (DictationBubblePosition::BottomLeft, (18.0, 986.0)),
+            (DictationBubblePosition::BottomCenter, (836.0, 986.0)),
+            (DictationBubblePosition::BottomRight, (1654.0, 986.0)),
+        ] {
+            let actual = calculate_dictation_position(monitor, position, size);
+            assert_eq!((actual.x, actual.y), expected);
+        }
+    }
+
+    #[test]
+    fn dictation_overlay_position_uses_logical_secondary_monitor_coordinates() {
+        let monitor = rect((-3840, 0), (3840, 2160), 2.0);
+        let size = dictation_overlay_size_for_monitor(monitor);
+        let position =
+            calculate_dictation_position(monitor, DictationBubblePosition::TopRight, size);
+
+        assert_eq!(position.x, -266.0);
+        assert_eq!(position.y, 32.0);
     }
 
     #[test]
