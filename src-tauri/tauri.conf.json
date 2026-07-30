@@ -41,6 +41,8 @@
     "targets": ["app"],
     "category": "Productivity",
     "resources": {
+      "../src/assets/sounds/dict-end-0.mp3": "dict-end-0.mp3",
+      "../src/assets/sounds/dict-start-0.mp3": "dict-start-0.mp3",
       "resources/dictation-start.wav": "dictation-start.wav",
       "resources/dictation-stop.wav": "dictation-stop.wav"
     },

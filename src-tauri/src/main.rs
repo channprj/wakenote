@@ -64,10 +64,11 @@ use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
 use wakenote::settings::{
-    AppSettings, FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction,
-    MicrophoneSlot, SettingsPatch, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_start_on_launch, resolve_auto_prompt,
+    AppSettings, DictationCueSound, DictationCueVolume, FloatingOverlayPosition,
+    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot, SettingsPatch, TrayClickAction,
+    clamp_llm_max_iterations, expand_user_path, launch_at_login_action_for_patch,
+    live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
+    resolve_auto_prompt,
 };
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
@@ -697,19 +698,44 @@ enum DictationCue {
     Stop,
 }
 
-fn dictation_cue_resource_name(cue: DictationCue) -> &'static str {
-    match cue {
-        DictationCue::Start => "dictation-start.wav",
-        DictationCue::Stop => "dictation-stop.wav",
+fn dictation_cue_resource_name(cue: DictationCue, sound: DictationCueSound) -> &'static str {
+    match (cue, sound) {
+        (DictationCue::Start, DictationCueSound::Original) => "dictation-start.wav",
+        (DictationCue::Stop, DictationCueSound::Original) => "dictation-stop.wav",
+        (DictationCue::Start, DictationCueSound::Alternative) => "dict-start-0.mp3",
+        (DictationCue::Stop, DictationCueSound::Alternative) => "dict-end-0.mp3",
     }
 }
 
-fn play_dictation_cue(app: &AppHandle, cue: DictationCue) -> Result<(), String> {
+fn dictation_cue_volume_arg(volume: DictationCueVolume) -> Option<&'static str> {
+    match volume {
+        DictationCueVolume::Muted => None,
+        DictationCueVolume::Small => Some("0.55"),
+        DictationCueVolume::Medium => Some("1.0"),
+    }
+}
+
+fn play_dictation_cue(
+    app: &AppHandle,
+    cue: DictationCue,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    let Some(volume) = dictation_cue_volume_arg(settings.dictation_cue_volume) else {
+        return Ok(());
+    };
+    let sound = match cue {
+        DictationCue::Start => settings.dictation_start_sound,
+        DictationCue::Stop => settings.dictation_stop_sound,
+    };
     let path = app
         .path()
-        .resolve(dictation_cue_resource_name(cue), BaseDirectory::Resource)
+        .resolve(
+            dictation_cue_resource_name(cue, sound),
+            BaseDirectory::Resource,
+        )
         .map_err(|error| error.to_string())?;
     let status = Command::new("/usr/bin/afplay")
+        .args(["-v", volume])
         .arg(path)
         .status()
         .map_err(|error| error.to_string())?;
@@ -737,14 +763,19 @@ fn spawn_dictation_cue_task(task: impl FnOnce() + Send + 'static) -> Result<(), 
         .map_err(|error| format!("could not start dictation cue: {error}"))
 }
 
-fn play_dictation_cue_nonblocking_on_failure(app: &AppHandle, cue: DictationCue) {
+fn play_dictation_cue_nonblocking_on_failure(
+    app: &AppHandle,
+    cue: DictationCue,
+    settings: &AppSettings,
+) {
     let app = app.clone();
+    let settings = settings.clone();
     if let Err(error) = spawn_dictation_cue_task(move || {
         let cue_name = match cue {
             DictationCue::Start => "start",
             DictationCue::Stop => "stop",
         };
-        match play_dictation_cue(&app, cue) {
+        match play_dictation_cue(&app, cue, &settings) {
             Ok(()) => log_dictation_runtime(&app, format!("[dictation] cue={cue_name} completed")),
             Err(error) => {
                 let message = format!("[dictation] cue={cue_name} failed error={error}");
@@ -1188,6 +1219,7 @@ fn process_dictation_recording(
     recording: DictationRecording,
 ) {
     let started = Instant::now();
+    let dictation_model = settings.effective_dictation_model().to_string();
     let microphone = settings
         .capture_microphones
         .first()
@@ -1217,7 +1249,7 @@ fn process_dictation_recording(
             let transcription_started = Instant::now();
             let result = transcribe_dictation_recording(
                 &recording,
-                &settings.selected_model,
+                &dictation_model,
                 settings.dictation_language,
                 transcriber,
             );
@@ -1274,9 +1306,10 @@ fn process_dictation_recording(
 }
 
 fn dictation_model_to_preload(settings: &AppSettings) -> Option<String> {
+    let model_id = settings.effective_dictation_model();
     (settings.dictation_enabled
-        && model_supports_live_partials(&settings.model_directory, &settings.selected_model))
-    .then(|| settings.selected_model.clone())
+        && model_supports_live_partials(&settings.model_directory, model_id))
+    .then(|| model_id.to_string())
 }
 
 fn preload_dictation_model(app: &AppHandle, settings: &AppSettings) {
@@ -1360,7 +1393,7 @@ async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings:
         Some("Transcribing…".to_string()),
     );
     refresh_tray_from_backend(&app);
-    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop);
+    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop, &settings);
     process_dictation_recording(&app, settings, recording);
 }
 
@@ -1392,7 +1425,7 @@ fn handle_dictation_shortcut_event(
     match action {
         DictationAction::Ignore => Ok(()),
         DictationAction::PlayStopCue => {
-            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop);
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &settings);
             Ok(())
         }
         DictationAction::StartRecording => {
@@ -1408,7 +1441,7 @@ fn handle_dictation_shortcut_event(
                 Some("Listening…".to_string()),
             );
             refresh_tray_from_backend(app);
-            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Start);
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Start, &settings);
 
             let microphone = settings
                 .capture_microphones
@@ -1482,7 +1515,7 @@ fn handle_dictation_shortcut_event(
                 Some("Transcribing…".to_string()),
             );
             refresh_tray_from_backend(app);
-            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop);
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &settings);
             process_dictation_recording(app, settings, recording);
             Ok(())
         }
@@ -6334,7 +6367,7 @@ mod tests {
     }
 
     #[test]
-    fn dictation_preloads_only_enabled_whisper_models() {
+    fn dictation_preloads_the_effective_dictation_whisper_model() {
         let mut settings = AppSettings::default();
         assert_eq!(dictation_model_to_preload(&settings), None);
 
@@ -6346,6 +6379,14 @@ mod tests {
         );
 
         settings.selected_model = "qwen3-asr-0.6b".to_string();
+        settings.dictation_model = "whisper-small".to_string();
+        assert_eq!(
+            dictation_model_to_preload(&settings),
+            Some("whisper-small".to_string())
+        );
+
+        settings.selected_model = "whisper-medium".to_string();
+        settings.dictation_model = "qwen3-asr-0.6b".to_string();
         assert_eq!(dictation_model_to_preload(&settings), None);
     }
 
@@ -6893,14 +6934,31 @@ mod tests {
     }
 
     #[test]
-    fn dictation_cues_use_bundled_resource_names() {
+    fn dictation_cues_use_selected_bundled_resources_and_volume() {
         assert_eq!(
-            dictation_cue_resource_name(DictationCue::Start),
+            dictation_cue_resource_name(DictationCue::Start, DictationCueSound::Original),
             "dictation-start.wav"
         );
         assert_eq!(
-            dictation_cue_resource_name(DictationCue::Stop),
+            dictation_cue_resource_name(DictationCue::Stop, DictationCueSound::Original),
             "dictation-stop.wav"
+        );
+        assert_eq!(
+            dictation_cue_resource_name(DictationCue::Start, DictationCueSound::Alternative),
+            "dict-start-0.mp3"
+        );
+        assert_eq!(
+            dictation_cue_resource_name(DictationCue::Stop, DictationCueSound::Alternative),
+            "dict-end-0.mp3"
+        );
+        assert_eq!(dictation_cue_volume_arg(DictationCueVolume::Muted), None);
+        assert_eq!(
+            dictation_cue_volume_arg(DictationCueVolume::Small),
+            Some("0.55")
+        );
+        assert_eq!(
+            dictation_cue_volume_arg(DictationCueVolume::Medium),
+            Some("1.0")
         );
     }
 

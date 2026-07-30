@@ -594,9 +594,11 @@ pub fn archive_dictation_recording(
     app_version: &str,
 ) -> Result<RecordedChunk, String> {
     let save_root = expand_user_path(&settings.save_root);
+    let mut archive_settings = settings.clone();
+    archive_settings.selected_model = settings.effective_dictation_model().to_string();
     Recorder::write_chunk(RecordingRequest {
         save_root: &save_root,
-        settings,
+        settings: &archive_settings,
         samples: &recording.samples,
         sample_rate: recording.sample_rate,
         started_at: recording.started_at,

@@ -607,6 +607,7 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
         save_root: tmp.path().to_string_lossy().into_owned(),
         audio_format: AudioFormat::Wav,
         selected_model: "qwen3-asr-0.6b".to_string(),
+        dictation_model: "whisper-small".to_string(),
         ..AppSettings::default()
     };
 
@@ -635,7 +636,7 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
     assert_eq!(metadata.source_label.as_deref(), Some("dictation"));
     assert_eq!(metadata.device_id, "input-0-boya-cm40");
     assert_eq!(metadata.device_name, "BOYA CM40");
-    assert_eq!(metadata.model_id, "qwen3-asr-0.6b");
+    assert_eq!(metadata.model_id, "whisper-small");
     assert_eq!(metadata.transcription_status, TranscriptionStatus::Queued);
     assert_eq!(metadata.started_at, recording.started_at);
     assert_eq!(metadata.ended_at, recording.ended_at);
