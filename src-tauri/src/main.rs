@@ -1077,10 +1077,20 @@ fn show_dictation_overlay(
     }
 }
 
-fn type_dictation_text_on_main_thread(app: &AppHandle, text: String, started: Instant) {
+fn type_dictation_text_on_main_thread(
+    app: &AppHandle,
+    text: String,
+    copy_to_clipboard: bool,
+    started: Instant,
+) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        if let Err(error) = wakenote::text_input::type_text_into_focused_cursor(&text) {
+        let clipboard_after_paste =
+            wakenote::text_input::dictation_clipboard_after_paste(copy_to_clipboard);
+        if let Err(error) = wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
+            &text,
+            clipboard_after_paste,
+        ) {
             show_dictation_error(&app_for_task, error);
             return;
         }
@@ -1295,6 +1305,15 @@ fn process_dictation_recording(
                 show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
                 return;
             }
+            let Some(input_text) = wakenote::text_input::dictation_input_text(
+                &text,
+                settings.dictation_remove_trailing_space,
+            ) else {
+                let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
+                refresh_transcript_day_index(&archive.audio_path);
+                show_dictation_error(app, "No speech detected".to_string());
+                return;
+            };
             refresh_transcript_day_index(&archive.audio_path);
             log_dictation_runtime(
                 app,
@@ -1304,7 +1323,12 @@ fn process_dictation_recording(
                     started.elapsed().as_millis(),
                 ),
             );
-            type_dictation_text_on_main_thread(app, text, started);
+            type_dictation_text_on_main_thread(
+                app,
+                input_text,
+                settings.dictation_copy_to_clipboard,
+                started,
+            );
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");

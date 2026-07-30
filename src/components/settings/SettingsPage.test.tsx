@@ -84,6 +84,8 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain("Dictation shortcut");
     expect(markup).toContain("Dictation language");
     expect(markup).toContain("Dictation model");
+    expect(markup).toContain("Copy result to clipboard");
+    expect(markup).toContain("Remove trailing space");
     expect(markup).toContain("Start sound");
     expect(markup).toContain("Stop sound");
     expect(markup).toContain("Cue volume");

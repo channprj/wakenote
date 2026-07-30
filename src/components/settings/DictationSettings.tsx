@@ -312,6 +312,28 @@ export function DictationSettings({
             })
           }
         />
+        <SettingSwitch
+          label="Copy result to clipboard"
+          description={
+            settings.dictation_copy_to_clipboard
+              ? "Keep each pasted Dictation result in the clipboard."
+              : "Paste the result and restore the previous clipboard."
+          }
+          checked={settings.dictation_copy_to_clipboard}
+          disabled={!settings.dictation_enabled}
+          onCheckedChange={(dictation_copy_to_clipboard) =>
+            void actions.onPatch({ dictation_copy_to_clipboard })
+          }
+        />
+        <SettingSwitch
+          label="Remove trailing space"
+          description="Trim whitespace from the end of Dictation text before pasting."
+          checked={settings.dictation_remove_trailing_space}
+          disabled={!settings.dictation_enabled}
+          onCheckedChange={(dictation_remove_trailing_space) =>
+            void actions.onPatch({ dictation_remove_trailing_space })
+          }
+        />
       </SettingsCard>
       <SettingsCard
         title="Feedback"

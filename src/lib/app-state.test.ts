@@ -26,6 +26,8 @@ describe("app state derivation", () => {
       dictation_cue_volume: "medium",
       dictation_bubble_position: "top_center",
       dictation_model: "",
+      dictation_copy_to_clipboard: true,
+      dictation_remove_trailing_space: false,
     });
   });
 

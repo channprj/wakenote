@@ -107,6 +107,8 @@ export interface AppSettings {
   dictation_cue_volume: DictationCueVolume;
   dictation_bubble_position: DictationBubblePosition;
   dictation_model: string;
+  dictation_copy_to_clipboard: boolean;
+  dictation_remove_trailing_space: boolean;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;

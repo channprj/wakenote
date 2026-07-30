@@ -331,6 +331,10 @@ pub struct AppSettings {
     pub dictation_bubble_position: DictationBubblePosition,
     #[serde(default)]
     pub dictation_model: String,
+    #[serde(default = "default_dictation_copy_to_clipboard")]
+    pub dictation_copy_to_clipboard: bool,
+    #[serde(default)]
+    pub dictation_remove_trailing_space: bool,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     #[serde(default = "default_tray_left_click_action")]
@@ -414,6 +418,8 @@ pub struct SettingsPatch {
     pub dictation_cue_volume: Option<DictationCueVolume>,
     pub dictation_bubble_position: Option<DictationBubblePosition>,
     pub dictation_model: Option<String>,
+    pub dictation_copy_to_clipboard: Option<bool>,
+    pub dictation_remove_trailing_space: Option<bool>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
@@ -475,6 +481,10 @@ pub fn default_dictation_shortcut() -> String {
 
 pub const fn default_dictation_language() -> TranscriptionLanguage {
     TranscriptionLanguage::Auto
+}
+
+pub const fn default_dictation_copy_to_clipboard() -> bool {
+    true
 }
 
 pub fn normalize_capture_microphones(
@@ -987,6 +997,12 @@ impl AppSettings {
         if let Some(value) = patch.dictation_model {
             self.dictation_model = value.trim().to_string();
         }
+        if let Some(value) = patch.dictation_copy_to_clipboard {
+            self.dictation_copy_to_clipboard = value;
+        }
+        if let Some(value) = patch.dictation_remove_trailing_space {
+            self.dictation_remove_trailing_space = value;
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
@@ -1112,6 +1128,8 @@ impl Default for AppSettings {
             dictation_cue_volume: DictationCueVolume::default(),
             dictation_bubble_position: DictationBubblePosition::default(),
             dictation_model: String::new(),
+            dictation_copy_to_clipboard: default_dictation_copy_to_clipboard(),
+            dictation_remove_trailing_space: false,
             show_dock_icon: true,
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
@@ -1328,6 +1346,22 @@ mod tests {
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+    }
+
+    #[test]
+    fn dictation_input_preferences_preserve_current_defaults_and_patch_independently() {
+        let mut settings = AppSettings::default();
+        assert!(settings.dictation_copy_to_clipboard);
+        assert!(!settings.dictation_remove_trailing_space);
+
+        settings.apply_patch(SettingsPatch {
+            dictation_copy_to_clipboard: Some(false),
+            dictation_remove_trailing_space: Some(true),
+            ..Default::default()
+        });
+
+        assert!(!settings.dictation_copy_to_clipboard);
+        assert!(settings.dictation_remove_trailing_space);
     }
 
     #[test]
@@ -1584,6 +1618,8 @@ mod tests {
             DictationBubblePosition::TopCenter
         );
         assert_eq!(settings.dictation_model, "");
+        assert!(settings.dictation_copy_to_clipboard);
+        assert!(!settings.dictation_remove_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
         assert_eq!(settings.openrouter_model, OPENROUTER_DEFAULT_MODEL_ID);

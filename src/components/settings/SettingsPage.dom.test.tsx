@@ -167,6 +167,14 @@ describe("SettingsPage interactions", () => {
         screen.getByRole("combobox", { name }).hasAttribute("disabled"),
       ).toBe(true);
     }
+    for (const name of [
+      "Copy result to clipboard",
+      "Remove trailing space",
+    ]) {
+      expect(
+        screen.getByRole("switch", { name }).hasAttribute("disabled"),
+      ).toBe(true);
+    }
 
     await user.click(
       screen.getByRole("switch", { name: "Enable shortcut dictation" }),
@@ -225,6 +233,20 @@ describe("SettingsPage interactions", () => {
     await choose("Dictation model", "Whisper Small");
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_model: "whisper-small",
+    });
+
+    await user.click(
+      screen.getByRole("switch", { name: "Copy result to clipboard" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_copy_to_clipboard: false,
+    });
+
+    await user.click(
+      screen.getByRole("switch", { name: "Remove trailing space" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_remove_trailing_space: true,
     });
 
     snapshot.settings.dictation_model = "whisper-small";
