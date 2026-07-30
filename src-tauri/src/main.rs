@@ -1035,14 +1035,20 @@ fn show_dictation_overlay(
     }
 }
 
-fn type_dictation_text_on_main_thread(app: &AppHandle, text: String) {
+fn type_dictation_text_on_main_thread(app: &AppHandle, text: String, started: Instant) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         if let Err(error) = wakenote::text_input::type_text_into_focused_cursor(&text) {
             show_dictation_error(&app_for_task, error);
             return;
         }
-        log_dictation_runtime(&app_for_task, "[dictation] text_input=completed");
+        log_dictation_runtime(
+            &app_for_task,
+            format!(
+                "[dictation] text_input=completed total_ms={}",
+                started.elapsed().as_millis()
+            ),
+        );
         complete_dictation(&app_for_task);
     }) {
         show_dictation_error(
@@ -1181,6 +1187,7 @@ fn process_dictation_recording(
     settings: AppSettings,
     recording: DictationRecording,
 ) {
+    let started = Instant::now();
     let microphone = settings
         .capture_microphones
         .first()
@@ -1189,14 +1196,41 @@ fn process_dictation_recording(
             id: settings.selected_microphone.clone(),
             label: settings.selected_microphone_label.clone(),
         });
-    let archive = match archive_dictation_recording(
-        &recording,
-        &settings,
-        &microphone.id,
-        &microphone.label,
-        false,
-        env!("CARGO_PKG_VERSION"),
-    ) {
+    let transcriber = RuntimeTranscriber::for_dictation(&settings.model_directory);
+    let ((archive_result, archive_elapsed), result, transcription_elapsed) =
+        thread::scope(|scope| {
+            let archive_started = Instant::now();
+            let recording_for_archive = &recording;
+            let settings_for_archive = &settings;
+            let microphone_for_archive = &microphone;
+            let archive_task = scope.spawn(move || {
+                let result = archive_dictation_recording(
+                    recording_for_archive,
+                    settings_for_archive,
+                    &microphone_for_archive.id,
+                    &microphone_for_archive.label,
+                    false,
+                    env!("CARGO_PKG_VERSION"),
+                );
+                (result, archive_started.elapsed())
+            });
+            let transcription_started = Instant::now();
+            let result = transcribe_dictation_recording(
+                &recording,
+                &settings.selected_model,
+                settings.dictation_language,
+                transcriber,
+            );
+            let transcription_elapsed = transcription_started.elapsed();
+            let archive = archive_task.join().unwrap_or_else(|_| {
+                (
+                    Err("Dictation archive worker panicked".to_string()),
+                    archive_started.elapsed(),
+                )
+            });
+            (archive, result, transcription_elapsed)
+        });
+    let archive = match archive_result {
         Ok(chunk) => chunk,
         Err(error) => {
             show_dictation_error(app, format!("Could not save dictation: {error}"));
@@ -1206,26 +1240,27 @@ fn process_dictation_recording(
     log_dictation_runtime(
         app,
         format!(
-            "[dictation] archive=created audio_path={}",
-            archive.audio_path.display()
+            "[dictation] archive=created elapsed_ms={} audio_path={}",
+            archive_elapsed.as_millis(),
+            archive.audio_path.display(),
         ),
     );
 
-    let transcriber = RuntimeTranscriber::for_dictation(&settings.model_directory);
-    let result = transcribe_dictation_recording(
-        &recording,
-        &settings.selected_model,
-        settings.dictation_language,
-        transcriber,
-    );
     match result {
         Ok(Some(text)) => {
             if let Err(error) = TranscriptionSidecar::write_success(&archive, &text) {
                 show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
                 return;
             }
-            log_dictation_runtime(app, "[dictation] transcription=completed");
-            type_dictation_text_on_main_thread(app, text);
+            log_dictation_runtime(
+                app,
+                format!(
+                    "[dictation] transcription=completed elapsed_ms={} total_ms={}",
+                    transcription_elapsed.as_millis(),
+                    started.elapsed().as_millis(),
+                ),
+            );
+            type_dictation_text_on_main_thread(app, text, started);
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
@@ -1235,6 +1270,26 @@ fn process_dictation_recording(
             let _ = TranscriptionSidecar::write_error(&archive, &error);
             show_dictation_error(app, error);
         }
+    }
+}
+
+fn dictation_model_to_preload(settings: &AppSettings) -> Option<String> {
+    (settings.dictation_enabled
+        && model_supports_live_partials(&settings.model_directory, &settings.selected_model))
+    .then(|| settings.selected_model.clone())
+}
+
+fn preload_dictation_model(app: &AppHandle, settings: &AppSettings) {
+    let Some(model_id) = dictation_model_to_preload(settings) else {
+        return;
+    };
+    let Some(transcriber_state) = app.try_state::<LiveTranscriberState>() else {
+        return;
+    };
+    if let Ok(slot) = transcriber_state.lock()
+        && let Some(service) = slot.as_ref()
+    {
+        service.preload(model_id);
     }
 }
 
@@ -1301,6 +1356,7 @@ fn handle_dictation_shortcut_event(
             Ok(())
         }
         DictationAction::StartRecording => {
+            preload_dictation_model(app, &settings);
             let payload = state
                 .lock()
                 .map_err(|error| error.to_string())?
@@ -1448,6 +1504,7 @@ fn update_settings(
             }
         }
     }
+    preload_dictation_model(&app, &settings);
     if settings.show_dock_icon != previous_show_dock_icon {
         apply_dock_icon_visibility(&app, settings.show_dock_icon)
             .map_err(|error| error.to_string())?;
@@ -4101,6 +4158,9 @@ fn wire_live_transcription(
     if let Ok(mut slot) = live_transcriber_state.lock() {
         *slot = Some(service.clone());
     }
+    if let Ok(backend) = backend_state.lock() {
+        preload_dictation_model(&app_handle, &backend.settings());
+    }
 
     let app_for_handler = app_handle.clone();
     let model_directory_for_handler = model_directory.clone();
@@ -6230,6 +6290,22 @@ mod tests {
             message,
             "[source-capture] error source_id=meet attempt=2 screen_recording_status=Granted next_retry_ms=5000 error=system-audio capture failed: cpal error: timed out querying shareable content elapsed_ms=10000"
         );
+    }
+
+    #[test]
+    fn dictation_preloads_only_enabled_whisper_models() {
+        let mut settings = AppSettings::default();
+        assert_eq!(dictation_model_to_preload(&settings), None);
+
+        settings.dictation_enabled = true;
+        settings.selected_model = "whisper-medium".to_string();
+        assert_eq!(
+            dictation_model_to_preload(&settings),
+            Some("whisper-medium".to_string())
+        );
+
+        settings.selected_model = "qwen3-asr-0.6b".to_string();
+        assert_eq!(dictation_model_to_preload(&settings), None);
     }
 
     struct FakeSystemAudioStream;

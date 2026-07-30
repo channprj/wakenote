@@ -20,10 +20,9 @@ use std::time::Instant;
 use chrono::{DateTime, Local, Utc};
 use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
-use whisper_rs::WhisperContext;
 
 use crate::settings::TranscriptionLanguage;
-use crate::transcription::{default_whisper_context_parameters, transcribe_samples_with_context};
+use crate::transcription::{cached_whisper_context, transcribe_samples_with_context};
 
 /// Frame size used for silence detection. 20 ms is fine-grained enough to find
 /// pause boundaries while keeping the RMS envelope small even for 2h files.
@@ -912,19 +911,18 @@ pub fn run_meeting_job(
     );
 
     // 3. Load the model once for the whole meeting.
-    let context =
-        match WhisperContext::new_with_params(&model_path, default_whisper_context_parameters()) {
-            Ok(context) => Arc::new(context),
-            Err(error) => {
-                let _ = fs::remove_file(&wav);
-                return finish_failed(
-                    &mut record,
-                    &rpath,
-                    &emit,
-                    format!("model load failed: {error}"),
-                );
-            }
-        };
+    let context = match cached_whisper_context(&model_path) {
+        Ok(context) => context,
+        Err(error) => {
+            let _ = fs::remove_file(&wav);
+            return finish_failed(
+                &mut record,
+                &rpath,
+                &emit,
+                format!("model load failed: {error}"),
+            );
+        }
+    };
 
     let language = record.language;
     let total_ms = record.duration_ms;

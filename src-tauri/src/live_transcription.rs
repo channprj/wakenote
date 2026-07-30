@@ -7,8 +7,8 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
 use crate::settings::{MicrophoneSlot, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
-    configure_whisper_language, decoded_segment_quality, default_whisper_context_parameters,
-    resample_linear, should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
+    cached_whisper_context, configure_whisper_language, decoded_segment_quality, resample_linear,
+    should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
 };
 
 /// Whisper requires roughly 1 second of audio for a meaningful pass; below
@@ -355,17 +355,13 @@ fn ensure_context(
         "[wakenote] live_transcription: loading model {} (this can take 5-15s)",
         model_path.display()
     );
-    let context = match WhisperContext::new_with_params(
-        model_path.to_string_lossy().as_ref(),
-        default_whisper_context_parameters(),
-    ) {
-        Ok(ctx) => ctx,
+    let context = match cached_whisper_context(&model_path) {
+        Ok(context) => context,
         Err(error) => {
             eprintln!("[wakenote] live_transcription: WhisperContext load error: {error}");
             return None;
         }
     };
-    let context = Arc::new(context);
 
     if let Ok(mut state) = inner.state.lock() {
         state.loaded_model = Some(LoadedModel {

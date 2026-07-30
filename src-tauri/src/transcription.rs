@@ -1,8 +1,8 @@
 use std::ffi::{CStr, c_char, c_uint, c_void};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Once, OnceLock};
 
 use thiserror::Error;
 use whisper_rs::{
@@ -1127,14 +1127,82 @@ pub fn default_whisper_context_parameters() -> WhisperContextParameters<'static>
     params
 }
 
+struct LoadedReusableContext<T> {
+    model_path: PathBuf,
+    context: Arc<T>,
+}
+
+struct ReusableContextCache<T> {
+    loaded: Option<LoadedReusableContext<T>>,
+}
+
+impl<T> Default for ReusableContextCache<T> {
+    fn default() -> Self {
+        Self { loaded: None }
+    }
+}
+
+impl<T> ReusableContextCache<T> {
+    fn get_or_try_load<E>(
+        &mut self,
+        model_path: &Path,
+        load: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Arc<T>, E> {
+        if let Some(loaded) = self
+            .loaded
+            .as_ref()
+            .filter(|loaded| loaded.model_path == model_path)
+        {
+            return Ok(loaded.context.clone());
+        }
+
+        let context = Arc::new(load()?);
+        self.loaded = Some(LoadedReusableContext {
+            model_path: model_path.to_path_buf(),
+            context: context.clone(),
+        });
+        Ok(context)
+    }
+}
+
+pub fn cached_whisper_context(
+    model_path: &Path,
+) -> Result<Arc<WhisperContext>, TranscriptionError> {
+    if !model_path.exists() {
+        return Err(TranscriptionError::ModelMissing(model_path.to_path_buf()));
+    }
+
+    static CACHE: OnceLock<Mutex<ReusableContextCache<WhisperContext>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(ReusableContextCache::default()))
+        .lock()
+        .map_err(|error| {
+            TranscriptionError::Engine(format!("Whisper context cache lock failed: {error}"))
+        })?;
+    cache.get_or_try_load(model_path, || {
+        let started = std::time::Instant::now();
+        eprintln!(
+            "[wakenote] whisper: loading reusable context from {}",
+            model_path.display()
+        );
+        let context =
+            WhisperContext::new_with_params(model_path, default_whisper_context_parameters())
+                .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+        eprintln!(
+            "[wakenote] whisper: reusable context loaded in {:?}",
+            started.elapsed()
+        );
+        Ok(context)
+    })
+}
+
 fn run_whisper(
     model_path: &Path,
     samples: &[f32],
     language: TranscriptionLanguage,
     suppress_low_confidence_decode: bool,
 ) -> Result<String, TranscriptionError> {
-    let context = WhisperContext::new_with_params(model_path, default_whisper_context_parameters())
-        .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+    let context = cached_whisper_context(model_path)?;
     let (language_code, detect_language) = match language.whisper_code() {
         Some(code) => (Some(code), false),
         None => (None, true),
@@ -1383,6 +1451,43 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reusable_context_cache_loads_the_same_model_once() {
+        let mut cache = ReusableContextCache::default();
+        let mut load_count = 0;
+
+        let first = cache
+            .get_or_try_load(Path::new("/models/medium.bin"), || {
+                load_count += 1;
+                Ok::<_, ()>("medium")
+            })
+            .expect("first load");
+        let second = cache
+            .get_or_try_load(Path::new("/models/medium.bin"), || {
+                load_count += 1;
+                Ok::<_, ()>("medium")
+            })
+            .expect("cached load");
+
+        assert_eq!(load_count, 1);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn reusable_context_cache_replaces_a_different_model() {
+        let mut cache = ReusableContextCache::default();
+        let first = cache
+            .get_or_try_load(Path::new("/models/base.bin"), || Ok::<_, ()>("base"))
+            .expect("base load");
+        let second = cache
+            .get_or_try_load(Path::new("/models/medium.bin"), || Ok::<_, ()>("medium"))
+            .expect("medium load");
+
+        assert_eq!(*first, "base");
+        assert_eq!(*second, "medium");
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+    }
 
     #[test]
     fn dictation_whisper_profile_keeps_explicit_low_confidence_speech() {
