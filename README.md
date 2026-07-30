@@ -98,7 +98,7 @@ two explicit, distinct physical devices.
 | Model directory | `~/Library/Application Support/WakeNote/models` | any directory |
 | Transcription language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Shortcut dictation | `off` | `on` / `off` |
-| Dictation shortcut | `Option+Space` | two modifiers, modifier + supported key, or `F1` … `F24` |
+| Dictation shortcut | `Option+Space` | one physical modifier, one supported key, or a key chord |
 | Dictation language | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start input on launch | `on` | `on` / `off` |
@@ -110,8 +110,8 @@ Settings are persisted to `<app_data_dir>/settings.json` and clamped to safe ran
 Enable **Settings › Dictation › Shortcut dictation**, choose a shortcut and
 language, then keep the cursor in the app where text should appear:
 
-1. Hold the shortcut to start recording from the configured Primary microphone.
-   A short start chirp finishes before the microphone opens.
+1. Hold the shortcut to start recording immediately from the configured Primary
+   microphone. The short start chirp plays without delaying capture.
 2. Speak while holding the shortcut, then release it. Capture closes before the
    stop chirp and local transcription begin.
 3. WakeNote keeps the mandatory top-center feedback visible even when Floating
@@ -123,8 +123,9 @@ independent of the archival transcription language. The capture is dedicated to
 dictation: it does not interrupt the voice-activated recorder and its temporary
 16 kHz WAV is removed after success or failure. Very quiet input is ignored,
 presses during transcription are ignored, and a recording automatically stops
-after 10 minutes. Modifier-only pairs such as `Control+Shift` are supported as
-push-to-talk chords: press starts capture and release stops it.
+after 10 minutes. A physical modifier such as left Control, an ordinary key such
+as `Z`, a modified key such as `Control+V` or `Shift+Z`, and modifier-only chords
+such as `Option+Command` are all supported as push-to-talk shortcuts.
 
 macOS must grant WakeNote microphone access. Focused-cursor typing also requires
 Accessibility permission for System Events under **System Settings › Privacy &

@@ -98,7 +98,7 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 | 모델 디렉터리 | `~/Library/Application Support/WakeNote/models` | 임의 디렉터리 |
 | Transcription 언어 | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | 단축키 받아쓰기 | `off` | `on` / `off` |
-| 받아쓰기 단축키 | `Option+Space` | 보조 키 2개, 보조 키 + 지원 키 또는 `F1` … `F24` |
+| 받아쓰기 단축키 | `Option+Space` | 물리 보조 키 1개, 지원 키 1개 또는 키 조합 |
 | 받아쓰기 언어 | `auto` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | 저신뢰 transcript 숨기기 | `on` | `on` / `off` |
 | 실행 시 입력 자동 시작 | `on` | `on` / `off` |
@@ -110,8 +110,8 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 **Settings › Dictation › Shortcut dictation**을 켜고 단축키와 언어를 고른
 다음, 텍스트를 입력할 앱에 커서를 둡니다.
 
-1. 단축키를 누르고 있으면 시작 chirp가 끝난 뒤 설정된 Primary 마이크
-   녹음이 시작됩니다.
+1. 단축키를 누르면 설정된 Primary 마이크 녹음이 즉시 시작됩니다. 짧은
+   시작 chirp는 캡처를 지연시키지 않고 재생됩니다.
 2. 단축키를 누른 채 말하고 손을 뗍니다. 캡처를 먼저 닫은 뒤 종료 chirp와
    로컬 전사를 실행합니다.
 3. Floating overlay가 꺼져 있어도 필수 상단 중앙 피드백을 계속 표시하고,
@@ -123,8 +123,9 @@ WakeNote은 메뉴바 앱입니다. 필수 Primary 마이크 한 대와 선택 S
 스트림을 사용해 음성 활성화 녹음을 중단하지 않으며, 임시 16 kHz WAV는
 성공·실패와 관계없이 삭제됩니다. 신호가 너무 작으면 입력하지 않고,
 전사 중 누른 단축키는 무시하며, 녹음은 10분 뒤 자동으로 종료됩니다.
-`Control+Shift`처럼 보조 키 2개만 사용하는 조합도 push-to-talk로
-지원하며, 누르면 캡처를 시작하고 손을 떼면 중지합니다.
+왼쪽 Control 같은 물리 보조 키 1개, `Z` 같은 일반 키 1개,
+`Control+V`·`Shift+Z` 같은 수정 키 조합, `Option+Command` 같은 보조 키
+전용 조합을 모두 push-to-talk 단축키로 지원합니다.
 
 macOS에서 WakeNote의 마이크 접근을 허용해야 합니다. 포커스된 커서에
 입력하려면 **시스템 설정 › 개인정보 보호 및 보안 › 손쉬운 사용**에서
