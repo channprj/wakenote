@@ -12,7 +12,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Resilient dual microphones** — select one Primary and an optional Secondary physical input in Settings. Each microphone owns its stream, frame queue, level, warning, and same-device reconnect loop, so one failure never stops the other. With two inputs, **Merge microphone inputs** is on by default and produces one recording and one transcription; turn it off to preserve separate per-microphone recordings and transcript identities. Input monitoring uses Primary only.
-- **Shortcut dictation** — optionally hold a configurable global shortcut to record and release it to transcribe locally, then WakeNote types the final result at the focused cursor. Dictation has its own Auto-detect language setting and does not add audio to the archive.
+- **Shortcut dictation** — optionally hold a configurable global shortcut to record and release it to transcribe locally, then WakeNote types the final result at the focused cursor. Dictation has its own Auto-detect language setting and stores recoverable `dictation` audio, metadata, and transcript records.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
 - **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. The Korean-capable registry includes Whisper, bundled sherpa-onnx models, and Qwen3-ASR 0.6B/1.7B. Qwen setup creates an isolated Transformers runtime and local model snapshot from the Models screen.
@@ -120,12 +120,15 @@ language, then keep the cursor in the app where text should appear:
 
 Dictation is off by default. Its language defaults to **Auto-detect** and is
 independent of the archival transcription language. The capture is dedicated to
-dictation: it does not interrupt the voice-activated recorder and its temporary
-16 kHz WAV is removed after success or failure. Very quiet input is ignored,
-presses during transcription are ignored, and a recording automatically stops
-after 10 minutes. A physical modifier such as left Control, an ordinary key such
-as `Z`, a modified key such as `Control+V` or `Shift+Z`, and modifier-only chords
-such as `Option+Command` are all supported as push-to-talk shortcuts.
+dictation: it does not interrupt the voice-activated recorder. Each attempt is
+stored as `HHMMSS-dictation.{m4a|wav}` with JSON metadata and a transcript or
+recoverable error sidecar; only the temporary 16 kHz inference WAV is removed.
+Very quiet input is not typed, presses during transcription are ignored, and a
+recording automatically stops after 10 minutes. For short Whisper dictation,
+an empty Auto-detect pass is retried with Whisper's detected language. A physical
+modifier such as left Control, an ordinary key such as `Z`, a modified key such
+as `Control+V` or `Shift+Z`, and modifier-only chords such as `Option+Command`
+are all supported as push-to-talk shortcuts.
 
 macOS must grant WakeNote microphone access. Focused-cursor typing also requires
 Accessibility permission for System Events under **System Settings › Privacy &
