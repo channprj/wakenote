@@ -10,7 +10,6 @@ import type { LucideIcon } from "lucide-react";
 import appIcon from "@/assets/wakenote-app.png";
 import { PRIMARY_NAV, type PrimaryRoute } from "@/lib/navigation";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Tooltip,
@@ -86,10 +85,6 @@ export function AppSidebar({
               </Tooltip>
             );
           })}
-        </nav>
-
-        <div className="app-sidebar__utility">
-          <Separator />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -111,6 +106,9 @@ export function AppSidebar({
               Settings
             </TooltipContent>
           </Tooltip>
+        </nav>
+
+        <div className="app-sidebar__utility">
           <span className="app-sidebar__version">v{__APP_VERSION__}</span>
         </div>
       </aside>

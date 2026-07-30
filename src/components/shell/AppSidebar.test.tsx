@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AppSidebar } from "./AppSidebar";
 
 describe("AppSidebar", () => {
-  it("renders separate compact destinations with Settings pinned apart", () => {
+  it("renders Settings as the final item in primary navigation", () => {
     const markup = renderToStaticMarkup(
       <AppSidebar
         activeRoute="meetings"
@@ -17,7 +17,9 @@ describe("AppSidebar", () => {
     expect(markup).toContain(">Meetings</span>");
     expect(markup).toContain(">Transcripts</span>");
     expect(markup).not.toContain(">Library<");
-    expect(markup).toMatch(/data-route="settings"/);
+    expect(markup).toMatch(
+      /aria-label="Primary navigation"[\s\S]*data-route="activity"[\s\S]*data-route="settings"[\s\S]*<\/nav>/,
+    );
     expect(markup).toContain(`v${__APP_VERSION__}`);
   });
 
