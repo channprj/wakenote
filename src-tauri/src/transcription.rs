@@ -182,6 +182,11 @@ impl<T: Transcriber> TranscriptionWorker<T> {
 
         match self.transcriber.transcribe(request) {
             Ok(transcript) => {
+                if transcript.trim().is_empty() {
+                    let message = "No speech detected";
+                    TranscriptionSidecar::write_error(&chunk, message)?;
+                    return Ok(TranscriptionJobOutcome::failed(job.id, message));
+                }
                 let suppress_artifacts = self.suppress_low_confidence_transcripts
                     && should_apply_artifact_suppression(&chunk);
                 if suppress_artifacts && let Some(reason) = transcript_artifact_reason(&transcript)
@@ -604,6 +609,10 @@ impl RuntimeTranscriber {
     }
 
     pub fn for_dictation(model_directory: impl AsRef<Path>) -> Self {
+        Self::for_archival(model_directory)
+    }
+
+    pub fn for_archival(model_directory: impl AsRef<Path>) -> Self {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
@@ -1504,6 +1513,19 @@ mod tests {
             finalize_whisper_transcript("마이크 테스트", &qualities, false),
             "마이크 테스트"
         );
+    }
+
+    #[test]
+    fn archival_runtime_profile_preserves_low_confidence_decode_text() {
+        assert!(
+            !RuntimeTranscriber::for_archival("/tmp/wakenote-models")
+                .suppress_low_confidence_decode
+        );
+        assert!(
+            !RuntimeTranscriber::for_dictation("/tmp/wakenote-models")
+                .suppress_low_confidence_decode
+        );
+        assert!(RuntimeTranscriber::new("/tmp/wakenote-models").suppress_low_confidence_decode);
     }
 
     #[test]

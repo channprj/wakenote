@@ -74,6 +74,71 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
 }
 
 #[test]
+fn transcription_worker_records_empty_output_as_no_speech_without_blank_txt() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230708.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let now = chrono::Utc::now();
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        device_id: "default".into(),
+        device_name: "System Default".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
+        started_at: now,
+        ended_at: now,
+        duration_ms: 1_000,
+        transcription_status: TranscriptionStatus::Queued,
+        transcribed_at: None,
+        transcript_text: None,
+        app_version: "0.0.0".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: Some(1),
+        source: ChunkSource::Microphone,
+        source_label: None,
+        microphone_slot: None,
+        microphone_inputs: Vec::new(),
+    };
+    std::fs::write(
+        audio_path.with_extension("json"),
+        serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file(&audio_path, "whisper-medium");
+    let worker = TranscriptionWorker::new(StaticTranscriber::success(" \n\t"));
+
+    let processed = worker
+        .process_next(&mut queue)
+        .expect("process")
+        .expect("processed job");
+
+    assert_eq!(processed, id);
+    let job = queue.job(id).expect("job");
+    assert_eq!(job.status, QueueJobStatus::Failed);
+    assert_eq!(job.error.as_deref(), Some("No speech detected"));
+    assert!(!audio_path.with_extension("txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("error.txt")).expect("error sidecar"),
+        "No speech detected\n"
+    );
+    let stored: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(audio_path.with_extension("json")).expect("stored metadata"),
+    )
+    .expect("stored metadata json");
+    assert_eq!(stored.transcription_status, TranscriptionStatus::Failed);
+    assert_eq!(stored.transcript_text, None);
+}
+
+#[test]
 fn transcription_worker_preserves_bracketed_artifact_transcripts_in_txt() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230710.wav");

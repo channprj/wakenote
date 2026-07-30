@@ -4,7 +4,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -128,6 +128,7 @@ const TRAY_ICON_DISCONNECTED_RGBA: [u8; 4] = [220, 38, 38, 255];
 const TRAY_ICON_IMAGE_SIZE: u32 = 64;
 const TRAY_ICON_DOT_DIAMETER: u32 = TRAY_ICON_IMAGE_SIZE / 2;
 const TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION: u32 = 1;
+static TRANSCRIPT_DAY_INDEX_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const TRANSCRIPT_DAY_INDEX_FILE_NAME: &str = "all.json";
 
 pub fn tray_presentation_for_state(state: TrayState) -> TrayPresentation {
@@ -2678,6 +2679,37 @@ pub fn rebuild_transcript_day_index_from_save_root(
     Ok(entries)
 }
 
+pub fn refresh_transcript_day_index_for_recording_path(
+    recording_path: &Path,
+) -> Result<(), String> {
+    let day_dir = recording_path
+        .parent()
+        .ok_or_else(|| "recording path has no day directory".to_string())?;
+    let compact = day_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "recording day directory is not valid UTF-8".to_string())?;
+    let day = dashed_day_from_compact(compact)
+        .ok_or_else(|| format!("recording is not inside a YYYYMMDD directory: {compact}"))?;
+    let parent = day_dir
+        .parent()
+        .ok_or_else(|| "recording day directory has no save root".to_string())?;
+    let root = if parent.file_name().and_then(|name| name.to_str()) == Some("uploaded") {
+        parent
+            .parent()
+            .ok_or_else(|| "uploaded recording directory has no save root".to_string())?
+    } else {
+        parent
+    };
+    let _refresh_guard = TRANSCRIPT_DAY_INDEX_REFRESH_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|error| format!("transcript day index refresh lock failed: {error}"))?;
+    let _dataless_guard = DatalessMaterializationGuard::disabled();
+    let entries = collect_transcripts_for_compact_day(root, compact);
+    write_transcript_day_index(root, &day, compact, &entries)
+}
+
 fn collect_transcripts_for_compact_day(root: &Path, compact: &str) -> Vec<RecentTranscript> {
     let day_dir = root.join(&compact);
     let uploaded_dir = root.join("uploaded").join(&compact);
@@ -3556,6 +3588,51 @@ mod tests {
             serde_json::from_slice(&std::fs::read(index_path).expect("index")).expect("index json");
         assert_eq!(index["day"], "2026-05-10");
         assert_eq!(index["entries"][0]["text"], "morning transcript");
+    }
+
+    #[test]
+    fn refresh_transcript_day_index_tracks_completed_and_removed_transcripts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        let morning_audio = day.join("090000.m4a");
+        let noon_audio = day.join("120000.m4a");
+        std::fs::write(&morning_audio, b"morning audio").expect("morning audio");
+        std::fs::write(morning_audio.with_extension("txt"), "morning transcript\n")
+            .expect("morning transcript");
+
+        refresh_transcript_day_index_for_recording_path(&morning_audio).expect("first refresh");
+
+        let index_path = day.join("all.json");
+        let first: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index_path).expect("first index"))
+                .expect("first index json");
+        assert_eq!(first["entries"].as_array().expect("entries").len(), 1);
+        assert_eq!(first["entries"][0]["text"], "morning transcript");
+
+        std::fs::write(&noon_audio, b"noon audio").expect("noon audio");
+        std::fs::write(noon_audio.with_extension("txt"), "noon transcript\n")
+            .expect("noon transcript");
+        refresh_transcript_day_index_for_recording_path(&noon_audio).expect("second refresh");
+
+        let second: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&index_path).expect("second index"))
+                .expect("second index json");
+        assert_eq!(second["entries"].as_array().expect("entries").len(), 2);
+
+        std::fs::remove_file(morning_audio.with_extension("txt")).expect("remove morning");
+        std::fs::write(
+            morning_audio.with_extension("error.txt"),
+            "No speech detected\n",
+        )
+        .expect("morning error");
+        refresh_transcript_day_index_for_recording_path(&morning_audio).expect("third refresh");
+
+        let third: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(index_path).expect("third index"))
+                .expect("third index json");
+        assert_eq!(third["entries"].as_array().expect("entries").len(), 1);
+        assert_eq!(third["entries"][0]["text"], "noon transcript");
     }
 
     #[test]

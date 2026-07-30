@@ -28,7 +28,8 @@ use wakenote::commands::{
     MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
     TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio,
     main_window_close_action, microphone_devices_from_input_devices,
-    open_containing_folder_request, recorded_at_for_audio_path, reveal_save_folder_request,
+    open_containing_folder_request, recorded_at_for_audio_path,
+    refresh_transcript_day_index_for_recording_path, reveal_save_folder_request,
     tray_icon_image_for_presentation, tray_menu_presentation, tray_presentation_for_dictation,
     tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
     with_live_runtime_warning,
@@ -1294,6 +1295,7 @@ fn process_dictation_recording(
                 show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
                 return;
             }
+            refresh_transcript_day_index(&archive.audio_path);
             log_dictation_runtime(
                 app,
                 format!(
@@ -1306,12 +1308,23 @@ fn process_dictation_recording(
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
+            refresh_transcript_day_index(&archive.audio_path);
             show_dictation_error(app, "No speech detected".to_string())
         }
         Err(error) => {
             let _ = TranscriptionSidecar::write_error(&archive, &error);
+            refresh_transcript_day_index(&archive.audio_path);
             show_dictation_error(app, error);
         }
+    }
+}
+
+fn refresh_transcript_day_index(recording_path: &Path) {
+    if let Err(error) = refresh_transcript_day_index_for_recording_path(recording_path) {
+        eprintln!(
+            "[wakenote] transcript day index refresh failed path={} error={error}",
+            recording_path.display()
+        );
     }
 }
 
@@ -4438,6 +4451,7 @@ fn kick_transcription_worker(
                 outcome.id, outcome.status
             );
 
+            refresh_transcript_day_index(&audio_path);
             emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
 
             match backend_state.lock() {
@@ -4469,7 +4483,7 @@ fn spawn_transcription_job(
         );
 
         let worker = TranscriptionWorker::with_options(
-            RuntimeTranscriber::new(started.model_directory),
+            RuntimeTranscriber::for_archival(started.model_directory),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,

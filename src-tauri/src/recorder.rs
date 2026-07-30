@@ -119,6 +119,8 @@ impl RecordedChunk {
 
 #[derive(Debug, Error)]
 pub enum RecorderError {
+    #[error("transcript text is empty")]
+    EmptyTranscript,
     #[error("m4a encoding requires the native macOS encoder bridge")]
     M4aRequiresNativeBridge,
     #[error("native m4a encoder failed: {0}")]
@@ -242,6 +244,9 @@ pub struct TranscriptionSidecar;
 
 impl TranscriptionSidecar {
     pub fn write_success(chunk: &RecordedChunk, transcript: &str) -> Result<(), RecorderError> {
+        if transcript.trim().is_empty() {
+            return Err(RecorderError::EmptyTranscript);
+        }
         write_text_sidecar(&chunk.transcript_path, transcript)?;
         if chunk.error_path.exists() {
             fs::remove_file(&chunk.error_path)?;
@@ -556,6 +561,22 @@ mod tests {
         assert_eq!(stored.transcript_text.as_deref(), Some("hello"));
         let transcribed_at = stored.transcribed_at.expect("transcribed_at recorded");
         assert!(transcribed_at >= before && transcribed_at <= after);
+    }
+
+    #[test]
+    fn write_success_rejects_whitespace_without_creating_transcript() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chunk = seeded_chunk(&tmp, TranscriptionStatus::Queued);
+
+        let error =
+            TranscriptionSidecar::write_success(&chunk, " \n\t").expect_err("empty transcript");
+
+        assert!(error.to_string().contains("empty"));
+        assert!(!chunk.transcript_path.exists());
+        let stored: ChunkMetadata =
+            serde_json::from_slice(&fs::read(&chunk.metadata_path).unwrap()).unwrap();
+        assert_eq!(stored.transcription_status, TranscriptionStatus::Queued);
+        assert_eq!(stored.transcript_text, None);
     }
 
     #[test]
