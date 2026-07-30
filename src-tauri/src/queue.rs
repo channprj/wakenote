@@ -92,21 +92,26 @@ impl TranscriptionQueue {
 
     pub fn enqueue_backlog(&mut self, scan: BacklogScan, model_id: impl Into<String>) -> Vec<u64> {
         let model_id = model_id.into();
-        let mut existing_paths = self
-            .jobs
-            .iter()
-            .map(|job| job.audio_path.clone())
-            .collect::<std::collections::HashSet<_>>();
-        scan.pending_audio
-            .into_iter()
-            .filter_map(|audio_path| {
-                if existing_paths.insert(audio_path.clone()) {
-                    Some(self.enqueue_file(audio_path, model_id.clone()))
-                } else {
-                    None
+        let mut enqueued = Vec::new();
+        for audio_path in scan.pending_audio {
+            if let Some(index) = self
+                .jobs
+                .iter()
+                .position(|job| job.audio_path == audio_path)
+            {
+                let job = &mut self.jobs[index];
+                if job.status == QueueJobStatus::Completed {
+                    job.model_id = model_id.clone();
+                    job.status = QueueJobStatus::Pending;
+                    job.error = None;
+                    enqueued.push(job.id);
                 }
-            })
-            .collect()
+                continue;
+            }
+
+            enqueued.push(self.enqueue_file(audio_path, model_id.clone()));
+        }
+        enqueued
     }
 
     pub fn requeue_file(
@@ -343,5 +348,9 @@ fn has_transcription_sidecar(audio_path: &Path) -> bool {
         return false;
     };
 
-    parent.join(format!("{stem}.txt")).exists() || parent.join(format!("{stem}.error.txt")).exists()
+    let transcript_path = parent.join(format!("{stem}.txt"));
+    parent.join(format!("{stem}.error.txt")).exists()
+        || std::fs::metadata(transcript_path)
+            .map(|metadata| metadata.len() > 1)
+            .unwrap_or(false)
 }

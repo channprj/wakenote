@@ -218,6 +218,43 @@ fn backlog_scan_enqueues_audio_without_txt_or_error_sidecar() {
 }
 
 #[test]
+fn backlog_scan_recovers_whitespace_only_transcript_sidecars() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let day = tmp.path().join("20260731");
+    std::fs::create_dir_all(&day).expect("day dir");
+    let audio_path = day.join("010203.m4a");
+    std::fs::write(&audio_path, b"recoverable audio").expect("audio");
+    std::fs::write(audio_path.with_extension("txt"), b"\n").expect("blank transcript");
+
+    let scan = BacklogScan::scan(tmp.path()).expect("scan");
+
+    assert_eq!(scan.pending_audio, [audio_path]);
+}
+
+#[test]
+fn backlog_enqueue_requeues_completed_job_when_its_transcript_is_missing() {
+    let audio_path = std::path::PathBuf::from("/recordings/20260731/010203.m4a");
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file(&audio_path, "old-model");
+    let running = queue.start_next().expect("running job");
+    assert_eq!(running.id, id);
+    queue.mark_completed(id).expect("complete job");
+
+    let added = queue.enqueue_backlog(
+        BacklogScan {
+            pending_audio: vec![audio_path.clone()],
+        },
+        "whisper-medium",
+    );
+
+    assert_eq!(added, [id]);
+    let job = queue.job(id).expect("requeued job");
+    assert_eq!(job.status, QueueJobStatus::Pending);
+    assert_eq!(job.model_id, "whisper-medium");
+    assert_eq!(queue.snapshot().pending_count, 1);
+}
+
+#[test]
 fn backlog_enqueue_ignores_files_already_in_queue() {
     let mut queue = TranscriptionQueue::new();
     queue.enqueue_file("/recordings/20260506/230709.wav", "whisper-medium");
