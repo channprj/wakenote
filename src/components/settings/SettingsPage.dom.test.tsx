@@ -9,7 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
 import { SettingsPage } from "./SettingsPage";
 import type { SettingsActions } from "./types";
@@ -59,6 +59,28 @@ class ControlledAnimationFrames {
 }
 
 globalThis.ResizeObserver = TestResizeObserver as typeof ResizeObserver;
+
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: {
+    configurable: true,
+    value: () => false,
+  },
+  setPointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  releasePointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+});
+
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+});
 
 afterEach(() => {
   cleanup();
@@ -134,12 +156,91 @@ describe("SettingsPage interactions", () => {
         .getByRole("combobox", { name: "Dictation language" })
         .hasAttribute("disabled"),
     ).toBe(true);
+    for (const name of [
+      "Dictation model",
+      "Start sound",
+      "Stop sound",
+      "Cue volume",
+      "Bubble position",
+    ]) {
+      expect(
+        screen.getByRole("combobox", { name }).hasAttribute("disabled"),
+      ).toBe(true);
+    }
 
     await user.click(
       screen.getByRole("switch", { name: "Enable shortcut dictation" }),
     );
 
     expect(actions.onPatch).toHaveBeenCalledWith({ dictation_enabled: true });
+  });
+
+  it("patches independent Dictation feedback and model preferences", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+    const smallModel = snapshot.models.find(
+      (model) => model.id === "whisper-small",
+    );
+    if (!smallModel) {
+      throw new Error("whisper-small fixture missing");
+    }
+    smallModel.status = "ready";
+
+    const view = render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    async function choose(name: string, option: string) {
+      await user.click(screen.getByRole("combobox", { name }));
+      await user.click(await screen.findByRole("option", { name: option }));
+    }
+
+    await choose("Start sound", "Alternative");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_start_sound: "alternative",
+    });
+
+    await choose("Stop sound", "Alternative");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_stop_sound: "alternative",
+    });
+
+    await choose("Cue volume", "Small");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_cue_volume: "small",
+    });
+
+    await choose("Bubble position", "Bottom right");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_bubble_position: "bottom_right",
+    });
+
+    await choose("Dictation model", "Whisper Small");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_model: "whisper-small",
+    });
+
+    snapshot.settings.dictation_model = "whisper-small";
+    view.rerender(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await choose("Dictation model", "Default transcription model");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_model: "",
+    });
   });
 
   it("suspends the active shortcut while capturing a physical key combination", async () => {

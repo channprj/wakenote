@@ -83,6 +83,11 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain("Enable shortcut dictation");
     expect(markup).toContain("Dictation shortcut");
     expect(markup).toContain("Dictation language");
+    expect(markup).toContain("Dictation model");
+    expect(markup).toContain("Start sound");
+    expect(markup).toContain("Stop sound");
+    expect(markup).toContain("Cue volume");
+    expect(markup).toContain("Bubble position");
     expect(markup).toContain("Auto-detect");
     expect(markup).toContain(
       "Hold the shortcut to record. Release it to transcribe and type at the cursor.",
@@ -125,7 +130,7 @@ describe("SettingsPage balanced masonry", () => {
     ["storage", "3"],
     ["integrations", "3"],
     ["audio", "3"],
-    ["dictation", "1"],
+    ["dictation", "2"],
   ] as const)(
     "caps the %s grid by its rendered card count",
     (section, maxColumns) => {

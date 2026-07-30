@@ -20,6 +20,13 @@ describe("app state derivation", () => {
     expect(settings.dictation_enabled).toBe(false);
     expect(settings.dictation_shortcut).toBe("alt+space");
     expect(settings.dictation_language).toBe("auto");
+    expect(settings).toMatchObject({
+      dictation_start_sound: "original",
+      dictation_stop_sound: "original",
+      dictation_cue_volume: "medium",
+      dictation_bubble_position: "top_center",
+      dictation_model: "",
+    });
   });
 
   it("maps independent recording/transcription toggles to PRD product modes", () => {

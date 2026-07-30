@@ -161,9 +161,11 @@ export function modelCancelDownloadDisabledReason(
 
 export function modelDeleteDisabledReason(
   model: Pick<ModelDescriptor, "status">,
-  isSelected: boolean,
+  isInUse: boolean,
 ): string | null {
-  if (isSelected) return "Cannot delete the active model";
+  if (isInUse) {
+    return "Cannot delete a model used by transcription or Dictation";
+  }
   if (isActiveDownload(model.status)) return "Download in progress";
   if (model.status === "missing") return "Model is not downloaded";
   return null;
@@ -202,6 +204,8 @@ export function ModelManager({
     >
       {models.map((model) => {
         const selected = settings.selected_model === model.id;
+        const usedByDictation = settings.dictation_model.trim() === model.id;
+        const inUse = selected || usedByDictation;
         const progress = statusProgress(model);
         const actions = modelActionState(model);
         const switchReason = modelSwitchDisabledReason(model, selected);
@@ -209,7 +213,7 @@ export function ModelManager({
         const verifyReason = modelVerifyDisabledReason(model);
         const retryReason = modelRetryDisabledReason(model);
         const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
-        const deleteReason = modelDeleteDisabledReason(model, selected);
+        const deleteReason = modelDeleteDisabledReason(model, inUse);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -295,7 +299,7 @@ export function ModelManager({
                 size="icon"
                 title={deleteReason ?? "Delete"}
                 onClick={() => onDelete(model.id)}
-                disabled={selected || !actions.canDelete}
+                disabled={inUse || !actions.canDelete}
               >
                 <Trash2 data-icon="solo" />
               </Button>

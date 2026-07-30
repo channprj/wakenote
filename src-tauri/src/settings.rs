@@ -139,6 +139,50 @@ pub enum TranscriptionLanguage {
     De,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationCueSound {
+    Original,
+    Alternative,
+}
+
+impl Default for DictationCueSound {
+    fn default() -> Self {
+        Self::Original
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationCueVolume {
+    Muted,
+    Small,
+    Medium,
+}
+
+impl Default for DictationCueVolume {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DictationBubblePosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl Default for DictationBubblePosition {
+    fn default() -> Self {
+        Self::TopCenter
+    }
+}
+
 impl TranscriptionLanguage {
     pub fn whisper_code(self) -> Option<&'static str> {
         match self {
@@ -277,6 +321,16 @@ pub struct AppSettings {
     pub dictation_shortcut: String,
     #[serde(default = "default_dictation_language")]
     pub dictation_language: TranscriptionLanguage,
+    #[serde(default)]
+    pub dictation_start_sound: DictationCueSound,
+    #[serde(default)]
+    pub dictation_stop_sound: DictationCueSound,
+    #[serde(default)]
+    pub dictation_cue_volume: DictationCueVolume,
+    #[serde(default)]
+    pub dictation_bubble_position: DictationBubblePosition,
+    #[serde(default)]
+    pub dictation_model: String,
     pub show_dock_icon: bool,
     pub show_tray_icon: bool,
     #[serde(default = "default_tray_left_click_action")]
@@ -355,6 +409,11 @@ pub struct SettingsPatch {
     pub dictation_enabled: Option<bool>,
     pub dictation_shortcut: Option<String>,
     pub dictation_language: Option<TranscriptionLanguage>,
+    pub dictation_start_sound: Option<DictationCueSound>,
+    pub dictation_stop_sound: Option<DictationCueSound>,
+    pub dictation_cue_volume: Option<DictationCueVolume>,
+    pub dictation_bubble_position: Option<DictationBubblePosition>,
+    pub dictation_model: Option<String>,
     pub show_dock_icon: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
@@ -913,6 +972,21 @@ impl AppSettings {
         if let Some(value) = patch.dictation_language {
             self.dictation_language = value;
         }
+        if let Some(value) = patch.dictation_start_sound {
+            self.dictation_start_sound = value;
+        }
+        if let Some(value) = patch.dictation_stop_sound {
+            self.dictation_stop_sound = value;
+        }
+        if let Some(value) = patch.dictation_cue_volume {
+            self.dictation_cue_volume = value;
+        }
+        if let Some(value) = patch.dictation_bubble_position {
+            self.dictation_bubble_position = value;
+        }
+        if let Some(value) = patch.dictation_model {
+            self.dictation_model = value.trim().to_string();
+        }
         if let Some(value) = patch.show_dock_icon {
             self.show_dock_icon = value;
         }
@@ -1033,6 +1107,11 @@ impl Default for AppSettings {
             dictation_enabled: false,
             dictation_shortcut: default_dictation_shortcut(),
             dictation_language: default_dictation_language(),
+            dictation_start_sound: DictationCueSound::default(),
+            dictation_stop_sound: DictationCueSound::default(),
+            dictation_cue_volume: DictationCueVolume::default(),
+            dictation_bubble_position: DictationBubblePosition::default(),
+            dictation_model: String::new(),
             show_dock_icon: true,
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
@@ -1057,6 +1136,15 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    pub fn effective_dictation_model(&self) -> &str {
+        let configured = self.dictation_model.trim();
+        if configured.is_empty() {
+            &self.selected_model
+        } else {
+            configured
+        }
+    }
+
     pub fn tray_right_click_action(&self) -> TrayClickAction {
         match self.tray_left_click_action {
             TrayClickAction::TogglePause => TrayClickAction::OpenMenu,
@@ -1240,6 +1328,55 @@ mod tests {
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+    }
+
+    #[test]
+    fn dictation_customization_defaults_preserve_current_behavior() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
+        assert_eq!(
+            settings.dictation_bubble_position,
+            DictationBubblePosition::TopCenter
+        );
+        assert_eq!(settings.dictation_model, "");
+        assert_eq!(settings.effective_dictation_model(), "whisper-medium");
+    }
+
+    #[test]
+    fn dictation_customization_patch_is_independent_and_trims_model() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            dictation_start_sound: Some(DictationCueSound::Alternative),
+            dictation_stop_sound: Some(DictationCueSound::Original),
+            dictation_cue_volume: Some(DictationCueVolume::Small),
+            dictation_bubble_position: Some(DictationBubblePosition::BottomRight),
+            dictation_model: Some("  whisper-small  ".into()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.dictation_start_sound,
+            DictationCueSound::Alternative
+        );
+        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Small);
+        assert_eq!(
+            settings.dictation_bubble_position,
+            DictationBubblePosition::BottomRight
+        );
+        assert_eq!(settings.dictation_model, "whisper-small");
+        assert_eq!(settings.effective_dictation_model(), "whisper-small");
+
+        settings.apply_patch(SettingsPatch {
+            dictation_model: Some("   ".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            settings.effective_dictation_model(),
+            settings.selected_model
+        );
     }
 
     #[test]
@@ -1439,6 +1576,14 @@ mod tests {
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
+        assert_eq!(
+            settings.dictation_bubble_position,
+            DictationBubblePosition::TopCenter
+        );
+        assert_eq!(settings.dictation_model, "");
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
         assert_eq!(settings.openrouter_model, OPENROUTER_DEFAULT_MODEL_ID);

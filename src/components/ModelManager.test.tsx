@@ -19,6 +19,7 @@ function renderModel(
   status: ModelStatus,
   overrides: Partial<ModelDescriptor> = {},
   selectedModel = "other-model",
+  dictationModel = "",
 ) {
   const model: ModelDescriptor = {
     ...mockModels()[0],
@@ -30,7 +31,11 @@ function renderModel(
   return renderToStaticMarkup(
     <ModelManager
       models={[model]}
-      settings={{ ...defaultSettings(), selected_model: selectedModel }}
+      settings={{
+        ...defaultSettings(),
+        selected_model: selectedModel,
+        dictation_model: dictationModel,
+      }}
       onPatch={() => {}}
       onVerify={() => {}}
       onDownload={() => {}}
@@ -122,6 +127,16 @@ describe("model manager actions", () => {
 
     expect(isDisabled(buttonTag(markup, "download"))).toBe(true);
     expect(isDisabled(buttonTag(markup, "rotate-cw"))).toBe(true);
+  });
+
+  it("prevents deleting a model reserved for Dictation", () => {
+    const dictationModel = mockModels()[0].id;
+    const markup = renderModel("ready", {}, "other-model", dictationModel);
+
+    expect(isDisabled(buttonTag(markup, "trash-2"))).toBe(true);
+    expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
+      "Cannot delete a model used by transcription or Dictation",
+    );
   });
 
   it.each(["ready", "installed", "unloaded"] satisfies ModelStatus[])(
@@ -432,7 +447,7 @@ describe("model delete disabled reason", () => {
     "blocks deletion of the active selected %s model",
     (status) => {
       expect(modelDeleteDisabledReason({ status }, true)).toBe(
-        "Cannot delete the active model",
+        "Cannot delete a model used by transcription or Dictation",
       );
     },
   );
@@ -488,7 +503,9 @@ describe("disabled-reason titles render on the action buttons", () => {
   it("explains why the active model cannot be deleted", () => {
     const activeId = mockModels()[0].id;
     const markup = renderModel("ready", {}, activeId);
-    expect(titleOf(buttonTag(markup, "trash-2"))).toBe("Cannot delete the active model");
+    expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
+      "Cannot delete a model used by transcription or Dictation",
+    );
   });
 
   it("keeps action-name fallbacks on enabled buttons (no Switch reason when usable)", () => {

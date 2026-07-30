@@ -1,6 +1,15 @@
 export type AudioFormat = "m4a" | "mp3" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type DictationCueSound = "original" | "alternative";
+export type DictationCueVolume = "muted" | "small" | "medium";
+export type DictationBubblePosition =
+  | "top_left"
+  | "top_center"
+  | "top_right"
+  | "bottom_left"
+  | "bottom_center"
+  | "bottom_right";
 export type ThemeMode = "light" | "dark";
 export type TrayClickAction = "toggle_pause" | "open_menu";
 export type TranscriptionLanguage =
@@ -93,6 +102,11 @@ export interface AppSettings {
   dictation_enabled: boolean;
   dictation_shortcut: string;
   dictation_language: TranscriptionLanguage;
+  dictation_start_sound: DictationCueSound;
+  dictation_stop_sound: DictationCueSound;
+  dictation_cue_volume: DictationCueVolume;
+  dictation_bubble_position: DictationBubblePosition;
+  dictation_model: string;
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;

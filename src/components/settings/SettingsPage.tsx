@@ -80,7 +80,7 @@ export function SettingsSectionContent({
     case "audio":
       return <AudioSettings snapshot={snapshot} actions={actions} />;
     case "dictation":
-      return <DictationSettings settings={snapshot.settings} actions={actions} />;
+      return <DictationSettings snapshot={snapshot} actions={actions} />;
     case "models":
       return <ModelsSettings snapshot={snapshot} actions={actions} />;
     case "storage":
