@@ -492,6 +492,10 @@ fn main() {
 
     debug_log!("Sherpa libs: {:?}", sherpa_libs);
     add_search_path(out_dir.join("lib"));
+    // Downloaded dylibs are copied into the Cargo profile directory below.
+    // Link from that durable project-local path as well, so cached build-script
+    // output does not depend on an external cache directory still existing.
+    add_search_path(&target_dir);
 
     for lib in sherpa_libs {
         if lib.contains("cxx") {
