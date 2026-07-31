@@ -1,8 +1,4 @@
 #[cfg(target_os = "macos")]
-use std::io::Write;
-#[cfg(target_os = "macos")]
-use std::process::{Command, Stdio};
-#[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 #[cfg(target_os = "macos")]
 use std::thread;
@@ -18,7 +14,7 @@ use objc2::runtime::ProtocolObject;
 #[cfg(target_os = "macos")]
 use objc2::{AnyThread, msg_send};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardWriting};
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSArray, NSData, NSString};
 
@@ -193,25 +189,11 @@ impl ClipboardPasteBackend for MacClipboardPasteBackend {
     }
 
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
-        let mut child = Command::new("/usr/bin/pbcopy")
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("Could not start clipboard copy: {error}"))?;
-        let write_result = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Could not open clipboard input".to_string())
-            .and_then(|mut stdin| {
-                stdin
-                    .write_all(text.as_bytes())
-                    .map_err(|error| format!("Could not copy Dictation text: {error}"))
-            });
-        let status = child
-            .wait()
-            .map_err(|error| format!("Could not finish clipboard copy: {error}"))?;
-        write_result?;
-        if !status.success() {
-            return Err(format!("pbcopy exited with status {status}"));
+        let pasteboard = NSPasteboard::generalPasteboard();
+        let text = NSString::from_str(text);
+        pasteboard.clearContents();
+        if !pasteboard.setString_forType(&text, unsafe { NSPasteboardTypeString }) {
+            return Err("Could not copy Dictation text to the macOS pasteboard".to_string());
         }
         Ok(())
     }
@@ -620,6 +602,25 @@ mod tests {
                 .expect("original clipboard restored"),
             original
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "mutates the live macOS pasteboard and restores it before returning"]
+    fn macos_pasteboard_copy_preserves_unicode_text_without_a_utf8_locale() {
+        let mut backend = MacClipboardPasteBackend;
+        let original = backend.snapshot_clipboard().expect("original clipboard");
+        let _restore_original = NativeClipboardRestoreGuard(Some(original));
+        let expected = "한글 Dictation 테스트";
+
+        backend
+            .copy_to_clipboard(expected)
+            .expect("copy Unicode Dictation text");
+
+        let actual = NSPasteboard::generalPasteboard()
+            .stringForType(unsafe { NSPasteboardTypeString })
+            .expect("plain-text clipboard representation");
+        assert_eq!(actual.to_string(), expected);
     }
 
     #[test]

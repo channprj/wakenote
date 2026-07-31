@@ -139,7 +139,12 @@ fn default_registry_includes_requested_asr_provider_models() {
 fn default_whisper_downloads_use_the_upstream_model_repository() {
     let registry = wakenote::models::default_model_registry();
 
-    for model_id in ["whisper-small", "whisper-medium", "whisper-turbo", "whisper-large"] {
+    for model_id in [
+        "whisper-small",
+        "whisper-medium",
+        "whisper-turbo",
+        "whisper-large",
+    ] {
         let model = registry.get(model_id).expect("default Whisper model");
         let url = model
             .download_url
