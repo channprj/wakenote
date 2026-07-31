@@ -219,7 +219,7 @@ describe("SettingsPage interactions", () => {
       dictation_start_sound: "alternative",
     });
 
-    await choose("Stop sound", "Clipping");
+    await choose("Stop sound", "Ding");
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_stop_sound: "alternative",
     });

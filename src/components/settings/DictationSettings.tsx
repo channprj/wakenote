@@ -44,7 +44,7 @@ const DICTATION_START_CUE_SOUNDS = [
 
 const DICTATION_STOP_CUE_SOUNDS = [
   { value: "original", label: "Default" },
-  { value: "alternative", label: "Clipping" },
+  { value: "alternative", label: "Ding" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
 
 const DICTATION_END_CUE_SOUNDS = [
