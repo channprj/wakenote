@@ -1399,7 +1399,10 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             display_name: "Whisper Small".to_string(),
             engine: "whisper.cpp".to_string(),
             provider_runtime: "whisper-rs".to_string(),
-            download_url: Some("https://blob.handy.computer/ggml-small.bin".to_string()),
+            download_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                    .to_string(),
+            ),
             checksum_sha256: Some(
                 "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b".to_string(),
             ),
@@ -1471,7 +1474,10 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             display_name: "Whisper Large".to_string(),
             engine: "whisper.cpp".to_string(),
             provider_runtime: "whisper-rs".to_string(),
-            download_url: Some("https://blob.handy.computer/ggml-large-v3-q5_0.bin".to_string()),
+            download_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"
+                    .to_string(),
+            ),
             checksum_sha256: Some(
                 "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1".to_string(),
             ),

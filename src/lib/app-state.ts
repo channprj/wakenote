@@ -243,7 +243,8 @@ export function mockModels(): ModelDescriptor[] {
       display_name: "Whisper Large",
       engine: "whisper.cpp",
       provider_runtime: "whisper-rs",
-      download_url: "https://blob.handy.computer/ggml-large-v3-q5_0.bin",
+      download_url:
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
       checksum_sha256:
         "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
       size_mb: 1031,
@@ -278,7 +279,8 @@ export function mockModels(): ModelDescriptor[] {
       display_name: "Whisper Small",
       engine: "whisper.cpp",
       provider_runtime: "whisper-rs",
-      download_url: "https://blob.handy.computer/ggml-small.bin",
+      download_url:
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
       checksum_sha256:
         "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
       size_mb: 465,

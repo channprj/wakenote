@@ -15,7 +15,17 @@ describe("app state derivation", () => {
     expect(defaultSettings().merge_microphone_inputs).toBe(true);
   });
 
-  it("ships dictation off by default with Handy's shortcut and auto-detect language", () => {
+  it("uses the upstream whisper.cpp repository for mock model downloads", () => {
+    const whisperModels = mockModels().filter((model) => model.provider_runtime === "whisper-rs");
+    expect(whisperModels.length).toBeGreaterThan(0);
+    for (const model of whisperModels) {
+      expect(model.download_url).toMatch(
+        /^https:\/\/huggingface\.co\/ggerganov\/whisper\.cpp\/resolve\/main\//,
+      );
+    }
+  });
+
+  it("ships dictation off by default with the product shortcut and auto-detect language", () => {
     const settings = defaultSettings();
     expect(settings.dictation_enabled).toBe(false);
     expect(settings.dictation_shortcut).toBe("alt+space");

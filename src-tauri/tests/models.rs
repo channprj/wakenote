@@ -136,6 +136,23 @@ fn default_registry_includes_requested_asr_provider_models() {
 }
 
 #[test]
+fn default_whisper_downloads_use_the_upstream_model_repository() {
+    let registry = wakenote::models::default_model_registry();
+
+    for model_id in ["whisper-small", "whisper-medium", "whisper-turbo", "whisper-large"] {
+        let model = registry.get(model_id).expect("default Whisper model");
+        let url = model
+            .download_url
+            .as_deref()
+            .expect("default Whisper download URL");
+        assert!(
+            url.starts_with("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"),
+            "{model_id} must download from the upstream whisper.cpp model repository: {url}",
+        );
+    }
+}
+
+#[test]
 fn model_store_marks_external_command_models_ready_from_command_files() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());
@@ -196,7 +213,7 @@ fn model_store_marks_missing_ready_and_error_states_from_local_files() {
 }
 
 #[test]
-fn model_store_discovers_handy_whisper_cpp_bins_without_json_registry() {
+fn model_store_discovers_local_whisper_cpp_bins_without_json_registry() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());
     std::fs::write(tmp.path().join("ggml-large-v3-turbo.bin"), b"turbo").expect("turbo model");
@@ -211,10 +228,10 @@ fn model_store_discovers_handy_whisper_cpp_bins_without_json_registry() {
     let registry = store.load_model_registry().expect("load registry");
     let turbo = registry
         .get("ggml-large-v3-turbo")
-        .expect("handy turbo is discovered");
+        .expect("local turbo model is discovered");
     let medium = registry
         .get("whisper-medium-q4_1")
-        .expect("handy medium q4 is discovered");
+        .expect("local medium q4 model is discovered");
 
     assert_eq!(turbo.provider_runtime, "whisper-rs");
     assert_eq!(turbo.engine, "whisper.cpp");

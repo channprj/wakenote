@@ -314,8 +314,8 @@ pub struct AppSettings {
     pub auto_transcript_input_enabled: bool,
     #[serde(default)]
     pub auto_transcript_input_trailing_space: bool,
-    /// Handy-style shortcut dictation: press the global shortcut, speak, press
-    /// again — the transcript is typed into the focused app. Off by default.
+    /// Shortcut dictation: press the global shortcut, speak, then press it
+    /// again to type the transcript into the focused app. Off by default.
     #[serde(default)]
     pub dictation_enabled: bool,
     #[serde(default = "default_dictation_shortcut")]
