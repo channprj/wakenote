@@ -37,15 +37,26 @@ const DICTATION_LANGUAGES = [
   { value: "de", label: "German" },
 ] as const satisfies ReadonlyArray<SelectOption<TranscriptionLanguage>>;
 
-const DICTATION_CUE_SOUNDS = [
-  { value: "original", label: "Original" },
-  { value: "alternative", label: "Alternative" },
+const DICTATION_START_CUE_SOUNDS = [
+  { value: "original", label: "Default" },
+  { value: "alternative", label: "Ding" },
+] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
+
+const DICTATION_STOP_CUE_SOUNDS = [
+  { value: "original", label: "Default" },
+  { value: "alternative", label: "Clipping" },
+] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
+
+const DICTATION_END_CUE_SOUNDS = [
+  { value: "original", label: "Default" },
+  { value: "alternative", label: "Stapling" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
 
 const DICTATION_CUE_VOLUMES = [
   { value: "muted", label: "Muted" },
   { value: "small", label: "Small" },
   { value: "medium", label: "Medium" },
+  { value: "large", label: "Large" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueVolume>>;
 
 const DICTATION_BUBBLE_POSITIONS = [
@@ -343,7 +354,7 @@ export function DictationSettings({
           label="Start sound"
           description="Played when shortcut recording starts."
           value={settings.dictation_start_sound}
-          options={DICTATION_CUE_SOUNDS}
+          options={DICTATION_START_CUE_SOUNDS}
           disabled={!settings.dictation_enabled}
           onValueChange={(dictation_start_sound) =>
             void actions.onPatch({ dictation_start_sound })
@@ -353,15 +364,25 @@ export function DictationSettings({
           label="Stop sound"
           description="Played when shortcut recording stops."
           value={settings.dictation_stop_sound}
-          options={DICTATION_CUE_SOUNDS}
+          options={DICTATION_STOP_CUE_SOUNDS}
           disabled={!settings.dictation_enabled}
           onValueChange={(dictation_stop_sound) =>
             void actions.onPatch({ dictation_stop_sound })
           }
         />
         <SettingSelect
+          label="End sound"
+          description="Played after the Dictation result is inserted."
+          value={settings.dictation_end_sound}
+          options={DICTATION_END_CUE_SOUNDS}
+          disabled={!settings.dictation_enabled}
+          onValueChange={(dictation_end_sound) =>
+            void actions.onPatch({ dictation_end_sound })
+          }
+        />
+        <SettingSelect
           label="Cue volume"
-          description="Mute the cues or play them at a small or medium level."
+          description="Mute the cues or play them at a small, medium, or large level."
           value={settings.dictation_cue_volume}
           options={DICTATION_CUE_VOLUMES}
           disabled={!settings.dictation_enabled}

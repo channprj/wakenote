@@ -170,6 +170,7 @@ export function defaultSettings(): AppSettings {
     dictation_language: "auto",
     dictation_start_sound: "original",
     dictation_stop_sound: "original",
+    dictation_end_sound: "original",
     dictation_cue_volume: "medium",
     dictation_bubble_position: "top_center",
     dictation_model: "",

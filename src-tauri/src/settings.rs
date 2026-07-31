@@ -158,6 +158,7 @@ pub enum DictationCueVolume {
     Muted,
     Small,
     Medium,
+    Large,
 }
 
 impl Default for DictationCueVolume {
@@ -326,6 +327,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub dictation_stop_sound: DictationCueSound,
     #[serde(default)]
+    pub dictation_end_sound: DictationCueSound,
+    #[serde(default)]
     pub dictation_cue_volume: DictationCueVolume,
     #[serde(default)]
     pub dictation_bubble_position: DictationBubblePosition,
@@ -415,6 +418,7 @@ pub struct SettingsPatch {
     pub dictation_language: Option<TranscriptionLanguage>,
     pub dictation_start_sound: Option<DictationCueSound>,
     pub dictation_stop_sound: Option<DictationCueSound>,
+    pub dictation_end_sound: Option<DictationCueSound>,
     pub dictation_cue_volume: Option<DictationCueVolume>,
     pub dictation_bubble_position: Option<DictationBubblePosition>,
     pub dictation_model: Option<String>,
@@ -988,6 +992,9 @@ impl AppSettings {
         if let Some(value) = patch.dictation_stop_sound {
             self.dictation_stop_sound = value;
         }
+        if let Some(value) = patch.dictation_end_sound {
+            self.dictation_end_sound = value;
+        }
         if let Some(value) = patch.dictation_cue_volume {
             self.dictation_cue_volume = value;
         }
@@ -1125,6 +1132,7 @@ impl Default for AppSettings {
             dictation_language: default_dictation_language(),
             dictation_start_sound: DictationCueSound::default(),
             dictation_stop_sound: DictationCueSound::default(),
+            dictation_end_sound: DictationCueSound::default(),
             dictation_cue_volume: DictationCueVolume::default(),
             dictation_bubble_position: DictationBubblePosition::default(),
             dictation_model: String::new(),
@@ -1365,10 +1373,11 @@ mod tests {
     }
 
     #[test]
-    fn dictation_customization_defaults_preserve_current_behavior() {
+    fn dictation_customization_uses_default_cue_choices() {
         let settings = AppSettings::default();
         assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
         assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
         assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
         assert_eq!(
             settings.dictation_bubble_position,
@@ -1384,7 +1393,8 @@ mod tests {
         settings.apply_patch(SettingsPatch {
             dictation_start_sound: Some(DictationCueSound::Alternative),
             dictation_stop_sound: Some(DictationCueSound::Original),
-            dictation_cue_volume: Some(DictationCueVolume::Small),
+            dictation_end_sound: Some(DictationCueSound::Alternative),
+            dictation_cue_volume: Some(DictationCueVolume::Large),
             dictation_bubble_position: Some(DictationBubblePosition::BottomRight),
             dictation_model: Some("  whisper-small  ".into()),
             ..Default::default()
@@ -1395,7 +1405,11 @@ mod tests {
             DictationCueSound::Alternative
         );
         assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Small);
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Alternative);
+        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Large);
+        let serialized = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(serialized["dictation_end_sound"], "alternative");
+        assert_eq!(serialized["dictation_cue_volume"], "large");
         assert_eq!(
             settings.dictation_bubble_position,
             DictationBubblePosition::BottomRight
@@ -1612,6 +1626,7 @@ mod tests {
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
         assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
         assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
         assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
         assert_eq!(
             settings.dictation_bubble_position,

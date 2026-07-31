@@ -697,14 +697,25 @@ fn emit_dictation_state(app: &AppHandle, payload: DictationStatePayload) {
 enum DictationCue {
     Start,
     Stop,
+    End,
 }
 
 fn dictation_cue_resource_name(cue: DictationCue, sound: DictationCueSound) -> &'static str {
     match (cue, sound) {
         (DictationCue::Start, DictationCueSound::Original) => "dictation-start.wav",
         (DictationCue::Stop, DictationCueSound::Original) => "dictation-stop.wav",
+        (DictationCue::End, DictationCueSound::Original) => "dictation-stop.wav",
         (DictationCue::Start, DictationCueSound::Alternative) => "dict-start-0.mp3",
-        (DictationCue::Stop, DictationCueSound::Alternative) => "dict-end-0.mp3",
+        (DictationCue::Stop, DictationCueSound::Alternative) => "dict-start-0.mp3",
+        (DictationCue::End, DictationCueSound::Alternative) => "dict-end-0.mp3",
+    }
+}
+
+fn dictation_cue_sound(cue: DictationCue, settings: &AppSettings) -> DictationCueSound {
+    match cue {
+        DictationCue::Start => settings.dictation_start_sound,
+        DictationCue::Stop => settings.dictation_stop_sound,
+        DictationCue::End => settings.dictation_end_sound,
     }
 }
 
@@ -713,6 +724,7 @@ fn dictation_cue_volume_arg(volume: DictationCueVolume) -> Option<&'static str> 
         DictationCueVolume::Muted => None,
         DictationCueVolume::Small => Some("0.55"),
         DictationCueVolume::Medium => Some("1.0"),
+        DictationCueVolume::Large => Some("1.45"),
     }
 }
 
@@ -724,10 +736,7 @@ fn play_dictation_cue(
     let Some(volume) = dictation_cue_volume_arg(settings.dictation_cue_volume) else {
         return Ok(());
     };
-    let sound = match cue {
-        DictationCue::Start => settings.dictation_start_sound,
-        DictationCue::Stop => settings.dictation_stop_sound,
-    };
+    let sound = dictation_cue_sound(cue, settings);
     let path = app
         .path()
         .resolve(
@@ -775,6 +784,7 @@ fn play_dictation_cue_nonblocking_on_failure(
         let cue_name = match cue {
             DictationCue::Start => "start",
             DictationCue::Stop => "stop",
+            DictationCue::End => "end",
         };
         match play_dictation_cue(&app, cue, &settings) {
             Ok(()) => log_dictation_runtime(&app, format!("[dictation] cue={cue_name} completed")),
@@ -1080,13 +1090,14 @@ fn show_dictation_overlay(
 fn type_dictation_text_on_main_thread(
     app: &AppHandle,
     text: String,
-    copy_to_clipboard: bool,
+    settings: AppSettings,
     started: Instant,
 ) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        let clipboard_after_paste =
-            wakenote::text_input::dictation_clipboard_after_paste(copy_to_clipboard);
+        let clipboard_after_paste = wakenote::text_input::dictation_clipboard_after_paste(
+            settings.dictation_copy_to_clipboard,
+        );
         if let Err(error) = wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
             &text,
             clipboard_after_paste,
@@ -1101,6 +1112,7 @@ fn type_dictation_text_on_main_thread(
                 started.elapsed().as_millis()
             ),
         );
+        play_dictation_cue_nonblocking_on_failure(&app_for_task, DictationCue::End, &settings);
         complete_dictation(&app_for_task);
     }) {
         show_dictation_error(
@@ -1323,12 +1335,7 @@ fn process_dictation_recording(
                     started.elapsed().as_millis(),
                 ),
             );
-            type_dictation_text_on_main_thread(
-                app,
-                input_text,
-                settings.dictation_copy_to_clipboard,
-                started,
-            );
+            type_dictation_text_on_main_thread(app, input_text, settings, started);
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
@@ -6992,11 +6999,19 @@ mod tests {
             "dictation-stop.wav"
         );
         assert_eq!(
+            dictation_cue_resource_name(DictationCue::End, DictationCueSound::Original),
+            "dictation-stop.wav"
+        );
+        assert_eq!(
             dictation_cue_resource_name(DictationCue::Start, DictationCueSound::Alternative),
             "dict-start-0.mp3"
         );
         assert_eq!(
             dictation_cue_resource_name(DictationCue::Stop, DictationCueSound::Alternative),
+            "dict-start-0.mp3"
+        );
+        assert_eq!(
+            dictation_cue_resource_name(DictationCue::End, DictationCueSound::Alternative),
             "dict-end-0.mp3"
         );
         assert_eq!(dictation_cue_volume_arg(DictationCueVolume::Muted), None);
@@ -7007,6 +7022,19 @@ mod tests {
         assert_eq!(
             dictation_cue_volume_arg(DictationCueVolume::Medium),
             Some("1.0")
+        );
+        assert_eq!(
+            dictation_cue_volume_arg(DictationCueVolume::Large),
+            Some("1.45")
+        );
+
+        let settings = AppSettings {
+            dictation_end_sound: DictationCueSound::Alternative,
+            ..Default::default()
+        };
+        assert_eq!(
+            dictation_cue_sound(DictationCue::End, &settings),
+            DictationCueSound::Alternative
         );
     }
 

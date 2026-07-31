@@ -210,19 +210,28 @@ describe("SettingsPage interactions", () => {
       await user.click(await screen.findByRole("option", { name: option }));
     }
 
-    await choose("Start sound", "Alternative");
+    expect(screen.getAllByText("Default")).toHaveLength(3);
+    expect(screen.queryByText("Original")).toBeNull();
+    expect(screen.queryByText("Alternative")).toBeNull();
+
+    await choose("Start sound", "Ding");
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_start_sound: "alternative",
     });
 
-    await choose("Stop sound", "Alternative");
+    await choose("Stop sound", "Clipping");
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_stop_sound: "alternative",
     });
 
-    await choose("Cue volume", "Small");
+    await choose("End sound", "Stapling");
     expect(actions.onPatch).toHaveBeenCalledWith({
-      dictation_cue_volume: "small",
+      dictation_end_sound: "alternative",
+    });
+
+    await choose("Cue volume", "Large");
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_cue_volume: "large",
     });
 
     await choose("Bubble position", "Bottom right");

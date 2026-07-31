@@ -23,6 +23,7 @@ describe("app state derivation", () => {
     expect(settings).toMatchObject({
       dictation_start_sound: "original",
       dictation_stop_sound: "original",
+      dictation_end_sound: "original",
       dictation_cue_volume: "medium",
       dictation_bubble_position: "top_center",
       dictation_model: "",

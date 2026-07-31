@@ -2,7 +2,7 @@ export type AudioFormat = "m4a" | "mp3" | "wav";
 
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
 export type DictationCueSound = "original" | "alternative";
-export type DictationCueVolume = "muted" | "small" | "medium";
+export type DictationCueVolume = "muted" | "small" | "medium" | "large";
 export type DictationBubblePosition =
   | "top_left"
   | "top_center"
@@ -104,6 +104,7 @@ export interface AppSettings {
   dictation_language: TranscriptionLanguage;
   dictation_start_sound: DictationCueSound;
   dictation_stop_sound: DictationCueSound;
+  dictation_end_sound: DictationCueSound;
   dictation_cue_volume: DictationCueVolume;
   dictation_bubble_position: DictationBubblePosition;
   dictation_model: string;
