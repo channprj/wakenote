@@ -36,6 +36,8 @@ describe("app state derivation", () => {
       dictation_end_sound: "original",
       dictation_cue_volume: "medium",
       dictation_bubble_position: "top_center",
+      dictation_bubble_background_color: "#000000",
+      dictation_bubble_background_opacity: 88,
       dictation_model: "",
       dictation_copy_to_clipboard: true,
       dictation_remove_trailing_space: false,

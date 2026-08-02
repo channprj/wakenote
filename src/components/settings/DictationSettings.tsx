@@ -19,6 +19,7 @@ import type {
 } from "@/lib/types";
 import {
   SettingSelect,
+  SettingSlider,
   SettingSwitch,
   SettingsCard,
   SettingsGrid,
@@ -398,6 +399,29 @@ export function DictationSettings({
           disabled={!settings.dictation_enabled}
           onValueChange={(dictation_bubble_position) =>
             void actions.onPatch({ dictation_bubble_position })
+          }
+        />
+        <SettingSelect
+          label="Bubble background"
+          description="Use a solid black or white Dictation surface."
+          value={settings.dictation_bubble_background_color}
+          options={[
+            { value: "#000000", label: "Black" },
+            { value: "#ffffff", label: "White" },
+          ]}
+          onValueChange={(dictation_bubble_background_color) =>
+            void actions.onPatch({ dictation_bubble_background_color })
+          }
+        />
+        <SettingSlider
+          label="Bubble background opacity"
+          description="Keep text and indicators visible even at 0%."
+          value={settings.dictation_bubble_background_opacity}
+          min={0}
+          max={100}
+          suffix="%"
+          onValueChange={(dictation_bubble_background_opacity) =>
+            void actions.onPatch({ dictation_bubble_background_opacity })
           }
         />
       </SettingsCard>

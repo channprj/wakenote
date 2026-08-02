@@ -41,11 +41,27 @@ pub fn default_floating_overlay_text_color() -> String {
 }
 
 pub fn default_floating_overlay_background_color() -> String {
-    "#050507".to_string()
+    "#000000".to_string()
 }
 
 pub fn default_floating_overlay_background_opacity() -> u8 {
     82
+}
+
+pub fn default_dictation_bubble_background_color() -> String {
+    "#000000".to_string()
+}
+
+pub fn default_dictation_bubble_background_opacity() -> u8 {
+    88
+}
+
+fn normalize_solid_background_color(value: &str) -> String {
+    if value.trim() == "#ffffff" {
+        "#ffffff".to_string()
+    } else {
+        "#000000".to_string()
+    }
 }
 
 pub fn default_mic_input_volume_percent() -> u32 {
@@ -114,6 +130,21 @@ pub struct FloatingOverlayCaptionStyle {
     pub text_color: String,
     pub background_color: String,
     pub background_opacity: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DictationOverlayStyle {
+    pub background_color: String,
+    pub background_opacity: u8,
+}
+
+impl Default for DictationOverlayStyle {
+    fn default() -> Self {
+        Self {
+            background_color: default_dictation_bubble_background_color(),
+            background_opacity: default_dictation_bubble_background_opacity(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,6 +381,10 @@ pub struct AppSettings {
     pub dictation_cue_volume: DictationCueVolume,
     #[serde(default)]
     pub dictation_bubble_position: DictationBubblePosition,
+    #[serde(default = "default_dictation_bubble_background_color")]
+    pub dictation_bubble_background_color: String,
+    #[serde(default = "default_dictation_bubble_background_opacity")]
+    pub dictation_bubble_background_opacity: u8,
     #[serde(default)]
     pub dictation_model: String,
     #[serde(default = "default_dictation_copy_to_clipboard")]
@@ -441,6 +476,8 @@ pub struct SettingsPatch {
     pub dictation_end_sound: Option<DictationCueSound>,
     pub dictation_cue_volume: Option<DictationCueVolume>,
     pub dictation_bubble_position: Option<DictationBubblePosition>,
+    pub dictation_bubble_background_color: Option<String>,
+    pub dictation_bubble_background_opacity: Option<u8>,
     pub dictation_model: Option<String>,
     pub dictation_copy_to_clipboard: Option<bool>,
     pub dictation_remove_trailing_space: Option<bool>,
@@ -1086,6 +1123,15 @@ impl AppSettings {
         if let Some(value) = patch.dictation_bubble_position {
             self.dictation_bubble_position = value;
         }
+        if let Some(value) = patch.dictation_bubble_background_color {
+            self.dictation_bubble_background_color = normalize_solid_background_color(&value);
+        }
+        if let Some(value) = patch.dictation_bubble_background_opacity {
+            self.dictation_bubble_background_opacity = value.clamp(
+                FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN,
+                FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX,
+            );
+        }
         if let Some(value) = patch.dictation_model {
             self.dictation_model = value.trim().to_string();
         }
@@ -1120,7 +1166,7 @@ impl AppSettings {
             self.floating_overlay_text_color = value;
         }
         if let Some(value) = patch.floating_overlay_background_color {
-            self.floating_overlay_background_color = value;
+            self.floating_overlay_background_color = normalize_solid_background_color(&value);
         }
         if let Some(value) = patch.floating_overlay_background_opacity {
             self.floating_overlay_background_opacity = value.clamp(
@@ -1222,6 +1268,8 @@ impl Default for AppSettings {
             dictation_end_sound: DictationCueSound::default(),
             dictation_cue_volume: DictationCueVolume::default(),
             dictation_bubble_position: DictationBubblePosition::default(),
+            dictation_bubble_background_color: default_dictation_bubble_background_color(),
+            dictation_bubble_background_opacity: default_dictation_bubble_background_opacity(),
             dictation_model: String::new(),
             dictation_copy_to_clipboard: default_dictation_copy_to_clipboard(),
             dictation_remove_trailing_space: false,
@@ -1279,6 +1327,13 @@ impl AppSettings {
             text_color: self.floating_overlay_text_color.clone(),
             background_color: self.floating_overlay_background_color.clone(),
             background_opacity: self.floating_overlay_background_opacity,
+        }
+    }
+
+    pub fn dictation_overlay_style(&self) -> DictationOverlayStyle {
+        DictationOverlayStyle {
+            background_color: self.dictation_bubble_background_color.clone(),
+            background_opacity: self.dictation_bubble_background_opacity,
         }
     }
 }
@@ -1470,6 +1525,8 @@ mod tests {
             settings.dictation_bubble_position,
             DictationBubblePosition::TopCenter
         );
+        assert_eq!(settings.dictation_bubble_background_color, "#000000");
+        assert_eq!(settings.dictation_bubble_background_opacity, 88);
         assert_eq!(settings.dictation_model, "");
         assert_eq!(settings.effective_dictation_model(), "whisper-medium");
     }
@@ -1784,24 +1841,41 @@ mod tests {
         );
         assert_eq!(settings.floating_overlay_font_size_px, 24);
         assert_eq!(settings.floating_overlay_text_color, "#ffffff");
-        assert_eq!(settings.floating_overlay_background_color, "#050507");
+        assert_eq!(settings.floating_overlay_background_color, "#000000");
         assert_eq!(settings.floating_overlay_background_opacity, 82);
     }
 
     #[test]
-    fn patch_clamps_floating_overlay_caption_style() {
+    fn patch_normalizes_solid_overlay_styles_and_clamps_opacity() {
         let mut settings = AppSettings::default();
         settings.apply_patch(SettingsPatch {
             floating_overlay_font_size_px: Some(4),
             floating_overlay_text_color: Some("#f8fafc".into()),
             floating_overlay_background_color: Some("#123456".into()),
             floating_overlay_background_opacity: Some(128),
+            dictation_bubble_background_color: Some("#ffffff".into()),
+            dictation_bubble_background_opacity: Some(100),
             ..Default::default()
         });
 
         assert_eq!(settings.floating_overlay_font_size_px, 18);
         assert_eq!(settings.floating_overlay_text_color, "#f8fafc");
-        assert_eq!(settings.floating_overlay_background_color, "#123456");
+        assert_eq!(settings.floating_overlay_background_color, "#000000");
         assert_eq!(settings.floating_overlay_background_opacity, 100);
+        assert_eq!(settings.dictation_bubble_background_color, "#ffffff");
+        assert_eq!(settings.dictation_bubble_background_opacity, 100);
+
+        settings.apply_patch(SettingsPatch {
+            floating_overlay_background_color: Some("#ffffff".into()),
+            floating_overlay_background_opacity: Some(0),
+            dictation_bubble_background_color: Some("#FFFFFF".into()),
+            dictation_bubble_background_opacity: Some(0),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.floating_overlay_background_color, "#ffffff");
+        assert_eq!(settings.floating_overlay_background_opacity, 0);
+        assert_eq!(settings.dictation_bubble_background_color, "#000000");
+        assert_eq!(settings.dictation_bubble_background_opacity, 0);
     }
 }

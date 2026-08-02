@@ -694,6 +694,104 @@ describe("SettingsPage interactions", () => {
     expect(actions.onDeleteOpenAiApiKey).toHaveBeenCalledOnce();
   });
 
+  it("only emits solid caption colors and both opacity boundaries", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+
+    const view = render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Overlay background" }));
+    await user.click(await screen.findByRole("option", { name: "White" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      floating_overlay_background_color: "#ffffff",
+      floating_overlay_text_color: "#000000",
+    });
+
+    snapshot.settings.floating_overlay_background_color = "#ffffff";
+    view.rerender(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Overlay background" }));
+    await user.click(await screen.findByRole("option", { name: "Black" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      floating_overlay_background_color: "#000000",
+      floating_overlay_text_color: "#ffffff",
+    });
+
+    const opacity = screen.getByRole("slider", {
+      name: "Overlay background opacity",
+    });
+    fireEvent.keyDown(opacity, { key: "Home" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      floating_overlay_background_opacity: 0,
+    });
+    fireEvent.keyDown(opacity, { key: "End" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      floating_overlay_background_opacity: 100,
+    });
+  });
+
+  it("only emits solid Dictation colors and both opacity boundaries", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+
+    const view = render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Bubble background" }));
+    await user.click(await screen.findByRole("option", { name: "White" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_bubble_background_color: "#ffffff",
+    });
+
+    snapshot.settings.dictation_bubble_background_color = "#ffffff";
+    view.rerender(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Bubble background" }));
+    await user.click(await screen.findByRole("option", { name: "Black" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_bubble_background_color: "#000000",
+    });
+
+    const opacity = screen.getByRole("slider", {
+      name: "Bubble background opacity",
+    });
+    fireEvent.keyDown(opacity, { key: "Home" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_bubble_background_opacity: 0,
+    });
+    fireEvent.keyDown(opacity, { key: "End" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_bubble_background_opacity: 100,
+    });
+  });
+
   it("disables the floating overlay position when the overlay is hidden", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.show_floating_overlay = false;

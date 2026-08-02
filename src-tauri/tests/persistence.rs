@@ -134,11 +134,15 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     let store = AppPersistence::new(tmp.path());
     std::fs::write(
         tmp.path().join("settings.json"),
-        r#"{
+        r##"{
           "recording_enabled": false,
           "threshold_dbfs": -39.5,
-          "save_root": "/tmp/legacy-wakenote"
-        }"#,
+          "save_root": "/tmp/legacy-wakenote",
+          "floating_overlay_background_color": "#123456",
+          "floating_overlay_background_opacity": 68,
+          "dictation_bubble_background_color": "#ffffff",
+          "dictation_bubble_background_opacity": 41
+        }"##,
     )
     .expect("legacy settings");
 
@@ -165,6 +169,10 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert!(loaded.suppress_low_confidence_transcripts);
     assert_eq!(loaded.theme_mode, ThemeMode::Dark);
     assert_eq!(loaded.theme_primary_color, "#000");
+    assert_eq!(loaded.floating_overlay_background_color, "#000000");
+    assert_eq!(loaded.floating_overlay_background_opacity, 68);
+    assert_eq!(loaded.dictation_bubble_background_color, "#ffffff");
+    assert_eq!(loaded.dictation_bubble_background_opacity, 41);
     assert_eq!(
         loaded.floating_overlay_position,
         FloatingOverlayPosition::Top

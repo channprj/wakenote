@@ -116,6 +116,8 @@ export interface AppSettings {
   dictation_end_sound: DictationCueSound;
   dictation_cue_volume: DictationCueVolume;
   dictation_bubble_position: DictationBubblePosition;
+  dictation_bubble_background_color: string;
+  dictation_bubble_background_opacity: number;
   dictation_model: string;
   dictation_copy_to_clipboard: boolean;
   dictation_remove_trailing_space: boolean;

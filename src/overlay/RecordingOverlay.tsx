@@ -12,6 +12,12 @@ export type DictationOverlayState =
 export interface DictationOverlaySnapshot {
   state: DictationOverlayState;
   message: string | null;
+  style: DictationOverlayStyle;
+}
+
+export interface DictationOverlayStyle {
+  background_color: string;
+  background_opacity: number;
 }
 
 export interface OverlayCaptionSnapshot {
@@ -51,8 +57,15 @@ function defaultCaptionStyle(): OverlayCaptionStyle {
   return {
     font_size_px: 24,
     text_color: "#ffffff",
-    background_color: "#050507",
+    background_color: "#000000",
     background_opacity: 82,
+  };
+}
+
+function defaultDictationStyle(): DictationOverlayStyle {
+  return {
+    background_color: "#000000",
+    background_opacity: 88,
   };
 }
 
@@ -72,7 +85,7 @@ function hexToRgbTriplet(hex: string): string {
   const normalized = hex.trim();
   const match = normalized.match(/^#?([0-9a-fA-F]{6})$/);
   if (!match) {
-    return "5 5 7";
+    return "0 0 0";
   }
   const value = match[1];
   return [
@@ -97,6 +110,7 @@ function emptyDictationSnapshot(): DictationOverlaySnapshot {
   return {
     state: "hidden",
     message: null,
+    style: defaultDictationStyle(),
   };
 }
 
@@ -113,7 +127,22 @@ function dictationSnapshotFromPayload(
         ? state
         : "hidden",
     message: typeof data?.message === "string" ? data.message : null,
+    style: {
+      ...defaultDictationStyle(),
+      ...(data?.style ?? {}),
+    },
   };
+}
+
+function dictationStyleVariables(style: DictationOverlayStyle): CSSProperties {
+  const backgroundColor = style.background_color === "#ffffff" ? "#ffffff" : "#000000";
+  const opacity = Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
+  return {
+    "--dictation-background-rgb": hexToRgbTriplet(backgroundColor),
+    "--dictation-background-opacity": `${opacity}`,
+    "--dictation-foreground-rgb":
+      backgroundColor === "#ffffff" ? "0 0 0" : "255 255 255",
+  } as CSSProperties;
 }
 
 function levelsFromPayload(payload: unknown): number[] {
@@ -151,6 +180,7 @@ export function OverlayContent({
         data-dictation-state="recording"
         role="status"
         aria-live="polite"
+        style={dictationStyleVariables(dictation.style)}
       >
         <span className="overlay-dictation__dot" aria-hidden="true" />
         <span className="overlay-dictation__waveform" aria-hidden="true">
@@ -175,6 +205,7 @@ export function OverlayContent({
         data-dictation-state="transcribing"
         role="status"
         aria-live="polite"
+        style={dictationStyleVariables(dictation.style)}
       >
         <span className="overlay-dictation__spinner" aria-hidden="true" />
         <span className="overlay-dictation__message">
@@ -191,6 +222,7 @@ export function OverlayContent({
         data-dictation-state="error"
         role="status"
         aria-live="assertive"
+        style={dictationStyleVariables(dictation.style)}
       >
         <span className="overlay-dictation__dot" aria-hidden="true" />
         <span className="overlay-dictation__message">

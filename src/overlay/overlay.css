@@ -38,16 +38,8 @@ body {
   padding: 14px 18px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.06),
-      rgba(0, 0, 0, 0.1)
-    ),
-    rgb(var(--overlay-caption-background-rgb, 5 5 7) / var(--overlay-caption-background-alpha, 0.82));
-  box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  background: rgb(var(--overlay-caption-background-rgb, 0 0 0) / var(--overlay-caption-background-alpha, 0.82));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(16px) saturate(1.15);
   box-sizing: border-box;
   animation: overlay-fade-in 300ms ease-out both;
@@ -78,14 +70,11 @@ body {
   max-width: calc(100vw - 24px);
   height: 44px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgb(var(--dictation-foreground-rgb, 255 255 255) / 0.15);
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 52%),
-    rgba(10, 10, 13, 0.88);
-  box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  background: rgb(var(--dictation-background-rgb, 0 0 0) / var(--dictation-background-opacity, 0.88));
+  color: rgb(var(--dictation-foreground-rgb, 255 255 255));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(18px) saturate(1.2);
   box-sizing: border-box;
   animation: dictation-capsule-in 160ms ease-out both;
@@ -123,13 +112,13 @@ body {
   min-height: 4px;
   max-height: 24px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgb(var(--dictation-foreground-rgb, 255 255 255) / 0.92);
   transition: height 70ms linear;
 }
 
 .overlay-dictation__elapsed {
   min-width: 36px;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgb(var(--dictation-foreground-rgb, 255 255 255) / 0.78);
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -138,7 +127,7 @@ body {
 }
 
 .overlay-dictation__message {
-  color: rgba(255, 255, 255, 0.9);
+  color: rgb(var(--dictation-foreground-rgb, 255 255 255) / 0.9);
   font-size: 13px;
   font-weight: 590;
   letter-spacing: -0.01em;

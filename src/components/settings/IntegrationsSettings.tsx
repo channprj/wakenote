@@ -93,11 +93,21 @@ export function IntegrationsSettings({
             actions.onPatch({ floating_overlay_text_color })
           }
         />
-        <ColorSetting
-          label="Overlay background color"
+        <SettingSelect
+          label="Overlay background"
           value={settings.floating_overlay_background_color}
-          onChange={(floating_overlay_background_color) =>
-            actions.onPatch({ floating_overlay_background_color })
+          options={[
+            { value: "#000000", label: "Black" },
+            { value: "#ffffff", label: "White" },
+          ]}
+          onValueChange={(floating_overlay_background_color) =>
+            actions.onPatch({
+              floating_overlay_background_color,
+              floating_overlay_text_color:
+                floating_overlay_background_color === "#ffffff"
+                  ? "#000000"
+                  : "#ffffff",
+            })
           }
         />
         <SettingSlider

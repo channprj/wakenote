@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 
 const css = readFileSync(new URL("./overlay.css", import.meta.url), "utf8");
 
+function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  expect(match, `missing ${selector} rule`).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("overlay caption css", () => {
   it("does not clamp or ellipsize long caption text", () => {
     expect(css).not.toContain("-webkit-line-clamp");
@@ -15,6 +22,24 @@ describe("overlay caption css", () => {
     expect(css).toMatch(/#overlay-root\s*\{[^}]*padding:\s*8px\s+0/);
     expect(css).toMatch(/#overlay-root\s*\{[^}]*box-sizing:\s*border-box/);
     expect(css).toMatch(/\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/);
+  });
+
+  it.each([
+    [
+      ".overlay-caption",
+      "var(--overlay-caption-background-rgb, 0 0 0)",
+      "var(--overlay-caption-background-alpha, 0.82)",
+    ],
+    [
+      ".overlay-dictation",
+      "var(--dictation-background-rgb, 0 0 0)",
+      "var(--dictation-background-opacity, 0.88)",
+    ],
+  ])("uses one solid variable-driven background for %s", (selector, rgb, opacity) => {
+    const rule = ruleBody(selector);
+    expect(rule).not.toContain("linear-gradient");
+    expect(rule).not.toContain("inset");
+    expect(rule).toContain(`background: rgb(${rgb} / ${opacity})`);
   });
 
   it("styles a compact dictation capsule and responsive waveform bars", () => {

@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
 use crate::commands::TrayState;
-use crate::settings::{DictationBubblePosition, FloatingOverlayPosition};
+use crate::settings::{DictationBubblePosition, DictationOverlayStyle, FloatingOverlayPosition};
 
 pub const OVERLAY_LABEL: &str = "overlay";
 pub const OVERLAY_EVENT: &str = "overlay-state";
@@ -103,10 +103,23 @@ struct OverlayLevelPayload {
     levels: Vec<f32>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 struct DictationOverlayPayload {
     state: DictationOverlayState,
     message: Option<String>,
+    style: DictationOverlayStyle,
+}
+
+fn dictation_overlay_payload(
+    state: DictationOverlayState,
+    message: Option<String>,
+    style: DictationOverlayStyle,
+) -> DictationOverlayPayload {
+    DictationOverlayPayload {
+        state,
+        message,
+        style,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -275,6 +288,7 @@ pub fn show_dictation_overlay(
     state: DictationOverlayState,
     message: Option<String>,
     position: DictationBubblePosition,
+    style: DictationOverlayStyle,
 ) -> tauri::Result<()> {
     if state == DictationOverlayState::Hidden {
         return hide_dictation_overlay_state(app);
@@ -294,7 +308,7 @@ pub fn show_dictation_overlay(
     }
 
     window.show()?;
-    let payload = DictationOverlayPayload { state, message };
+    let payload = dictation_overlay_payload(state, message, style);
     let _ = window.emit(DICTATION_OVERLAY_EVENT, payload.clone());
     let _ = app.emit(DICTATION_OVERLAY_EVENT, payload);
     Ok(())
@@ -309,10 +323,11 @@ pub fn emit_dictation_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
 }
 
 pub fn hide_dictation_overlay_state(app: &AppHandle) -> tauri::Result<()> {
-    let payload = DictationOverlayPayload {
-        state: DictationOverlayState::Hidden,
-        message: None,
-    };
+    let payload = dictation_overlay_payload(
+        DictationOverlayState::Hidden,
+        None,
+        DictationOverlayStyle::default(),
+    );
     if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = window.emit(DICTATION_OVERLAY_EVENT, payload.clone());
     }
@@ -551,6 +566,24 @@ pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_dictation_payloads_carry_the_selected_style() {
+        let style = DictationOverlayStyle {
+            background_color: "#000000".to_string(),
+            background_opacity: 82,
+        };
+
+        for state in [
+            DictationOverlayState::Recording,
+            DictationOverlayState::Transcribing,
+            DictationOverlayState::Error,
+        ] {
+            let payload =
+                dictation_overlay_payload(state, Some("Feedback".to_string()), style.clone());
+            assert_eq!(payload.style, style);
+        }
+    }
 
     fn rect(origin: (i32, i32), size: (u32, u32), scale: f64) -> MonitorRect {
         MonitorRect {
