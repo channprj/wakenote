@@ -15,6 +15,7 @@ use crate::audio::{
     MicHealthVerdict, dbfs_from_samples, list_input_devices,
 };
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
+use crate::cloud_transcription::TranscriptionCredentials;
 use crate::debug_log::{append_debug_log, append_debug_log_nonblocking};
 use crate::dictation::DictationStage;
 use crate::dictionary::DictionaryContext;
@@ -515,6 +516,7 @@ pub struct StartedTranscriptionJob {
     pub language: TranscriptionLanguage,
     pub suppress_low_confidence_transcripts: bool,
     pub dictionary: DictionaryContext,
+    pub credentials: Result<TranscriptionCredentials, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -960,6 +962,52 @@ impl AppBackend {
             .ok_or_else(|| "App persistence is not configured".to_string())?
             .delete_openrouter_api_key()
             .map_err(|error| error.to_string())
+    }
+
+    pub fn openai_api_key_configured(&self) -> Result<bool, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .openai_api_key_configured()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn load_openai_api_key(&self) -> Result<Option<String>, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .load_openai_api_key()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn save_openai_api_key(&self, api_key: &str) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .save_openai_api_key(api_key)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn delete_openai_api_key(&self) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .delete_openai_api_key()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn transcription_credentials(&self) -> Result<TranscriptionCredentials, String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(TranscriptionCredentials::default());
+        };
+        Ok(TranscriptionCredentials::new(
+            persistence
+                .load_openrouter_api_key()
+                .map_err(|error| error.to_string())?,
+            persistence
+                .load_openai_api_key()
+                .map_err(|error| error.to_string())?,
+        ))
     }
 
     pub fn upload_audio_file(
@@ -2018,7 +2066,11 @@ impl AppBackend {
     }
 
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        let transcriber = RuntimeTranscriber::for_archival(&self.settings.model_directory);
+        let transcriber = RuntimeTranscriber::for_archival_with_credentials(
+            &self.settings.model_directory,
+            self.transcription_credentials()?,
+        )
+        .map_err(|error| error.to_string())?;
         self.process_next_transcription_with(transcriber)
     }
 
@@ -2099,6 +2151,7 @@ impl AppBackend {
         let language = self.settings.transcription_language;
         let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
         let dictionary = DictionaryContext::from_settings(&self.settings);
+        let credentials = self.transcription_credentials();
         let mut started_jobs = Vec::new();
 
         while let Some(job) = self
@@ -2111,6 +2164,7 @@ impl AppBackend {
                 language,
                 suppress_low_confidence_transcripts,
                 dictionary: dictionary.clone(),
+                credentials: credentials.clone(),
             });
         }
 

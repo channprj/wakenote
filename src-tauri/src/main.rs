@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
+use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
     AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
     MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
@@ -567,6 +568,11 @@ struct OpenRouterKeyStatus {
     configured: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiKeyStatus {
+    configured: bool,
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
@@ -617,6 +623,31 @@ fn delete_openrouter_api_key(
     let backend = state.lock().map_err(|error| error.to_string())?;
     backend.delete_openrouter_api_key()?;
     Ok(OpenRouterKeyStatus { configured: false })
+}
+
+#[tauri::command]
+fn openai_key_status(state: State<'_, BackendState>) -> Result<OpenAiKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(OpenAiKeyStatus {
+        configured: backend.openai_api_key_configured()?,
+    })
+}
+
+#[tauri::command]
+fn save_openai_api_key(
+    state: State<'_, BackendState>,
+    api_key: String,
+) -> Result<OpenAiKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.save_openai_api_key(&api_key)?;
+    Ok(OpenAiKeyStatus { configured: true })
+}
+
+#[tauri::command]
+fn delete_openai_api_key(state: State<'_, BackendState>) -> Result<OpenAiKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.delete_openai_api_key()?;
+    Ok(OpenAiKeyStatus { configured: false })
 }
 
 #[tauri::command]
@@ -1263,7 +1294,32 @@ fn process_dictation_recording(
             id: settings.selected_microphone.clone(),
             label: settings.selected_microphone_label.clone(),
         });
-    let transcriber = RuntimeTranscriber::for_dictation(&settings.model_directory);
+    let credentials = match app.try_state::<BackendState>() {
+        Some(state) => match state.lock() {
+            Ok(backend) => match backend.transcription_credentials() {
+                Ok(credentials) => credentials,
+                Err(error) => {
+                    show_dictation_error(app, error);
+                    return;
+                }
+            },
+            Err(error) => {
+                show_dictation_error(app, error.to_string());
+                return;
+            }
+        },
+        None => TranscriptionCredentials::default(),
+    };
+    let transcriber = match RuntimeTranscriber::for_dictation_with_credentials(
+        &settings.model_directory,
+        credentials,
+    ) {
+        Ok(transcriber) => transcriber,
+        Err(error) => {
+            show_dictation_error(app, error.to_string());
+            return;
+        }
+    };
     let dictionary = DictionaryContext::from_settings(&settings);
     let ((archive_result, archive_elapsed), result, transcription_elapsed) =
         thread::scope(|scope| {
@@ -2761,6 +2817,20 @@ fn schedule_and_spawn_meeting_job(
                 &current_job.id,
                 current_job.suppress_low_confidence,
                 &current_job.dictionary,
+                app.try_state::<BackendState>()
+                    .and_then(|state| {
+                        state.lock().ok().and_then(|backend| {
+                            backend
+                                .transcription_credentials()
+                                .map_err(|error| {
+                                    eprintln!(
+                                        "[wakenote] meeting credentials unavailable: {error}"
+                                    );
+                                })
+                                .ok()
+                        })
+                    })
+                    .unwrap_or_default(),
                 current_cancel,
                 emit,
             ) {
@@ -3806,6 +3876,13 @@ fn spawn_startup_document_recovery(
 }
 
 fn meeting_job_model_is_ready(job: &MeetingJobSpec) -> bool {
+    if job
+        .model_directory
+        .join(format!("{}.bin", job.model_id))
+        .is_file()
+    {
+        return true;
+    }
     let store = ModelStore::new(&job.model_directory);
     store
         .load_model_registry()
@@ -4544,8 +4621,21 @@ fn spawn_transcription_job(
             started.job.model_id
         );
 
+        let transcriber = match started.credentials.and_then(|credentials| {
+            RuntimeTranscriber::for_archival_with_credentials(started.model_directory, credentials)
+                .map_err(|error| error.to_string())
+        }) {
+            Ok(transcriber) => transcriber,
+            Err(error) => {
+                let _ = outcome_tx.send((
+                    audio_path,
+                    TranscriptionJobOutcome::failed(started.job.id, error),
+                ));
+                return;
+            }
+        };
         let worker = TranscriptionWorker::with_options_and_dictionary(
-            RuntimeTranscriber::for_archival(started.model_directory),
+            transcriber,
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
@@ -5574,6 +5664,9 @@ fn main() {
             openrouter_key_status,
             save_openrouter_api_key,
             delete_openrouter_api_key,
+            openai_key_status,
+            save_openai_api_key,
+            delete_openai_api_key,
             overlay_caption_snapshot,
             debug_show_overlay_caption,
             debug_hide_overlay_caption,

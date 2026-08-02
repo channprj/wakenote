@@ -3076,3 +3076,33 @@ fn sync_system_capture_settings_keeps_session_and_is_noop_without_one() {
     });
     assert!(backend.is_system_capturing());
 }
+
+#[test]
+fn cloud_transcription_dispatch_snapshots_private_provider_credentials() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("sample.wav");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    backend
+        .save_openrouter_api_key(" sk-openrouter-test ")
+        .expect("OpenRouter key");
+    backend
+        .save_openai_api_key(" sk-openai-test ")
+        .expect("OpenAI key");
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
+        selected_model: Some("openrouter-qwen3-asr-flash".into()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, Some("openrouter-qwen3-asr-flash".into()));
+
+    let started = backend
+        .start_next_transcription_job()
+        .expect("cloud job should start");
+    let credentials = started.credentials.expect("credential snapshot");
+
+    assert!(credentials.openrouter_configured());
+    assert!(credentials.openai_configured());
+    assert!(!format!("{credentials:?}").contains("sk-openrouter-test"));
+    assert!(!format!("{credentials:?}").contains("sk-openai-test"));
+}

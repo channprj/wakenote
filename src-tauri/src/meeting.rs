@@ -21,6 +21,7 @@ use chrono::{DateTime, Local, Utc};
 use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 
+use crate::cloud_transcription::TranscriptionCredentials;
 use crate::dictionary::DictionaryContext;
 use crate::settings::TranscriptionLanguage;
 use crate::transcription::{
@@ -856,6 +857,7 @@ pub fn run_meeting_job(
     id: &str,
     suppress_low_confidence: bool,
     dictionary: &DictionaryContext,
+    credentials: TranscriptionCredentials,
     cancel: Arc<AtomicBool>,
     emit: MeetingEventCallback,
 ) -> Result<(), String> {
@@ -953,9 +955,22 @@ pub fn run_meeting_job(
     } else {
         None
     };
-    let runtime_transcriber = context
-        .is_none()
-        .then(|| RuntimeTranscriber::for_archival(model_directory));
+    let runtime_transcriber = if context.is_none() {
+        match RuntimeTranscriber::for_archival_with_credentials(model_directory, credentials) {
+            Ok(transcriber) => Some(transcriber),
+            Err(error) => {
+                let _ = fs::remove_file(&wav);
+                return finish_failed(
+                    &mut record,
+                    &rpath,
+                    &emit,
+                    format!("transcription client setup failed: {error}"),
+                );
+            }
+        }
+    } else {
+        None
+    };
 
     let language = record.language;
     let total_ms = record.duration_ms;
