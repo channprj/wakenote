@@ -10,6 +10,9 @@ use whisper_rs::{
     get_lang_str,
 };
 
+use crate::cloud_transcription::{
+    CloudTranscriptionClient, CloudTranscriptionError, TranscriptionCredentials,
+};
 use crate::dictionary::DictionaryContext;
 use crate::models::{ModelStore, default_model_registry};
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
@@ -619,6 +622,7 @@ impl Transcriber for WhisperTranscriber {
 pub struct RuntimeTranscriber {
     model_directory: PathBuf,
     suppress_low_confidence_decode: bool,
+    cloud: CloudTranscriptionClient,
 }
 
 impl RuntimeTranscriber {
@@ -626,6 +630,7 @@ impl RuntimeTranscriber {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: true,
+            cloud: CloudTranscriptionClient::default(),
         }
     }
 
@@ -637,7 +642,26 @@ impl RuntimeTranscriber {
         Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
+            cloud: CloudTranscriptionClient::default(),
         }
+    }
+
+    pub fn for_dictation_with_credentials(
+        model_directory: impl AsRef<Path>,
+        credentials: TranscriptionCredentials,
+    ) -> Result<Self, CloudTranscriptionError> {
+        Self::for_archival_with_credentials(model_directory, credentials)
+    }
+
+    pub fn for_archival_with_credentials(
+        model_directory: impl AsRef<Path>,
+        credentials: TranscriptionCredentials,
+    ) -> Result<Self, CloudTranscriptionError> {
+        Ok(Self {
+            model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
+            suppress_low_confidence_decode: false,
+            cloud: CloudTranscriptionClient::new(credentials)?,
+        })
     }
 
     fn model_runtime(&self, model_id: &str) -> String {
@@ -672,6 +696,14 @@ impl Transcriber for RuntimeTranscriber {
                 "external-command" => {
                     ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
                 }
+                "openrouter-stt" => self
+                    .cloud
+                    .transcribe_openrouter(request.audio_path, request.language)
+                    .map_err(|error| TranscriptionError::Engine(error.to_string())),
+                "openai-stt" => self
+                    .cloud
+                    .transcribe_openai(request.audio_path, request.language, request.dictionary)
+                    .map_err(|error| TranscriptionError::Engine(error.to_string())),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);
                     transcriber.suppress_low_confidence_decode =

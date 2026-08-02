@@ -3233,6 +3233,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
+        "openrouter-stt" | "openai-stt" => true,
         "sherpa-onnx" | "external-command" | "qwen3-asr" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
@@ -3361,6 +3362,18 @@ mod tests {
         let models = selectable_model_ids(&tmp.path().to_string_lossy());
 
         assert!(models.contains("sensevoice-small"));
+    }
+
+    #[test]
+    fn selectable_model_ids_includes_cloud_models_without_local_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let models = selectable_model_ids(&tmp.path().to_string_lossy());
+
+        assert!(models.contains("openrouter-qwen3-asr-flash"));
+        assert!(models.contains("openai-gpt-transcribe"));
+        assert!(!tmp.path().join("openrouter-qwen3-asr-flash.bin").exists());
+        assert!(!tmp.path().join("openai-gpt-transcribe.bin").exists());
     }
 
     #[test]

@@ -75,6 +75,8 @@ fn model_store_loads_metadata_only_json_registry() {
     assert_eq!(model.status, ModelStatus::Missing);
     assert_eq!(model.download_progress, None);
     assert_eq!(model.download_error, None);
+    assert!(registry.contains_key("openrouter-qwen3-asr-flash"));
+    assert!(registry.contains_key("openai-gpt-transcribe"));
 }
 
 #[test]
@@ -133,6 +135,28 @@ fn default_registry_includes_requested_asr_provider_models() {
             .any(|language| language == "multi")
     );
     assert!(nemotron.offline);
+}
+
+#[test]
+fn cloud_transcription_models_are_ready_and_not_downloadable() {
+    let registry = wakenote::models::default_model_registry();
+    for (id, runtime, engine) in [
+        (
+            "openrouter-qwen3-asr-flash",
+            "openrouter-stt",
+            "OpenRouter · Qwen",
+        ),
+        ("openai-gpt-transcribe", "openai-stt", "OpenAI"),
+    ] {
+        let model = registry.get(id).expect("cloud transcription model");
+        assert_eq!(model.provider_runtime, runtime);
+        assert_eq!(model.engine, engine);
+        assert!(!model.offline);
+        assert!(model.download_url.is_none());
+        assert!(model.checksum_sha256.is_none());
+        assert_eq!(model.size_mb, 0);
+        assert_eq!(model.status, ModelStatus::Ready);
+    }
 }
 
 #[test]

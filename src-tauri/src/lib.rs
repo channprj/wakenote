@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod audio_analysis;
 pub mod capture;
+pub mod cloud_transcription;
 pub mod commands;
 pub mod debug_log;
 pub mod dictation;

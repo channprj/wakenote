@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub const OPENROUTER_QWEN3_ASR_MODEL: &str = "qwen/qwen3-asr-flash-2026-02-10";
+pub const OPENAI_GPT_TRANSCRIBE_MODEL: &str = "gpt-transcribe";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStatus {
@@ -541,6 +544,7 @@ impl ModelStore {
         } else {
             default_model_registry()
         };
+        merge_builtin_cloud_models(&mut registry);
         self.merge_local_whisper_cpp_models(&mut registry)?;
         Ok(registry)
     }
@@ -592,6 +596,13 @@ impl ModelStore {
     }
 
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
+        if matches!(
+            model.provider_runtime.as_str(),
+            "openrouter-stt" | "openai-stt"
+        ) {
+            return Ok(ModelStatus::Ready);
+        }
+
         if model.provider_runtime == "sherpa-onnx" {
             return Ok(if self.sherpa_model_ready(&model.id) {
                 ModelStatus::Ready
@@ -1143,6 +1154,15 @@ impl ModelStore {
     }
 }
 
+fn merge_builtin_cloud_models(registry: &mut BTreeMap<String, ModelDescriptor>) {
+    let mut defaults = default_model_registry();
+    for id in ["openrouter-qwen3-asr-flash", "openai-gpt-transcribe"] {
+        if let Some(model) = defaults.remove(id) {
+            registry.entry(id.to_string()).or_insert(model);
+        }
+    }
+}
+
 fn download_error_message(error: &ModelStoreError) -> String {
     match error {
         ModelStoreError::Cancelled { .. } => "cancelled by user".to_string(),
@@ -1611,6 +1631,52 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 accuracy_score,
                 offline: true,
                 status: ModelStatus::Missing,
+                download_progress: None,
+                download_error: None,
+            },
+        );
+    }
+
+    for (id, display_name, engine, provider_runtime, accuracy_score) in [
+        (
+            "openrouter-qwen3-asr-flash",
+            "OpenRouter · Qwen3 ASR Flash",
+            "OpenRouter · Qwen",
+            "openrouter-stt",
+            9,
+        ),
+        (
+            "openai-gpt-transcribe",
+            "OpenAI · GPT Transcribe",
+            "OpenAI",
+            "openai-stt",
+            9,
+        ),
+    ] {
+        registry.insert(
+            id.to_string(),
+            ModelDescriptor {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                engine: engine.to_string(),
+                provider_runtime: provider_runtime.to_string(),
+                download_url: None,
+                checksum_sha256: None,
+                size_mb: 0,
+                languages: vec![
+                    "ko".to_string(),
+                    "en".to_string(),
+                    "ja".to_string(),
+                    "zh".to_string(),
+                    "es".to_string(),
+                    "fr".to_string(),
+                    "de".to_string(),
+                    "multi".to_string(),
+                ],
+                speed_score: 9,
+                accuracy_score,
+                offline: false,
+                status: ModelStatus::Ready,
                 download_progress: None,
                 download_error: None,
             },

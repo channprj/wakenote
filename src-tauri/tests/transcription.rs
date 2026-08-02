@@ -759,6 +759,34 @@ fn runtime_transcriber_runs_external_command_models_with_audio_environment() {
 }
 
 #[test]
+fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let missing_audio = tmp.path().join("missing.wav");
+    let transcriber = RuntimeTranscriber::new(tmp.path());
+
+    for (model_id, provider) in [
+        ("openrouter-qwen3-asr-flash", "OpenRouter"),
+        ("openai-gpt-transcribe", "OpenAI"),
+    ] {
+        let error = transcriber
+            .transcribe(TranscriptionRequest {
+                audio_path: &missing_audio,
+                model_id,
+                language: TranscriptionLanguage::Auto,
+                dictionary: &DictionaryContext::default(),
+            })
+            .expect_err("missing provider key");
+
+        assert_eq!(
+            error,
+            TranscriptionError::Engine(format!(
+                "{provider} API key is not configured; add it in Settings > Integrations"
+            ))
+        );
+    }
+}
+
+#[test]
 fn live_partial_support_is_limited_to_whisper_runtimes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::write(

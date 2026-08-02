@@ -3806,9 +3806,19 @@ fn spawn_startup_document_recovery(
 }
 
 fn meeting_job_model_is_ready(job: &MeetingJobSpec) -> bool {
-    job.model_directory
-        .join(format!("{}.bin", job.model_id))
-        .is_file()
+    let store = ModelStore::new(&job.model_directory);
+    store
+        .load_model_registry()
+        .ok()
+        .and_then(|registry| registry.get(&job.model_id).cloned())
+        .is_some_and(|model| {
+            store.verify_model(&model).is_ok_and(|status| {
+                matches!(
+                    status,
+                    wakenote::models::ModelStatus::Ready | wakenote::models::ModelStatus::Installed
+                )
+            })
+        })
 }
 
 fn start_finished_system_meeting_jobs(
@@ -6784,6 +6794,22 @@ mod tests {
         assert!(complete_meeting_job(&mut runtime, "second").is_none());
         assert!(runtime.current.is_none());
         assert!(runtime.cancel.is_none());
+    }
+
+    #[test]
+    fn cloud_meeting_models_are_ready_without_local_artifacts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for model_id in ["openrouter-qwen3-asr-flash", "openai-gpt-transcribe"] {
+            let job = MeetingJobSpec {
+                id: "cloud".into(),
+                save_root: tmp.path().to_path_buf(),
+                model_directory: tmp.path().join("models"),
+                model_id: model_id.into(),
+                suppress_low_confidence: true,
+                dictionary: DictionaryContext::default(),
+            };
+            assert!(meeting_job_model_is_ready(&job));
+        }
     }
 
     #[test]
