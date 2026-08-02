@@ -308,11 +308,11 @@ fn wait_for_request(inner: &Arc<LiveTranscriptionInner>) -> Option<WorkItem> {
         }
         // A real decode always wins over a preload — if audio is already
         // waiting, loading the model for it covers the warm-up anyway.
-        if let Some(source_key) = state.ready_sources.pop_front() {
-            if let Some(request) = state.pending.remove(&source_key) {
-                state.in_flight_source_key = Some(source_key);
-                return Some(WorkItem::Partial(request));
-            }
+        if let Some(source_key) = state.ready_sources.pop_front()
+            && let Some(request) = state.pending.remove(&source_key)
+        {
+            state.in_flight_source_key = Some(source_key);
+            return Some(WorkItem::Partial(request));
         }
         if let Some(model_id) = state.preload_model_id.take() {
             return Some(WorkItem::Preload(model_id));

@@ -569,13 +569,12 @@ impl MicHealthMonitor {
             self.escalations_since_first_frame = 0;
             // Healthy frames imply the stream is alive; clear cooldown so the
             // next stall can be acted on immediately.
-            if matches!(self.state, MicHealthState::Cooldown) {
-                if let Some(cooldown_until) = self.cooldown_until {
-                    if now >= cooldown_until {
-                        self.state = MicHealthState::Watching;
-                        self.cooldown_until = None;
-                    }
-                }
+            if matches!(self.state, MicHealthState::Cooldown)
+                && let Some(cooldown_until) = self.cooldown_until
+                && now >= cooldown_until
+            {
+                self.state = MicHealthState::Watching;
+                self.cooldown_until = None;
             }
         }
     }
@@ -598,10 +597,10 @@ impl MicHealthMonitor {
             }
             MicHealthState::Watching => self.evaluate(now),
             MicHealthState::AwaitingRestart => {
-                if let Some(cooldown_until) = self.cooldown_until {
-                    if now < cooldown_until {
-                        return MicHealthVerdict::InCooldown;
-                    }
+                if let Some(cooldown_until) = self.cooldown_until
+                    && now < cooldown_until
+                {
+                    return MicHealthVerdict::InCooldown;
                 }
                 self.emit_restart_action(now)
             }

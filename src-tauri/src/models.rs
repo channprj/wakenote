@@ -864,11 +864,11 @@ impl ModelStore {
             removed_anything = true;
         }
         // sherpa-onnx models extract to a directory rather than a single file.
-        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
-            if sherpa_dir.is_dir() {
-                std::fs::remove_dir_all(sherpa_dir)?;
-                removed_anything = true;
-            }
+        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id)
+            && sherpa_dir.is_dir()
+        {
+            std::fs::remove_dir_all(sherpa_dir)?;
+            removed_anything = true;
         }
 
         if removed_anything {
@@ -966,14 +966,14 @@ impl ModelStore {
         }
 
         let actual = hex_digest(hasher.finalize());
-        if let Some(expected) = &model.checksum_sha256 {
-            if !actual.eq_ignore_ascii_case(expected) {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(ModelStoreError::ChecksumMismatch {
-                    expected: expected.clone(),
-                    actual,
-                });
-            }
+        if let Some(expected) = &model.checksum_sha256
+            && !actual.eq_ignore_ascii_case(expected)
+        {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(ModelStoreError::ChecksumMismatch {
+                expected: expected.clone(),
+                actual,
+            });
         }
 
         std::fs::rename(temp_path, path)?;

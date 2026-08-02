@@ -165,11 +165,11 @@ fn push_audible_range(ranges: &mut Vec<AudioRange>, start: f64, end: f64, durati
 
     let start = start.max(0.0).min(duration_seconds);
     let end = end.max(start).min(duration_seconds);
-    if let Some(previous) = ranges.last_mut() {
-        if start - previous.end <= MERGE_SILENCE_GAP_SECONDS {
-            previous.end = end;
-            return;
-        }
+    if let Some(previous) = ranges.last_mut()
+        && start - previous.end <= MERGE_SILENCE_GAP_SECONDS
+    {
+        previous.end = end;
+        return;
     }
 
     ranges.push(AudioRange { start, end });

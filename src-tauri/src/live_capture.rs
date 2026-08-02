@@ -480,20 +480,19 @@ fn select_device_with_resolution(
                 },
             ));
         }
-        if label_match.is_none() {
-            if let Some(hint) = label_hint {
-                if label == hint {
-                    label_match = Some((
-                        device,
-                        ResolvedInputDevice {
-                            device_id: stable_id.clone(),
-                            device_name: label.clone(),
-                            used_fallback_device: false,
-                        },
-                    ));
-                    continue;
-                }
-            }
+        if label_match.is_none()
+            && let Some(hint) = label_hint
+            && label == hint
+        {
+            label_match = Some((
+                device,
+                ResolvedInputDevice {
+                    device_id: stable_id.clone(),
+                    device_name: label.clone(),
+                    used_fallback_device: false,
+                },
+            ));
+            continue;
         }
         if legacy_match.is_none() && label == device_id {
             legacy_match = Some((
@@ -552,14 +551,14 @@ pub fn resolve_input_device_from_candidates(
     // the device label usually is. Match by the persisted label so the same
     // physical mic is re-acquired after its index moves.
     let label_hint = label_hint.filter(|label| !label.is_empty());
-    if let Some(label) = label_hint {
-        if let Some(candidate) = candidates.iter().find(|c| c.label == label) {
-            return Some(ResolvedInputDevice {
-                device_id: candidate.id.clone(),
-                device_name: candidate.label.clone(),
-                used_fallback_device: false,
-            });
-        }
+    if let Some(label) = label_hint
+        && let Some(candidate) = candidates.iter().find(|c| c.label == label)
+    {
+        return Some(ResolvedInputDevice {
+            device_id: candidate.id.clone(),
+            device_name: candidate.label.clone(),
+            used_fallback_device: false,
+        });
     }
 
     // Legacy: callers used to pass a label string as `requested_device_id`.

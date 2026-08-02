@@ -199,8 +199,9 @@ struct TrayPresentationSnapshot {
     dictation_stage: DictationStage,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum SourceCaptureLifecycle {
+    #[default]
     Idle,
     Starting {
         source_id: String,
@@ -217,12 +218,6 @@ enum SourceCaptureLifecycle {
         failed_at: Instant,
         attempts: u8,
     },
-}
-
-impl Default for SourceCaptureLifecycle {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -440,7 +435,6 @@ fn publish_overlay_caption_snapshot(
                 snapshot.style.font_size_px,
             ) {
                 eprintln!("[overlay-caption] {context} show failed: {error}");
-                return;
             }
         } else {
             if let Err(error) = overlay::hide_overlay(&app_for_task) {
@@ -833,10 +827,10 @@ fn play_dictation_cue_nonblocking_on_failure(
 }
 
 fn dispatch_dictation_shortcut_event(app: &AppHandle, event: DictationShortcutEvent) {
-    if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>() {
-        if let Err(error) = dispatcher.send(event) {
-            eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
-        }
+    if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>()
+        && let Err(error) = dispatcher.send(event)
+    {
+        eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
     }
 }
 
@@ -1641,6 +1635,7 @@ fn handle_dictation_shortcut_event(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn update_settings(
     app: AppHandle,
     state: State<'_, BackendState>,
@@ -1688,12 +1683,11 @@ fn update_settings(
     if previous_settings.dictation_enabled && !settings.dictation_enabled {
         finish_dictation(&app, None);
     }
-    if settings.model_directory != previous_model_directory {
-        if let Ok(slot) = live_transcriber_state.lock() {
-            if let Some(service) = slot.as_ref() {
-                service.update_model_directory(&settings.model_directory);
-            }
-        }
+    if settings.model_directory != previous_model_directory
+        && let Ok(slot) = live_transcriber_state.lock()
+        && let Some(service) = slot.as_ref()
+    {
+        service.update_model_directory(&settings.model_directory);
     }
     preload_dictation_model(&app, &settings);
     if settings.show_dock_icon != previous_show_dock_icon {
@@ -2965,10 +2959,10 @@ fn meeting_detail(state: State<'_, BackendState>, id: String) -> Result<MeetingD
 #[tauri::command]
 fn cancel_meeting(meeting_state: State<'_, MeetingState>, id: String) -> Result<(), String> {
     let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-    if runtime.current.as_deref() == Some(id.as_str()) {
-        if let Some(cancel) = runtime.cancel.as_ref() {
-            cancel.store(true, Ordering::Release);
-        }
+    if runtime.current.as_deref() == Some(id.as_str())
+        && let Some(cancel) = runtime.cancel.as_ref()
+    {
+        cancel.store(true, Ordering::Release);
     }
     Ok(())
 }
@@ -3089,12 +3083,10 @@ fn start_live_capture_runtime(
             .lock()
             .ok()
             .map(|backend| backend.settings().selected_model),
-    ) {
-        if let Ok(slot) = transcriber_state.lock() {
-            if let Some(service) = slot.as_ref() {
-                service.preload(model_id);
-            }
-        }
+    ) && let Ok(slot) = transcriber_state.lock()
+        && let Some(service) = slot.as_ref()
+    {
+        service.preload(model_id);
     }
 
     let (dropped_frames, runtime_error) = live_state
@@ -3186,10 +3178,10 @@ fn start_live_capture_slot_runtime(
                 label_hint: requested_label_hint,
             },
             move |frame| {
-                if let Some(input_monitor) = callback_input_monitor.as_ref() {
-                    if let Ok(monitor) = input_monitor.try_lock() {
-                        monitor.feed(&frame.samples);
-                    }
+                if let Some(input_monitor) = callback_input_monitor.as_ref()
+                    && let Ok(monitor) = input_monitor.try_lock()
+                {
+                    monitor.feed(&frame.samples);
                 }
                 let waveform_levels = overlay::waveform_levels_from_samples(
                     &frame.samples,
@@ -3294,10 +3286,8 @@ fn stop_live_capture_runtime(
             snapshot.running_count == 0 && snapshot.pending_count == 0
         })
         .unwrap_or(true);
-    if queue_idle {
-        if let Err(error) = overlay::hide_overlay_on_main_thread(app, "hide") {
-            eprintln!("[overlay] hide failed: {error}");
-        }
+    if queue_idle && let Err(error) = overlay::hide_overlay_on_main_thread(app, "hide") {
+        eprintln!("[overlay] hide failed: {error}");
     }
     Ok(status)
 }
@@ -3348,6 +3338,7 @@ fn source_capture_status(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn start_source_capture(
     source_id: String,
     app: AppHandle,
@@ -3374,6 +3365,7 @@ fn start_source_capture(
 
 /// Start system-audio capture for a detected source. The source must currently
 /// be detected (its pid is the ScreenCaptureKit target) and its id must match.
+#[allow(clippy::too_many_arguments)]
 fn attempt_source_capture_start(
     source: &DetectedSource,
     backend_state: &BackendState,
@@ -3614,6 +3606,7 @@ fn start_source_capture_runtime(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn stop_source_capture(
     app: AppHandle,
     backend_state: State<'_, BackendState>,
@@ -3628,10 +3621,9 @@ fn stop_source_capture(
         .lock()
         .ok()
         .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()))
+        && let Ok(mut paused) = source_capture_pause_state.lock()
     {
-        if let Ok(mut paused) = source_capture_pause_state.lock() {
-            paused.insert(source_id);
-        }
+        paused.insert(source_id);
     }
     let status = stop_source_capture_runtime(
         &app,
@@ -3661,10 +3653,10 @@ fn stop_source_capture_runtime(
         .lock()
         .ok()
         .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()));
-    if let Some(source_id) = stopped_source_id.as_deref() {
-        if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
-            source_capture_mark_stopping(&mut lifecycle, source_id);
-        }
+    if let Some(source_id) = stopped_source_id.as_deref()
+        && let Ok(mut lifecycle) = source_capture_lifecycle_state.lock()
+    {
+        source_capture_mark_stopping(&mut lifecycle, source_id);
     }
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
@@ -3978,6 +3970,7 @@ fn source_watcher_should_enumerate_windows(
 /// every [`SOURCE_WATCH_INTERVAL`] and react to source transitions. Cheap when
 /// the feature is off (it just re-reads the flag and sleeps). Notifications are
 /// posted at most once per source per app session via an in-memory snooze set.
+#[allow(clippy::too_many_arguments)]
 fn spawn_source_watcher(
     app: AppHandle,
     backend_state: BackendState,
@@ -4098,18 +4091,16 @@ fn spawn_source_watcher(
                         auto_capture,
                         already_capturing,
                         paused_this_session,
+                    ) && let Err(error) = start_source_capture_runtime(
+                        &app,
+                        &source.source_id,
+                        &backend_state,
+                        &system_capture_state,
+                        &source_capture_lifecycle_state,
+                        &detected_source_state,
+                        transcription_state.clone(),
                     ) {
-                        if let Err(error) = start_source_capture_runtime(
-                            &app,
-                            &source.source_id,
-                            &backend_state,
-                            &system_capture_state,
-                            &source_capture_lifecycle_state,
-                            &detected_source_state,
-                            transcription_state.clone(),
-                        ) {
-                            eprintln!("[source-watch] auto-capture failed: {error}");
-                        }
+                        eprintln!("[source-watch] auto-capture failed: {error}");
                     }
                 }
                 SourceTransition::Ended(source) => {
@@ -4200,18 +4191,16 @@ fn spawn_source_watcher(
                         auto_capture || recovery_pending,
                         already_capturing,
                         paused_this_session,
+                    ) && let Err(error) = start_source_capture_runtime(
+                        &app,
+                        &source.source_id,
+                        &backend_state,
+                        &system_capture_state,
+                        &source_capture_lifecycle_state,
+                        &detected_source_state,
+                        transcription_state.clone(),
                     ) {
-                        if let Err(error) = start_source_capture_runtime(
-                            &app,
-                            &source.source_id,
-                            &backend_state,
-                            &system_capture_state,
-                            &source_capture_lifecycle_state,
-                            &detected_source_state,
-                            transcription_state.clone(),
-                        ) {
-                            eprintln!("[source-watch] auto-capture retry failed: {error}");
-                        }
+                        eprintln!("[source-watch] auto-capture retry failed: {error}");
                     }
                 }
             }
@@ -4707,36 +4696,35 @@ fn emit_outcome_to_frontend(
             );
             if chunk_id.is_some()
                 && source_identity.microphone_slot != Some(MicrophoneSlot::Secondary)
+                && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
             {
-                if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
-                    let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
-                        if runtime.show_final_at(
-                            chunk_id,
-                            audio_path.to_path_buf(),
-                            &text,
-                            settings_for_log.effective_floating_overlay_position(),
-                            settings_for_log.floating_overlay_caption_style(),
-                        ) {
-                            Some(runtime.snapshot())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(snapshot) = snapshot {
-                        let generation = snapshot.generation;
-                        let should_schedule_hide = snapshot.visible
-                            && matches!(
-                                snapshot.position,
-                                FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
-                            );
-                        publish_overlay_caption_snapshot(app, snapshot, "live final caption");
-                        if should_schedule_hide {
-                            schedule_overlay_caption_hide(
-                                app.clone(),
-                                caption_state.inner().clone(),
-                                generation,
-                            );
-                        }
+                let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
+                    if runtime.show_final_at(
+                        chunk_id,
+                        audio_path.to_path_buf(),
+                        &text,
+                        settings_for_log.effective_floating_overlay_position(),
+                        settings_for_log.floating_overlay_caption_style(),
+                    ) {
+                        Some(runtime.snapshot())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(snapshot) = snapshot {
+                    let generation = snapshot.generation;
+                    let should_schedule_hide = snapshot.visible
+                        && matches!(
+                            snapshot.position,
+                            FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
+                        );
+                    publish_overlay_caption_snapshot(app, snapshot, "live final caption");
+                    if should_schedule_hide {
+                        schedule_overlay_caption_hide(
+                            app.clone(),
+                            caption_state.inner().clone(),
+                            generation,
+                        );
                     }
                 }
             }
@@ -4751,15 +4739,14 @@ fn emit_outcome_to_frontend(
                 );
                 let settings_for_input = settings_for_log.clone();
                 if let Err(error) = app.run_on_main_thread(move || {
-                    if let Some(text_for_input) = text_for_input {
-                        if let Err(error) =
+                    if let Some(text_for_input) = text_for_input
+                        && let Err(error) =
                             wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
-                        {
-                            append_runtime_debug_log(
-                                &settings_for_input,
-                                format!("[auto-input] failed to type transcript: {error}"),
-                            );
-                        }
+                    {
+                        append_runtime_debug_log(
+                            &settings_for_input,
+                            format!("[auto-input] failed to type transcript: {error}"),
+                        );
                     }
                 }) {
                     append_runtime_debug_log(
@@ -4919,31 +4906,28 @@ fn spawn_mic_recovery_watchdog(
                     .is_some_and(|diagnostic| {
                         diagnostic.running && diagnostic.runtime_error.is_none()
                     });
-                if !secondary_healthy {
-                    if let Some(state) = app.try_state::<LiveCaptureState>() {
-                        let _ = stop_live_capture_slot_runtime(
-                            &backend_state,
-                            state.inner(),
+                if !secondary_healthy && let Some(state) = app.try_state::<LiveCaptureState>() {
+                    let _ = stop_live_capture_slot_runtime(
+                        &backend_state,
+                        state.inner(),
+                        MicrophoneSlot::Secondary,
+                    );
+                    if let Err(error) = start_live_capture_slot_runtime(
+                        &app,
+                        &backend_state,
+                        state.inner(),
+                        transcription_state.clone(),
+                        MicrophoneSlot::Secondary,
+                        configured.id,
+                        configured.label,
+                    ) && let Ok(mut backend) = backend_state.lock()
+                    {
+                        backend.set_microphone_slot_warning(
                             MicrophoneSlot::Secondary,
+                            format!(
+                                "Secondary microphone disconnected; waiting for the same device: {error}"
+                            ),
                         );
-                        if let Err(error) = start_live_capture_slot_runtime(
-                            &app,
-                            &backend_state,
-                            state.inner(),
-                            transcription_state.clone(),
-                            MicrophoneSlot::Secondary,
-                            configured.id,
-                            configured.label,
-                        ) {
-                            if let Ok(mut backend) = backend_state.lock() {
-                                backend.set_microphone_slot_warning(
-                                    MicrophoneSlot::Secondary,
-                                    format!(
-                                        "Secondary microphone disconnected; waiting for the same device: {error}"
-                                    ),
-                                );
-                            }
-                        }
                     }
                 }
             }
@@ -4967,10 +4951,10 @@ fn spawn_mic_recovery_watchdog(
             // If cpal explicitly told us the stream broke, latch that as a
             // pending recovery so the same tick fires an action immediately —
             // no need to wait for heartbeat/silence thresholds.
-            if let Some(error) = runtime_error {
-                if let Ok(mut backend) = backend_state.lock() {
-                    backend.notify_stream_error(format!("audio stream error: {error}"));
-                }
+            if let Some(error) = runtime_error
+                && let Ok(mut backend) = backend_state.lock()
+            {
+                backend.notify_stream_error(format!("audio stream error: {error}"));
             }
             let action = match backend_state.lock() {
                 Ok(mut backend) => backend.evaluate_microphone_health(),
@@ -5220,10 +5204,10 @@ fn append_app_lifecycle_debug_log(app: &AppHandle, message: impl AsRef<str>) {
 }
 
 fn hide_settings_window(app: &AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
-            window.hide()?;
-        }
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL)
+        && main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray
+    {
+        window.hide()?;
     }
     Ok(())
 }
@@ -5451,11 +5435,11 @@ fn main() {
             handle_app_menu_event(app, event.id().as_ref());
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && main_window_close_action(window.label()) == MainWindowCloseAction::HideToTray
+            {
+                api.prevent_close();
+                let _ = window.hide();
             }
         })
         .setup(|app| {
@@ -6238,11 +6222,13 @@ mod tests {
 
     #[test]
     fn recognized_source_infos_honor_user_override() {
-        let mut settings = AppSettings::default();
-        settings.source_auto_prompt = vec![SourceAutoPromptEntry {
-            source_id: "youtube".into(),
-            auto_prompt: true,
-        }];
+        let settings = AppSettings {
+            source_auto_prompt: vec![SourceAutoPromptEntry {
+                source_id: "youtube".into(),
+                auto_prompt: true,
+            }],
+            ..Default::default()
+        };
         let infos = recognized_source_infos(&settings);
         let youtube = infos
             .iter()
@@ -6336,8 +6322,10 @@ mod tests {
 
     #[test]
     fn system_capture_action_syncs_while_enabled_and_recording() {
-        let mut settings = AppSettings::default();
-        settings.system_audio_enabled = true;
+        let settings = AppSettings {
+            system_audio_enabled: true,
+            ..Default::default()
+        };
         assert!(settings.recording_enabled);
         assert!(!settings.pause_all);
         assert_eq!(
@@ -6348,8 +6336,7 @@ mod tests {
 
     #[test]
     fn system_capture_action_stops_when_feature_disabled() {
-        let mut settings = AppSettings::default();
-        settings.system_audio_enabled = false;
+        let settings = AppSettings::default();
         assert_eq!(
             system_capture_settings_action(&settings, true),
             SystemCaptureSettingsAction::Stop
@@ -6358,15 +6345,19 @@ mod tests {
 
     #[test]
     fn system_capture_action_stops_when_recording_off_or_paused() {
-        let mut recording_off = AppSettings::default();
-        recording_off.recording_enabled = false;
+        let recording_off = AppSettings {
+            recording_enabled: false,
+            ..Default::default()
+        };
         assert_eq!(
             system_capture_settings_action(&recording_off, true),
             SystemCaptureSettingsAction::Stop
         );
 
-        let mut paused = AppSettings::default();
-        paused.pause_all = true;
+        let paused = AppSettings {
+            pause_all: true,
+            ..Default::default()
+        };
         assert_eq!(
             system_capture_settings_action(&paused, true),
             SystemCaptureSettingsAction::Stop
@@ -6375,8 +6366,10 @@ mod tests {
 
     #[test]
     fn input_monitor_action_starts_only_when_enabled_and_live_input_running() {
-        let mut settings = AppSettings::default();
-        settings.input_monitoring_enabled = true;
+        let settings = AppSettings {
+            input_monitoring_enabled: true,
+            ..Default::default()
+        };
 
         assert_eq!(
             input_monitor_runtime_action(&settings, true, false),
@@ -6391,7 +6384,6 @@ mod tests {
     #[test]
     fn input_monitor_action_stops_when_disabled_or_live_input_stops() {
         let mut settings = AppSettings::default();
-        settings.input_monitoring_enabled = false;
         assert_eq!(
             input_monitor_runtime_action(&settings, true, true),
             InputMonitorRuntimeAction::Stop
@@ -6406,8 +6398,10 @@ mod tests {
 
     #[test]
     fn source_watcher_enumerates_windows_only_after_screen_recording_grant() {
-        let mut settings = AppSettings::default();
-        settings.system_audio_enabled = true;
+        let mut settings = AppSettings {
+            system_audio_enabled: true,
+            ..Default::default()
+        };
 
         assert!(!source_watcher_should_enumerate_windows(
             &settings,

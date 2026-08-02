@@ -87,28 +87,26 @@ fn is_related_application(
     candidate_name: &str,
     candidate_bundle: &str,
 ) -> bool {
-    if let Some(target_name) = target_name {
-        if !target_name.is_empty()
-            && (candidate_name == target_name
-                || candidate_name
-                    .strip_prefix(target_name)
-                    .map(|suffix| suffix.starts_with(' ') || suffix.starts_with(" Helper"))
-                    .unwrap_or(false))
-        {
-            return true;
-        }
+    if let Some(target_name) = target_name
+        && !target_name.is_empty()
+        && (candidate_name == target_name
+            || candidate_name
+                .strip_prefix(target_name)
+                .map(|suffix| suffix.starts_with(' ') || suffix.starts_with(" Helper"))
+                .unwrap_or(false))
+    {
+        return true;
     }
 
-    if let Some(target_bundle) = target_bundle {
-        if !target_bundle.is_empty()
-            && (candidate_bundle == target_bundle
-                || candidate_bundle
-                    .strip_prefix(target_bundle)
-                    .map(|suffix| suffix.starts_with('.') || suffix.starts_with('-'))
-                    .unwrap_or(false))
-        {
-            return true;
-        }
+    if let Some(target_bundle) = target_bundle
+        && !target_bundle.is_empty()
+        && (candidate_bundle == target_bundle
+            || candidate_bundle
+                .strip_prefix(target_bundle)
+                .map(|suffix| suffix.starts_with('.') || suffix.starts_with('-'))
+                .unwrap_or(false))
+    {
+        return true;
     }
 
     false
@@ -270,10 +268,10 @@ mod macos {
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    if let Ok(mut slot) = ivars.runtime_error.lock() {
-                        if slot.is_none() {
-                            *slot = Some(error);
-                        }
+                    if let Ok(mut slot) = ivars.runtime_error.lock()
+                        && slot.is_none()
+                    {
+                        *slot = Some(error);
                     }
                 }
             }
@@ -487,10 +485,10 @@ mod macos {
             }
         }
 
-        if related.is_empty() {
-            if let Some(app) = primary {
-                related.push(app);
-            }
+        if related.is_empty()
+            && let Some(app) = primary
+        {
+            related.push(app);
         }
 
         related

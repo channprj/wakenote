@@ -487,12 +487,11 @@ async fn generation_refines_with_quality_feedback_and_stops_when_the_second_draf
         "Add the missing action items."
     );
     assert_eq!(refinement_payload["current_draft"], "incomplete draft");
-    assert_eq!(
+    assert!(
         refinement_payload["transcript_data"]
             .as_str()
             .unwrap()
-            .contains("summarize me"),
-        true
+            .contains("summarize me")
     );
 }
 

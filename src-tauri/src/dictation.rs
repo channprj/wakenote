@@ -183,9 +183,7 @@ impl ModifierShortcutRuntime {
         &mut self,
         pressed: ModifierShortcut,
     ) -> Option<DictationShortcutEvent> {
-        let Some(shortcut) = self.shortcut else {
-            return None;
-        };
+        let shortcut = self.shortcut?;
         if self.active {
             if pressed == shortcut {
                 return None;

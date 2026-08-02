@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -245,7 +245,7 @@ impl OverlayCaptionRuntime {
             .map(|_| self.generation)
     }
 
-    fn matches_result(&self, chunk_id: Option<u64>, audio_path: &PathBuf) -> bool {
+    fn matches_result(&self, chunk_id: Option<u64>, audio_path: &Path) -> bool {
         if let (Some(current), Some(incoming)) = (self.chunk_id, chunk_id) {
             return current == incoming;
         }

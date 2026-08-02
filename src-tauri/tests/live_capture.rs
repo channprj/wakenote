@@ -6,9 +6,11 @@ use wakenote::live_capture::{
     LiveCaptureError, LiveCaptureRuntime, resolve_input_device_from_candidates,
 };
 
+type FrameCallback = Arc<dyn Fn(AudioFrame) + Send + Sync>;
+
 #[derive(Clone, Default)]
 struct FakeInput {
-    callback: Arc<Mutex<Option<Arc<dyn Fn(AudioFrame) + Send + Sync>>>>,
+    callback: Arc<Mutex<Option<FrameCallback>>>,
     starts: Arc<Mutex<usize>>,
     runtime_error: Arc<Mutex<Option<String>>>,
 }

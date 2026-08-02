@@ -300,7 +300,7 @@ fn write_output<T>(
     let mut mono = vec![0.0; frames];
     buffer.read(&mut mono);
 
-    for (frame, sample) in data.chunks_mut(channels).zip(mono.into_iter()) {
+    for (frame, sample) in data.chunks_mut(channels).zip(mono) {
         for slot in frame {
             write_sample(slot, sample);
         }

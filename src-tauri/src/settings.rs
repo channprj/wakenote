@@ -161,10 +161,11 @@ pub enum TrayClickAction {
     OpenMenu,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptionLanguage {
     Auto,
+    #[default]
     Ko,
     En,
     Ja,
@@ -174,49 +175,34 @@ pub enum TranscriptionLanguage {
     De,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationCueSound {
+    #[default]
     Original,
     Alternative,
 }
 
-impl Default for DictationCueSound {
-    fn default() -> Self {
-        Self::Original
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationCueVolume {
     Muted,
     Small,
+    #[default]
     Medium,
     Large,
 }
 
-impl Default for DictationCueVolume {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationBubblePosition {
     TopLeft,
+    #[default]
     TopCenter,
     TopRight,
     BottomLeft,
     BottomCenter,
     BottomRight,
-}
-
-impl Default for DictationBubblePosition {
-    fn default() -> Self {
-        Self::TopCenter
-    }
 }
 
 impl TranscriptionLanguage {
@@ -231,12 +217,6 @@ impl TranscriptionLanguage {
             Self::Fr => Some("fr"),
             Self::De => Some("de"),
         }
-    }
-}
-
-impl Default for TranscriptionLanguage {
-    fn default() -> Self {
-        Self::Ko
     }
 }
 

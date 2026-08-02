@@ -398,8 +398,8 @@ fn best_silence_cut(
                 *best_center = Some((start + end) / 2);
             }
         };
-    for index in lo..hi {
-        if frame_rms[index] < threshold {
+    for (index, rms) in frame_rms.iter().enumerate().take(hi).skip(lo) {
+        if *rms < threshold {
             run_start.get_or_insert(index);
         } else if let Some(start) = run_start.take() {
             consider(start, index, &mut best_len, &mut best_center);
@@ -552,6 +552,7 @@ impl std::fmt::Debug for MeetingCaptureRecorder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_recorded_meeting_capture(
     save_root: &Path,
     title: &str,
@@ -729,7 +730,7 @@ pub fn list_meetings(save_root: &Path) -> Vec<MeetingSummary> {
             out.push(record.summary());
         }
     }
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    out.sort_by_key(|item| std::cmp::Reverse(item.created_at));
     out
 }
 
@@ -851,6 +852,7 @@ fn emit_progress_running(
 /// be called from a dedicated worker thread. Records failures into the meeting
 /// rather than returning `Err`, so the caller's `Result` only reflects fatal
 /// orchestration errors (e.g. the record can't be loaded).
+#[allow(clippy::too_many_arguments)]
 pub fn run_meeting_job(
     save_root: &Path,
     model_directory: &Path,
@@ -1036,11 +1038,10 @@ pub fn run_meeting_job(
         let progress_cb = move |pct: i32| {
             let pct = pct.clamp(0, 100) as u64;
             let processed = base_done_ms + span_ms * pct / 100;
-            let overall = if total_ms > 0 {
-                (processed * 100 / total_ms) as i32
-            } else {
-                0
-            };
+            let overall = processed
+                .saturating_mul(100)
+                .checked_div(total_ms)
+                .unwrap_or(0) as i32;
             if overall <= last_overall.load(Ordering::Acquire) {
                 return;
             }

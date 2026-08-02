@@ -2700,10 +2700,8 @@ pub fn transcripts_for_day_from_save_root(
         return Vec::new();
     };
 
-    if !download {
-        if let Some(entries) = read_valid_transcript_day_index(root, day, &compact) {
-            return entries;
-        }
+    if !download && let Some(entries) = read_valid_transcript_day_index(root, day, &compact) {
+        return entries;
     }
 
     let _dataless_guard = if download {
@@ -2771,8 +2769,8 @@ pub fn refresh_transcript_day_index_for_recording_path(
 }
 
 fn collect_transcripts_for_compact_day(root: &Path, compact: &str) -> Vec<RecentTranscript> {
-    let day_dir = root.join(&compact);
-    let uploaded_dir = root.join("uploaded").join(&compact);
+    let day_dir = root.join(compact);
+    let uploaded_dir = root.join("uploaded").join(compact);
     let mut paths = Vec::new();
     collect_day_sidecar_paths(&day_dir, &mut paths);
     collect_day_sidecar_paths(&uploaded_dir, &mut paths);
