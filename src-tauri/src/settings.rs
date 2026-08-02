@@ -28,6 +28,10 @@ pub const LLM_MAX_ITERATIONS_MIN: u8 = 1;
 pub const LLM_MAX_ITERATIONS_MAX: u8 = 30;
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-5.2";
 
+pub const fn default_true() -> bool {
+    true
+}
+
 pub fn default_floating_overlay_font_size_px() -> u32 {
     24
 }
@@ -267,6 +271,16 @@ pub struct CustomSourceEntry {
     pub auto_prompt: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DictionaryEntry {
+    pub id: String,
+    pub term: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub recording_enabled: bool,
@@ -305,6 +319,10 @@ pub struct AppSettings {
     pub max_chunk_ms: u64,
     pub selected_model: String,
     pub model_directory: String,
+    #[serde(default = "default_true")]
+    pub dictionary_enabled: bool,
+    #[serde(default)]
+    pub dictionary: Vec<DictionaryEntry>,
     pub vad_enabled: bool,
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
@@ -407,6 +425,8 @@ pub struct SettingsPatch {
     pub max_chunk_ms: Option<u64>,
     pub selected_model: Option<String>,
     pub model_directory: Option<String>,
+    pub dictionary_enabled: Option<bool>,
+    pub dictionary: Option<Vec<DictionaryEntry>>,
     pub vad_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
@@ -768,6 +788,65 @@ fn normalize_custom_sources(list: Vec<CustomSourceEntry>) -> Vec<CustomSourceEnt
         .collect()
 }
 
+fn dictionary_comparison_key(value: &str) -> String {
+    if value.is_ascii() {
+        value.to_ascii_lowercase()
+    } else {
+        value.to_string()
+    }
+}
+
+fn normalize_dictionary(list: Vec<DictionaryEntry>) -> Vec<DictionaryEntry> {
+    let mut used_ids = std::collections::HashSet::new();
+    list.into_iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let term = entry.term.trim().to_string();
+            if term.is_empty() {
+                return None;
+            }
+
+            let requested_id = entry.id.trim();
+            let base_id = if requested_id.is_empty() {
+                format!("dictionary-{}", index + 1)
+            } else {
+                requested_id.to_string()
+            };
+            let mut id = base_id.clone();
+            let mut suffix = 2;
+            while !used_ids.insert(id.clone()) {
+                id = format!("{base_id}-{suffix}");
+                suffix += 1;
+            }
+
+            let term_key = dictionary_comparison_key(&term);
+            let mut seen_aliases = std::collections::HashSet::new();
+            let aliases = entry
+                .aliases
+                .into_iter()
+                .filter_map(|alias| {
+                    let alias = alias.trim().to_string();
+                    if alias.is_empty() {
+                        return None;
+                    }
+                    let key = dictionary_comparison_key(&alias);
+                    if key == term_key || !seen_aliases.insert(key) {
+                        return None;
+                    }
+                    Some(alias)
+                })
+                .collect();
+
+            Some(DictionaryEntry {
+                id,
+                term,
+                aliases,
+                enabled: entry.enabled,
+            })
+        })
+        .collect()
+}
+
 impl AppSettings {
     pub fn normalize_capture_microphones(&mut self) {
         if self.capture_microphones.is_empty() {
@@ -954,6 +1033,12 @@ impl AppSettings {
         if let Some(value) = patch.model_directory {
             self.model_directory = value;
         }
+        if let Some(value) = patch.dictionary_enabled {
+            self.dictionary_enabled = value;
+        }
+        if let Some(value) = patch.dictionary {
+            self.dictionary = normalize_dictionary(value);
+        }
         if let Some(value) = patch.vad_enabled {
             self.vad_enabled = value;
         }
@@ -1121,6 +1206,8 @@ impl Default for AppSettings {
             max_chunk_ms: 180_000,
             selected_model: "whisper-medium".to_string(),
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
+            dictionary_enabled: true,
+            dictionary: Vec::new(),
             vad_enabled: false,
             launch_at_login: false,
             start_live_input_on_launch: true,
@@ -1590,6 +1677,52 @@ mod tests {
     }
 
     #[test]
+    fn dictionary_patch_normalizes_entries_without_reordering_them() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            dictionary: Some(vec![
+                DictionaryEntry {
+                    id: "wake".into(),
+                    term: " WakeNote ".into(),
+                    aliases: vec!["wake note".into(), "Wake Note".into(), "WakeNote".into()],
+                    enabled: true,
+                },
+                DictionaryEntry {
+                    id: "empty".into(),
+                    term: "  ".into(),
+                    aliases: vec!["ignored".into()],
+                    enabled: true,
+                },
+                DictionaryEntry {
+                    id: "qwen".into(),
+                    term: "Qwen3-ASR".into(),
+                    aliases: vec![" qwen 3 asr ".into(), "".into()],
+                    enabled: false,
+                },
+            ]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            settings.dictionary,
+            vec![
+                DictionaryEntry {
+                    id: "wake".into(),
+                    term: "WakeNote".into(),
+                    aliases: vec!["wake note".into()],
+                    enabled: true,
+                },
+                DictionaryEntry {
+                    id: "qwen".into(),
+                    term: "Qwen3-ASR".into(),
+                    aliases: vec!["qwen 3 asr".into()],
+                    enabled: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn resolve_auto_prompt_uses_source_defaults() {
         let settings = AppSettings::default();
         assert!(resolve_auto_prompt(&settings, "meet"));
@@ -1637,6 +1770,8 @@ mod tests {
         assert!(!settings.dictation_remove_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());
         assert!(settings.custom_sources.is_empty());
+        assert!(settings.dictionary_enabled);
+        assert!(settings.dictionary.is_empty());
         assert_eq!(settings.openrouter_model, OPENROUTER_DEFAULT_MODEL_ID);
         assert_eq!(settings.llm_max_iterations, 3);
         assert_eq!(

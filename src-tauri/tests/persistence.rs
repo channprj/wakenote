@@ -3,7 +3,9 @@ use wakenote::persistence::{
     AppPersistence, ListVisibilityKind, ListVisibilityTarget, SetListVisibilityRequest,
 };
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
-use wakenote::settings::{AppSettings, FloatingOverlayPosition, SettingsPatch, ThemeMode};
+use wakenote::settings::{
+    AppSettings, DictionaryEntry, FloatingOverlayPosition, SettingsPatch, ThemeMode,
+};
 
 #[test]
 fn persistence_round_trips_settings_json() {
@@ -17,6 +19,13 @@ fn persistence_round_trips_settings_json() {
         selected_microphone_label: Some("USB Mic".to_string()),
         save_root: Some("/tmp/wakenote-recordings".to_string()),
         theme_mode: Some(ThemeMode::Light),
+        dictionary_enabled: Some(true),
+        dictionary: Some(vec![DictionaryEntry {
+            id: "wake".to_string(),
+            term: " WakeNote ".to_string(),
+            aliases: vec![" wake note ".to_string()],
+            enabled: true,
+        }]),
         ..SettingsPatch::default()
     });
 
@@ -32,6 +41,8 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.selected_microphone_label, "USB Mic");
     assert_eq!(loaded.save_root, "/tmp/wakenote-recordings");
     assert_eq!(loaded.theme_mode, ThemeMode::Light);
+    assert_eq!(loaded.dictionary[0].term, "WakeNote");
+    assert_eq!(loaded.dictionary[0].aliases, vec!["wake note"]);
     assert!(loaded.save_root_confirmed);
 }
 
@@ -126,6 +137,8 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     );
     assert_eq!(loaded.openrouter_model, "z-ai/glm-5.2");
     assert_eq!(loaded.llm_max_iterations, 3);
+    assert!(loaded.dictionary_enabled);
+    assert!(loaded.dictionary.is_empty());
     assert!(
         loaded
             .llm_summary_prompt_template
