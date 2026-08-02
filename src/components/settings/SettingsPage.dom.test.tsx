@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,6 +130,8 @@ function makeActions(): SettingsActions {
     onDeleteModel: vi.fn(),
     onSaveOpenRouterApiKey: vi.fn(),
     onDeleteOpenRouterApiKey: vi.fn(),
+    onSaveOpenAiApiKey: vi.fn(),
+    onDeleteOpenAiApiKey: vi.fn(),
   };
 }
 
@@ -549,6 +552,146 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({
       auto_transcript_input_enabled: true,
     });
+  });
+
+  it("manages the shared Dictionary through exact settings patches", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictionary = [
+      {
+        id: "wake-note",
+        term: "WakeNote",
+        aliases: ["wake note"],
+        enabled: true,
+      },
+    ];
+
+    render(
+      <SettingsPage
+        section="models"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("switch", { name: "Enable shared Dictionary" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({ dictionary_enabled: false });
+
+    await user.click(
+      screen.getByRole("switch", {
+        name: "Enable Dictionary entry WakeNote",
+      }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictionary: [
+        {
+          id: "wake-note",
+          term: "WakeNote",
+          aliases: ["wake note"],
+          enabled: false,
+        },
+      ],
+    });
+
+    fireEvent.change(screen.getByLabelText("Dictionary canonical term 1"), {
+      target: { value: "WakeNote Pro" },
+    });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictionary: [
+        {
+          id: "wake-note",
+          term: "WakeNote Pro",
+          aliases: ["wake note"],
+          enabled: true,
+        },
+      ],
+    });
+
+    fireEvent.change(screen.getByLabelText("Dictionary aliases 1"), {
+      target: { value: "wake-note, WakeNote, wake-note, 웨이크노트" },
+    });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictionary: [
+        {
+          id: "wake-note",
+          term: "WakeNote",
+          aliases: ["wake-note", "웨이크노트"],
+          enabled: true,
+        },
+      ],
+    });
+
+    await user.type(screen.getByLabelText("New canonical term"), "Codex");
+    await user.type(
+      screen.getByLabelText("New term aliases"),
+      "code x, Codex, code x",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add Dictionary entry" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictionary: [
+        snapshot.settings.dictionary[0],
+        {
+          id: "dictionary-1",
+          term: "Codex",
+          aliases: ["code x"],
+          enabled: true,
+        },
+      ],
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete Dictionary entry WakeNote",
+      }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({ dictionary: [] });
+  });
+
+  it("saves and deletes OpenRouter and OpenAI credentials independently", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.openrouter_key_configured = true;
+    snapshot.openai_key_configured = true;
+
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const openRouterCard = screen.getByText("OpenRouter").closest('[data-slot="card"]');
+    const openAiCard = screen.getByText("OpenAI").closest('[data-slot="card"]');
+    if (!(openRouterCard instanceof HTMLElement) || !(openAiCard instanceof HTMLElement)) {
+      throw new Error("API key settings cards not found");
+    }
+
+    await user.type(
+      within(openRouterCard).getByLabelText("OpenRouter API Key"),
+      "sk-or-test",
+    );
+    await user.click(within(openRouterCard).getByRole("button", { name: /Save/ }));
+    expect(actions.onSaveOpenRouterApiKey).toHaveBeenCalledWith("sk-or-test");
+    await user.click(within(openRouterCard).getByRole("button", { name: /Delete/ }));
+    expect(actions.onDeleteOpenRouterApiKey).toHaveBeenCalledOnce();
+
+    await user.type(
+      within(openAiCard).getByLabelText("OpenAI API Key"),
+      "sk-openai-test",
+    );
+    await user.click(within(openAiCard).getByRole("button", { name: /Save/ }));
+    expect(actions.onSaveOpenAiApiKey).toHaveBeenCalledWith("sk-openai-test");
+    await user.click(within(openAiCard).getByRole("button", { name: /Delete/ }));
+    expect(actions.onDeleteOpenAiApiKey).toHaveBeenCalledOnce();
   });
 
   it("disables the floating overlay position when the overlay is hidden", () => {

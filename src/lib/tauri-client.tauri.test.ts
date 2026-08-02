@@ -98,6 +98,7 @@ function mockInvoke(command: string) {
     case "queue_snapshot":
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "openrouter_key_status":
+    case "openai_key_status":
       return Promise.resolve({ configured: false });
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
@@ -165,6 +166,9 @@ describe("tauri runtime client snapshots", () => {
     const snapshot = await loadSnapshot();
 
     expect(snapshot.recent_transcripts).toEqual([]);
+    expect(snapshot.openrouter_key_configured).toBe(false);
+    expect(snapshot.openai_key_configured).toBe(false);
+    expect(mocks.invoke).toHaveBeenCalledWith("openai_key_status");
     expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
       "recent_transcripts",
     );

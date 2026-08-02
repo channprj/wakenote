@@ -41,6 +41,17 @@ export function formatLanguageList(codes: string[]): string {
   return labels.join(", ");
 }
 
+export function cloudCredentialLabel(providerRuntime: string): string | null {
+  switch (providerRuntime) {
+    case "openrouter-stt":
+      return "Requires OpenRouter API key";
+    case "openai-stt":
+      return "Requires OpenAI API key";
+    default:
+      return null;
+  }
+}
+
 function statusProgress(model: ModelDescriptor) {
   if (typeof model.download_progress === "number") {
     return model.download_progress;
@@ -214,6 +225,7 @@ export function ModelManager({
         const retryReason = modelRetryDisabledReason(model);
         const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
         const deleteReason = modelDeleteDisabledReason(model, inUse);
+        const credentialLabel = cloudCredentialLabel(model.provider_runtime);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -221,7 +233,7 @@ export function ModelManager({
                 <div>
                   <strong>{model.display_name}</strong>
                   <span>
-                    {model.engine} · {model.provider_runtime} · {formatModelSize(model.size_mb)}
+                    {model.engine} · {model.provider_runtime} · {model.offline ? formatModelSize(model.size_mb) : "API"}
                   </span>
                 </div>
                 <StatusBadge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</StatusBadge>
@@ -232,6 +244,7 @@ export function ModelManager({
                 <span>Accuracy {model.accuracy_score}/10</span>
                 <span>{formatLanguageList(model.languages)}</span>
                 <span>{model.offline ? "Offline" : "Cloud/API"}</span>
+                {credentialLabel ? <span>{credentialLabel}</span> : null}
                 {model.download_error ? (
                   <span data-tone="danger">{model.download_error}</span>
                 ) : null}
@@ -249,60 +262,64 @@ export function ModelManager({
                 <CheckCircle2 data-icon="inline-start" />
                 {selected ? "Active" : "Switch"}
               </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={acquire.reason ?? acquire.label}
-                onClick={() => {
-                  if (acquire.kind === "download") {
-                    onDownload(model.id);
-                  }
-                }}
-                disabled={!acquire.enabled}
-              >
-                <Download data-icon="solo" />
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={verifyReason ?? "Verify"}
-                onClick={() => onVerify(model.id)}
-                disabled={!actions.canVerify}
-              >
-                <ShieldCheck data-icon="solo" />
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={retryReason ?? "Retry"}
-                onClick={() => onDownload(model.id)}
-                disabled={!actions.canRetry}
-              >
-                <RotateCw data-icon="solo" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={cancelDownloadReason ?? "Cancel Download"}
-                onClick={() => onCancelDownload(model.id)}
-                disabled={!actions.canCancelDownload}
-              >
-                <CircleX data-icon="solo" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                title={deleteReason ?? "Delete"}
-                onClick={() => onDelete(model.id)}
-                disabled={inUse || !actions.canDelete}
-              >
-                <Trash2 data-icon="solo" />
-              </Button>
+              {model.offline ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    title={acquire.reason ?? acquire.label}
+                    onClick={() => {
+                      if (acquire.kind === "download") {
+                        onDownload(model.id);
+                      }
+                    }}
+                    disabled={!acquire.enabled}
+                  >
+                    <Download data-icon="solo" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    title={verifyReason ?? "Verify"}
+                    onClick={() => onVerify(model.id)}
+                    disabled={!actions.canVerify}
+                  >
+                    <ShieldCheck data-icon="solo" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="icon"
+                    title={retryReason ?? "Retry"}
+                    onClick={() => onDownload(model.id)}
+                    disabled={!actions.canRetry}
+                  >
+                    <RotateCw data-icon="solo" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title={cancelDownloadReason ?? "Cancel Download"}
+                    onClick={() => onCancelDownload(model.id)}
+                    disabled={!actions.canCancelDownload}
+                  >
+                    <CircleX data-icon="solo" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title={deleteReason ?? "Delete"}
+                    onClick={() => onDelete(model.id)}
+                    disabled={inUse || !actions.canDelete}
+                  >
+                    <Trash2 data-icon="solo" />
+                  </Button>
+                </>
+              ) : null}
             </div>
           </article>
         );

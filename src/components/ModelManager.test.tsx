@@ -175,6 +175,25 @@ describe("model manager actions", () => {
       expect(isDisabled(buttonTag(markup, "trash-2"))).toBe(false);
     },
   );
+
+  it.each([
+    ["openrouter-stt", "Requires OpenRouter API key"],
+    ["openai-stt", "Requires OpenAI API key"],
+  ])("keeps %s cloud models selectable without local file actions", (providerRuntime, label) => {
+    const markup = renderModel("ready", {
+      provider_runtime: providerRuntime,
+      offline: false,
+      download_url: null,
+      size_mb: 0,
+    });
+
+    expect(markup).toContain("Cloud/API");
+    expect(markup).toContain(label);
+    expect(isDisabled(buttonWithText(markup, "Switch"))).toBe(false);
+    expect(markup).not.toContain("lucide-download");
+    expect(markup).not.toContain("lucide-shield-check");
+    expect(markup).not.toContain("lucide-trash-2");
+  });
 });
 
 describe("model acquire action", () => {

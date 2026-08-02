@@ -76,6 +76,8 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
         onDeleteModel: () => {},
         onSaveOpenRouterApiKey: () => {},
         onDeleteOpenRouterApiKey: () => {},
+        onSaveOpenAiApiKey: () => {},
+        onDeleteOpenAiApiKey: () => {},
       }}
     />,
   );

@@ -24,6 +24,8 @@ const actions: SettingsActions = {
   onDeleteModel: vi.fn(),
   onSaveOpenRouterApiKey: vi.fn(),
   onDeleteOpenRouterApiKey: vi.fn(),
+  onSaveOpenAiApiKey: vi.fn(),
+  onDeleteOpenAiApiKey: vi.fn(),
 };
 
 function renderSection(section: SettingsSection, snapshot: AppSnapshot = mockSnapshot()) {

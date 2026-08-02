@@ -23,7 +23,8 @@ export function IntegrationsSettings({
   actions: SettingsActions;
 }) {
   const { settings } = snapshot;
-  const [apiKey, setApiKey] = useState("");
+  const [openRouterApiKey, setOpenRouterApiKey] = useState("");
+  const [openAiApiKey, setOpenAiApiKey] = useState("");
 
   return (
     <SettingsGrid maxColumns={3}>
@@ -111,34 +112,38 @@ export function IntegrationsSettings({
         />
       </SettingsCard>
 
-      <SettingsCard title="OpenRouter" description="Transcript summaries and detailed reports.">
+      <SettingsCard
+        title="OpenRouter"
+        description="Qwen3 ASR transcription, transcript summaries, and detailed reports."
+      >
         <Field orientation="responsive" className="settings-row">
           <FieldContent>
             <FieldLabel>API Key</FieldLabel>
             <FieldDescription>
-              Stored in the system keychain, never in the settings file.
+              Stored in WakeNote&apos;s private app-data secret store, never in the settings file.
             </FieldDescription>
           </FieldContent>
           <div className="settings-inline-control">
             <Input
               type="password"
               autoComplete="off"
-              value={apiKey}
+              aria-label="OpenRouter API Key"
+              value={openRouterApiKey}
               placeholder={
                 snapshot.openrouter_key_configured
                   ? "Enter a new key to replace the saved key"
                   : "OpenRouter API key"
               }
-              onChange={(event) => setApiKey(event.currentTarget.value)}
+              onChange={(event) => setOpenRouterApiKey(event.currentTarget.value)}
             />
             <Button
               type="button"
               size="sm"
               variant="outline"
-              disabled={!apiKey.trim()}
+              disabled={!openRouterApiKey.trim()}
               onClick={() => {
-                actions.onSaveOpenRouterApiKey(apiKey);
-                setApiKey("");
+                actions.onSaveOpenRouterApiKey(openRouterApiKey);
+                setOpenRouterApiKey("");
               }}
             >
               <KeyRoundIcon data-icon="inline-start" />
@@ -195,6 +200,63 @@ export function IntegrationsSettings({
             actions.onPatch({ llm_report_prompt_template })
           }
         />
+      </SettingsCard>
+
+      <SettingsCard
+        title="OpenAI"
+        description="Direct GPT Transcribe speech recognition."
+      >
+        <Field orientation="responsive" className="settings-row">
+          <FieldContent>
+            <FieldLabel>API Key</FieldLabel>
+            <FieldDescription>
+              Stored in WakeNote&apos;s private app-data secret store, never in the settings file.
+            </FieldDescription>
+          </FieldContent>
+          <div className="settings-inline-control">
+            <Input
+              type="password"
+              autoComplete="off"
+              aria-label="OpenAI API Key"
+              value={openAiApiKey}
+              placeholder={
+                snapshot.openai_key_configured
+                  ? "Enter a new key to replace the saved key"
+                  : "OpenAI API key"
+              }
+              onChange={(event) => setOpenAiApiKey(event.currentTarget.value)}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!openAiApiKey.trim()}
+              onClick={() => {
+                actions.onSaveOpenAiApiKey(openAiApiKey);
+                setOpenAiApiKey("");
+              }}
+            >
+              <KeyRoundIcon data-icon="inline-start" />
+              Save
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={!snapshot.openai_key_configured}
+              onClick={actions.onDeleteOpenAiApiKey}
+            >
+              <Trash2Icon data-icon="inline-start" />
+              Delete
+            </Button>
+          </div>
+          <StatusBadge tone={snapshot.openai_key_configured ? "success" : "warning"}>
+            {snapshot.openai_key_configured ? "API key saved" : "API key missing"}
+          </StatusBadge>
+        </Field>
+        <p className="text-muted-foreground text-xs">
+          Required when OpenAI · GPT Transcribe is selected for transcription or Dictation.
+        </p>
       </SettingsCard>
     </SettingsGrid>
   );

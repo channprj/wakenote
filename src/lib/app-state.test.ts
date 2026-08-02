@@ -91,6 +91,8 @@ describe("app state derivation", () => {
       "nemotron-3.5-asr-streaming-0.6b",
       "qwen3-asr-0.6b",
       "qwen3-asr-1.7b",
+      "openrouter-qwen3-asr-flash",
+      "openai-gpt-transcribe",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
@@ -100,6 +102,16 @@ describe("app state derivation", () => {
       models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")?.languages,
     ).toContain("ko");
     expect(models.find((model) => model.id === "qwen3-asr-0.6b")?.languages).toContain("ko");
+    expect(models.find((model) => model.id === "openrouter-qwen3-asr-flash")).toMatchObject({
+      provider_runtime: "openrouter-stt",
+      offline: false,
+      status: "ready",
+    });
+    expect(models.find((model) => model.id === "openai-gpt-transcribe")).toMatchObject({
+      provider_runtime: "openai-stt",
+      offline: false,
+      status: "ready",
+    });
   });
 
   it("keeps polling while transcription queue work is pending even if the tray is idle", () => {

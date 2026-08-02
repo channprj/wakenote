@@ -9,6 +9,7 @@ import {
   cancelLlmReport,
   deleteModel,
   deleteOpenRouterApiKey,
+  deleteOpenAiApiKey,
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
@@ -24,6 +25,7 @@ import {
   retryJob,
   retryLlmReport,
   saveOpenRouterApiKey,
+  saveOpenAiApiKey,
   saveSettingsPatch,
   skipJob,
   startLiveCapture,
@@ -128,6 +130,20 @@ describe("tauri live capture client", () => {
 
     const dark = await saveSettingsPatch({ theme_mode: "dark" });
     expect(dark.settings.theme_mode).toBe("dark");
+  });
+
+  it("tracks browser fallback OpenAI key state without retaining blank values", async () => {
+    await deleteOpenAiApiKey();
+    expect((await loadSnapshot()).openai_key_configured).toBe(false);
+
+    await expect(saveOpenAiApiKey("   ")).rejects.toThrow(
+      "OpenAI API key cannot be blank",
+    );
+    const saved = await saveOpenAiApiKey(" sk-openai-browser ");
+    expect(saved.openai_key_configured).toBe(true);
+
+    await deleteOpenAiApiKey();
+    expect((await loadSnapshot()).openai_key_configured).toBe(false);
   });
 
   it("tracks browser fallback OpenRouter key state and completed durable runs", async () => {

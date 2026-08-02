@@ -48,6 +48,8 @@ import {
   stopLiveCapture,
   suspendDictationShortcut,
   deleteOpenRouterApiKey,
+  saveOpenAiApiKey,
+  deleteOpenAiApiKey,
   verifyModel,
 } from "./lib/tauri-client";
 import {
@@ -545,6 +547,9 @@ export default function App() {
             void runAction(() => saveOpenRouterApiKey(apiKey)),
           onDeleteOpenRouterApiKey: () =>
             void runAction(deleteOpenRouterApiKey),
+          onSaveOpenAiApiKey: (apiKey) =>
+            void runAction(() => saveOpenAiApiKey(apiKey)),
+          onDeleteOpenAiApiKey: () => void runAction(deleteOpenAiApiKey),
         }}
       />
     ),

@@ -27,6 +27,7 @@ export interface DevFixtures {
   reports: LlmReportHistoryDetail[];
   runs: LlmReportRunSnapshot[];
   openrouterApiKey: string;
+  openaiApiKey: string;
 }
 
 const saveRoot = "~/Documents/WakeNote";
@@ -508,5 +509,6 @@ export function devFixtures(now: Date = new Date()): DevFixtures {
     reports,
     runs: fixtureRuns(now, reports),
     openrouterApiKey: "sk-or-browser-preview",
+    openaiApiKey: "sk-openai-browser-preview",
   };
 }

@@ -66,6 +66,13 @@ export interface CaptureMicrophoneEntry {
 
 export type MicrophoneSlot = "primary" | "secondary";
 
+export interface DictionaryEntry {
+  id: string;
+  term: string;
+  aliases: string[];
+  enabled: boolean;
+}
+
 export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
@@ -93,6 +100,8 @@ export interface AppSettings {
   max_chunk_ms: number;
   selected_model: string;
   model_directory: string;
+  dictionary_enabled: boolean;
+  dictionary: DictionaryEntry[];
   vad_enabled: boolean;
   launch_at_login: boolean;
   start_live_input_on_launch: boolean;
@@ -346,9 +355,11 @@ export interface LlmReportHistoryDetail {
   content: string;
 }
 
-export interface OpenRouterKeyStatus {
+export interface ApiKeyStatus {
   configured: boolean;
 }
+
+export type OpenRouterKeyStatus = ApiKeyStatus;
 
 export interface TranscriptDay {
   day: string;
@@ -526,4 +537,5 @@ export interface AppSnapshot {
   recent_transcripts: RecentTranscript[];
   permissions: AppPermissions;
   openrouter_key_configured: boolean;
+  openai_key_configured: boolean;
 }

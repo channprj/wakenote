@@ -17,4 +17,6 @@ export interface SettingsActions {
   onDeleteModel: (modelId: string) => void;
   onSaveOpenRouterApiKey: (apiKey: string) => void;
   onDeleteOpenRouterApiKey: () => void;
+  onSaveOpenAiApiKey: (apiKey: string) => void;
+  onDeleteOpenAiApiKey: () => void;
 }

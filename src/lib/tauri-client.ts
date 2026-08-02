@@ -40,7 +40,7 @@ import type {
   LlmReportHistoryDetail,
   LlmReportHistoryItem,
   LlmReportRunSnapshot,
-  OpenRouterKeyStatus,
+  ApiKeyStatus,
   ListVisibilityState,
   SetListVisibilityRequest,
 } from "./types";
@@ -62,6 +62,7 @@ let browserCaptureSessionTranscriptionRequested = false;
 let browserSourceCapturing = false;
 let browserDetectedSource: SourcePayload | null = null;
 let browserOpenRouterApiKey: string | null = null;
+let browserOpenAiApiKey: string | null = null;
 let browserListVisibility = emptyListVisibilityState();
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
@@ -129,6 +130,7 @@ export function seedBrowserFixtures(fixtures: DevFixtures) {
     recent_transcripts: fixtures.transcripts,
   };
   browserOpenRouterApiKey = fixtures.openrouterApiKey;
+  browserOpenAiApiKey = fixtures.openaiApiKey;
   browserLlmReportHistory.splice(
     0,
     browserLlmReportHistory.length,
@@ -356,6 +358,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
       queue,
       status: statusFrom(settings, queue),
       openrouter_key_configured: Boolean(browserOpenRouterApiKey),
+      openai_key_configured: Boolean(browserOpenAiApiKey),
     };
     return browserSnapshot;
   }
@@ -368,6 +371,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     queue,
     permissions,
     openRouterKeyStatus,
+    openAiKeyStatus,
   ] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
@@ -375,7 +379,8 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
     invoke<AppPermissions>("permission_snapshot"),
-    invoke<OpenRouterKeyStatus>("openrouter_key_status"),
+    invoke<ApiKeyStatus>("openrouter_key_status"),
+    invoke<ApiKeyStatus>("openai_key_status"),
   ]);
 
   return {
@@ -387,6 +392,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     permissions,
     recent_transcripts: [],
     openrouter_key_configured: openRouterKeyStatus.configured,
+    openai_key_configured: openAiKeyStatus.configured,
   };
 }
 
@@ -509,6 +515,7 @@ export async function saveSettingsPatch(
       status: statusFrom(settings, queue),
       queue,
       openrouter_key_configured: Boolean(browserOpenRouterApiKey),
+      openai_key_configured: Boolean(browserOpenAiApiKey),
     };
     return browserSnapshot;
   }
@@ -533,7 +540,7 @@ export async function saveOpenRouterApiKey(
     return loadSnapshot();
   }
 
-  await invoke<OpenRouterKeyStatus>("save_openrouter_api_key", { apiKey });
+  await invoke<ApiKeyStatus>("save_openrouter_api_key", { apiKey });
   return loadSnapshot();
 }
 
@@ -547,7 +554,39 @@ export async function deleteOpenRouterApiKey(): Promise<AppSnapshot> {
     return loadSnapshot();
   }
 
-  await invoke<OpenRouterKeyStatus>("delete_openrouter_api_key");
+  await invoke<ApiKeyStatus>("delete_openrouter_api_key");
+  return loadSnapshot();
+}
+
+export async function saveOpenAiApiKey(apiKey: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      throw new Error("OpenAI API key cannot be blank");
+    }
+    browserOpenAiApiKey = trimmed;
+    browserSnapshot = {
+      ...browserSnapshot,
+      openai_key_configured: true,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<ApiKeyStatus>("save_openai_api_key", { apiKey });
+  return loadSnapshot();
+}
+
+export async function deleteOpenAiApiKey(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserOpenAiApiKey = null;
+    browserSnapshot = {
+      ...browserSnapshot,
+      openai_key_configured: false,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<ApiKeyStatus>("delete_openai_api_key");
   return loadSnapshot();
 }
 
