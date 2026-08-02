@@ -4,18 +4,18 @@
 
 **Voice-activated local transcription for macOS.**
 
-WakeNote is a menu-bar app that listens to one required Primary microphone and an optional Secondary microphone, automatically opens recording chunks when the input crosses a configurable dBFS threshold, and transcribes each chunk locally with Whisper. When both microphones are configured, WakeNote keeps their physical capture streams independent but merges them into one time-aligned recording and transcription input by default. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
+WakeNote is a menu-bar app that listens to one required Primary microphone and an optional Secondary microphone, automatically opens recording chunks when the input crosses a configurable dBFS threshold, and transcribes each chunk with the selected local or opt-in cloud model. When both microphones are configured, WakeNote keeps their physical capture streams independent but merges them into one time-aligned recording and transcription input by default. Audio, transcript, and metadata are written next to each other under a date-bucketed folder so recordings stay greppable from notes, scripts, or backup tools.
 
-The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Transcription runs offline through `whisper-rs` (whisper.cpp) with Metal GPU acceleration on macOS builds; audio capture goes through `cpal`. The default theme color is black `#000`.
+The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CSS v4. Local transcription can run offline through `whisper-rs` (whisper.cpp) with Metal GPU acceleration on macOS builds; audio capture goes through `cpal`. The default theme color is black `#000`.
 
 ## Highlights
 
 - **Voice-activated capture** — recording starts only after RMS dBFS stays above the threshold for the configured *attack* duration, and ends only after it stays below for the *release* duration. Pre-roll and post-roll buffers preserve the head and tail of each utterance.
 - **Resilient dual microphones** — select one Primary and an optional Secondary physical input in Settings. Each microphone owns its stream, frame queue, level, warning, and same-device reconnect loop, so one failure never stops the other. With two inputs, **Merge microphone inputs** is on by default and produces one recording and one transcription; turn it off to preserve separate per-microphone recordings and transcript identities. Input monitoring uses Primary only.
-- **Shortcut dictation** — optionally hold a configurable global shortcut to record and release it to transcribe locally, then WakeNote types the final result at the focused cursor. Dictation has its own Auto-detect language setting and stores recoverable `dictation` audio, metadata, and transcript records.
+- **Shortcut dictation** — optionally hold a configurable global shortcut to record and release it to transcribe with its selected model, then WakeNote types the final result at the focused cursor. Dictation has its own Auto-detect language setting and stores recoverable `dictation` audio, metadata, and transcript records.
 - **Independent Recording / Transcription / Pause toggles** — capture audio without transcribing, transcribe an existing backlog without recording, or pause everything from the tray.
 - **Local-first storage** — `{save_root}/YYYYMMDD/HHMMSS.{m4a|wav}` for audio, `.txt` for transcripts, `.json` for metadata, `.error.txt` for recoverable transcription errors. Filename collisions roll over to `-001`, `-002`, …
-- **Model manager** — download, verify (SHA-256), cancel, delete, and switch models from the UI. The Korean-capable registry includes Whisper, bundled sherpa-onnx models, and Qwen3-ASR 0.6B/1.7B. Qwen setup creates an isolated Transformers runtime and local model snapshot from the Models screen.
+- **Model manager** — download, verify (SHA-256), cancel, delete, and switch local models from the UI, or select the OpenRouter Qwen3 ASR Flash and OpenAI GPT Transcribe API models. The Korean-capable local registry includes Whisper, bundled sherpa-onnx models, and Qwen3-ASR 0.6B/1.7B.
 - **AI summaries and detailed reports** — turn any set of captures into a Markdown document through OpenRouter. The runner drafts, grades its own output against success criteria, and refines until the criteria are met or the iteration budget runs out. See [AI summaries and reports](#ai-summaries-and-reports).
 - **Single-flight transcription queue** — at most one job runs at a time; failed jobs surface as recoverable errors with retry / skip actions; recovered jobs from a previous session are re-queued on startup.
 - **Robust live capture** — the audio callback dispatches frames to a bounded background queue; if processing falls behind, stale frames are dropped and the UI surfaces a runtime warning instead of stalling the input thread.
@@ -38,7 +38,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
   │                       single-flight TranscriptionQueue ──► .txt  │
   │                                          │              .error.txt│
   │                                          ▼                       │
-  │                       whisper-rs (local Whisper inference)       │
+  │                 selected ASR runtime (local or cloud API)       │
   └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,7 +48,7 @@ The app is built on Tauri 2 (Rust backend) + React 19 + TypeScript + Tailwind CS
 - `src-tauri/src/multi_capture.rs` — coordinates fixed Primary / Secondary runtimes without sharing streams or dispatch queues, then time-aligns and resamples their frames into one input when merging is enabled.
 - `src-tauri/src/recorder.rs` — writes `.wav` via `hound`, `.m4a` via macOS `afconvert` (PCM → WAV → AAC/M4A), `.json` metadata, transcript / error sidecars.
 - `src-tauri/src/queue.rs` — `TranscriptionQueue`, idempotent enqueue, single-flight `start_next`, retry/skip/cancel.
-- `src-tauri/src/transcription.rs` — Whisper, sherpa-onnx, Qwen3-ASR and external-command runtime routing plus `TranscriptionWorker`.
+- `src-tauri/src/transcription.rs` — Whisper, sherpa-onnx, Qwen3-ASR, OpenRouter, OpenAI, and external-command runtime routing plus `TranscriptionWorker`.
 - `src-tauri/src/dictation.rs` — shortcut validation, push-to-talk state, dedicated microphone capture, ephemeral 16 kHz transcription input, and final-result focused-cursor typing.
 - `src-tauri/src/models.rs` — model registry, download with progress/cancel/checksum, on-disk `ModelStore`.
 - `src-tauri/src/persistence.rs` — atomic JSON writes for `settings.json` and `transcription-queue.json` under the app data dir; in-flight jobs recovered as pending on startup.
@@ -113,7 +113,7 @@ language, then keep the cursor in the app where text should appear:
 1. Hold the shortcut to start recording immediately from the configured Primary
    microphone. The short start chirp plays without delaying capture.
 2. Speak while holding the shortcut, then release it. Capture closes before the
-   stop chirp and local transcription begin.
+   stop chirp and selected-model transcription begin.
 3. WakeNote keeps the mandatory top-center feedback visible even when Floating
    overlay is off, then types non-empty final text at the focused cursor and
    restores the previous clipboard contents.
@@ -193,7 +193,52 @@ report removes it from the list only — nothing is deleted.
 
 WakeNote includes registry entries for `parakeet-tdt-0.6b-v3`,
 `sensevoice-small`, `nemotron-3.5-asr-streaming-0.6b`, `qwen3-asr-0.6b`,
-and `qwen3-asr-1.7b`.
+`qwen3-asr-1.7b`, `openrouter-qwen3-asr-flash`, and
+`openai-gpt-transcribe`.
+
+### Cloud transcription
+
+Two cloud models are selectable for normal transcription, meeting segments,
+and Dictation:
+
+| WakeNote model | Provider model | Credential |
+| --- | --- | --- |
+| OpenRouter · Qwen3 ASR Flash | `qwen/qwen3-asr-flash-2026-02-10` | OpenRouter API key |
+| OpenAI · GPT Transcribe | `gpt-transcribe` | OpenAI API key |
+
+Configure each key separately in **Settings › Integrations**. WakeNote stores
+the trimmed keys in provider-specific files in its private app-data secret
+store, separate from `settings.json`; the UI and snapshots expose only whether
+a key is configured.
+
+Selecting a cloud model sends the recording audio and explicit language, when
+configured, over the network to that provider. The request needs connectivity
+and is subject to the provider account's privacy, retention, rate-limit, and
+billing policies. WakeNote does not fall back to a local or different cloud
+model: a missing key, timeout, HTTP error, malformed response, or blank result
+becomes the existing visible transcription/Dictation error. Queue jobs retain
+their selected model and can be retried explicitly.
+
+### Shared Dictionary
+
+**Settings › Models › Dictionary** defines canonical terms and optional,
+comma-separated aliases once for every local and cloud transcription path.
+WakeNote supplies canonical terms as provider-native context where the selected
+runtime supports it, then applies the same deterministic alias-to-canonical
+correction before saving, captioning, or typing the result. Matching is exact:
+there is no fuzzy replacement. OpenAI receives active canonical terms through
+`keywords[]`; OpenRouter's current Qwen transcription API exposes no documented
+prompt or keyword field, so that path uses correction only.
+
+### Solid feedback surfaces
+
+The floating caption and compact Dictation bubble use solid Black or White
+backgrounds—no gradients—with independent `0–100%` opacity controls in
+**Settings › Integrations** and **Settings › Dictation**. Changing the caption
+background selects a contrasting default text color while preserving its
+separate text-color control. Dictation text and waveform colors switch
+automatically for contrast; at `0%`, the background is transparent but text and
+state indicators remain visible.
 
 ### Parakeet V3, SenseVoice, and Nemotron 3.5 (on-device, no external tools)
 
