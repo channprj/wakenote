@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
+use crate::dictionary::DictionaryContext;
 use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
 use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
@@ -619,6 +620,7 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
     recording: &DictationRecording,
     model_id: &str,
     language: TranscriptionLanguage,
+    dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<String>, String> {
     let Some(samples) = prepare_dictation_audio(&recording.samples, recording.sample_rate)? else {
@@ -631,8 +633,10 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
             audio_path: &path,
             model_id,
             language,
+            dictionary,
         })
         .map_err(|error| error.to_string())
+        .map(|text| dictionary.correct(&text))
         .map(|text| (!text.trim().is_empty()).then_some(text));
     let _ = std::fs::remove_file(&path);
     result
@@ -642,6 +646,7 @@ pub fn transcribe_and_type_dictation_recording<T, F>(
     recording: &DictationRecording,
     model_id: &str,
     language: TranscriptionLanguage,
+    dictionary: &DictionaryContext,
     transcriber: T,
     type_text: F,
 ) -> Result<DictationProcessOutcome, String>
@@ -649,7 +654,8 @@ where
     T: Transcriber,
     F: FnOnce(&str) -> Result<(), String>,
 {
-    let Some(text) = transcribe_dictation_recording(recording, model_id, language, transcriber)?
+    let Some(text) =
+        transcribe_dictation_recording(recording, model_id, language, dictionary, transcriber)?
     else {
         return Ok(DictationProcessOutcome::NoSpeech);
     };

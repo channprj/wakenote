@@ -17,6 +17,7 @@ use crate::audio::{
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::debug_log::{append_debug_log, append_debug_log_nonblocking};
 use crate::dictation::DictationStage;
+use crate::dictionary::DictionaryContext;
 use crate::live_capture::AudioFrame;
 use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
 use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
@@ -513,6 +514,7 @@ pub struct StartedTranscriptionJob {
     pub model_directory: std::path::PathBuf,
     pub language: TranscriptionLanguage,
     pub suppress_low_confidence_transcripts: bool,
+    pub dictionary: DictionaryContext,
 }
 
 #[derive(Debug, Clone)]
@@ -2032,7 +2034,7 @@ impl AppBackend {
         let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
             return Ok(self.queue.snapshot());
         };
-        let worker = TranscriptionWorker::with_options(
+        let worker = TranscriptionWorker::with_options_and_dictionary(
             transcriber,
             TranscriptionWorkerOptions {
                 language: self.settings.transcription_language,
@@ -2040,6 +2042,7 @@ impl AppBackend {
                     .settings
                     .suppress_low_confidence_transcripts,
             },
+            DictionaryContext::from_settings(&self.settings),
         );
         let outcome = worker
             .process_started_job(&job)
@@ -2052,13 +2055,14 @@ impl AppBackend {
         transcriber: T,
     ) -> Result<QueueSnapshot, String> {
         while let Some(started) = self.start_next_transcription_job() {
-            let worker = TranscriptionWorker::with_options(
+            let worker = TranscriptionWorker::with_options_and_dictionary(
                 transcriber.clone(),
                 TranscriptionWorkerOptions {
                     language: started.language,
                     suppress_low_confidence_transcripts: started
                         .suppress_low_confidence_transcripts,
                 },
+                started.dictionary,
             );
             let outcome = worker
                 .process_started_job(&started.job)
@@ -2094,6 +2098,7 @@ impl AppBackend {
         let model_directory = self.model_directory_path();
         let language = self.settings.transcription_language;
         let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
+        let dictionary = DictionaryContext::from_settings(&self.settings);
         let mut started_jobs = Vec::new();
 
         while let Some(job) = self
@@ -2105,6 +2110,7 @@ impl AppBackend {
                 model_directory: model_directory.clone(),
                 language,
                 suppress_low_confidence_transcripts,
+                dictionary: dictionary.clone(),
             });
         }
 

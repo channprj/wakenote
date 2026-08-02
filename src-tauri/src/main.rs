@@ -43,6 +43,7 @@ use wakenote::dictation::{
     normalize_dictation_patch, shortcut_registration_change, transcribe_dictation_recording,
     validate_dictation_shortcut,
 };
+use wakenote::dictionary::DictionaryContext;
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
     AudioFrame, AudioInputConfig, AudioStreamHandle, CpalAudioInput, LiveCaptureError,
@@ -126,6 +127,7 @@ struct MeetingJobSpec {
     model_directory: PathBuf,
     model_id: String,
     suppress_low_confidence: bool,
+    dictionary: DictionaryContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1262,6 +1264,7 @@ fn process_dictation_recording(
             label: settings.selected_microphone_label.clone(),
         });
     let transcriber = RuntimeTranscriber::for_dictation(&settings.model_directory);
+    let dictionary = DictionaryContext::from_settings(&settings);
     let ((archive_result, archive_elapsed), result, transcription_elapsed) =
         thread::scope(|scope| {
             let archive_started = Instant::now();
@@ -1284,6 +1287,7 @@ fn process_dictation_recording(
                 &recording,
                 &dictation_model,
                 settings.dictation_language,
+                &dictionary,
                 transcriber,
             );
             let transcription_elapsed = transcription_started.elapsed();
@@ -2756,6 +2760,7 @@ fn schedule_and_spawn_meeting_job(
                 &current_job.model_directory,
                 &current_job.id,
                 current_job.suppress_low_confidence,
+                &current_job.dictionary,
                 current_cancel,
                 emit,
             ) {
@@ -2810,16 +2815,21 @@ fn meeting_job_spec_from_settings(id: String, settings: &AppSettings) -> Meeting
         model_directory: expand_user_path(&settings.model_directory),
         model_id: settings.selected_model.clone(),
         suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+        dictionary: DictionaryContext::from_settings(settings),
     }
 }
 
-fn meeting_job_spec_from_finished(job: FinishedSystemMeetingJob) -> MeetingJobSpec {
+fn meeting_job_spec_from_finished(
+    job: FinishedSystemMeetingJob,
+    settings: &AppSettings,
+) -> MeetingJobSpec {
     MeetingJobSpec {
         id: job.id,
         save_root: job.save_root,
         model_directory: job.model_directory,
         model_id: job.model_id,
         suppress_low_confidence: job.suppress_low_confidence,
+        dictionary: DictionaryContext::from_settings(settings),
     }
 }
 
@@ -3642,10 +3652,11 @@ fn drain_finished_system_meeting_job_actions(
     backend: &mut AppBackend,
 ) -> Vec<FinishedSystemMeetingJobAction> {
     let jobs = backend.take_finished_system_meeting_jobs();
-    let transcription_enabled = backend.settings().transcription_enabled;
+    let settings = backend.settings();
+    let transcription_enabled = settings.transcription_enabled;
     jobs.into_iter()
         .map(|job| {
-            let job = meeting_job_spec_from_finished(job);
+            let job = meeting_job_spec_from_finished(job, &settings);
             if !transcription_enabled {
                 FinishedSystemMeetingJobAction::Pending {
                     job,
@@ -3706,6 +3717,7 @@ fn pending_meeting_job_actions_with_cutoff(
                 model_directory: model_directory.clone(),
                 model_id: meeting.model_id,
                 suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+                dictionary: DictionaryContext::from_settings(settings),
             };
             if !settings.transcription_enabled {
                 FinishedSystemMeetingJobAction::Pending {
@@ -4366,6 +4378,15 @@ fn wire_live_transcription(
                 model_id,
                 language,
                 suppress_low_confidence_transcripts,
+                dictionary: app_for_handler
+                    .try_state::<BackendState>()
+                    .and_then(|state| {
+                        state
+                            .lock()
+                            .ok()
+                            .map(|backend| DictionaryContext::from_settings(&backend.settings()))
+                    })
+                    .unwrap_or_default(),
                 sample_rate,
                 samples,
             });
@@ -4513,12 +4534,13 @@ fn spawn_transcription_job(
             started.job.model_id
         );
 
-        let worker = TranscriptionWorker::with_options(
+        let worker = TranscriptionWorker::with_options_and_dictionary(
             RuntimeTranscriber::for_archival(started.model_directory),
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
             },
+            started.dictionary,
         );
         let outcome = worker
             .process_started_job(&started.job)
@@ -6737,6 +6759,7 @@ mod tests {
             model_directory: PathBuf::from("/tmp/models"),
             model_id: "whisper-medium".into(),
             suppress_low_confidence: false,
+            dictionary: DictionaryContext::default(),
         };
 
         let (first_outcome, first_cancel) = schedule_meeting_job(&mut runtime, job("first"), false)
@@ -6772,6 +6795,7 @@ mod tests {
             model_directory: PathBuf::from("/tmp/first-models"),
             model_id: "first-model".into(),
             suppress_low_confidence: false,
+            dictionary: DictionaryContext::default(),
         };
         let second = MeetingJobSpec {
             id: "second".into(),
@@ -6779,6 +6803,7 @@ mod tests {
             model_directory: PathBuf::from("/tmp/second-models"),
             model_id: "second-model".into(),
             suppress_low_confidence: true,
+            dictionary: DictionaryContext::default(),
         };
 
         schedule_meeting_job(&mut runtime, first, false).expect("start first");
@@ -6801,6 +6826,7 @@ mod tests {
             model_directory: PathBuf::from("/tmp/models"),
             model_id: "whisper-medium".into(),
             suppress_low_confidence: false,
+            dictionary: DictionaryContext::default(),
         };
 
         schedule_meeting_job(&mut runtime, job("first"), false).expect("start first");
@@ -6869,6 +6895,7 @@ mod tests {
                     model_directory: model_dir.clone(),
                     model_id: "record-model".into(),
                     suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+                    dictionary: DictionaryContext::default(),
                 }),
                 FinishedSystemMeetingJobAction::Start(MeetingJobSpec {
                     id: newer.id,
@@ -6876,6 +6903,7 @@ mod tests {
                     model_directory: model_dir,
                     model_id: "record-model".into(),
                     suppress_low_confidence: settings.suppress_low_confidence_transcripts,
+                    dictionary: DictionaryContext::default(),
                 }),
             ]
         );

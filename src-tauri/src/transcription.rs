@@ -10,6 +10,7 @@ use whisper_rs::{
     get_lang_str,
 };
 
+use crate::dictionary::DictionaryContext;
 use crate::models::{ModelStore, default_model_registry};
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
@@ -37,6 +38,7 @@ pub struct TranscriptionRequest<'a> {
     pub audio_path: &'a Path,
     pub model_id: &'a str,
     pub language: TranscriptionLanguage,
+    pub dictionary: &'a DictionaryContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -132,6 +134,7 @@ pub struct TranscriptionWorker<T> {
     transcriber: T,
     language: TranscriptionLanguage,
     suppress_low_confidence_transcripts: bool,
+    dictionary: DictionaryContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +149,7 @@ impl<T> TranscriptionWorker<T> {
             transcriber,
             language: TranscriptionLanguage::Auto,
             suppress_low_confidence_transcripts: true,
+            dictionary: DictionaryContext::default(),
         }
     }
 
@@ -164,6 +168,20 @@ impl<T> TranscriptionWorker<T> {
             transcriber,
             language: options.language,
             suppress_low_confidence_transcripts: options.suppress_low_confidence_transcripts,
+            dictionary: DictionaryContext::default(),
+        }
+    }
+
+    pub fn with_options_and_dictionary(
+        transcriber: T,
+        options: TranscriptionWorkerOptions,
+        dictionary: DictionaryContext,
+    ) -> Self {
+        Self {
+            transcriber,
+            language: options.language,
+            suppress_low_confidence_transcripts: options.suppress_low_confidence_transcripts,
+            dictionary,
         }
     }
 }
@@ -178,10 +196,12 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             audio_path: &job.audio_path,
             model_id: &job.model_id,
             language: self.language,
+            dictionary: &self.dictionary,
         };
 
         match self.transcriber.transcribe(request) {
             Ok(transcript) => {
+                let transcript = self.dictionary.correct(&transcript);
                 if transcript.trim().is_empty() {
                     let message = "No speech detected";
                     TranscriptionSidecar::write_error(&chunk, message)?;
@@ -590,6 +610,7 @@ impl Transcriber for WhisperTranscriber {
             &samples,
             request.language,
             self.suppress_low_confidence_decode,
+            request.dictionary.prompt(),
         )
     }
 }
@@ -643,19 +664,20 @@ impl Transcriber for RuntimeTranscriber {
         let store = ModelStore::new(&self.model_directory);
         let command_path = store.command_path(request.model_id);
         if command_path.exists() {
-            return ExternalCommandTranscriber::new(&self.model_directory).transcribe(request);
-        }
-
-        match self.model_runtime(request.model_id).as_str() {
-            "sherpa-onnx" => transcribe_with_sherpa(&self.model_directory, request),
-            "qwen3-asr" => Qwen3AsrTranscriber::new(&self.model_directory).transcribe(request),
-            "external-command" => {
-                ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
-            }
-            _ => {
-                let mut transcriber = WhisperTranscriber::new(&self.model_directory);
-                transcriber.suppress_low_confidence_decode = self.suppress_low_confidence_decode;
-                transcriber.transcribe(request)
+            ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
+        } else {
+            match self.model_runtime(request.model_id).as_str() {
+                "sherpa-onnx" => transcribe_with_sherpa(&self.model_directory, request),
+                "qwen3-asr" => Qwen3AsrTranscriber::new(&self.model_directory).transcribe(request),
+                "external-command" => {
+                    ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
+                }
+                _ => {
+                    let mut transcriber = WhisperTranscriber::new(&self.model_directory);
+                    transcriber.suppress_low_confidence_decode =
+                        self.suppress_low_confidence_decode;
+                    transcriber.transcribe(request)
+                }
             }
         }
     }
@@ -722,6 +744,10 @@ impl Transcriber for Qwen3AsrTranscriber {
             .env(
                 "WAKENOTE_QWEN3_ASR_LANGUAGE",
                 qwen3_asr_language_name(request.language).unwrap_or(""),
+            )
+            .env(
+                "WAKENOTE_QWEN3_ASR_PROMPT",
+                request.dictionary.prompt().unwrap_or(""),
             )
             .env("HF_HUB_OFFLINE", "1")
             .env("TRANSFORMERS_OFFLINE", "1")
@@ -1003,6 +1029,14 @@ impl Transcriber for ExternalCommandTranscriber {
                 "WAKENOTE_LANGUAGE",
                 request.language.whisper_code().unwrap_or("auto"),
             )
+            .env(
+                "WAKENOTE_DICTIONARY_TERMS",
+                request.dictionary.canonical_terms().join(","),
+            )
+            .env(
+                "WAKENOTE_DICTIONARY_JSON",
+                request.dictionary.serialized_entries(),
+            )
             .output()
             .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
 
@@ -1210,22 +1244,33 @@ fn run_whisper(
     samples: &[f32],
     language: TranscriptionLanguage,
     suppress_low_confidence_decode: bool,
+    initial_prompt: Option<&str>,
 ) -> Result<String, TranscriptionError> {
     let context = cached_whisper_context(model_path)?;
     let (language_code, detect_language) = match language.whisper_code() {
         Some(code) => (Some(code), false),
         None => (None, true),
     };
-    let (mut transcript, mut qualities, detected_language) =
-        run_whisper_pass(&context, samples, language_code, detect_language)?;
+    let (mut transcript, mut qualities, detected_language) = run_whisper_pass(
+        &context,
+        samples,
+        language_code,
+        detect_language,
+        initial_prompt,
+    )?;
     if let Some(retry_language) = dictation_whisper_retry_language(
         language,
         suppress_low_confidence_decode,
         &transcript,
         detected_language,
     ) {
-        (transcript, qualities, _) =
-            run_whisper_pass(&context, samples, Some(retry_language), false)?;
+        (transcript, qualities, _) = run_whisper_pass(
+            &context,
+            samples,
+            Some(retry_language),
+            false,
+            initial_prompt,
+        )?;
     }
 
     Ok(finalize_whisper_transcript(
@@ -1240,6 +1285,7 @@ fn run_whisper_pass(
     samples: &[f32],
     language: Option<&str>,
     detect_language: bool,
+    initial_prompt: Option<&str>,
 ) -> Result<(String, Vec<DecodedSegmentQuality>, Option<&'static str>), TranscriptionError> {
     let mut state = context
         .create_state()
@@ -1252,6 +1298,9 @@ fn run_whisper_pass(
     params.set_no_context(true);
     params.set_language(language);
     params.set_detect_language(detect_language);
+    if let Some(initial_prompt) = initial_prompt {
+        params.set_initial_prompt(initial_prompt);
+    }
 
     state
         .full(params, samples)
@@ -1313,6 +1362,7 @@ pub fn transcribe_samples_with_context(
     samples: &[f32],
     language: TranscriptionLanguage,
     suppress_low_confidence: bool,
+    dictionary: &DictionaryContext,
     progress: impl FnMut(i32) + 'static,
 ) -> Result<DecodedWindow, TranscriptionError> {
     let mut state = context
@@ -1326,6 +1376,9 @@ pub fn transcribe_samples_with_context(
     params.set_no_context(true);
     params.set_progress_callback_safe(progress);
     configure_whisper_language(&mut params, language);
+    if let Some(initial_prompt) = dictionary.prompt() {
+        params.set_initial_prompt(initial_prompt);
+    }
 
     state
         .full(params, samples)
@@ -1345,7 +1398,11 @@ pub fn transcribe_samples_with_context(
         && (should_suppress_transcript_artifact(&text)
             || should_suppress_low_confidence_decode(&text, &qualities));
     Ok(DecodedWindow {
-        text: if suppressed { String::new() } else { text },
+        text: if suppressed {
+            String::new()
+        } else {
+            dictionary.correct(&text)
+        },
         no_speech: max_no_speech >= MAX_NO_SPEECH_PROBABILITY,
     })
 }
@@ -1586,7 +1643,7 @@ mod tests {
         std::fs::create_dir_all(&model).expect("model");
         std::fs::write(
             &python,
-            "#!/bin/sh\nprintf '%s|%s|%s' \"$WAKENOTE_QWEN3_ASR_LANGUAGE\" \"$WAKENOTE_QWEN3_ASR_MODEL_PATH\" \"$WAKENOTE_AUDIO_PATH\"\n",
+            "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$WAKENOTE_QWEN3_ASR_LANGUAGE\" \"$WAKENOTE_QWEN3_ASR_MODEL_PATH\" \"$WAKENOTE_AUDIO_PATH\" \"$WAKENOTE_QWEN3_ASR_PROMPT\"\n",
         )
         .expect("fake python");
         let mut permissions = std::fs::metadata(&python)
@@ -1623,11 +1680,21 @@ mod tests {
             String::from_utf8_lossy(&conversion.stderr)
         );
 
+        let dictionary = DictionaryContext::compile(
+            true,
+            &[crate::settings::DictionaryEntry {
+                id: "wake".into(),
+                term: "WakeNote".into(),
+                aliases: vec!["wake note".into()],
+                enabled: true,
+            }],
+        );
         let text = RuntimeTranscriber::new(tmp.path())
             .transcribe(TranscriptionRequest {
                 audio_path: &audio,
                 model_id: "qwen3-asr-0.6b",
                 language: TranscriptionLanguage::Ko,
+                dictionary: &dictionary,
             })
             .expect("Qwen route");
 
@@ -1635,6 +1702,7 @@ mod tests {
         assert_eq!(fields.next(), Some("Korean"));
         assert_eq!(fields.next(), Some(model.to_string_lossy().as_ref()));
         let runner_audio = PathBuf::from(fields.next().expect("runner audio path"));
+        assert_eq!(fields.next(), Some("WakeNote"));
         assert_eq!(
             runner_audio.extension().and_then(|value| value.to_str()),
             Some("wav")

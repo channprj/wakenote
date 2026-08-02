@@ -1,11 +1,11 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
 
-use crate::settings::DictionaryEntry;
+use crate::settings::{AppSettings, DictionaryEntry};
 
 const DICTIONARY_PROMPT_MAX_CHARS: usize = 800;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictionaryContext {
     canonical_terms: Vec<String>,
     prompt: Option<String>,
@@ -13,7 +13,22 @@ pub struct DictionaryContext {
     serialized_entries: String,
 }
 
+impl Default for DictionaryContext {
+    fn default() -> Self {
+        Self {
+            canonical_terms: Vec::new(),
+            prompt: None,
+            replacements: Vec::new(),
+            serialized_entries: "[]".to_string(),
+        }
+    }
+}
+
 impl DictionaryContext {
+    pub fn from_settings(settings: &AppSettings) -> Self {
+        Self::compile(settings.dictionary_enabled, &settings.dictionary)
+    }
+
     pub fn compile(enabled: bool, entries: &[DictionaryEntry]) -> Self {
         if !enabled {
             return Self::default();

@@ -132,6 +132,7 @@ from transformers import AutoModelForMultimodalLM, AutoProcessor
 audio_path = os.environ["WAKENOTE_AUDIO_PATH"]
 model_path = os.environ["WAKENOTE_QWEN3_ASR_MODEL_PATH"]
 language = os.environ.get("WAKENOTE_QWEN3_ASR_LANGUAGE") or None
+prompt = os.environ.get("WAKENOTE_QWEN3_ASR_PROMPT") or None
 
 processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
 model = AutoModelForMultimodalLM.from_pretrained(
@@ -142,6 +143,7 @@ model = AutoModelForMultimodalLM.from_pretrained(
 inputs = processor.apply_transcription_request(
     audio=audio_path,
     language=language,
+    prompt=prompt,
 ).to(model.device, model.dtype)
 with torch.inference_mode():
     output_ids = model.generate(**inputs, max_new_tokens=256, do_sample=False)

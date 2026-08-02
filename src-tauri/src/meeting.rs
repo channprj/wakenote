@@ -21,8 +21,12 @@ use chrono::{DateTime, Local, Utc};
 use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 
+use crate::dictionary::DictionaryContext;
 use crate::settings::TranscriptionLanguage;
-use crate::transcription::{cached_whisper_context, transcribe_samples_with_context};
+use crate::transcription::{
+    DecodedWindow, RuntimeTranscriber, Transcriber, TranscriptionRequest, cached_whisper_context,
+    model_runtime_for_id, transcribe_samples_with_context,
+};
 
 /// Frame size used for silence detection. 20 ms is fine-grained enough to find
 /// pause boundaries while keeping the RMS envelope small even for 2h files.
@@ -500,6 +504,26 @@ fn read_window_samples(wav_path: &Path, start_ms: u64, end_ms: u64) -> std::io::
     Ok(mono)
 }
 
+fn write_samples_wav16k(path: &Path, samples: &[f32]) -> Result<(), String> {
+    let mut writer = WavWriter::create(
+        path,
+        WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    for sample in samples {
+        let encoded = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+        writer
+            .write_sample(encoded)
+            .map_err(|error| error.to_string())?;
+    }
+    writer.finalize().map_err(|error| error.to_string())
+}
+
 fn write_transcript(dir: &Path, record: &MeetingRecord) -> std::io::Result<()> {
     fs::write(transcript_path(dir), record.transcript_text())
 }
@@ -831,6 +855,7 @@ pub fn run_meeting_job(
     model_directory: &Path,
     id: &str,
     suppress_low_confidence: bool,
+    dictionary: &DictionaryContext,
     cancel: Arc<AtomicBool>,
     emit: MeetingEventCallback,
 ) -> Result<(), String> {
@@ -839,8 +864,9 @@ pub fn run_meeting_job(
     let mut record = MeetingRecord::load(&rpath).map_err(|e| e.to_string())?;
     let started = Instant::now();
 
+    let model_runtime = model_runtime_for_id(model_directory, &record.model_id);
     let model_path = model_directory.join(format!("{}.bin", record.model_id));
-    if !model_path.exists() {
+    if model_runtime == "whisper-rs" && !model_path.exists() {
         return finish_failed(
             &mut record,
             &rpath,
@@ -911,18 +937,25 @@ pub fn run_meeting_job(
     );
 
     // 3. Load the model once for the whole meeting.
-    let context = match cached_whisper_context(&model_path) {
-        Ok(context) => context,
-        Err(error) => {
-            let _ = fs::remove_file(&wav);
-            return finish_failed(
-                &mut record,
-                &rpath,
-                &emit,
-                format!("model load failed: {error}"),
-            );
+    let context = if model_runtime == "whisper-rs" {
+        match cached_whisper_context(&model_path) {
+            Ok(context) => Some(context),
+            Err(error) => {
+                let _ = fs::remove_file(&wav);
+                return finish_failed(
+                    &mut record,
+                    &rpath,
+                    &emit,
+                    format!("model load failed: {error}"),
+                );
+            }
         }
+    } else {
+        None
     };
+    let runtime_transcriber = context
+        .is_none()
+        .then(|| RuntimeTranscriber::for_archival(model_directory));
 
     let language = record.language;
     let total_ms = record.duration_ms;
@@ -1012,13 +1045,42 @@ pub fn run_meeting_job(
             }));
         };
 
-        match transcribe_samples_with_context(
-            &context,
-            &samples,
-            language,
-            suppress_low_confidence,
-            progress_cb,
-        ) {
+        let decoded = if let Some(context) = context.as_ref() {
+            transcribe_samples_with_context(
+                context,
+                &samples,
+                language,
+                suppress_low_confidence,
+                dictionary,
+                progress_cb,
+            )
+        } else {
+            let segment_wav = dir.join(format!(".wakenote-segment-{idx}.wav"));
+            let result = write_samples_wav16k(&segment_wav, &samples)
+                .map_err(crate::transcription::TranscriptionError::Engine)
+                .and_then(|()| {
+                    runtime_transcriber
+                        .as_ref()
+                        .expect("non-Whisper meetings have a runtime transcriber")
+                        .transcribe(TranscriptionRequest {
+                            audio_path: &segment_wav,
+                            model_id: &record.model_id,
+                            language,
+                            dictionary,
+                        })
+                })
+                .map(|text| {
+                    let text = dictionary.correct(text.trim());
+                    DecodedWindow {
+                        no_speech: text.is_empty(),
+                        text,
+                    }
+                });
+            let _ = fs::remove_file(segment_wav);
+            result
+        };
+
+        match decoded {
             Ok(decoded) => {
                 record.segments[idx].status = MeetingSegmentStatus::Completed;
                 record.segments[idx].text = decoded.text.clone();

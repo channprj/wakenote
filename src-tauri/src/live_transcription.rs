@@ -5,6 +5,7 @@ use std::thread::{self, JoinHandle};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext};
 
+use crate::dictionary::DictionaryContext;
 use crate::settings::{MicrophoneSlot, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
     cached_whisper_context, configure_whisper_language, decoded_segment_quality, resample_linear,
@@ -33,6 +34,7 @@ pub struct LivePartialRequest {
     pub model_id: String,
     pub language: TranscriptionLanguage,
     pub suppress_low_confidence_transcripts: bool,
+    pub dictionary: DictionaryContext,
     pub samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
 }
@@ -265,6 +267,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
             request.sample_rate,
             request.language,
             request.suppress_low_confidence_transcripts,
+            &request.dictionary,
         );
         let elapsed = started.elapsed();
         eprintln!(
@@ -378,6 +381,7 @@ fn run_whisper_partial(
     source_rate: u32,
     language: TranscriptionLanguage,
     suppress_low_confidence_transcripts: bool,
+    dictionary: &DictionaryContext,
 ) -> Result<Option<String>, String> {
     // Take only the trailing window. Re-decoding minutes of audio every
     // partial cycle would never keep up; the queue worker still gets the
@@ -410,6 +414,9 @@ fn run_whisper_partial(
     params.set_no_context(true);
     params.set_single_segment(true);
     configure_whisper_language(&mut params, language);
+    if let Some(initial_prompt) = dictionary.prompt() {
+        params.set_initial_prompt(initial_prompt);
+    }
     state
         .full(params, &resampled)
         .map_err(|error| format!("decode: {error}"))?;
@@ -428,7 +435,7 @@ fn run_whisper_partial(
     {
         Ok(None)
     } else {
-        Ok(Some(text))
+        Ok(Some(dictionary.correct(&text)))
     }
 }
 
@@ -445,6 +452,7 @@ mod tests {
             model_id: "missing-test-model".to_string(),
             language: TranscriptionLanguage::En,
             suppress_low_confidence_transcripts: false,
+            dictionary: DictionaryContext::default(),
             samples: Arc::new(Vec::new()),
             sample_rate: 16_000,
         }
@@ -481,5 +489,35 @@ mod tests {
         assert_eq!(first.source_key, "microphone:wired");
         assert_eq!(second.source_key, "microphone:wireless");
         assert_eq!(first.chunk_id, second.chunk_id);
+    }
+
+    #[test]
+    fn live_partial_request_keeps_its_dictionary_snapshot() {
+        let mut partial = request("microphone:wired", 2);
+        partial.dictionary = DictionaryContext::compile(
+            true,
+            &[crate::settings::DictionaryEntry {
+                id: "wake".into(),
+                term: "WakeNote".into(),
+                aliases: vec!["wake note".into()],
+                enabled: true,
+            }],
+        );
+        let mut state = LiveTranscriptionState {
+            pending: BTreeMap::new(),
+            ready_sources: VecDeque::new(),
+            in_flight_source_key: None,
+            closed: false,
+            model_directory: PathBuf::new(),
+            loaded_model: None,
+            preload_model_id: None,
+        };
+
+        enqueue_latest_request(&mut state, partial);
+
+        assert_eq!(
+            state.pending["microphone:wired"].dictionary.prompt(),
+            Some("WakeNote")
+        );
     }
 }

@@ -10,11 +10,14 @@ use wakenote::dictation::{
     transcribe_and_type_dictation_recording, transcribe_dictation_recording,
     validate_dictation_shortcut,
 };
+use wakenote::dictionary::DictionaryContext;
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, LiveCaptureError,
 };
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
-use wakenote::settings::{AppSettings, AudioFormat, SettingsPatch, TranscriptionLanguage};
+use wakenote::settings::{
+    AppSettings, AudioFormat, DictionaryEntry, SettingsPatch, TranscriptionLanguage,
+};
 use wakenote::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
 
 struct FakeInput {
@@ -507,6 +510,7 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        &DictionaryContext::default(),
         transcriber,
     )
     .expect("transcription succeeds");
@@ -530,6 +534,41 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
 }
 
 #[test]
+fn dictation_transcription_applies_the_shared_dictionary() {
+    let started_at = Utc::now();
+    let dictionary = DictionaryContext::compile(
+        true,
+        &[DictionaryEntry {
+            id: "wake".into(),
+            term: "WakeNote".into(),
+            aliases: vec!["wake note".into()],
+            enabled: true,
+        }],
+    );
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+    };
+    let transcriber = OrderedFakeTranscriber {
+        events: Arc::new(Mutex::new(Vec::new())),
+        text: "wake note".into(),
+    };
+
+    let text = transcribe_dictation_recording(
+        &recording,
+        "whisper-medium",
+        TranscriptionLanguage::Auto,
+        &dictionary,
+        transcriber,
+    )
+    .expect("transcription succeeds");
+
+    assert_eq!(text.as_deref(), Some("WakeNote"));
+}
+
+#[test]
 fn dictation_types_only_after_transcription_returns() {
     let started_at = Utc::now();
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -549,6 +588,7 @@ fn dictation_types_only_after_transcription_returns() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        &DictionaryContext::default(),
         transcriber,
         move |text| {
             sink_events
@@ -588,6 +628,7 @@ fn quiet_dictation_never_calls_the_text_sink() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        &DictionaryContext::default(),
         transcriber,
         |_| panic!("quiet audio must not type"),
     )

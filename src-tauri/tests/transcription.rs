@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use wakenote::dictionary::DictionaryContext;
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
-use wakenote::settings::TranscriptionLanguage;
+use wakenote::settings::{DictionaryEntry, TranscriptionLanguage};
 use wakenote::transcription::{
     DecodedSegmentQuality, RuntimeTranscriber, Transcriber, TranscriptArtifactReason,
     TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest, TranscriptionWorker,
@@ -71,6 +72,40 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
         "안녕하세요 hello\n"
     );
     assert!(!audio_path.with_extension("error.txt").exists());
+}
+
+#[test]
+fn transcription_worker_writes_dictionary_corrected_text() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("20260506").join("230710.wav");
+    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let dictionary = DictionaryContext::compile(
+        true,
+        &[DictionaryEntry {
+            id: "wake".into(),
+            term: "WakeNote".into(),
+            aliases: vec!["wake note".into()],
+            enabled: true,
+        }],
+    );
+    let worker = TranscriptionWorker::with_options_and_dictionary(
+        StaticTranscriber::success("wake note is ready"),
+        TranscriptionWorkerOptions {
+            language: TranscriptionLanguage::Auto,
+            suppress_low_confidence_transcripts: true,
+        },
+        dictionary,
+    );
+
+    worker.process_next(&mut queue).expect("process");
+
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
+        "WakeNote is ready\n"
+    );
 }
 
 #[test]
@@ -630,6 +665,7 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
             audio_path: &audio_path,
             model_id: "whisper-medium",
             language: TranscriptionLanguage::Auto,
+            dictionary: &DictionaryContext::default(),
         })
         .expect_err("missing model should fail");
 
@@ -650,6 +686,7 @@ fn whisper_transcriber_expands_tilde_model_directory() {
             audio_path: &audio_path,
             model_id: "missing-model-for-tilde-expansion",
             language: TranscriptionLanguage::Auto,
+            dictionary: &DictionaryContext::default(),
         })
         .expect_err("missing model should fail");
 
@@ -689,25 +726,36 @@ fn runtime_transcriber_runs_external_command_models_with_audio_environment() {
     .expect("registry json");
     std::fs::write(
         model_directory.join("parakeet-tdt-0.6b-v3.command"),
-        "printf '%s:%s' \"$WAKENOTE_MODEL_ID\" \"$WAKENOTE_AUDIO_PATH\"",
+        "printf '%s|%s|%s|%s' \"$WAKENOTE_MODEL_ID\" \"$WAKENOTE_AUDIO_PATH\" \"$WAKENOTE_DICTIONARY_TERMS\" \"$WAKENOTE_DICTIONARY_JSON\"",
     )
     .expect("command file");
     let audio_path = tmp.path().join("sample.wav");
     std::fs::write(&audio_path, b"wav bytes").expect("audio");
 
+    let dictionary = DictionaryContext::compile(
+        true,
+        &[DictionaryEntry {
+            id: "wake".into(),
+            term: "WakeNote".into(),
+            aliases: vec!["wake note".into()],
+            enabled: true,
+        }],
+    );
     let transcriber = RuntimeTranscriber::new(&model_directory);
     let transcript = transcriber
         .transcribe(TranscriptionRequest {
             audio_path: &audio_path,
             model_id: "parakeet-tdt-0.6b-v3",
             language: TranscriptionLanguage::Auto,
+            dictionary: &dictionary,
         })
         .expect("external command transcript");
 
-    assert_eq!(
-        transcript,
-        format!("parakeet-tdt-0.6b-v3:{}", audio_path.display())
-    );
+    let fields = transcript.splitn(4, '|').collect::<Vec<_>>();
+    assert_eq!(fields[0], "parakeet-tdt-0.6b-v3");
+    assert_eq!(fields[1], audio_path.to_string_lossy());
+    assert_eq!(fields[2], "WakeNote");
+    assert!(fields[3].contains("wake note"));
 }
 
 #[test]
