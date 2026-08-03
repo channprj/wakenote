@@ -43,6 +43,7 @@ import type {
   ApiKeyStatus,
   ListVisibilityState,
   SetListVisibilityRequest,
+  DictionaryFileStatus,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
 
@@ -372,6 +373,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     permissions,
     openRouterKeyStatus,
     openAiKeyStatus,
+    dictionaryFileStatus,
   ] = await Promise.all([
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
@@ -381,6 +383,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     invoke<AppPermissions>("permission_snapshot"),
     invoke<ApiKeyStatus>("openrouter_key_status"),
     invoke<ApiKeyStatus>("openai_key_status"),
+    invoke<DictionaryFileStatus>("dictionary_file_status"),
   ]);
 
   return {
@@ -393,7 +396,29 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     recent_transcripts: [],
     openrouter_key_configured: openRouterKeyStatus.configured,
     openai_key_configured: openAiKeyStatus.configured,
+    dictionary_file_status: dictionaryFileStatus,
   };
+}
+
+export async function loadDictionaryFileStatus(): Promise<DictionaryFileStatus> {
+  if (!isTauriRuntime()) {
+    return { ...browserSnapshot.dictionary_file_status };
+  }
+  return invoke<DictionaryFileStatus>("dictionary_file_status");
+}
+
+export async function openDictionaryFile(): Promise<AppSnapshot> {
+  if (isTauriRuntime()) {
+    await invoke("open_dictionary_file");
+  }
+  return loadSnapshot();
+}
+
+export async function reloadDictionaryFile(): Promise<AppSnapshot> {
+  if (isTauriRuntime()) {
+    await invoke<DictionaryFileStatus>("reload_dictionary_file");
+  }
+  return loadSnapshot();
 }
 
 export async function loadPermissions(): Promise<AppPermissions> {
@@ -508,6 +533,15 @@ export async function saveSettingsPatch(
     }
 
     const settings = { ...previousSettings, ...safePatch };
+    const dictionaryFileStatus = safePatch.dictionary
+      ? {
+          ...browserSnapshot.dictionary_file_status,
+          revision: `browser-${Date.now()}`,
+          error: null,
+          error_line: null,
+          in_sync: true,
+        }
+      : browserSnapshot.dictionary_file_status;
     browserSnapshot = {
       ...browserSnapshot,
       settings,
@@ -516,6 +550,7 @@ export async function saveSettingsPatch(
       queue,
       openrouter_key_configured: Boolean(browserOpenRouterApiKey),
       openai_key_configured: Boolean(browserOpenAiApiKey),
+      dictionary_file_status: dictionaryFileStatus,
     };
     return browserSnapshot;
   }

@@ -15,6 +15,8 @@ const actions: SettingsActions = {
   onChooseSaveRoot: vi.fn(),
   onRevealSaveFolder: vi.fn(),
   onChooseModelDirectory: vi.fn(),
+  onOpenDictionaryFile: vi.fn(),
+  onReloadDictionaryFile: vi.fn(),
   onRequestAccessibilityPermission: vi.fn(),
   onRequestMicrophonePermission: vi.fn(),
   onRequestScreenRecordingPermission: vi.fn(),
@@ -28,7 +30,10 @@ const actions: SettingsActions = {
   onDeleteOpenAiApiKey: vi.fn(),
 };
 
-function renderSection(section: SettingsSection, snapshot: AppSnapshot = mockSnapshot()) {
+function renderSection(
+  section: SettingsSection,
+  snapshot: AppSnapshot = mockSnapshot(),
+) {
   return renderToStaticMarkup(
     <SettingsPage
       section={section}
@@ -53,7 +58,8 @@ describe("SettingsPage ownership", () => {
     snapshot.permissions.accessibility = {
       status: "denied",
       label: "Needs access",
-      detail: "WakeNote needs Accessibility access to type Dictation results at the cursor.",
+      detail:
+        "WakeNote needs Accessibility access to type Dictation results at the cursor.",
       can_request: true,
       can_open_settings: true,
     };

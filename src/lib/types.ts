@@ -73,6 +73,14 @@ export interface DictionaryEntry {
   enabled: boolean;
 }
 
+export interface DictionaryFileStatus {
+  path: string;
+  revision: string;
+  error: string | null;
+  error_line: number | null;
+  in_sync: boolean;
+}
+
 export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
@@ -540,4 +548,5 @@ export interface AppSnapshot {
   permissions: AppPermissions;
   openrouter_key_configured: boolean;
   openai_key_configured: boolean;
+  dictionary_file_status: DictionaryFileStatus;
 }

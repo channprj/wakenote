@@ -67,6 +67,8 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
         onChooseSaveRoot: () => {},
         onRevealSaveFolder: () => {},
         onChooseModelDirectory: () => {},
+        onOpenDictionaryFile: () => {},
+        onReloadDictionaryFile: () => {},
         onRequestAccessibilityPermission: () => {},
         onRequestMicrophonePermission: () => {},
         onRequestScreenRecordingPermission: () => {},

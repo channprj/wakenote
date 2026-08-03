@@ -25,6 +25,7 @@ import {
   SettingsGrid,
   type SelectOption,
 } from "./settings-controls";
+import { DictionarySettingsCard } from "./DictionarySettingsCard";
 import type { SettingsActions } from "./types";
 
 const DICTATION_LANGUAGES = [
@@ -112,9 +113,7 @@ export function DictationSettings({
     try {
       await actions.onSuspendDictationShortcut();
     } catch (error) {
-      setShortcutError(
-        error instanceof Error ? error.message : String(error),
-      );
+      setShortcutError(error instanceof Error ? error.message : String(error));
       return;
     }
     if (!mountedRef.current) {
@@ -132,9 +131,7 @@ export function DictationSettings({
     try {
       await actions.onResumeDictationShortcut();
     } catch (error) {
-      setShortcutError(
-        error instanceof Error ? error.message : String(error),
-      );
+      setShortcutError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -148,9 +145,7 @@ export function DictationSettings({
     try {
       await actions.onPatch({ dictation_shortcut: shortcut });
     } catch (error) {
-      setShortcutError(
-        error instanceof Error ? error.message : String(error),
-      );
+      setShortcutError(error instanceof Error ? error.message : String(error));
     } finally {
       try {
         await actions.onResumeDictationShortcut();
@@ -347,6 +342,13 @@ export function DictationSettings({
           }
         />
       </SettingsCard>
+      <DictionarySettingsCard
+        settings={settings}
+        status={snapshot.dictionary_file_status}
+        onPatch={actions.onPatch}
+        onOpenFile={actions.onOpenDictionaryFile}
+        onReloadFile={actions.onReloadDictionaryFile}
+      />
       <SettingsCard
         title="Feedback"
         description="Choose the audio cues and where the compact Dictation bubble appears."

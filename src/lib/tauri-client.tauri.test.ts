@@ -100,6 +100,17 @@ function mockInvoke(command: string) {
     case "openrouter_key_status":
     case "openai_key_status":
       return Promise.resolve({ configured: false });
+    case "dictionary_file_status":
+    case "reload_dictionary_file":
+      return Promise.resolve({
+        path: "/tmp/WakeNote/dictionary.txt",
+        revision: "abc123",
+        error: null,
+        error_line: null,
+        in_sync: true,
+      });
+    case "open_dictionary_file":
+      return Promise.resolve(null);
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "open_transcript_folder":
@@ -169,9 +180,24 @@ describe("tauri runtime client snapshots", () => {
     expect(snapshot.openrouter_key_configured).toBe(false);
     expect(snapshot.openai_key_configured).toBe(false);
     expect(mocks.invoke).toHaveBeenCalledWith("openai_key_status");
+    expect(mocks.invoke).toHaveBeenCalledWith("dictionary_file_status");
     expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
       "recent_transcripts",
     );
+  });
+
+  it("opens and reloads the stable dictionary file through exact commands", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { openDictionaryFile, reloadDictionaryFile } = await import(
+      "./tauri-client"
+    );
+
+    await openDictionaryFile();
+    await reloadDictionaryFile();
+
+    expect(mocks.invoke).toHaveBeenCalledWith("open_dictionary_file");
+    expect(mocks.invoke).toHaveBeenCalledWith("reload_dictionary_file");
   });
 
   it("loads recent transcripts through a separate bounded command", async () => {

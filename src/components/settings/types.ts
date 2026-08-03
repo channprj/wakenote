@@ -8,6 +8,8 @@ export interface SettingsActions {
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;
+  onOpenDictionaryFile: () => void;
+  onReloadDictionaryFile: () => void;
   onRequestAccessibilityPermission: () => void;
   onRequestMicrophonePermission: () => void;
   onRequestScreenRecordingPermission: () => void;

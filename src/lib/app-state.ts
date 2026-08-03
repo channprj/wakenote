@@ -135,7 +135,9 @@ export function shouldRefreshSnapshotForTauriEvent(eventName: string) {
   return (
     eventName === "source-capture-started" ||
     eventName === "source-capture-stopped" ||
-    eventName === "source-capture-error"
+    eventName === "source-capture-error" ||
+    eventName === "dictionary-changed" ||
+    eventName === "dictionary-file-error"
   );
 }
 
@@ -527,5 +529,12 @@ export function mockSnapshot(): AppSnapshot {
     permissions: defaultPermissions(),
     openrouter_key_configured: false,
     openai_key_configured: false,
+    dictionary_file_status: {
+      path: "~/Library/Application Support/WakeNote/dictionary.txt",
+      revision: "browser",
+      error: null,
+      error_line: null,
+      in_sync: true,
+    },
   };
 }

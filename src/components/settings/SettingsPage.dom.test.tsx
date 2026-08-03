@@ -121,6 +121,8 @@ function makeActions(): SettingsActions {
     onChooseSaveRoot: vi.fn(),
     onRevealSaveFolder: vi.fn(),
     onChooseModelDirectory: vi.fn(),
+    onOpenDictionaryFile: vi.fn(),
+    onReloadDictionaryFile: vi.fn(),
     onRequestAccessibilityPermission: vi.fn(),
     onRequestMicrophonePermission: vi.fn(),
     onRequestScreenRecordingPermission: vi.fn(),
@@ -170,10 +172,7 @@ describe("SettingsPage interactions", () => {
         screen.getByRole("combobox", { name }).hasAttribute("disabled"),
       ).toBe(true);
     }
-    for (const name of [
-      "Copy result to clipboard",
-      "Remove trailing space",
-    ]) {
+    for (const name of ["Copy result to clipboard", "Remove trailing space"]) {
       expect(
         screen.getByRole("switch", { name }).hasAttribute("disabled"),
       ).toBe(true);
@@ -554,7 +553,7 @@ describe("SettingsPage interactions", () => {
     });
   });
 
-  it("manages the shared Dictionary through exact settings patches", async () => {
+  it("keeps the compact Dictionary editor in Dictation instead of Models", async () => {
     const user = userEvent.setup();
     const actions = makeActions();
     const snapshot = mockSnapshot();
@@ -569,7 +568,7 @@ describe("SettingsPage interactions", () => {
 
     render(
       <SettingsPage
-        section="models"
+        section="dictation"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -582,38 +581,14 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({ dictionary_enabled: false });
 
     await user.click(
-      screen.getByRole("switch", {
-        name: "Enable Dictionary entry WakeNote",
-      }),
+      screen.getByRole("button", { name: "Edit Dictionary entry WakeNote" }),
     );
-    expect(actions.onPatch).toHaveBeenCalledWith({
-      dictionary: [
-        {
-          id: "wake-note",
-          term: "WakeNote",
-          aliases: ["wake note"],
-          enabled: false,
-        },
-      ],
-    });
-
-    fireEvent.change(screen.getByLabelText("Dictionary canonical term 1"), {
-      target: { value: "WakeNote Pro" },
-    });
-    expect(actions.onPatch).toHaveBeenCalledWith({
-      dictionary: [
-        {
-          id: "wake-note",
-          term: "WakeNote Pro",
-          aliases: ["wake note"],
-          enabled: true,
-        },
-      ],
-    });
-
-    fireEvent.change(screen.getByLabelText("Dictionary aliases 1"), {
+    fireEvent.change(screen.getByLabelText("Aliases"), {
       target: { value: "wake-note, WakeNote, wake-note, 웨이크노트" },
     });
+    await user.click(
+      screen.getByRole("button", { name: "Save Dictionary entry" }),
+    );
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictionary: [
         {
@@ -625,32 +600,21 @@ describe("SettingsPage interactions", () => {
       ],
     });
 
-    await user.type(screen.getByLabelText("New canonical term"), "Codex");
-    await user.type(
-      screen.getByLabelText("New term aliases"),
-      "code x, Codex, code x",
-    );
     await user.click(
-      screen.getByRole("button", { name: "Add Dictionary entry" }),
-    );
-    expect(actions.onPatch).toHaveBeenCalledWith({
-      dictionary: [
-        snapshot.settings.dictionary[0],
-        {
-          id: "dictionary-1",
-          term: "Codex",
-          aliases: ["code x"],
-          enabled: true,
-        },
-      ],
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Delete Dictionary entry WakeNote",
-      }),
+      screen.getByRole("button", { name: "Delete Dictionary entry WakeNote" }),
     );
     expect(actions.onPatch).toHaveBeenCalledWith({ dictionary: [] });
+
+    cleanup();
+    render(
+      <SettingsPage
+        section="models"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    expect(screen.queryByText("Dictionary")).toBeNull();
   });
 
   it("saves and deletes OpenRouter and OpenAI credentials independently", async () => {
@@ -669,9 +633,14 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const openRouterCard = screen.getByText("OpenRouter").closest('[data-slot="card"]');
+    const openRouterCard = screen
+      .getByText("OpenRouter")
+      .closest('[data-slot="card"]');
     const openAiCard = screen.getByText("OpenAI").closest('[data-slot="card"]');
-    if (!(openRouterCard instanceof HTMLElement) || !(openAiCard instanceof HTMLElement)) {
+    if (
+      !(openRouterCard instanceof HTMLElement) ||
+      !(openAiCard instanceof HTMLElement)
+    ) {
       throw new Error("API key settings cards not found");
     }
 
@@ -679,9 +648,13 @@ describe("SettingsPage interactions", () => {
       within(openRouterCard).getByLabelText("OpenRouter API Key"),
       "sk-or-test",
     );
-    await user.click(within(openRouterCard).getByRole("button", { name: /Save/ }));
+    await user.click(
+      within(openRouterCard).getByRole("button", { name: /Save/ }),
+    );
     expect(actions.onSaveOpenRouterApiKey).toHaveBeenCalledWith("sk-or-test");
-    await user.click(within(openRouterCard).getByRole("button", { name: /Delete/ }));
+    await user.click(
+      within(openRouterCard).getByRole("button", { name: /Delete/ }),
+    );
     expect(actions.onDeleteOpenRouterApiKey).toHaveBeenCalledOnce();
 
     await user.type(
@@ -690,7 +663,9 @@ describe("SettingsPage interactions", () => {
     );
     await user.click(within(openAiCard).getByRole("button", { name: /Save/ }));
     expect(actions.onSaveOpenAiApiKey).toHaveBeenCalledWith("sk-openai-test");
-    await user.click(within(openAiCard).getByRole("button", { name: /Delete/ }));
+    await user.click(
+      within(openAiCard).getByRole("button", { name: /Delete/ }),
+    );
     expect(actions.onDeleteOpenAiApiKey).toHaveBeenCalledOnce();
   });
 
@@ -708,7 +683,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Overlay background" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Overlay background" }),
+    );
     await user.click(await screen.findByRole("option", { name: "White" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
       floating_overlay_background_color: "#ffffff",
@@ -724,7 +701,9 @@ describe("SettingsPage interactions", () => {
         actions={actions}
       />,
     );
-    await user.click(screen.getByRole("combobox", { name: "Overlay background" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Overlay background" }),
+    );
     await user.click(await screen.findByRole("option", { name: "Black" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
       floating_overlay_background_color: "#000000",
@@ -758,7 +737,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("combobox", { name: "Bubble background" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Bubble background" }),
+    );
     await user.click(await screen.findByRole("option", { name: "White" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_bubble_background_color: "#ffffff",
@@ -773,7 +754,9 @@ describe("SettingsPage interactions", () => {
         actions={actions}
       />,
     );
-    await user.click(screen.getByRole("combobox", { name: "Bubble background" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Bubble background" }),
+    );
     await user.click(await screen.findByRole("option", { name: "Black" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_bubble_background_color: "#000000",

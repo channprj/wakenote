@@ -36,6 +36,8 @@ import {
   subscribeLlmReportRuns,
   loadRecognizedSources,
   loadSourceCaptureStatus,
+  openDictionaryFile,
+  reloadDictionaryFile,
   verifyModel,
 } from "./tauri-client";
 
@@ -58,6 +60,17 @@ describe("transcript day loaders (browser fallback)", () => {
   });
 });
 
+describe("dictionary file browser fallback", () => {
+  it("keeps open and reload actions browser-safe", async () => {
+    await expect(openDictionaryFile()).resolves.toMatchObject({
+      dictionary_file_status: { in_sync: true },
+    });
+    await expect(reloadDictionaryFile()).resolves.toMatchObject({
+      dictionary_file_status: { in_sync: true },
+    });
+  });
+});
+
 describe("tauri live capture client", () => {
   it("returns browser-safe snapshots for live capture actions outside Tauri", async () => {
     const expected = mockSnapshot();
@@ -68,7 +81,9 @@ describe("tauri live capture client", () => {
       tray_state: "listening",
     });
 
-    const transcriptionOnly = await saveSettingsPatch({ recording_enabled: false });
+    const transcriptionOnly = await saveSettingsPatch({
+      recording_enabled: false,
+    });
     expect(transcriptionOnly.status).toMatchObject({
       live_input_active: false,
       tray_state: "idle",
@@ -82,7 +97,9 @@ describe("tauri live capture client", () => {
   });
 
   it("marks browser fallback save root patches confirmed only when non-empty", async () => {
-    const confirmed = await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
+    const confirmed = await saveSettingsPatch({
+      save_root: "/tmp/confirmed-wakenote",
+    });
     expect(confirmed.settings.save_root).toBe("/tmp/confirmed-wakenote");
     expect(confirmed.settings.save_root_confirmed).toBe(true);
 
@@ -112,7 +129,9 @@ describe("tauri live capture client", () => {
     const unchanged = await loadSnapshot();
     expect(unchanged.settings.dictation_shortcut).toBe("leftctrl");
 
-    const canonical = await saveSettingsPatch({ dictation_shortcut: "  Ctrl+Alt+D  " });
+    const canonical = await saveSettingsPatch({
+      dictation_shortcut: "  Ctrl+Alt+D  ",
+    });
     expect(canonical.settings.dictation_shortcut).toBe("ctrl+alt+d");
 
     const enabled = await saveSettingsPatch({
@@ -121,7 +140,10 @@ describe("tauri live capture client", () => {
     });
     expect(enabled.settings.dictation_enabled).toBe(true);
     expect(enabled.settings.dictation_language).toBe("en");
-    await saveSettingsPatch({ dictation_enabled: false, dictation_language: "auto" });
+    await saveSettingsPatch({
+      dictation_enabled: false,
+      dictation_language: "auto",
+    });
   });
 
   it("persists browser fallback theme mode patches", async () => {
@@ -199,9 +221,7 @@ describe("tauri live capture client", () => {
     expect(completed?.usage?.total_tokens).toBeGreaterThan(0);
     const history = await listLlmReportHistory();
     expect(history[0].report_id).toBe(completed?.report_id);
-    const detail = await loadLlmReportHistoryDetail(
-      completed?.report_id ?? "",
-    );
+    const detail = await loadLlmReportHistoryDetail(completed?.report_id ?? "");
     expect(detail.content).toContain("# Summary");
   });
 
@@ -215,20 +235,20 @@ describe("tauri live capture client", () => {
     });
     const request = {
       kind: "summary" as const,
-      transcripts: [{
-        transcript_path: "/tmp/source.txt",
-        audio_path: null,
-        recorded_at: "2026-07-18T09:00:00+09:00",
-        text: "source",
-        source: "microphone" as const,
-        source_label: null,
-      }],
+      transcripts: [
+        {
+          transcript_path: "/tmp/source.txt",
+          audio_path: null,
+          recorded_at: "2026-07-18T09:00:00+09:00",
+          text: "source",
+          source: "microphone" as const,
+          source_label: null,
+        },
+      ],
     };
 
     const first = await startLlmReport(request);
-    await expect(startLlmReport(request)).rejects.toThrow(
-      first.run_id,
-    );
+    await expect(startLlmReport(request)).rejects.toThrow(first.run_id);
     await vi.advanceTimersByTimeAsync(20);
     const stopping = await cancelLlmReport(first.run_id);
     expect(stopping.status).toBe("stopping");
@@ -238,9 +258,7 @@ describe("tauri live capture client", () => {
       (run) => run.run_id === first.run_id,
     );
     expect(cancelled?.status).toBe("cancelled");
-    expect(await listLlmReportHistory()).toHaveLength(
-      historyBefore.length,
-    );
+    expect(await listLlmReportHistory()).toHaveLength(historyBefore.length);
 
     const retry = await retryLlmReport(first.run_id);
     expect(retry.parent_run_id).toBe(first.run_id);
@@ -275,18 +293,26 @@ describe("tauri live capture client", () => {
   });
 
   it("reports recording state when simulated browser input crosses threshold", async () => {
-    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: false });
+    await saveSettingsPatch({
+      threshold_dbfs: -90,
+      transcription_enabled: false,
+    });
 
     const started = await startLiveCapture();
 
     expect(started.status.tray_state).toBe("recording");
 
     await stopLiveCapture();
-    await saveSettingsPatch({ threshold_dbfs: -45, transcription_enabled: true });
+    await saveSettingsPatch({
+      threshold_dbfs: -45,
+      transcription_enabled: true,
+    });
   });
 
   it("does not process browser fallback queue work while the selected model is unavailable", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/missing-selected-model.wav"]);
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/missing-selected-model.wav",
+    ]);
     const pendingId = before.queue.jobs.find(
       (job) => job.audio_path === "/tmp/imported/missing-selected-model.wav",
     )?.id;
@@ -294,7 +320,9 @@ describe("tauri live capture client", () => {
 
     const processed = await processNextTranscription();
 
-    expect(processed.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+    expect(
+      processed.queue.jobs.find((job) => job.id === pendingId),
+    ).toMatchObject({
       status: "pending",
       error: null,
     });
@@ -304,14 +332,18 @@ describe("tauri live capture client", () => {
 
   it("does not process browser fallback queue work while the queued model is unavailable", async () => {
     const current = await loadSnapshot();
-    for (const job of current.queue.jobs.filter((candidate) => candidate.status === "pending")) {
+    for (const job of current.queue.jobs.filter(
+      (candidate) => candidate.status === "pending",
+    )) {
       await skipJob(job.id);
     }
 
     await downloadModel("whisper-medium");
     await loadSnapshot();
     await saveSettingsPatch({ selected_model: "whisper-medium" });
-    const queued = await enqueueAudioFiles(["/tmp/imported/missing-queued-model.wav"]);
+    const queued = await enqueueAudioFiles([
+      "/tmp/imported/missing-queued-model.wav",
+    ]);
     const pendingId = queued.queue.jobs.find(
       (job) => job.audio_path === "/tmp/imported/missing-queued-model.wav",
     )?.id;
@@ -324,7 +356,9 @@ describe("tauri live capture client", () => {
 
     const processed = await processNextTranscription();
 
-    expect(processed.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+    expect(
+      processed.queue.jobs.find((job) => job.id === pendingId),
+    ).toMatchObject({
       model_id: "whisper-medium",
       status: "pending",
       error: null,
@@ -339,14 +373,18 @@ describe("tauri live capture client", () => {
 
   it("simulates model download and cancel state outside Tauri", async () => {
     const downloading = await downloadModel("whisper-small");
-    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      downloading.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
     });
 
     const cancelled = await cancelModelDownload("whisper-small");
-    expect(cancelled.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      cancelled.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "error",
       download_progress: 0,
       download_error: "cancelled by user",
@@ -356,10 +394,14 @@ describe("tauri live capture client", () => {
   it("cancels active browser fallback model downloads from the generic cancel action", async () => {
     const current = await loadSnapshot();
     const targetModelId =
-      current.settings.selected_model === "whisper-small" ? "whisper-medium" : "whisper-small";
+      current.settings.selected_model === "whisper-small"
+        ? "whisper-medium"
+        : "whisper-small";
     await deleteModel(targetModelId);
     const downloading = await downloadModel(targetModelId);
-    expect(downloading.models.find((model) => model.id === targetModelId)).toMatchObject({
+    expect(
+      downloading.models.find((model) => model.id === targetModelId),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -367,7 +409,9 @@ describe("tauri live capture client", () => {
 
     const cancelled = await cancelCurrentOperation();
 
-    expect(cancelled.models.find((model) => model.id === targetModelId)).toMatchObject({
+    expect(
+      cancelled.models.find((model) => model.id === targetModelId),
+    ).toMatchObject({
       status: "error",
       download_progress: 0,
       download_error: "cancelled by user",
@@ -379,7 +423,9 @@ describe("tauri live capture client", () => {
 
     const cancelled = await cancelModelDownload("whisper-small");
 
-    expect(cancelled.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      cancelled.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "missing",
       download_progress: null,
       download_error: null,
@@ -390,7 +436,9 @@ describe("tauri live capture client", () => {
     await deleteModel("whisper-small");
 
     const downloading = await downloadModel("whisper-small");
-    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      downloading.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -398,7 +446,9 @@ describe("tauri live capture client", () => {
 
     const settled = await loadSnapshot();
 
-    expect(settled.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      settled.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -409,7 +459,9 @@ describe("tauri live capture client", () => {
     await deleteModel("whisper-small");
     await downloadModel("whisper-small");
     const ready = await loadSnapshot();
-    expect(ready.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      ready.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -417,7 +469,9 @@ describe("tauri live capture client", () => {
 
     const repeated = await downloadModel("whisper-small");
 
-    expect(repeated.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      repeated.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -427,7 +481,9 @@ describe("tauri live capture client", () => {
   it("does not delete active browser fallback model downloads", async () => {
     await deleteModel("whisper-small");
     const downloading = await downloadModel("whisper-small");
-    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      downloading.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -435,7 +491,9 @@ describe("tauri live capture client", () => {
 
     const deleted = await deleteModel("whisper-small");
 
-    expect(deleted.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      deleted.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -445,7 +503,9 @@ describe("tauri live capture client", () => {
   it("does not verify active browser fallback model downloads", async () => {
     await deleteModel("whisper-small");
     const downloading = await downloadModel("whisper-small");
-    expect(downloading.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      downloading.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -453,7 +513,9 @@ describe("tauri live capture client", () => {
 
     const verified = await verifyModel("whisper-small");
 
-    expect(verified.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      verified.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "downloading",
       download_progress: 0,
       download_error: null,
@@ -467,14 +529,18 @@ describe("tauri live capture client", () => {
     await deleteModel("whisper-medium");
 
     const verifying = await verifyModel("whisper-medium");
-    expect(verifying.models.find((model) => model.id === "whisper-medium")).toMatchObject({
+    expect(
+      verifying.models.find((model) => model.id === "whisper-medium"),
+    ).toMatchObject({
       status: "verifying",
       download_error: null,
     });
 
     const settled = await loadSnapshot();
 
-    expect(settled.models.find((model) => model.id === "whisper-medium")).toMatchObject({
+    expect(
+      settled.models.find((model) => model.id === "whisper-medium"),
+    ).toMatchObject({
       status: "missing",
       download_progress: null,
       download_error: null,
@@ -485,18 +551,24 @@ describe("tauri live capture client", () => {
     await deleteModel("whisper-small");
     await downloadModel("whisper-small");
     await loadSnapshot();
-    const selectedTiny = await saveSettingsPatch({ selected_model: "whisper-small" });
+    const selectedTiny = await saveSettingsPatch({
+      selected_model: "whisper-small",
+    });
     expect(selectedTiny.settings.selected_model).toBe("whisper-small");
 
     await deleteModel("whisper-medium");
-    const blocked = await saveSettingsPatch({ selected_model: "whisper-medium" });
+    const blocked = await saveSettingsPatch({
+      selected_model: "whisper-medium",
+    });
 
     expect(blocked.settings.selected_model).toBe("whisper-small");
     expect(blocked.status.active_model).toBe("whisper-small");
 
     await downloadModel("whisper-medium");
     await loadSnapshot();
-    const selectedMedium = await saveSettingsPatch({ selected_model: "whisper-medium" });
+    const selectedMedium = await saveSettingsPatch({
+      selected_model: "whisper-medium",
+    });
 
     expect(selectedMedium.settings.selected_model).toBe("whisper-medium");
     expect(selectedMedium.status.active_model).toBe("whisper-medium");
@@ -512,7 +584,9 @@ describe("tauri live capture client", () => {
 
     expect(deleted.settings.selected_model).toBe("whisper-small");
     expect(deleted.status.active_model).toBe("whisper-small");
-    expect(deleted.models.find((model) => model.id === "whisper-small")).toMatchObject({
+    expect(
+      deleted.models.find((model) => model.id === "whisper-small"),
+    ).toMatchObject({
       status: "ready",
       download_progress: 100,
       download_error: null,
@@ -532,7 +606,11 @@ describe("tauri live capture client", () => {
     expect(audioPaths).toContain("/tmp/imported/call.m4a");
     expect(
       snapshot.queue.jobs
-        .filter((job) => ["/tmp/imported/meeting.wav", "/tmp/imported/call.m4a"].includes(job.audio_path))
+        .filter((job) =>
+          ["/tmp/imported/meeting.wav", "/tmp/imported/call.m4a"].includes(
+            job.audio_path,
+          ),
+        )
         .every((job) => job.model_id === snapshot.settings.selected_model),
     ).toBe(true);
   });
@@ -543,7 +621,9 @@ describe("tauri live capture client", () => {
     await enqueueAudioFiles([audioPath]);
     const snapshot = await enqueueAudioFiles([audioPath]);
 
-    expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
+    expect(
+      snapshot.queue.jobs.filter((job) => job.audio_path === audioPath),
+    ).toHaveLength(1);
   });
 
   it("requeues completed browser fallback audio for regeneration", async () => {
@@ -553,7 +633,9 @@ describe("tauri live capture client", () => {
 
     const snapshot = await regenerateTranscript(audioPath);
 
-    expect(snapshot.queue.jobs.find((job) => job.audio_path === audioPath)).toMatchObject({
+    expect(
+      snapshot.queue.jobs.find((job) => job.audio_path === audioPath),
+    ).toMatchObject({
       status: "pending",
       error: null,
     });
@@ -568,7 +650,9 @@ describe("tauri live capture client", () => {
 
     const snapshot = await regenerateTranscript(audioPath, "whisper-small");
 
-    expect(snapshot.queue.jobs.find((job) => job.audio_path === audioPath)).toMatchObject({
+    expect(
+      snapshot.queue.jobs.find((job) => job.audio_path === audioPath),
+    ).toMatchObject({
       model_id: "whisper-small",
       status: "pending",
       error: null,
@@ -576,7 +660,9 @@ describe("tauri live capture client", () => {
   });
 
   it("no-ops browser fallback transcript folder opening", async () => {
-    const snapshot = await openTranscriptFolder("/tmp/imported/regenerate-with-tiny.wav");
+    const snapshot = await openTranscriptFolder(
+      "/tmp/imported/regenerate-with-tiny.wav",
+    );
 
     expect(snapshot).toEqual(await loadSnapshot());
   });
@@ -590,7 +676,9 @@ describe("tauri live capture client", () => {
     ]);
 
     expect(snapshot.queue.pending_count).toBe(before.queue.pending_count + 1);
-    expect(snapshot.queue.jobs.map((job) => job.audio_path)).toContain("/tmp/imported/voice.WAV");
+    expect(snapshot.queue.jobs.map((job) => job.audio_path)).toContain(
+      "/tmp/imported/voice.WAV",
+    );
     expect(snapshot.queue.jobs.map((job) => job.audio_path)).not.toContain(
       "/tmp/imported/not-audio.txt",
     );
@@ -606,19 +694,25 @@ describe("tauri live capture client", () => {
     await enqueueBacklog(saveRoot);
     const snapshot = await enqueueBacklog(saveRoot);
 
-    expect(snapshot.queue.jobs.filter((job) => job.audio_path === audioPath)).toHaveLength(1);
+    expect(
+      snapshot.queue.jobs.filter((job) => job.audio_path === audioPath),
+    ).toHaveLength(1);
   });
 
   it("processes the next queued browser fallback transcription", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/fallback.wav"]);
     const pendingBefore = before.queue.pending_count;
-    const firstPendingId = before.queue.jobs.find((job) => job.status === "pending")?.id;
+    const firstPendingId = before.queue.jobs.find(
+      (job) => job.status === "pending",
+    )?.id;
 
     const processed = await processNextTranscription();
 
     expect(processed.queue.pending_count).toBe(pendingBefore - 1);
     expect(processed.queue.running_count).toBe(0);
-    expect(processed.queue.jobs.find((job) => job.id === firstPendingId)).toMatchObject({
+    expect(
+      processed.queue.jobs.find((job) => job.id === firstPendingId),
+    ).toMatchObject({
       status: "completed",
       error: null,
     });
@@ -633,7 +727,9 @@ describe("tauri live capture client", () => {
       pause_all: false,
     });
     const current = await loadSnapshot();
-    for (const job of current.queue.jobs.filter((candidate) => candidate.status === "pending")) {
+    for (const job of current.queue.jobs.filter(
+      (candidate) => candidate.status === "pending",
+    )) {
       await skipJob(job.id);
     }
 
@@ -642,10 +738,12 @@ describe("tauri live capture client", () => {
       "/tmp/imported/single-flight-pending.wav",
     ]);
     const runningJob = queued.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/single-flight-running.wav",
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/single-flight-running.wav",
     );
     const pendingJob = queued.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/single-flight-pending.wav",
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/single-flight-pending.wav",
     );
     expect(runningJob?.id).toBeTypeOf("number");
     expect(pendingJob?.id).toBeTypeOf("number");
@@ -657,11 +755,15 @@ describe("tauri live capture client", () => {
 
     const processed = await processNextTranscription();
 
-    expect(processed.queue.jobs.find((candidate) => candidate.id === runningJob?.id)).toMatchObject({
+    expect(
+      processed.queue.jobs.find((candidate) => candidate.id === runningJob?.id),
+    ).toMatchObject({
       status: "running",
       error: null,
     });
-    expect(processed.queue.jobs.find((candidate) => candidate.id === pendingJob?.id)).toMatchObject({
+    expect(
+      processed.queue.jobs.find((candidate) => candidate.id === pendingJob?.id),
+    ).toMatchObject({
       status: "pending",
       error: null,
     });
@@ -672,9 +774,12 @@ describe("tauri live capture client", () => {
   });
 
   it("cancels running browser fallback transcription jobs", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/cancel-running.wav"]);
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/cancel-running.wav",
+    ]);
     const job = before.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/cancel-running.wav",
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/cancel-running.wav",
     );
     expect(job?.id).toBeTypeOf("number");
     if (job) {
@@ -686,7 +791,9 @@ describe("tauri live capture client", () => {
     const cancelled = await cancelCurrentTranscription();
 
     expect(cancelled.queue.running_count).toBe(0);
-    expect(cancelled.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+    expect(
+      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({
       status: "cancelled",
       error: "cancelled by user",
     });
@@ -694,9 +801,12 @@ describe("tauri live capture client", () => {
 
   it("cancels running browser fallback transcription jobs from the generic cancel action", async () => {
     await loadSnapshot();
-    const before = await enqueueAudioFiles(["/tmp/imported/cancel-current-operation.wav"]);
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/cancel-current-operation.wav",
+    ]);
     const job = before.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/cancel-current-operation.wav",
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/cancel-current-operation.wav",
     );
     expect(job?.id).toBeTypeOf("number");
     if (job) {
@@ -708,7 +818,9 @@ describe("tauri live capture client", () => {
     const cancelled = await cancelCurrentOperation();
 
     expect(cancelled.queue.running_count).toBe(0);
-    expect(cancelled.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+    expect(
+      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({
       status: "cancelled",
       error: "cancelled by user",
     });
@@ -717,13 +829,17 @@ describe("tauri live capture client", () => {
   it("skips pending browser fallback queue jobs", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/skip-me.wav"]);
     const pendingBefore = before.queue.pending_count;
-    const pendingId = before.queue.jobs.find((job) => job.status === "pending")?.id;
+    const pendingId = before.queue.jobs.find(
+      (job) => job.status === "pending",
+    )?.id;
     expect(pendingId).toBeTypeOf("number");
 
     const skipped = await skipJob(pendingId ?? -1);
 
     expect(skipped.queue.pending_count).toBe(pendingBefore - 1);
-    expect(skipped.queue.jobs.find((job) => job.id === pendingId)).toMatchObject({
+    expect(
+      skipped.queue.jobs.find((job) => job.id === pendingId),
+    ).toMatchObject({
       status: "skipped",
     });
   });
@@ -741,7 +857,9 @@ describe("tauri live capture client", () => {
 
     const skipped = await skipJob(job?.id ?? -1);
 
-    expect(skipped.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+    expect(
+      skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({
       status: "skipped",
       error: null,
     });
@@ -749,7 +867,9 @@ describe("tauri live capture client", () => {
 
   it("retries failed browser fallback queue jobs", async () => {
     const before = await enqueueAudioFiles(["/tmp/imported/retry-me.wav"]);
-    const job = before.queue.jobs.find((candidate) => candidate.audio_path === "/tmp/imported/retry-me.wav");
+    const job = before.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/retry-me.wav",
+    );
     expect(job?.id).toBeTypeOf("number");
     if (job) {
       job.status = "failed";
@@ -758,14 +878,19 @@ describe("tauri live capture client", () => {
 
     const retried = await retryJob(job?.id ?? -1);
 
-    expect(retried.queue.jobs.find((candidate) => candidate.id === job?.id)).toMatchObject({
+    expect(
+      retried.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({
       status: "pending",
       error: null,
     });
   });
 
   it("queues one simulated browser capture chunk after threshold activation", async () => {
-    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: true });
+    await saveSettingsPatch({
+      threshold_dbfs: -90,
+      transcription_enabled: true,
+    });
     const before = await startLiveCapture();
     const pendingBefore = before.queue.pending_count;
 
@@ -781,19 +906,26 @@ describe("tauri live capture client", () => {
       error: null,
     });
     expect(captureJob?.audio_path).toContain(captured.settings.save_root);
-    expect(captureJob?.audio_path.endsWith(`.${captured.settings.audio_format}`)).toBe(true);
+    expect(
+      captureJob?.audio_path.endsWith(`.${captured.settings.audio_format}`),
+    ).toBe(true);
 
     const repeated = await loadSnapshot();
 
     expect(repeated.queue.pending_count).toBe(captured.queue.pending_count);
     expect(
-      repeated.queue.jobs.filter((job) => job.audio_path === captureJob?.audio_path),
+      repeated.queue.jobs.filter(
+        (job) => job.audio_path === captureJob?.audio_path,
+      ),
     ).toHaveLength(1);
   });
 
   it("does not duplicate browser capture sessions while input is already active", async () => {
     await stopLiveCapture();
-    await saveSettingsPatch({ threshold_dbfs: -90, transcription_enabled: true });
+    await saveSettingsPatch({
+      threshold_dbfs: -90,
+      transcription_enabled: true,
+    });
     await startLiveCapture();
     const firstCapture = await loadSnapshot();
 
@@ -801,7 +933,9 @@ describe("tauri live capture client", () => {
     const repeatedStart = await loadSnapshot();
 
     expect(repeatedStart.status.live_input_active).toBe(true);
-    expect(repeatedStart.queue.pending_count).toBe(firstCapture.queue.pending_count);
+    expect(repeatedStart.queue.pending_count).toBe(
+      firstCapture.queue.pending_count,
+    );
   });
 
   it("does not allocate simulated browser capture sessions while recording is unavailable", async () => {
@@ -819,7 +953,10 @@ describe("tauri live capture client", () => {
     const syncedCaptureNumber = browserCaptureNumber(syncedJob?.audio_path);
     expect(syncedCaptureNumber).toBeTypeOf("number");
 
-    await saveSettingsPatch({ recording_enabled: false, transcription_enabled: true });
+    await saveSettingsPatch({
+      recording_enabled: false,
+      transcription_enabled: true,
+    });
     const blocked = await startLiveCapture();
 
     expect(blocked.status.live_input_active).toBe(false);
@@ -830,7 +967,9 @@ describe("tauri live capture client", () => {
     const stopped = await stopLiveCapture();
     const nextJob = stopped.queue.jobs.at(-1);
 
-    expect(browserCaptureNumber(nextJob?.audio_path)).toBe((syncedCaptureNumber ?? 0) + 1);
+    expect(browserCaptureNumber(nextJob?.audio_path)).toBe(
+      (syncedCaptureNumber ?? 0) + 1,
+    );
 
     await skipJob(syncedJob?.id ?? -1);
     await skipJob(nextJob?.id ?? -1);
@@ -939,7 +1078,9 @@ describe("tauri source capture client (browser fallback)", () => {
 
     const sources = await loadRecognizedSources();
 
-    expect(sources.some((source) => source.id === "spotify" && source.custom)).toBe(true);
+    expect(
+      sources.some((source) => source.id === "spotify" && source.custom),
+    ).toBe(true);
   });
 
   it("flips simulated source capture state on start and stop (locked-behaviors §10)", async () => {
@@ -949,7 +1090,10 @@ describe("tauri source capture client (browser fallback)", () => {
     await startSourceCapture("meet");
     const active = await loadSourceCaptureStatus();
     expect(active.capturing).toBe(true);
-    expect(active.detected).toMatchObject({ source_id: "meet", label: "Google Meet" });
+    expect(active.detected).toMatchObject({
+      source_id: "meet",
+      label: "Google Meet",
+    });
 
     await stopSourceCapture();
     const stopped = await loadSourceCaptureStatus();

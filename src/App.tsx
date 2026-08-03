@@ -39,7 +39,9 @@ import {
   pressedModifierShortcut,
   resumeDictationShortcut,
   openScreenRecordingSettings,
+  openDictionaryFile,
   processNextTranscription,
+  reloadDictionaryFile,
   retryJob,
   saveOpenRouterApiKey,
   saveSettingsPatch,
@@ -294,6 +296,8 @@ export default function App() {
         ["source-capture-started", () => null],
         ["source-capture-stopped", () => null],
         ["source-capture-error", () => null],
+        ["dictionary-changed", () => null],
+        ["dictionary-file-error", () => null],
       ];
 
       for (const [eventName, parse] of subscriptions) {
@@ -517,6 +521,8 @@ export default function App() {
           onChooseSaveRoot: () => void runAction(chooseSaveRoot),
           onRevealSaveFolder: () => void runAction(revealSaveFolder),
           onChooseModelDirectory: () => void runAction(chooseModelDirectory),
+          onOpenDictionaryFile: () => void runAction(openDictionaryFile),
+          onReloadDictionaryFile: () => void runAction(reloadDictionaryFile),
           onRequestAccessibilityPermission: () =>
             void runAction(
               snapshot.permissions.accessibility.can_request
