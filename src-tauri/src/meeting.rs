@@ -52,6 +52,7 @@ const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MeetingStatus {
+    Recorded,
     Pending,
     Processing,
     Completed,
@@ -609,6 +610,31 @@ pub fn start_recorded_meeting_capture(
         sample_rate,
         samples_written: 0,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn start_manual_recorded_meeting_capture(
+    save_root: &Path,
+    title: &str,
+    source_filename: &str,
+    model_id: &str,
+    language: TranscriptionLanguage,
+    app_version: &str,
+    sample_rate: u32,
+    timestamp: DateTime<Local>,
+) -> Result<MeetingCaptureRecorder, String> {
+    let mut recorder = start_recorded_meeting_capture(
+        save_root,
+        title,
+        source_filename,
+        model_id,
+        language,
+        app_version,
+        sample_rate,
+        timestamp,
+    )?;
+    recorder.record.status = MeetingStatus::Recorded;
+    Ok(recorder)
 }
 
 impl MeetingCaptureRecorder {
@@ -1182,6 +1208,35 @@ mod tests {
             }
         }
         rms
+    }
+
+    #[test]
+    fn manual_meeting_capture_finishes_as_recorded_without_queueing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let timestamp = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+        let mut recorder = start_manual_recorded_meeting_capture(
+            temp.path(),
+            "Manual meeting",
+            "Microphone + System Audio",
+            "whisper-medium",
+            TranscriptionLanguage::Auto,
+            "test",
+            16_000,
+            timestamp,
+        )
+        .expect("manual recorder");
+        recorder.write_samples(&vec![0.25; 16_000]).expect("audio");
+
+        let record = recorder.finish().expect("recorded meeting");
+
+        assert_eq!(record.status, MeetingStatus::Recorded);
+        assert_eq!(record.duration_ms, 1_000);
+        assert_eq!(
+            MeetingRecord::load(&record_path(&meeting_dir(temp.path(), &record.id)))
+                .expect("saved record")
+                .status,
+            MeetingStatus::Recorded
+        );
     }
 
     #[test]

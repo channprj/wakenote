@@ -415,6 +415,7 @@ export interface UploadedAudio {
 // --- Long-form meeting transcription -------------------------------------
 
 export type MeetingStatus =
+  | "recorded"
   | "pending"
   | "processing"
   | "completed"

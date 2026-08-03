@@ -52,7 +52,8 @@ export function formatEta(etaMs: number): string {
 }
 
 const STATUS_LABELS: Record<MeetingStatus, string> = {
-  pending: "Recorded",
+  recorded: "Recorded",
+  pending: "Queued",
   processing: "Transcribing",
   completed: "Completed",
   failed: "Failed",
@@ -64,6 +65,7 @@ export function meetingStatusLabel(status: MeetingStatus): string {
 }
 
 const STATUS_TONES: Record<MeetingStatus, StatusTone> = {
+  recorded: "neutral",
   pending: "warning",
   processing: "primary",
   completed: "success",
