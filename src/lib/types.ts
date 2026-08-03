@@ -429,6 +429,7 @@ export type ManualMeetingRecordingPhase = "off" | "recording" | "error";
 export type ManualMeetingStopReason =
   | "manual"
   | "maximum_duration"
+  | "application_quit"
   | "error";
 
 export interface ManualMeetingRecordingStatus {

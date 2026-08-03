@@ -246,6 +246,7 @@ enum ManualMeetingRecordingPhase {
 enum ManualMeetingStopReason {
     Manual,
     MaximumDuration,
+    ApplicationQuit,
     Error,
 }
 
@@ -6159,9 +6160,32 @@ fn handle_app_menu_event(app: &AppHandle, menu_id: &str) {
         }
         AppMenuAction::IntentionalQuit => {
             mark_intentional_quit(app, "app menu");
+            finalize_manual_meeting_before_exit(app);
             app.exit(0);
         }
         AppMenuAction::Noop => {}
+    }
+}
+
+fn finalize_manual_meeting_before_exit(app: &AppHandle) {
+    let Some(state) = app.try_state::<ManualMeetingRecordingState>() else {
+        return;
+    };
+    let state = state.inner().clone();
+    let generation = state
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.session.as_ref().map(|session| session.generation));
+    let Some(generation) = generation else {
+        return;
+    };
+    if let Err(error) = finalize_manual_meeting_recording(
+        app,
+        &state,
+        generation,
+        ManualMeetingStopReason::ApplicationQuit,
+    ) {
+        eprintln!("[wakenote] WARN could not finalize Meeting Mode before exit: {error}");
     }
 }
 
@@ -6732,7 +6756,7 @@ fn main() {
                     schedule_settings_window_for_reopen(app, "macOS reopen");
                 }
                 tauri::RunEvent::ExitRequested { code, api, .. } => {
-                    let (settings, runtime_active) = app
+                    let (settings, mut runtime_active) = app
                         .try_state::<BackendState>()
                         .and_then(|state| {
                             state.lock().ok().map(|backend| {
@@ -6744,6 +6768,16 @@ fn main() {
                             })
                         })
                         .unwrap_or_else(|| (AppSettings::default(), false));
+                    let manual_meeting_active = app
+                        .try_state::<ManualMeetingRecordingState>()
+                        .and_then(|state| {
+                            state
+                                .lock()
+                                .ok()
+                                .map(|runtime| runtime.session.is_some())
+                        })
+                        .unwrap_or(false);
+                    runtime_active |= manual_meeting_active;
                     let show_tray_icon = settings
                         .show_tray_icon;
                     let intentional_quit = app
@@ -6760,6 +6794,8 @@ fn main() {
                     );
                     if matches!(decision, ExitRequestDecision::Prevent) {
                         api.prevent_exit();
+                    } else {
+                        finalize_manual_meeting_before_exit(app);
                     }
                 }
                 // whisper.cpp's GGML Metal backend aborts inside its
@@ -7155,6 +7191,7 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
         }
         "quit" => {
             mark_intentional_quit(app, "tray menu");
+            finalize_manual_meeting_before_exit(app);
             app.exit(0);
         }
         _ => {}
