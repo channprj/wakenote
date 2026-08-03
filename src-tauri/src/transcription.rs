@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
@@ -50,7 +51,7 @@ pub struct TranscriptionRequest<'a> {
     pub dictionary: &'a DictionaryContext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpeakerTurn {
     pub speaker_id: String,
     pub part_index: usize,
@@ -966,13 +967,53 @@ impl Transcriber for RuntimeTranscriber {
         &self,
         request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionExecution, TranscriptionError> {
-        if self.model_runtime(request.model_id) == "openai-realtime" {
-            self.wait_for_realtime_result(request.audio_path)
-        } else {
-            let model_id = request.model_id.to_string();
-            self.transcribe(request)
-                .map(|text| TranscriptionExecution::direct(text, &model_id))
+        let runtime = self.model_runtime(request.model_id);
+        if runtime == "openai-realtime" {
+            return self.wait_for_realtime_result(request.audio_path);
         }
+        if runtime == "openai-stt" {
+            let model_id = request.model_id.to_string();
+            let provider_model = match request.model_id {
+                "openai-gpt-4o-transcribe-diarize" => OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL,
+                _ => OPENAI_GPT_TRANSCRIBE_MODEL,
+            };
+            return self
+                .cloud
+                .transcribe_openai_model_result(
+                    request.audio_path,
+                    request.language,
+                    request.dictionary,
+                    provider_model,
+                    self.streaming_enabled,
+                    &mut |text| {
+                        if let Some(callback) = self.partial_callback.as_ref() {
+                            callback(text.to_string());
+                        }
+                    },
+                )
+                .map(|result| TranscriptionExecution {
+                    text: result.text,
+                    speaker_turns: result
+                        .speaker_turns
+                        .into_iter()
+                        .map(|turn| SpeakerTurn {
+                            speaker_id: turn.speaker_id,
+                            part_index: 0,
+                            start_ms: turn.start_ms,
+                            end_ms: turn.end_ms,
+                            text: turn.text,
+                        })
+                        .collect(),
+                    requested_model_id: model_id.clone(),
+                    effective_model_id: model_id,
+                    fallback_from_model_id: None,
+                    usage: None,
+                })
+                .map_err(|error| TranscriptionError::Failure(error.into_failure()));
+        }
+        let model_id = request.model_id.to_string();
+        self.transcribe(request)
+            .map(|text| TranscriptionExecution::direct(text, &model_id))
     }
 }
 

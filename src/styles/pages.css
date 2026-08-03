@@ -615,6 +615,48 @@
   white-space: pre-wrap;
 }
 
+.meeting-transcription-options {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  overflow-y: auto;
+}
+
+.meeting-transcription-options > label {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--foreground);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: var(--leading-caption);
+}
+
+.meeting-transcription-option {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.meeting-transcription-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.meeting-transcription-option strong {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.meeting-transcription-option small {
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  font-weight: 450;
+  line-height: var(--leading-micro);
+}
+
 .transcripts-panel,
 .transcript-day,
 .transcript-toolbar,

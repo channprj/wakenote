@@ -10,7 +10,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::dictionary::DictionaryContext;
-use crate::models::{OPENAI_GPT_TRANSCRIBE_MODEL, OPENROUTER_QWEN3_ASR_MODEL};
+use crate::models::{
+    OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL, OPENAI_GPT_TRANSCRIBE_MODEL, OPENROUTER_QWEN3_ASR_MODEL,
+};
 use crate::settings::TranscriptionLanguage;
 
 const OPENROUTER_TRANSCRIPTIONS_URL: &str = "https://openrouter.ai/api/v1/audio/transcriptions";
@@ -268,6 +270,20 @@ pub struct CloudTranscriptionResponse {
     pub body: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudSpeakerTurn {
+    pub speaker_id: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudTranscriptionResult {
+    pub text: String,
+    pub speaker_turns: Vec<CloudSpeakerTurn>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudTransportError {
     Timeout,
@@ -392,6 +408,7 @@ struct OpenAiStreamAccumulator {
     partial_text: String,
     final_text: Option<String>,
     parse_error: bool,
+    speaker_turns: Vec<CloudSpeakerTurn>,
 }
 
 impl OpenAiStreamAccumulator {
@@ -427,12 +444,22 @@ impl OpenAiStreamAccumulator {
                 };
                 self.final_text = Some(text.to_string());
             }
+            Some("transcript.text.segment") => {
+                let segment = event.get("segment").unwrap_or(&event);
+                match parse_speaker_turn(segment) {
+                    Some(turn) => self.speaker_turns.push(turn),
+                    None => self.parse_error = true,
+                }
+            }
             Some(_) => {}
             None => self.parse_error = true,
         }
     }
 
-    fn finish(self, provider: &'static str) -> Result<String, CloudTranscriptionError> {
+    fn finish_result(
+        self,
+        provider: &'static str,
+    ) -> Result<CloudTranscriptionResult, CloudTranscriptionError> {
         if self.parse_error {
             return Err(CloudTranscriptionError::InvalidResponse(provider));
         }
@@ -443,8 +470,61 @@ impl OpenAiStreamAccumulator {
         if text.is_empty() {
             return Err(CloudTranscriptionError::EmptyTranscript(provider));
         }
-        Ok(text.to_string())
+        Ok(CloudTranscriptionResult {
+            text: text.to_string(),
+            speaker_turns: self.speaker_turns,
+        })
     }
+}
+
+fn seconds_to_milliseconds(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_f64()
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(|seconds| (seconds * 1_000.0).round() as u64)
+}
+
+fn parse_speaker_turn(value: &serde_json::Value) -> Option<CloudSpeakerTurn> {
+    let speaker_id = value
+        .get("speaker")
+        .or_else(|| value.get("speaker_id"))?
+        .as_str()?
+        .trim();
+    let text = value.get("text")?.as_str()?.trim();
+    if speaker_id.is_empty() || text.is_empty() {
+        return None;
+    }
+    Some(CloudSpeakerTurn {
+        speaker_id: speaker_id.to_string(),
+        start_ms: seconds_to_milliseconds(value.get("start")?)?,
+        end_ms: seconds_to_milliseconds(value.get("end")?)?,
+        text: text.to_string(),
+    })
+}
+
+fn parse_openai_result(
+    provider: &'static str,
+    body: &str,
+) -> Result<CloudTranscriptionResult, CloudTranscriptionError> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| CloudTranscriptionError::InvalidResponse(provider))?;
+    let text = parsed
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(CloudTranscriptionError::InvalidResponse(provider))?
+        .trim();
+    if text.is_empty() {
+        return Err(CloudTranscriptionError::EmptyTranscript(provider));
+    }
+    let speaker_turns = parsed
+        .get("segments")
+        .and_then(serde_json::Value::as_array)
+        .map(|segments| segments.iter().filter_map(parse_speaker_turn).collect())
+        .unwrap_or_default();
+    Ok(CloudTranscriptionResult {
+        text: text.to_string(),
+        speaker_turns,
+    })
 }
 
 #[derive(Clone)]
@@ -540,6 +620,26 @@ impl CloudTranscriptionClient {
         streaming: bool,
         on_partial: &mut dyn FnMut(&str),
     ) -> Result<String, CloudTranscriptionError> {
+        self.transcribe_openai_model_result(
+            audio_path,
+            language,
+            dictionary,
+            provider_model,
+            streaming,
+            on_partial,
+        )
+        .map(|result| result.text)
+    }
+
+    pub fn transcribe_openai_model_result(
+        &self,
+        audio_path: &Path,
+        language: TranscriptionLanguage,
+        dictionary: &DictionaryContext,
+        provider_model: &str,
+        streaming: bool,
+        on_partial: &mut dyn FnMut(&str),
+    ) -> Result<CloudTranscriptionResult, CloudTranscriptionError> {
         const PROVIDER: &str = "OpenAI";
         let api_key = self
             .credentials
@@ -547,23 +647,32 @@ impl CloudTranscriptionClient {
             .clone()
             .ok_or(CloudTranscriptionError::MissingKey(PROVIDER))?;
         let (audio, format, mime_type) = read_audio(audio_path, PROVIDER)?;
+        let diarization = provider_model == OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL;
         let mut fields = vec![
             ("model".to_string(), provider_model.to_string()),
-            ("response_format".to_string(), "json".to_string()),
+            (
+                "response_format".to_string(),
+                if diarization { "diarized_json" } else { "json" }.to_string(),
+            ),
         ];
+        if diarization {
+            fields.push(("chunking_strategy".to_string(), "auto".to_string()));
+        }
         if streaming {
             fields.push(("stream".to_string(), "true".to_string()));
         }
         if let Some(language) = language.whisper_code() {
             fields.push(("language".to_string(), language.to_string()));
         }
-        fields.extend(
-            dictionary
-                .canonical_terms()
-                .iter()
-                .cloned()
-                .map(|term| ("keywords[]".to_string(), term)),
-        );
+        if !diarization {
+            fields.extend(
+                dictionary
+                    .canonical_terms()
+                    .iter()
+                    .cloned()
+                    .map(|term| ("keywords[]".to_string(), term)),
+            );
+        }
         let request = CloudTranscriptionRequest::OpenAi {
             url: OPENAI_TRANSCRIPTIONS_URL,
             api_key,
@@ -573,18 +682,28 @@ impl CloudTranscriptionClient {
             fields,
         };
         if streaming {
-            self.execute_stream_and_parse(PROVIDER, request, on_partial)
+            self.execute_stream_and_parse_result(PROVIDER, request, on_partial)
         } else {
-            self.execute_and_parse(PROVIDER, request)
+            let response = self.transport.execute(request).map_err(|error| {
+                CloudTranscriptionError::Failure(failure_for_transport(PROVIDER, error))
+            })?;
+            if !(200..300).contains(&response.status) {
+                return Err(CloudTranscriptionError::Failure(classify_http_failure(
+                    PROVIDER,
+                    response.status,
+                    &response.body,
+                )));
+            }
+            parse_openai_result(PROVIDER, &response.body)
         }
     }
 
-    fn execute_stream_and_parse(
+    fn execute_stream_and_parse_result(
         &self,
         provider: &'static str,
         request: CloudTranscriptionRequest,
         on_partial: &mut dyn FnMut(&str),
-    ) -> Result<String, CloudTranscriptionError> {
+    ) -> Result<CloudTranscriptionResult, CloudTranscriptionError> {
         let mut stream = OpenAiStreamAccumulator::default();
         let response = self
             .transport
@@ -599,7 +718,7 @@ impl CloudTranscriptionClient {
                 &response.body,
             )));
         }
-        stream.finish(provider)
+        stream.finish_result(provider)
     }
 
     fn execute_and_parse(
@@ -932,6 +1051,50 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["WakeNote", "Qwen3-ASR"]
         );
+    }
+
+    #[test]
+    fn openai_diarization_requests_diarized_json_and_returns_speaker_turns() {
+        let (_directory, audio_path) = audio_fixture("wav");
+        let transport = FakeTransport::responding(CloudTranscriptionResponse {
+            status: 200,
+            body: serde_json::json!({
+                "text": "Hello there. Welcome back.",
+                "segments": [
+                    {"speaker": "A", "start": 0.25, "end": 1.5, "text": "Hello there."},
+                    {"speaker": "B", "start": 1.6, "end": 3.0, "text": "Welcome back."}
+                ]
+            })
+            .to_string(),
+        });
+        let client = CloudTranscriptionClient::with_transport(
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            transport.clone(),
+        );
+
+        let result = client
+            .transcribe_openai_model_result(
+                &audio_path,
+                TranscriptionLanguage::En,
+                &DictionaryContext::default(),
+                crate::models::OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL,
+                false,
+                &mut |_| {},
+            )
+            .expect("diarized transcript");
+
+        assert_eq!(result.text, "Hello there. Welcome back.");
+        assert_eq!(result.speaker_turns.len(), 2);
+        assert_eq!(result.speaker_turns[0].speaker_id, "A");
+        assert_eq!(result.speaker_turns[0].start_ms, 250);
+        assert_eq!(result.speaker_turns[1].end_ms, 3_000);
+        let requests = transport.requests.lock().expect("requests");
+        let CloudTranscriptionRequest::OpenAi { fields, .. } = &requests[0] else {
+            panic!("OpenAI request")
+        };
+        assert!(fields.contains(&("response_format".into(), "diarized_json".into())));
+        assert!(fields.contains(&("chunking_strategy".into(), "auto".into())));
+        assert!(!fields.iter().any(|(name, _)| name == "keywords[]"));
     }
 
     #[test]

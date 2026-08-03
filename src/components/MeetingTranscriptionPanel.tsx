@@ -10,10 +10,12 @@ import {
   importAndStartMeeting,
   isTauriRuntime,
   listMeetings,
+  listTranscriptionModels,
   loadManualMeetingRecordingStatus,
   meetingDetail,
   openTranscriptFolder,
   resumeMeeting,
+  startMeetingTranscription,
   startManualMeetingRecording,
   stopManualMeetingRecording,
 } from "../lib/tauri-client";
@@ -25,8 +27,10 @@ import type {
   ListVisibilityTarget,
   ManualMeetingRecordingStatus,
   MeetingDetail,
+  MeetingTranscriptionRequest,
   MeetingProgressPayload,
   MeetingSummary,
+  ModelDescriptor,
 } from "../lib/types";
 import type { ListVisibilityMode } from "./ListVisibilityToolbar";
 import { MeetingTranscriptionView } from "./meetings/MeetingTranscriptionView";
@@ -42,12 +46,14 @@ function meetingVisibilityTarget(
 
 export function MeetingTranscriptionPanel() {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
+  const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [progressById, setProgressById] = useState<Record<string, MeetingProgressPayload>>({});
   const [liveTextById, setLiveTextById] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [manualRecordingBusy, setManualRecordingBusy] = useState(false);
+  const [transcriptionBusy, setTranscriptionBusy] = useState(false);
   const [manualRecording, setManualRecording] =
     useState<ManualMeetingRecordingStatus>({
       generation: 0,
@@ -85,6 +91,12 @@ export function MeetingTranscriptionPanel() {
     } catch (cause) {
       setError(String(cause));
     }
+  }, []);
+
+  useEffect(() => {
+    void listTranscriptionModels()
+      .then(setModels)
+      .catch((cause) => setError(String(cause)));
   }, []);
 
   const openDetail = useCallback(async (id: string) => {
@@ -229,6 +241,23 @@ export function MeetingTranscriptionPanel() {
     }
   }, [openDetail, refreshMeetings]);
 
+  const onStartTranscription = useCallback(
+    async (id: string, request: MeetingTranscriptionRequest) => {
+      setTranscriptionBusy(true);
+      setError(null);
+      try {
+        await startMeetingTranscription(id, request);
+        await refreshMeetings();
+        await openDetail(id);
+      } catch (cause) {
+        setError(String(cause));
+      } finally {
+        setTranscriptionBusy(false);
+      }
+    },
+    [openDetail, refreshMeetings],
+  );
+
   const onImport = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -365,6 +394,8 @@ export function MeetingTranscriptionPanel() {
       busy={busy}
       manualRecording={manualRecording}
       manualRecordingBusy={manualRecordingBusy}
+      models={models}
+      transcriptionBusy={transcriptionBusy}
       error={error ?? visibility.error}
       visibilityMode={visibilityMode}
       visibleCount={projectedMeetings.visible.length}
@@ -377,6 +408,9 @@ export function MeetingTranscriptionPanel() {
       onImport={() => void onImport()}
       onStartManualRecording={() => void onStartManualRecording()}
       onStopManualRecording={() => void onStopManualRecording()}
+      onStartTranscription={(id, request) =>
+        void onStartTranscription(id, request)
+      }
       onOpen={(id) => void openDetail(id)}
       onBack={() => {
         setSelectedId(null);

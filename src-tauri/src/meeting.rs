@@ -25,8 +25,8 @@ use crate::cloud_transcription::TranscriptionCredentials;
 use crate::dictionary::DictionaryContext;
 use crate::settings::TranscriptionLanguage;
 use crate::transcription::{
-    DecodedWindow, RuntimeTranscriber, Transcriber, TranscriptionRequest, cached_whisper_context,
-    model_runtime_for_id, transcribe_samples_with_context,
+    DecodedWindow, RuntimeTranscriber, SpeakerTurn, Transcriber, TranscriptionRequest,
+    cached_whisper_context, model_runtime_for_id, transcribe_samples_with_context,
 };
 
 /// Frame size used for silence detection. 20 ms is fine-grained enough to find
@@ -89,6 +89,14 @@ pub struct MeetingSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeetingTranscriptionRequest {
+    pub model_id: String,
+    pub language: TranscriptionLanguage,
+    pub streaming_enabled: bool,
+    pub speaker_separation_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeetingRecord {
     pub id: String,
     pub title: String,
@@ -105,6 +113,10 @@ pub struct MeetingRecord {
     pub status: MeetingStatus,
     pub progress: MeetingProgress,
     pub segments: Vec<MeetingSegment>,
+    #[serde(default)]
+    pub transcription_request: Option<MeetingTranscriptionRequest>,
+    #[serde(default)]
+    pub speaker_turns: Vec<SpeakerTurn>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -144,6 +156,26 @@ impl MeetingRecord {
 
     /// Time-ordered transcript built from completed segments only.
     pub fn transcript_text(&self) -> String {
+        if !self.speaker_turns.is_empty() {
+            let mut turns = self.speaker_turns.iter().collect::<Vec<_>>();
+            turns.sort_by_key(|turn| (turn.part_index, turn.start_ms));
+            return turns
+                .into_iter()
+                .filter_map(|turn| {
+                    let text = turn.text.trim();
+                    (!text.is_empty()).then(|| {
+                        format!(
+                            "[{}] Part {} · {}: {}",
+                            format_timestamp(turn.start_ms),
+                            turn.part_index + 1,
+                            turn.speaker_id,
+                            text
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
         self.segments
             .iter()
             .filter(|segment| segment.status == MeetingSegmentStatus::Completed)
@@ -168,6 +200,16 @@ impl MeetingRecord {
             error: self.error.clone(),
         }
     }
+}
+
+fn format_timestamp(milliseconds: u64) -> String {
+    let total_seconds = milliseconds / 1_000;
+    format!(
+        "{:02}:{:02}:{:02}",
+        total_seconds / 3_600,
+        (total_seconds % 3_600) / 60,
+        total_seconds % 60
+    )
 }
 
 /// Lightweight projection of a meeting for list views (no segment bodies).
@@ -600,6 +642,8 @@ pub fn start_recorded_meeting_capture(
         status: MeetingStatus::Pending,
         progress: MeetingProgress::default(),
         segments: Vec::new(),
+        transcription_request: None,
+        speaker_turns: Vec::new(),
         error: None,
     };
 
@@ -735,6 +779,8 @@ pub fn import_meeting(
         status: MeetingStatus::Pending,
         progress: MeetingProgress::default(),
         segments: Vec::new(),
+        transcription_request: None,
+        speaker_turns: Vec::new(),
         error: None,
     };
     record
@@ -774,6 +820,39 @@ pub fn meeting_detail(save_root: &Path, id: &str) -> Result<MeetingDetail, Strin
         transcript,
         audio_path,
     })
+}
+
+pub fn start_recorded_meeting_transcription(
+    save_root: &Path,
+    id: &str,
+    request: MeetingTranscriptionRequest,
+) -> Result<MeetingRecord, String> {
+    if !is_valid_meeting_id(id) {
+        return Err("invalid meeting id".to_string());
+    }
+    let dir = meeting_dir(save_root, id);
+    let path = record_path(&dir);
+    let mut record = MeetingRecord::load(&path).map_err(|error| error.to_string())?;
+    if !matches!(
+        record.status,
+        MeetingStatus::Recorded | MeetingStatus::Failed | MeetingStatus::Canceled
+    ) {
+        return Err("meeting is not ready to start transcription".to_string());
+    }
+    record.model_id = request.model_id.clone();
+    record.language = request.language;
+    record.transcription_request = Some(request);
+    record.speaker_turns.clear();
+    record.segments.clear();
+    record.progress = MeetingProgress::default();
+    record.status = MeetingStatus::Pending;
+    record.error = None;
+    record.touch();
+    let _ = fs::remove_file(transcript_path(&dir));
+    record
+        .save_atomic(&path)
+        .map_err(|error| error.to_string())?;
+    Ok(record)
 }
 
 /// Rewrite orphaned `processing` meetings (their worker thread died with the
@@ -893,6 +972,16 @@ pub fn run_meeting_job(
     let rpath = record_path(&dir);
     let mut record = MeetingRecord::load(&rpath).map_err(|e| e.to_string())?;
     let started = Instant::now();
+    let transcription_request =
+        record
+            .transcription_request
+            .clone()
+            .unwrap_or_else(|| MeetingTranscriptionRequest {
+                model_id: record.model_id.clone(),
+                language: record.language,
+                streaming_enabled: false,
+                speaker_separation_enabled: false,
+            });
 
     let model_runtime = model_runtime_for_id(model_directory, &record.model_id);
     let model_path = model_directory.join(format!("{}.bin", record.model_id));
@@ -985,7 +1074,9 @@ pub fn run_meeting_job(
     };
     let runtime_transcriber = if context.is_none() {
         match RuntimeTranscriber::for_archival_with_credentials(model_directory, credentials) {
-            Ok(transcriber) => Some(transcriber),
+            Ok(transcriber) => {
+                Some(transcriber.with_file_streaming(transcription_request.streaming_enabled, None))
+            }
             Err(error) => {
                 let _ = fs::remove_file(&wav);
                 return finish_failed(
@@ -1096,6 +1187,7 @@ pub fn run_meeting_job(
                 dictionary,
                 progress_cb,
             )
+            .map(|decoded| (decoded, Vec::new()))
         } else {
             let segment_wav = dir.join(format!(".wakenote-segment-{idx}.wav"));
             let result = write_samples_wav16k(&segment_wav, &samples)
@@ -1104,29 +1196,49 @@ pub fn run_meeting_job(
                     runtime_transcriber
                         .as_ref()
                         .expect("non-Whisper meetings have a runtime transcriber")
-                        .transcribe(TranscriptionRequest {
+                        .transcribe_execution(TranscriptionRequest {
                             audio_path: &segment_wav,
                             model_id: &record.model_id,
                             language,
                             dictionary,
                         })
                 })
-                .map(|text| {
-                    let text = dictionary.correct(text.trim());
-                    DecodedWindow {
-                        no_speech: text.is_empty(),
-                        text,
-                    }
+                .map(|execution| {
+                    let text = dictionary.correct(execution.text.trim());
+                    let speaker_turns = if transcription_request.speaker_separation_enabled {
+                        execution
+                            .speaker_turns
+                            .into_iter()
+                            .map(|mut turn| {
+                                turn.part_index = idx;
+                                turn.start_ms = turn.start_ms.saturating_add(read_lo);
+                                turn.end_ms = turn.end_ms.saturating_add(read_lo);
+                                turn.text = dictionary.correct(turn.text.trim());
+                                turn
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    (
+                        DecodedWindow {
+                            no_speech: text.is_empty(),
+                            text,
+                        },
+                        speaker_turns,
+                    )
                 });
             let _ = fs::remove_file(segment_wav);
             result
         };
 
         match decoded {
-            Ok(decoded) => {
+            Ok((decoded, speaker_turns)) => {
                 record.segments[idx].status = MeetingSegmentStatus::Completed;
                 record.segments[idx].text = decoded.text.clone();
                 record.segments[idx].no_speech = decoded.no_speech;
+                record.speaker_turns.retain(|turn| turn.part_index != idx);
+                record.speaker_turns.extend(speaker_turns);
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
@@ -1237,6 +1349,46 @@ mod tests {
                 .status,
             MeetingStatus::Recorded
         );
+    }
+
+    #[test]
+    fn recorded_meeting_starts_with_selected_model_and_options() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = meeting_dir(temp.path(), "20260803-120000-meeting");
+        fs::create_dir_all(&dir).expect("meeting dir");
+        let mut record = sample_record();
+        record.id = "20260803-120000-meeting".into();
+        record.status = MeetingStatus::Recorded;
+        record.model_id = "whisper-medium".into();
+        record
+            .save_atomic(&record_path(&dir))
+            .expect("recorded meeting");
+
+        let updated = start_recorded_meeting_transcription(
+            temp.path(),
+            &record.id,
+            MeetingTranscriptionRequest {
+                model_id: "openai-gpt-4o-transcribe-diarize".into(),
+                language: TranscriptionLanguage::Ko,
+                streaming_enabled: true,
+                speaker_separation_enabled: true,
+            },
+        )
+        .expect("start transcription");
+
+        assert_eq!(updated.status, MeetingStatus::Pending);
+        assert_eq!(updated.model_id, "openai-gpt-4o-transcribe-diarize");
+        assert_eq!(
+            updated.transcription_request,
+            Some(MeetingTranscriptionRequest {
+                model_id: "openai-gpt-4o-transcribe-diarize".into(),
+                language: TranscriptionLanguage::Ko,
+                streaming_enabled: true,
+                speaker_separation_enabled: true,
+            })
+        );
+        assert!(updated.segments.is_empty());
+        assert!(updated.speaker_turns.is_empty());
     }
 
     #[test]
@@ -1449,6 +1601,8 @@ mod tests {
             status: MeetingStatus::Pending,
             progress: MeetingProgress::default(),
             segments: Vec::new(),
+            transcription_request: None,
+            speaker_turns: Vec::new(),
             error: None,
         }
     }

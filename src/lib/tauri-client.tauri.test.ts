@@ -130,6 +130,25 @@ function mockInvoke(command: string) {
         stop_reason: null,
         error: null,
       });
+    case "start_meeting_transcription":
+      return Promise.resolve({
+        id: "meeting-1",
+        title: "Meeting",
+        source_filename: "audio.wav",
+        status: "pending",
+        duration_ms: 1_000,
+        created_at: "2026-08-03T00:00:00Z",
+        updated_at: "2026-08-03T00:00:00Z",
+        progress: {
+          segments_total: 0,
+          segments_done: 0,
+          processed_ms: 0,
+          elapsed_ms: 0,
+        },
+        model_id: "openai-gpt-4o-transcribe-diarize",
+        language: "ko",
+        error: null,
+      });
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
@@ -235,6 +254,26 @@ describe("tauri runtime client snapshots", () => {
     );
     expect(mocks.invoke).toHaveBeenCalledWith(
       "stop_manual_meeting_recording",
+    );
+  });
+
+  it("starts recorded meeting transcription with an exact option snapshot", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { startMeetingTranscription } = await import("./tauri-client");
+    const request = {
+      model_id: "openai-gpt-4o-transcribe-diarize",
+      language: "ko" as const,
+      streaming_enabled: true,
+      speaker_separation_enabled: true,
+    };
+
+    const meeting = await startMeetingTranscription("meeting-1", request);
+
+    expect(meeting.status).toBe("pending");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "start_meeting_transcription",
+      { id: "meeting-1", request },
     );
   });
 

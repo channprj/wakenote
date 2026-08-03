@@ -35,6 +35,7 @@ import type {
   SourcePayload,
   MeetingSummary,
   MeetingDetail,
+  MeetingTranscriptionRequest,
   ManualMeetingRecordingStatus,
   LlmGenerateRequest,
   LlmProgressEvent,
@@ -1970,6 +1971,13 @@ export async function listMeetings(): Promise<MeetingSummary[]> {
   return invoke<MeetingSummary[]>("list_meetings");
 }
 
+export async function listTranscriptionModels(): Promise<ModelDescriptor[]> {
+  if (!isTauriRuntime()) {
+    return settledBrowserModels(browserSnapshot.models ?? mockModels());
+  }
+  return invoke<ModelDescriptor[]>("list_models");
+}
+
 function browserManualMeetingRecordingStatus(): ManualMeetingRecordingStatus {
   const elapsedMs = browserManualMeetingStartedAt === null
     ? 0
@@ -2043,6 +2051,36 @@ export async function importAndStartMeeting(): Promise<MeetingSummary | null> {
 
 export async function meetingDetail(id: string): Promise<MeetingDetail> {
   return invoke<MeetingDetail>("meeting_detail", { id });
+}
+
+export async function startMeetingTranscription(
+  id: string,
+  request: MeetingTranscriptionRequest,
+): Promise<MeetingSummary> {
+  if (!isTauriRuntime()) {
+    return {
+      id,
+      title: "Browser meeting",
+      source_filename: "audio.wav",
+      status: "pending",
+      duration_ms: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      progress: {
+        segments_total: 0,
+        segments_done: 0,
+        processed_ms: 0,
+        elapsed_ms: 0,
+      },
+      model_id: request.model_id,
+      language: request.language,
+      error: null,
+    };
+  }
+  return invoke<MeetingSummary>("start_meeting_transcription", {
+    id,
+    request,
+  });
 }
 
 export async function cancelMeeting(id: string): Promise<void> {

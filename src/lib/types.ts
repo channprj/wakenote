@@ -459,6 +459,21 @@ export interface MeetingSegment {
   no_speech: boolean;
 }
 
+export interface SpeakerTurn {
+  speaker_id: string;
+  part_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface MeetingTranscriptionRequest {
+  model_id: string;
+  language: TranscriptionLanguage;
+  streaming_enabled: boolean;
+  speaker_separation_enabled: boolean;
+}
+
 export interface MeetingSummary {
   id: string;
   title: string;
@@ -478,6 +493,8 @@ export interface MeetingRecord extends MeetingSummary {
   audio_format: string;
   app_version: string;
   segments: MeetingSegment[];
+  transcription_request: MeetingTranscriptionRequest | null;
+  speaker_turns: SpeakerTurn[];
 }
 
 export interface MeetingDetail {

@@ -6,12 +6,32 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { MeetingDetail, MeetingProgressPayload, MeetingSummary } from "@/lib/types";
 import { LONG_CONTENT } from "@/test-fixtures/long-content";
+import { mockModels } from "@/lib/app-state";
 import {
   MeetingTranscriptionView,
   type MeetingTranscriptionViewProps,
 } from "./MeetingTranscriptionView";
 
 afterEach(cleanup);
+
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: {
+    configurable: true,
+    value: () => false,
+  },
+  setPointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  releasePointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  scrollIntoView: {
+    configurable: true,
+    value: () => {},
+  },
+});
 
 function meeting(overrides: Partial<MeetingSummary> = {}): MeetingSummary {
   return {
@@ -44,6 +64,8 @@ function detail(overrides: Partial<MeetingSummary> = {}): MeetingDetail {
       audio_format: "m4a",
       app_version: "0.260715.0",
       segments: [],
+      transcription_request: null,
+      speaker_turns: [],
     },
     transcript: "첫 번째 문장입니다.\n두 번째 문장입니다.",
     audio_path: "/tmp/weekly-review.m4a",
@@ -81,6 +103,8 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
       error: null,
     },
     manualRecordingBusy: false,
+    models: mockModels(),
+    transcriptionBusy: false,
     error: null,
     visibilityMode: "visible",
     visibleCount: 0,
@@ -91,6 +115,7 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
     onImport: vi.fn(),
     onStartManualRecording: vi.fn(),
     onStopManualRecording: vi.fn(),
+    onStartTranscription: vi.fn(),
     onOpen: vi.fn(),
     onBack: vi.fn(),
     onCancel: vi.fn(),
@@ -232,6 +257,57 @@ describe("MeetingTranscriptionView", () => {
     expect(completed).not.toContain(">Resume<");
     expect(interrupted).toContain("Resume");
     expect(interrupted).toContain("Model stopped");
+  });
+
+  it("configures a recorded meeting with model-aware streaming and speaker separation", async () => {
+    const onStartTranscription = vi.fn();
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          selected: detail({ status: "recorded" }),
+          onStartTranscription,
+        })}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Configure transcription" }),
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Meeting transcription model" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("switch", { name: "Streaming" }).hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("switch", { name: "Speaker separation" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Meeting transcription model" }),
+    );
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "OpenAI · GPT-4o Transcribe Diarize",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Speaker separation" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start transcription" }),
+    );
+
+    expect(onStartTranscription).toHaveBeenCalledWith(
+      "meeting-1",
+      expect.objectContaining({
+        model_id: "openai-gpt-4o-transcribe-diarize",
+        speaker_separation_enabled: true,
+      }),
+    );
   });
 
   it("defaults to Visible and applies one bulk hide action", async () => {

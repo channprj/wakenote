@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Local, Utc};
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::image::Image;
 use tauri::menu::{
     AboutMetadata, CheckMenuItem, HELP_SUBMENU_ID, Menu, MenuItem, PredefinedMenuItem, Submenu,
@@ -62,10 +62,13 @@ use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
 };
 use wakenote::meeting::{
-    MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary,
-    start_manual_recorded_meeting_capture,
+    MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary, MeetingTranscriptionRequest,
+    start_manual_recorded_meeting_capture, start_recorded_meeting_transcription,
 };
-use wakenote::models::{ModelDescriptor, ModelStore, validate_model_options};
+use wakenote::models::{
+    ModelDescriptor, ModelStatus, ModelStore, StreamingCapability, TranscriptionContext,
+    model_supports_context, validate_model_options,
+};
 use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::openai_realtime::{OpenAiRealtimeManager, RealtimePartial, RealtimeSamplesRequest};
 use wakenote::overlay;
@@ -79,10 +82,10 @@ use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
 use wakenote::settings::{
     AppSettings, DictationCueSound, DictationCueVolume, FloatingOverlayPosition,
-    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot, SettingsPatch, TrayClickAction,
-    clamp_llm_max_iterations, expand_user_path, launch_at_login_action_for_patch,
-    live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
-    resolve_auto_prompt,
+    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot, SettingsPatch,
+    TranscriptionLanguage, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_start_on_launch, resolve_auto_prompt,
 };
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
@@ -252,6 +255,14 @@ struct ManualMeetingRecordingStatus {
     inputs: Vec<String>,
     stop_reason: Option<ManualMeetingStopReason>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct StartMeetingTranscriptionRequest {
+    model_id: String,
+    language: TranscriptionLanguage,
+    streaming_enabled: bool,
+    speaker_separation_enabled: bool,
 }
 
 #[derive(Default)]
@@ -3549,6 +3560,66 @@ fn meeting_detail(state: State<'_, BackendState>, id: String) -> Result<MeetingD
 }
 
 #[tauri::command]
+fn start_meeting_transcription(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    meeting_state: State<'_, MeetingState>,
+    id: String,
+    request: StartMeetingTranscriptionRequest,
+) -> Result<MeetingSummary, String> {
+    {
+        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        if let Some(current) = runtime.current.as_ref() {
+            return Err(format!(
+                "Another meeting ({current}) is being processed. Try again after it finishes."
+            ));
+        }
+    }
+    let (save_root, model) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        let model = backend
+            .model_registry()
+            .into_iter()
+            .find(|model| model.id == request.model_id)
+            .ok_or_else(|| "selected meeting transcription model was not found".to_string())?;
+        (expand_user_path(&backend.settings().save_root), model)
+    };
+    if !model_supports_context(&model, TranscriptionContext::Meeting, false)
+        || !model.capabilities.file_transcription
+    {
+        return Err("selected model does not support meeting file transcription".to_string());
+    }
+    if model.offline && !matches!(model.status, ModelStatus::Installed | ModelStatus::Ready) {
+        return Err("selected on-device model is not installed and ready".to_string());
+    }
+    if request.speaker_separation_enabled && !model.capabilities.diarization {
+        return Err("selected model does not support speaker separation".to_string());
+    }
+    let streaming_enabled = match model.capabilities.streaming {
+        StreamingCapability::Required => true,
+        StreamingCapability::Optional => request.streaming_enabled,
+        StreamingCapability::Unsupported => false,
+    };
+    let record = start_recorded_meeting_transcription(
+        &save_root,
+        &id,
+        MeetingTranscriptionRequest {
+            model_id: model.id,
+            language: request.language,
+            streaming_enabled,
+            speaker_separation_enabled: request.speaker_separation_enabled,
+        },
+    )?;
+    spawn_meeting_job(
+        app,
+        state.inner().clone(),
+        meeting_state.inner().clone(),
+        record.id.clone(),
+    )?;
+    Ok(record.summary())
+}
+
+#[tauri::command]
 fn cancel_meeting(meeting_state: State<'_, MeetingState>, id: String) -> Result<(), String> {
     let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
     if runtime.current.as_deref() == Some(id.as_str())
@@ -6516,6 +6587,7 @@ fn main() {
             list_meetings,
             import_and_start_meeting,
             meeting_detail,
+            start_meeting_transcription,
             cancel_meeting,
             resume_meeting
         ])

@@ -1917,10 +1917,7 @@ tr:last-child td {
 
 .transcript-entry {
   display: grid;
-  grid-template-columns: var(--size-selection-control) 116px 112px minmax(
-      0,
-      1fr
-    ) 51px;
+  grid-template-columns: var(--size-selection-control) 116px 112px minmax(0, 1fr) 51px;
   align-items: start;
   column-gap: var(--space-1);
   min-width: 0;
