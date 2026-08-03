@@ -690,16 +690,23 @@ describe("transcript archive density", () => {
       ".transcript-entry__play,\n.transcript-entry__folder",
     );
     const textRule = cssRule(".transcript-entry__text");
+    const checkboxRule = cssRule(
+      '.transcript-entry > [data-slot="checkbox"]',
+    );
+    const sourceBadgeRule = cssRule(".transcript-source-badge");
     const selectedRule = cssRule(".transcript-entry[data-selected=\"true\"]");
 
     expect(entryRule).toContain("display: grid;");
     expect(entryRule).toContain(
-      "grid-template-columns: var(--size-selection-control) 116px 112px minmax(0, 1fr) 51px;",
+      "grid-template-columns: var(--size-selection-control) 116px 88px minmax(0, 1fr) 51px;",
     );
-    expect(entryRule).toContain("column-gap: var(--space-1);");
+    expect(entryRule).toContain("align-items: center;");
+    expect(entryRule).toContain("column-gap: 6px;");
     expect(entryRule).toContain("border-left: 2px solid transparent;");
-    expect(entryRule).toContain("padding: 1px 4px 1px 3px;");
+    expect(entryRule).toContain("padding: 1px 6px 1px 4px;");
     expect(entryRule).toContain("border-radius: 0;");
+    expect(checkboxRule).toContain("justify-self: center;");
+    expect(sourceBadgeRule).toContain("max-width: 88px;");
     expect(dividerRule).toContain("border-bottom: 1px solid");
     expect(actionsRule).toContain("min-width: 51px;");
     expect(buttonRule).toContain("width: var(--space-6);");

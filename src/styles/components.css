@@ -1939,17 +1939,21 @@ tr:last-child td {
 
 .transcript-entry {
   display: grid;
-  grid-template-columns: var(--size-selection-control) 116px 112px minmax(0, 1fr) 51px;
-  align-items: start;
-  column-gap: var(--space-1);
+  grid-template-columns: var(--size-selection-control) 116px 88px minmax(0, 1fr) 51px;
+  align-items: center;
+  column-gap: 6px;
   min-width: 0;
   border-left: 2px solid transparent;
   background: transparent;
-  padding: 1px 4px 1px 3px;
+  padding: 1px 6px 1px 4px;
   border-radius: 0;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.transcript-entry > [data-slot="checkbox"] {
+  justify-self: center;
 }
 
 .transcript-entry:not(:last-child) {
@@ -2036,7 +2040,7 @@ tr:last-child td {
   align-items: center;
   gap: 4px;
   width: fit-content;
-  max-width: 112px;
+  max-width: 88px;
   min-height: var(--badge-height);
   padding: 1px 5px;
   border: 1px solid var(--line);
