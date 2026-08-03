@@ -3150,6 +3150,26 @@ fn regenerate_transcript(
 }
 
 #[tauri::command]
+fn reprocess_jobs(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    transcription_state: State<'_, AutoTranscriptionState>,
+    ids: Vec<u64>,
+    model_id: String,
+) -> Result<QueueSnapshot, String> {
+    let snapshot = {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.reprocess_jobs(ids, model_id)?
+    };
+    kick_transcription_worker_if_needed(
+        app,
+        state.inner().clone(),
+        transcription_state.inner().clone(),
+    );
+    Ok(snapshot)
+}
+
+#[tauri::command]
 fn open_transcript_folder(path: String) -> Result<(), String> {
     let request = open_containing_folder_request(PathBuf::from(path))?;
     Command::new(request.program)
@@ -6730,6 +6750,7 @@ fn main() {
             enqueue_backlog,
             retry_job,
             regenerate_transcript,
+            reprocess_jobs,
             open_transcript_folder,
             skip_job,
             mark_all_activity_read,

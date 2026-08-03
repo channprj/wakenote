@@ -52,6 +52,8 @@ function renderQueuePanelMarkup(status: QueueJobStatus): string {
       onProcessNext={() => {}}
       onRetry={() => {}}
       onSkip={() => {}}
+      selectedModelId="whisper-medium"
+      onReprocess={async () => true}
     />,
   );
 }

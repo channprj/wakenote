@@ -17,6 +17,8 @@ function renderQueue(queue: QueueSnapshot) {
       onProcessNext={() => {}}
       onRetry={() => {}}
       onSkip={() => {}}
+      selectedModelId="whisper-medium"
+      onReprocess={async () => true}
     />,
   );
 }

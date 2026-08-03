@@ -22,14 +22,15 @@ use crate::dictionary::DictionaryContext;
 use crate::live_capture::AudioFrame;
 use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
 use crate::models::{
-    ModelDescriptor, ModelStatus, ModelStore, default_model_registry, validate_model_options,
+    ModelDescriptor, ModelStatus, ModelStore, TranscriptionContext, default_model_registry,
+    model_supports_context, validate_model_options,
 };
 use crate::multi_capture::MicrophoneMixer;
 use crate::persistence::{
     AppPersistence, ListVisibilityState, PersistenceError, SetListVisibilityRequest,
 };
 use crate::queue::{
-    BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueSnapshot, TranscriptionQueue,
+    BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueJobStatus, QueueSnapshot, TranscriptionQueue,
     is_importable_audio_path,
 };
 use crate::recorder::{
@@ -2066,6 +2067,65 @@ impl AppBackend {
         let job_id = self.queue.requeue_file(audio_path, model_id)?;
         self.queue
             .set_transcription_options(job_id, self.settings.transcription_options.clone())?;
+        self.persist_queue();
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn reprocess_jobs(
+        &mut self,
+        ids: Vec<u64>,
+        model_id: String,
+    ) -> Result<QueueSnapshot, String> {
+        let ids = ids.into_iter().collect::<BTreeSet<_>>();
+        if ids.is_empty() {
+            return Err("select at least one job to reprocess".to_string());
+        }
+
+        let model = self
+            .model_registry()
+            .into_iter()
+            .find(|model| model.id == model_id)
+            .ok_or_else(|| format!("unknown model {model_id}"))?;
+        if !model_supports_context(&model, TranscriptionContext::File, false) {
+            return Err(format!(
+                "model {model_id} does not support file transcription"
+            ));
+        }
+        if !model_is_selectable(&model_id, &self.settings.model_directory) {
+            return Err(format!("model {model_id} is not ready"));
+        }
+
+        let mut audio_paths = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let job = self
+                .queue
+                .job(*id)
+                .ok_or_else(|| format!("job {id} not found"))?;
+            if !matches!(
+                job.status,
+                QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
+            ) {
+                return Err(format!(
+                    "job {id} cannot be reprocessed from {:?}",
+                    job.status
+                ));
+            }
+            if !is_importable_audio_path(&job.audio_path) {
+                return Err(format!("job {id} audio is not an existing m4a or wav file"));
+            }
+            audio_paths.push(job.audio_path.clone());
+        }
+
+        for audio_path in &audio_paths {
+            let chunk = RecordedChunk::from_audio_path(audio_path.clone());
+            TranscriptionSidecar::reset_for_regenerate(&chunk)
+                .map_err(|error| error.to_string())?;
+        }
+        for audio_path in audio_paths {
+            let job_id = self.queue.requeue_file(audio_path, model_id.clone())?;
+            self.queue
+                .set_transcription_options(job_id, self.settings.transcription_options.clone())?;
+        }
         self.persist_queue();
         Ok(self.queue.snapshot())
     }

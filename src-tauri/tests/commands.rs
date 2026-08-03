@@ -1185,6 +1185,110 @@ fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
 }
 
 #[test]
+fn backend_reprocesses_selected_attention_jobs_with_an_explicit_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_models(&model_dir, &["whisper-medium", "whisper-small"]);
+    let failed_audio = tmp.path().join("20260611").join("failed.wav");
+    let skipped_audio = tmp.path().join("20260611").join("skipped.wav");
+    std::fs::create_dir_all(failed_audio.parent().expect("audio parent")).expect("audio dir");
+    std::fs::write(&failed_audio, b"failed audio").expect("failed audio");
+    std::fs::write(&skipped_audio, b"skipped audio").expect("skipped audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let first = backend.enqueue_audio_file(&failed_audio, Some("whisper-medium".into()));
+    let failed_id = first
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == failed_audio)
+        .expect("failed job")
+        .id;
+    let second = backend.enqueue_audio_file(&skipped_audio, Some("whisper-medium".into()));
+    let skipped_id = second
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == skipped_audio)
+        .expect("skipped job")
+        .id;
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed(failed_id, "mock failure"))
+        .expect("fail first job");
+    backend.skip_job(skipped_id).expect("skip second job");
+    backend.mark_all_activity_read();
+    std::fs::write(failed_audio.with_extension("error.txt"), b"old error").expect("error sidecar");
+    std::fs::write(skipped_audio.with_extension("txt"), b"old transcript").expect("text sidecar");
+
+    let snapshot = backend
+        .reprocess_jobs(vec![failed_id, skipped_id], "whisper-small".into())
+        .expect("reprocess selected jobs");
+
+    assert_eq!(snapshot.pending_count, 2);
+    assert_eq!(snapshot.failed_count, 0);
+    for id in [failed_id, skipped_id] {
+        let job = snapshot.jobs.iter().find(|job| job.id == id).expect("job");
+        assert_eq!(job.status, QueueJobStatus::Pending);
+        assert_eq!(job.model_id, "whisper-small");
+        assert_eq!(job.error, None);
+        assert!(!job.is_read);
+        assert_eq!(
+            job.transcription_options,
+            Some(backend.settings().transcription_options)
+        );
+    }
+    assert!(!failed_audio.with_extension("error.txt").exists());
+    assert!(!skipped_audio.with_extension("txt").exists());
+}
+
+#[test]
+fn backend_reprocess_jobs_rejects_an_invalid_batch_without_mutating_the_queue() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let issue_audio = tmp.path().join("issue.wav");
+    let completed_audio = tmp.path().join("completed.wav");
+    std::fs::write(&issue_audio, b"issue audio").expect("issue audio");
+    std::fs::write(&completed_audio, b"completed audio").expect("completed audio");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let issue_id = backend
+        .enqueue_audio_file(&issue_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == issue_audio)
+        .expect("issue job")
+        .id;
+    let completed_id = backend
+        .enqueue_audio_file(&completed_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == completed_audio)
+        .expect("completed job")
+        .id;
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed(issue_id, "mock failure"))
+        .expect("fail issue job");
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed(completed_id))
+        .expect("complete other job");
+    let before = backend.queue_snapshot();
+
+    let error = backend
+        .reprocess_jobs(vec![issue_id, completed_id], "whisper-medium".into())
+        .expect_err("completed jobs cannot be batch reprocessed");
+
+    assert!(error.contains("cannot be reprocessed"));
+    assert_eq!(backend.queue_snapshot(), before);
+}
+
+#[test]
 fn backend_system_capture_emits_live_transcript_events() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

@@ -1413,6 +1413,15 @@ svg {
   justify-content: space-between;
   gap: var(--space-2);
   min-width: 0;
+  flex-wrap: wrap;
+}
+
+.queue-view-bar__history,
+.queue-reprocess-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .queue-view-tabs {
@@ -1434,6 +1443,33 @@ svg {
 
 .queue-view-tabs [data-slot="button"][aria-pressed="true"] span {
   color: inherit;
+}
+
+.queue-reprocess-controls {
+  margin-left: auto;
+}
+
+.queue-reprocess-controls__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  white-space: nowrap;
+}
+
+.queue-reprocess-controls__count {
+  min-width: 64px;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.queue-reprocess-controls [data-slot="select-trigger"] {
+  max-width: 180px;
 }
 
 .queue-table-wrap {

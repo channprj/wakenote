@@ -458,6 +458,23 @@ describe("compact overflow safety contract", () => {
     expect(activityMinimumCss).not.toContain("display: none;");
   });
 
+  it("keeps compact Activity values out of the narrow label column", () => {
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+    const values = cssRule(
+      '[data-slot="queue-table"] tbody > tr:not(.table-group-row) > td:not(.empty-cell) > *',
+      compact,
+    );
+    const group = cssRule(
+      '[data-slot="queue-table"] .table-group-row > td',
+      compact,
+    );
+
+    expect(values).toContain("grid-column: 2;");
+    expect(group).toContain("display: block;");
+    expect(group).toContain("width: 100%;");
+    expect(group).toContain("max-width: none;");
+  });
+
   it("stacks capture and meeting content before the minimum viewport", () => {
     const compactPages = cssBlock("@media (max-width: 979px)", pagesCss);
     const narrowPages = cssBlock("@media (max-width: 820px)", pagesCss);

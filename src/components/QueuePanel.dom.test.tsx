@@ -1,10 +1,55 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import type { QueueJob } from "../lib/types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ModelDescriptor, QueueJob } from "../lib/types";
 import { QueuePanel } from "./QueuePanel";
+
+afterEach(cleanup);
+
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: {
+    configurable: true,
+    value: () => false,
+  },
+  setPointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  releasePointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  scrollIntoView: {
+    configurable: true,
+    value: () => {},
+  },
+});
+
+function readyFileModel(id: string, displayName: string): ModelDescriptor {
+  return {
+    id,
+    display_name: displayName,
+    engine: "test",
+    provider_runtime: "test",
+    size_mb: 1,
+    languages: ["en"],
+    speed_score: 1,
+    accuracy_score: 1,
+    offline: true,
+    status: "ready",
+    capabilities: {
+      file_transcription: true,
+      realtime: false,
+      streaming: "unsupported",
+      diarization: false,
+      cost_reporting: "none",
+      maximum_request_bytes: null,
+      selectable_contexts: ["file"],
+    },
+  };
+}
 
 function paginatedJobs(): QueueJob[] {
   const olderJobs: QueueJob[] = Array.from({ length: 50 }, (_, index) => ({
@@ -45,6 +90,8 @@ describe("QueuePanel pagination", () => {
         onProcessNext={() => {}}
         onRetry={() => {}}
         onSkip={() => {}}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
       />,
     );
 
@@ -78,6 +125,8 @@ describe("QueuePanel pagination", () => {
         onProcessNext={() => {}}
         onRetry={() => {}}
         onSkip={() => {}}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
       />,
     );
 
@@ -121,6 +170,8 @@ describe("QueuePanel pagination", () => {
         onProcessNext={() => {}}
         onRetry={() => {}}
         onSkip={() => {}}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
       />,
     );
     const panel = within(container);
@@ -136,5 +187,94 @@ describe("QueuePanel pagination", () => {
 
     expect(container.querySelector('a[title="/unread.wav"]')).toBeTruthy();
     expect(container.querySelector('a[title="/resolved-failed.wav"]')).toBeNull();
+  });
+
+  it(
+    "selects every matching issue across pages and reprocesses with the chosen model",
+    async () => {
+      const user = userEvent.setup();
+      const onReprocess = vi.fn().mockResolvedValue(true);
+      const jobs: QueueJob[] = Array.from({ length: 51 }, (_, index) => ({
+        id: index + 1,
+        audio_path: `/recordings/20260803/${String(index + 1).padStart(6, "0")}.wav`,
+        model_id: "whisper-medium",
+        status: index % 2 === 0 ? "failed" : "skipped",
+        is_read: index > 24,
+      }));
+      const { container } = render(
+        <QueuePanel
+          queue={{ jobs, pending_count: 0, running_count: 0, failed_count: 26 }}
+          models={[
+            readyFileModel("whisper-medium", "Whisper Medium"),
+            readyFileModel("whisper-small", "Whisper Small"),
+          ]}
+          selectedModelId="whisper-medium"
+          canProcessTranscription
+          onImportAudioFiles={() => {}}
+          onEnqueueBacklog={() => {}}
+          onMarkAllRead={() => {}}
+          onCancelCurrent={() => {}}
+          onProcessNext={() => {}}
+          onRetry={() => {}}
+          onSkip={() => {}}
+          onReprocess={onReprocess}
+        />,
+      );
+
+      const panel = within(container);
+      await user.click(
+        panel.getByRole("checkbox", { name: "Select all 51 matching issues" }),
+      );
+      expect(panel.getByText("51 selected")).toBeTruthy();
+      expect(panel.getByRole("button", { name: "Reprocess 51" })).toBeTruthy();
+
+      await user.click(panel.getByRole("combobox", { name: "Reprocessing model" }));
+      await user.click(screen.getByRole("option", { name: "Whisper Small" }));
+      await user.click(panel.getByRole("button", { name: "Reprocess 51" }));
+
+      expect(onReprocess).toHaveBeenCalledTimes(1);
+      expect(onReprocess).toHaveBeenCalledWith(
+        Array.from({ length: 51 }, (_, index) => index + 1),
+        "whisper-small",
+      );
+    },
+    15_000,
+  );
+
+  it("supports selecting only one issue", async () => {
+    const user = userEvent.setup();
+    const onReprocess = vi.fn().mockResolvedValue(true);
+    render(
+      <QueuePanel
+        queue={{
+          jobs: [
+            { id: 1, audio_path: "/one.wav", model_id: "old", status: "failed" },
+            { id: 2, audio_path: "/two.wav", model_id: "old", status: "cancelled" },
+            { id: 3, audio_path: "/done.wav", model_id: "old", status: "completed" },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 1,
+        }}
+        models={[readyFileModel("whisper-small", "Whisper Small")]}
+        selectedModelId="whisper-small"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onReprocess={onReprocess}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select one.wav for reprocessing" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
+
+    expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
   });
 });

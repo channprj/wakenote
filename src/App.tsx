@@ -43,6 +43,7 @@ import {
   openDictionaryFile,
   processNextTranscription,
   reloadDictionaryFile,
+  reprocessJobs,
   retryJob,
   saveOpenRouterApiKey,
   saveSettingsPatch,
@@ -392,8 +393,10 @@ export default function App() {
     try {
       const next = await action();
       setSnapshot((current) => preserveRecentTranscripts(current, next));
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -498,6 +501,7 @@ export default function App() {
         <QueuePanel
           queue={snapshot.queue}
           models={snapshot.models}
+          selectedModelId={snapshot.settings.selected_model}
           canProcessTranscription={canProcessTranscription}
           onImportAudioFiles={() => void runAction(chooseAudioFiles)}
           onEnqueueBacklog={() =>
@@ -508,6 +512,9 @@ export default function App() {
           onProcessNext={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
+          onReprocess={(ids, modelId) =>
+            runAction(() => reprocessJobs(ids, modelId))
+          }
         />
       </WorkspacePage>
     ),

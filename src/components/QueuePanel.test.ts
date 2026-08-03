@@ -3,13 +3,44 @@ import {
   activityPage,
   cancelCurrentDisabledReason,
   filterActivityJobs,
+  isReprocessableJob,
+  preferredReprocessingModelId,
   processNextDisabledReason,
   queueJobActionState,
   queueJobRetryDisabledReason,
   queueJobSkipDisabledReason,
   queueToolbarActionState,
+  reprocessingModels,
 } from "./QueuePanel";
-import type { QueueJob, QueueJobStatus } from "../lib/types";
+import type { ModelDescriptor, QueueJob, QueueJobStatus } from "../lib/types";
+
+function model(
+  id: string,
+  status: ModelDescriptor["status"],
+  selectableContexts: ModelDescriptor["capabilities"]["selectable_contexts"],
+): ModelDescriptor {
+  return {
+    id,
+    display_name: id,
+    engine: "test",
+    provider_runtime: "test",
+    size_mb: 1,
+    languages: ["en"],
+    speed_score: 1,
+    accuracy_score: 1,
+    offline: true,
+    status,
+    capabilities: {
+      file_transcription: selectableContexts.includes("file"),
+      realtime: selectableContexts.includes("realtime"),
+      streaming: "unsupported",
+      diarization: false,
+      cost_reporting: "none",
+      maximum_request_bytes: null,
+      selectable_contexts: selectableContexts,
+    },
+  };
+}
 
 describe("Activity pagination", () => {
   it("shows the newest day first and caps each page at 50 jobs", () => {
@@ -60,6 +91,51 @@ describe("Activity issue views", () => {
     expect(filterActivityJobs(jobs, "resolved").map((job) => job.id)).toEqual([2, 3]);
     expect(filterActivityJobs(jobs, "attention").map((job) => job.id)).toEqual([1]);
     expect(filterActivityJobs(jobs, "all").map((job) => job.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("Activity issue reprocessing", () => {
+  it.each([
+    ["failed", true],
+    ["cancelled", true],
+    ["skipped", true],
+    ["pending", false],
+    ["running", false],
+    ["completed", false],
+  ] satisfies Array<[QueueJobStatus, boolean]>) (
+    "allows %s jobs to be selected for reprocessing",
+    (status, expected) => {
+      expect(
+        isReprocessableJob({
+          id: 1,
+          audio_path: "/recording.wav",
+          model_id: "old",
+          status,
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it("offers only ready file-transcription models and prefers the current model", () => {
+    const models = [
+      model("ready-file", "ready", ["file"]),
+      model("installed-file", "installed", ["file"]),
+      model("unloaded-file", "unloaded", ["file"]),
+      model("missing-file", "missing", ["file"]),
+      model("ready-realtime", "ready", ["realtime"]),
+    ];
+
+    expect(reprocessingModels(models).map((candidate) => candidate.id)).toEqual([
+      "ready-file",
+      "installed-file",
+      "unloaded-file",
+    ]);
+    expect(preferredReprocessingModelId(models, "installed-file")).toBe(
+      "installed-file",
+    );
+    expect(preferredReprocessingModelId(models, "missing-file")).toBe(
+      "ready-file",
+    );
   });
 });
 

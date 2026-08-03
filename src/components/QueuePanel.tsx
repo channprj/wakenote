@@ -23,9 +23,17 @@ import {
   AlertDialogTrigger,
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { EmptyState } from "./ui/empty-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { StatusBadge } from "./ui/status-badge";
-import { formatModelLabel } from "../lib/models";
+import { formatModelLabel, modelSupportsContext } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
   fileUrlFromPath,
@@ -62,6 +70,28 @@ export function filterActivityJobs(
     return jobs.filter((job) => isAttentionOutcome(job) && job.is_read === true);
   }
   return jobs;
+}
+
+export function isReprocessableJob(job: QueueJob): boolean {
+  return isAttentionOutcome(job);
+}
+
+export function reprocessingModels(models: ModelDescriptor[]): ModelDescriptor[] {
+  return models.filter(
+    (model) =>
+      ["ready", "installed", "unloaded"].includes(model.status) &&
+      modelSupportsContext(model, "file"),
+  );
+}
+
+export function preferredReprocessingModelId(
+  models: ModelDescriptor[],
+  selectedModelId: string,
+): string {
+  const available = reprocessingModels(models);
+  return available.some((model) => model.id === selectedModelId)
+    ? selectedModelId
+    : (available[0]?.id ?? "");
 }
 
 export function activityPage(
@@ -161,6 +191,7 @@ export function queueJobSkipDisabledReason(status: QueueJobStatus): string | nul
 export function QueuePanel({
   queue,
   models,
+  selectedModelId,
   canProcessTranscription,
   onImportAudioFiles,
   onEnqueueBacklog,
@@ -169,9 +200,11 @@ export function QueuePanel({
   onProcessNext,
   onRetry,
   onSkip,
+  onReprocess,
 }: {
   queue: QueueSnapshot;
   models: ModelDescriptor[];
+  selectedModelId: string;
   canProcessTranscription: boolean;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
@@ -180,9 +213,16 @@ export function QueuePanel({
   onProcessNext: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
+  onReprocess: (ids: number[], modelId: string) => Promise<boolean>;
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
   const [activityView, setActivityView] = useState<ActivityView>("all");
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [requestedReprocessingModelId, setRequestedReprocessingModelId] =
+    useState("");
+  const [reprocessing, setReprocessing] = useState(false);
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
@@ -192,6 +232,25 @@ export function QueuePanel({
   const statsBanner = queueStatsBanner(queue);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
   const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved").length;
+  const availableReprocessingModels = reprocessingModels(models);
+  const preferredModelId = preferredReprocessingModelId(models, selectedModelId);
+  const reprocessingModelId = availableReprocessingModels.some(
+    (model) => model.id === requestedReprocessingModelId,
+  )
+    ? requestedReprocessingModelId
+    : preferredModelId;
+  const filteredReprocessableJobs = filteredJobs.filter(isReprocessableJob);
+  const filteredReprocessableIds = filteredReprocessableJobs.map((job) => job.id);
+  const selectedIds = filteredReprocessableIds.filter((id) =>
+    selectedJobIds.has(id),
+  );
+  const hasReprocessableJobs = queue.jobs.some(isReprocessableJob);
+  const allMatchingSelected =
+    filteredReprocessableIds.length > 0 &&
+    filteredReprocessableIds.every((id) => selectedJobIds.has(id));
+  const someMatchingSelected = filteredReprocessableIds.some((id) =>
+    selectedJobIds.has(id),
+  );
   const activityViews: Array<{ id: ActivityView; label: string; count: number }> = [
     { id: "all", label: "All", count: queue.jobs.length },
     { id: "attention", label: "Needs attention", count: unreadOutcomeCount },
@@ -213,6 +272,46 @@ export function QueuePanel({
             description:
               "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
           };
+
+  function setJobSelected(id: number, checked: boolean) {
+    setSelectedJobIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  function setAllMatchingSelected(checked: boolean) {
+    setSelectedJobIds((current) => {
+      const next = new Set(current);
+      for (const id of filteredReprocessableIds) {
+        if (checked) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      }
+      return next;
+    });
+  }
+
+  async function handleReprocess() {
+    if (selectedIds.length === 0 || !reprocessingModelId || reprocessing) {
+      return;
+    }
+    setReprocessing(true);
+    try {
+      if (await onReprocess(selectedIds, reprocessingModelId)) {
+        setSelectedJobIds(new Set());
+      }
+    } finally {
+      setReprocessing(false);
+    }
+  }
 
   return (
     <div className="queue-panel">
@@ -291,31 +390,95 @@ export function QueuePanel({
         </Button>
       </div>
       <div className="queue-view-bar">
-        <div className="queue-view-tabs" role="group" aria-label="Activity history views">
-          {activityViews.map((view) => (
+        <div className="queue-view-bar__history">
+          <div className="queue-view-tabs" role="group" aria-label="Activity history views">
+            {activityViews.map((view) => (
+              <Button
+                key={view.id}
+                type="button"
+                size="sm"
+                variant={activityView === view.id ? "secondary" : "ghost"}
+                aria-pressed={activityView === view.id}
+                onClick={() => {
+                  setActivityView(view.id);
+                  setRequestedPage(1);
+                  setSelectedJobIds(new Set());
+                }}
+              >
+                {view.label} <span>{view.count}</span>
+              </Button>
+            ))}
+          </div>
+          <span className="queue-view-bar__hint">
+            Resolved outcomes stay in history until you reprocess them.
+          </span>
+        </div>
+        {hasReprocessableJobs ? (
+          <div className="queue-reprocess-controls" aria-label="Reprocess selected issues">
+            <div className="queue-reprocess-controls__select-all">
+              <Checkbox
+                aria-label={`Select all ${filteredReprocessableIds.length} matching issues`}
+                checked={
+                  allMatchingSelected
+                    ? true
+                    : someMatchingSelected
+                      ? "indeterminate"
+                      : false
+                }
+                disabled={filteredReprocessableIds.length === 0}
+                onCheckedChange={(checked) =>
+                  setAllMatchingSelected(checked === true)
+                }
+              />
+              <span aria-hidden="true">Select all</span>
+            </div>
+            <span className="queue-reprocess-controls__count" aria-live="polite">
+              {selectedIds.length} selected
+            </span>
+            <Select
+              value={reprocessingModelId || undefined}
+              onValueChange={setRequestedReprocessingModelId}
+              disabled={availableReprocessingModels.length === 0 || reprocessing}
+            >
+              <SelectTrigger size="sm" aria-label="Reprocessing model">
+                <SelectValue placeholder="No model ready" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableReprocessingModels.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.display_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
-              key={view.id}
               type="button"
               size="sm"
-              variant={activityView === view.id ? "secondary" : "ghost"}
-              aria-pressed={activityView === view.id}
-              onClick={() => {
-                setActivityView(view.id);
-                setRequestedPage(1);
-              }}
+              onClick={() => void handleReprocess()}
+              disabled={
+                selectedIds.length === 0 || !reprocessingModelId || reprocessing
+              }
+              title={
+                availableReprocessingModels.length === 0
+                  ? "No ready file transcription model"
+                  : selectedIds.length === 0
+                    ? "Select at least one issue"
+                    : `Reprocess ${selectedIds.length} selected ${selectedIds.length === 1 ? "job" : "jobs"}`
+              }
             >
-              {view.label} <span>{view.count}</span>
+              <RotateCw data-icon="inline-start" />
+              {reprocessing
+                ? "Reprocessing…"
+                : `Reprocess ${selectedIds.length || ""}`.trim()}
             </Button>
-          ))}
-        </div>
-        <span className="queue-view-bar__hint">
-          Resolved outcomes stay in history until you reprocess them.
-        </span>
+          </div>
+        ) : null}
       </div>
       <div className="table-wrap queue-table-wrap">
         <table data-slot="queue-table">
           <thead>
             <tr>
+              <th className="queue-job__selection-heading" aria-label="Select" />
               <th>Audio</th>
               <th>Model</th>
               <th>Status</th>
@@ -325,7 +488,7 @@ export function QueuePanel({
           <tbody>
             {filteredJobs.length === 0 ? (
               <tr>
-                <td colSpan={4} className="empty-cell">
+                <td colSpan={5} className="empty-cell">
                   <EmptyState
                     icon={ListChecksIcon}
                     title={emptyCopy.title}
@@ -339,7 +502,7 @@ export function QueuePanel({
                 return (
                 <Fragment key={group.day}>
                   <tr className="table-group-row">
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
                       {breakdown.map(({ status, count }) => (
                         <Fragment key={status}>
@@ -364,6 +527,17 @@ export function QueuePanel({
                         data-tone={rowTone === "neutral" ? undefined : rowTone}
                         data-read={job.is_read === true ? true : undefined}
                       >
+                        <td className="queue-job__selection" data-label="Select">
+                          {isReprocessableJob(job) ? (
+                            <Checkbox
+                              aria-label={`Select ${formatAudioPathLabel(job.audio_path)} for reprocessing`}
+                              checked={selectedJobIds.has(job.id)}
+                              onCheckedChange={(checked) =>
+                                setJobSelected(job.id, checked === true)
+                              }
+                            />
+                          ) : null}
+                        </td>
                         <td className="queue-job__audio" data-label="Audio">
                           <a className="truncate" href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
                             {formatAudioPathLabel(job.audio_path)}

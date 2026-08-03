@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { normalizeDictationShortcut } from "./dictation-shortcut";
+import { modelSupportsContext } from "./models";
 import { formatLocalTimestamp } from "./transcript-history";
 import {
   applyListVisibilityRequest,
@@ -1684,6 +1685,68 @@ export async function regenerateTranscript(
     payload.modelId = modelId;
   }
   await invoke<QueueSnapshot>("regenerate_transcript", payload);
+  return loadSnapshot();
+}
+
+export async function reprocessJobs(
+  ids: number[],
+  modelId: string,
+): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id)))];
+    const models = browserSnapshot.models ?? mockModels();
+    const model = models.find((candidate) => candidate.id === modelId);
+    if (
+      uniqueIds.length === 0 ||
+      !model ||
+      !isUsableBrowserModel(modelId, models) ||
+      !modelSupportsContext(model, "file")
+    ) {
+      return browserSnapshot;
+    }
+
+    const selectedIds = new Set(uniqueIds);
+    const selectedJobs = browserSnapshot.queue.jobs.filter((job) =>
+      selectedIds.has(job.id),
+    );
+    if (
+      selectedJobs.length !== selectedIds.size ||
+      selectedJobs.some(
+        (job) =>
+          !["failed", "cancelled", "skipped"].includes(job.status) ||
+          !isBrowserImportableAudioPath(job.audio_path),
+      )
+    ) {
+      return browserSnapshot;
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const selectedAudioPaths = new Set(selectedJobs.map((job) => job.audio_path));
+    const jobs = browserSnapshot.queue.jobs.map((job) =>
+      selectedIds.has(job.id)
+        ? {
+            ...job,
+            model_id: modelId,
+            status: "pending" as const,
+            error: null,
+            is_read: false,
+            transcription_options: settings.transcription_options,
+          }
+        : job,
+    );
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+      recent_transcripts: (browserSnapshot.recent_transcripts ?? []).filter(
+        (entry) => !entry.audio_path || !selectedAudioPaths.has(entry.audio_path),
+      ),
+    };
+    return browserSnapshot;
+  }
+
+  await invoke<QueueSnapshot>("reprocess_jobs", { ids, modelId });
   return loadSnapshot();
 }
 
