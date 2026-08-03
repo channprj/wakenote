@@ -8,6 +8,7 @@ import {
   formatModelSize,
   modelAcquireAction,
   modelCancelDownloadDisabledReason,
+  modelCapabilityLabels,
   modelDeleteDisabledReason,
   modelDownloadDisabledReason,
   modelRetryDisabledReason,
@@ -179,6 +180,7 @@ describe("model manager actions", () => {
   it.each([
     ["openrouter-stt", "Requires OpenRouter API key"],
     ["openai-stt", "Requires OpenAI API key"],
+    ["openai-realtime", "Requires OpenAI API key"],
   ])("keeps %s cloud models selectable without local file actions", (providerRuntime, label) => {
     const markup = renderModel("ready", {
       provider_runtime: providerRuntime,
@@ -187,12 +189,34 @@ describe("model manager actions", () => {
       size_mb: 0,
     });
 
-    expect(markup).toContain("Cloud/API");
+    expect(markup).toContain(">API<");
     expect(markup).toContain(label);
     expect(isDisabled(buttonWithText(markup, "Switch"))).toBe(false);
     expect(markup).not.toContain("lucide-download");
     expect(markup).not.toContain("lucide-shield-check");
     expect(markup).not.toContain("lucide-trash-2");
+  });
+
+  it("renders only declared capability badges", () => {
+    const live = mockModels().find(
+      (model) => model.id === "openai-gpt-live-transcribe",
+    );
+    const diarize = mockModels().find(
+      (model) => model.id === "openai-gpt-4o-transcribe-diarize",
+    );
+    const local = mockModels().find((model) => model.id === "whisper-medium");
+
+    expect(modelCapabilityLabels(live!)).toEqual([
+      "Realtime",
+      "Streaming required",
+      "API",
+    ]);
+    expect(modelCapabilityLabels(diarize!)).toEqual([
+      "Streaming",
+      "Speaker separation",
+      "API",
+    ]);
+    expect(modelCapabilityLabels(local!)).toEqual(["On-device"]);
   });
 });
 

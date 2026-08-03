@@ -13,6 +13,7 @@ import { formatModelLabel } from "@/lib/models";
 import { modelStatusBadgeTone } from "@/lib/status-summary";
 import type { AppSnapshot } from "@/lib/types";
 import { SettingsCard } from "./settings-controls";
+import { TranscriptionOptionsSettings } from "./TranscriptionOptionsSettings";
 import type { SettingsActions } from "./types";
 
 export function ModelsSettings({
@@ -74,6 +75,12 @@ export function ModelsSettings({
           </Field>
         </SettingsCard>
       </div>
+
+      <TranscriptionOptionsSettings
+        settings={settings}
+        models={models}
+        onPatch={actions.onPatch}
+      />
 
       <ModelManager
         models={models}

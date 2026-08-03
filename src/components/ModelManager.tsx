@@ -46,10 +46,28 @@ export function cloudCredentialLabel(providerRuntime: string): string | null {
     case "openrouter-stt":
       return "Requires OpenRouter API key";
     case "openai-stt":
+    case "openai-realtime":
       return "Requires OpenAI API key";
     default:
       return null;
   }
+}
+
+export function modelCapabilityLabels(model: ModelDescriptor): string[] {
+  const labels: string[] = [];
+  if (model.capabilities.realtime) {
+    labels.push("Realtime");
+  }
+  if (model.capabilities.streaming === "required") {
+    labels.push("Streaming required");
+  } else if (model.capabilities.streaming === "optional") {
+    labels.push("Streaming");
+  }
+  if (model.capabilities.diarization) {
+    labels.push("Speaker separation");
+  }
+  labels.push(model.offline ? "On-device" : "API");
+  return labels;
 }
 
 function statusProgress(model: ModelDescriptor) {
@@ -226,6 +244,7 @@ export function ModelManager({
         const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
         const deleteReason = modelDeleteDisabledReason(model, inUse);
         const credentialLabel = cloudCredentialLabel(model.provider_runtime);
+        const capabilityLabels = modelCapabilityLabels(model);
         return (
           <article className="model-row" key={model.id} data-selected={selected}>
             <div className="model-row__main">
@@ -239,11 +258,15 @@ export function ModelManager({
                 <StatusBadge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</StatusBadge>
               </header>
               <Progress value={progress} />
+              <div className="model-row__capabilities" aria-label="Model capabilities">
+                {capabilityLabels.map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
               <div className="model-row__scores">
                 <span>Speed {model.speed_score}/10</span>
                 <span>Accuracy {model.accuracy_score}/10</span>
                 <span>{formatLanguageList(model.languages)}</span>
-                <span>{model.offline ? "Offline" : "Cloud/API"}</span>
                 {credentialLabel ? <span>{credentialLabel}</span> : null}
                 {model.download_error ? (
                   <span data-tone="danger">{model.download_error}</span>

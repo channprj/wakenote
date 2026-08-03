@@ -1359,6 +1359,33 @@ svg {
   gap: 10px;
 }
 
+.model-row__capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.model-row__capabilities span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted-foreground);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.transcription-fallback-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+}
+
 .model-row__scores span[data-tone="danger"] {
   flex-basis: 100%;
   color: var(--danger);
