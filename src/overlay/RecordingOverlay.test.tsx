@@ -110,6 +110,7 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-text-color:#f8fafc");
     expect(markup).toContain("--overlay-caption-background-rgb:255 255 255");
     expect(markup).toContain("--overlay-caption-background-alpha:0.68");
+    expect(markup).toContain("background-color:rgba(255, 255, 255, 0.68)");
   });
 
   it("prioritizes recording dictation over a visible caption", () => {
@@ -178,6 +179,7 @@ describe("caption overlay content", () => {
     expect(whiteMarkup).toContain("--dictation-background-rgb:255 255 255");
     expect(whiteMarkup).toContain("--dictation-background-opacity:0");
     expect(whiteMarkup).toContain("--dictation-foreground-rgb:0 0 0");
+    expect(whiteMarkup).toContain("background-color:rgba(255, 255, 255, 0)");
 
     const blackMarkup = renderToStaticMarkup(
       <OverlayContent
@@ -193,5 +195,23 @@ describe("caption overlay content", () => {
     expect(blackMarkup).toContain("--dictation-background-rgb:0 0 0");
     expect(blackMarkup).toContain("--dictation-background-opacity:1");
     expect(blackMarkup).toContain("--dictation-foreground-rgb:255 255 255");
+    expect(blackMarkup).toContain("background-color:rgba(0, 0, 0, 1)");
+  });
+
+  it("applies the requested background alpha while Dictation is transcribing", () => {
+    const markup = renderToStaticMarkup(
+      <OverlayContent
+        caption={emptyCaptionSnapshot()}
+        dictation={dictation("transcribing", "Transcribing…", {
+          background_color: "#000000",
+          background_opacity: 23,
+        })}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+
+    expect(markup).toContain("--dictation-background-opacity:0.23");
+    expect(markup).toContain("background-color:rgba(0, 0, 0, 0.23)");
   });
 });

@@ -47,7 +47,7 @@ describe("overlay caption css", () => {
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*gap:\s*10px/);
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*min-width:\s*190px/);
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*padding:\s*0 12px/);
-    expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*backdrop-filter:\s*blur/);
+    expect(css).not.toMatch(/backdrop-filter:\s*blur/);
     expect(css).toMatch(
       /\.overlay-dictation__waveform\s+i\s*\{[^}]*height:\s*calc\(4px \+ var\(--level\) \* 20px\)/,
     );

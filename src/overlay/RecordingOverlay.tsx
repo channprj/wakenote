@@ -95,6 +95,10 @@ function hexToRgbTriplet(hex: string): string {
   ].join(" ");
 }
 
+function rgbaColor(hex: string, opacity: number): string {
+  return `rgba(${hexToRgbTriplet(hex).replaceAll(" ", ", ")}, ${opacity})`;
+}
+
 function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
   const fontSize = Math.max(18, Math.min(48, Math.round(style.font_size_px)));
   const opacity = Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
@@ -103,6 +107,7 @@ function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
     "--overlay-caption-text-color": style.text_color,
     "--overlay-caption-background-rgb": hexToRgbTriplet(style.background_color),
     "--overlay-caption-background-alpha": `${opacity}`,
+    backgroundColor: rgbaColor(style.background_color, opacity),
   } as CSSProperties;
 }
 
@@ -142,6 +147,7 @@ function dictationStyleVariables(style: DictationOverlayStyle): CSSProperties {
     "--dictation-background-opacity": `${opacity}`,
     "--dictation-foreground-rgb":
       backgroundColor === "#ffffff" ? "0 0 0" : "255 255 255",
+    backgroundColor: rgbaColor(backgroundColor, opacity),
   } as CSSProperties;
 }
 

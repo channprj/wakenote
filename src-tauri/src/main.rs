@@ -1793,8 +1793,6 @@ fn update_settings(
         previous_settings,
         launch_at_login_action,
         live_capture_action,
-        prior_position,
-        prior_caption_style,
         previous_model_directory,
         previous_show_dock_icon,
     ) = {
@@ -1804,8 +1802,6 @@ fn update_settings(
             settings.clone(),
             launch_at_login_action_for_patch(&settings, &patch),
             live_capture_runtime_action_for_patch(&settings, &patch),
-            settings.effective_floating_overlay_position(),
-            settings.floating_overlay_caption_style(),
             settings.model_directory.clone(),
             settings.show_dock_icon,
         )
@@ -1877,16 +1873,53 @@ fn update_settings(
         transcription_state.inner().clone(),
     );
 
-    if prior_position != settings.effective_floating_overlay_position()
-        || prior_caption_style != settings.floating_overlay_caption_style()
-    {
+    if overlay_presentation_settings_changed(&previous_settings, &settings) {
         apply_overlay_settings_change(&app, &settings);
     }
 
     Ok(settings)
 }
 
+fn overlay_presentation_settings_changed(previous: &AppSettings, next: &AppSettings) -> bool {
+    previous.effective_floating_overlay_position() != next.effective_floating_overlay_position()
+        || previous.floating_overlay_caption_style() != next.floating_overlay_caption_style()
+        || previous.dictation_bubble_position != next.dictation_bubble_position
+        || previous.dictation_overlay_style() != next.dictation_overlay_style()
+}
+
+fn dictation_overlay_presentation(
+    stage: DictationStage,
+) -> Option<(overlay::DictationOverlayState, &'static str)> {
+    match stage {
+        DictationStage::Recording => {
+            Some((overlay::DictationOverlayState::Recording, "Listening…"))
+        }
+        DictationStage::Transcribing => Some((
+            overlay::DictationOverlayState::Transcribing,
+            "Transcribing…",
+        )),
+        DictationStage::Error => Some((overlay::DictationOverlayState::Error, "Dictation failed")),
+        DictationStage::Idle => None,
+    }
+}
+
+fn refresh_active_dictation_overlay(app: &AppHandle) -> bool {
+    let presentation = app.try_state::<DictationState>().and_then(|state| {
+        state
+            .lock()
+            .ok()
+            .and_then(|runtime| dictation_overlay_presentation(runtime.stage()))
+    });
+    let Some((state, message)) = presentation else {
+        return false;
+    };
+
+    show_dictation_overlay(app, state, Some(message.to_string()));
+    true
+}
+
 fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
+    let mut published_caption = false;
     if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
         let snapshot = caption_state.lock().ok().map(|mut runtime| {
             runtime.set_position(settings.effective_floating_overlay_position());
@@ -1895,11 +1928,16 @@ fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
         });
         if let Some(snapshot) = snapshot {
             publish_overlay_caption_snapshot(app, snapshot, "overlay settings change");
-            return;
+            published_caption = true;
         }
     }
 
-    if let Err(error) = overlay::hide_overlay_on_main_thread(app, "position change hide inactive") {
+    let refreshed_dictation = refresh_active_dictation_overlay(app);
+    if !published_caption
+        && !refreshed_dictation
+        && let Err(error) =
+            overlay::hide_overlay_on_main_thread(app, "position change hide inactive")
+    {
         eprintln!("[overlay] position change failed: {error}");
     }
 }
@@ -6461,6 +6499,46 @@ mod tests {
         assert!(matches!(outcome, DictionaryApplyOutcome::Invalid(_)));
         assert_eq!(backend.settings().dictionary, existing);
         assert_eq!(store.status().error_line, Some(2));
+    }
+
+    #[test]
+    fn overlay_settings_change_detects_active_dictation_opacity_and_position() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.dictation_bubble_background_opacity = 24;
+        assert!(overlay_presentation_settings_changed(&previous, &next));
+
+        let mut repositioned = previous.clone();
+        repositioned.dictation_bubble_position =
+            wakenote::settings::DictationBubblePosition::BottomRight;
+        assert!(overlay_presentation_settings_changed(
+            &previous,
+            &repositioned
+        ));
+    }
+
+    #[test]
+    fn overlay_settings_change_ignores_unrelated_preferences() {
+        let previous = AppSettings::default();
+        let mut next = previous.clone();
+        next.autoplay_next_transcript = !previous.autoplay_next_transcript;
+        assert!(!overlay_presentation_settings_changed(&previous, &next));
+    }
+
+    #[test]
+    fn active_dictation_stage_maps_to_a_refreshable_overlay_presentation() {
+        assert_eq!(
+            dictation_overlay_presentation(DictationStage::Recording),
+            Some((overlay::DictationOverlayState::Recording, "Listening…"))
+        );
+        assert_eq!(
+            dictation_overlay_presentation(DictationStage::Transcribing),
+            Some((
+                overlay::DictationOverlayState::Transcribing,
+                "Transcribing…"
+            ))
+        );
+        assert_eq!(dictation_overlay_presentation(DictationStage::Idle), None);
     }
 
     #[test]
