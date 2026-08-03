@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
@@ -783,11 +784,14 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
             })
             .expect_err("missing provider key");
 
+        let TranscriptionError::Failure(failure) = error else {
+            panic!("structured cloud failure")
+        };
+        assert_eq!(failure.provider, Some(provider));
+        assert_eq!(failure.category, FailureCategory::Authentication);
         assert_eq!(
-            error,
-            TranscriptionError::Engine(format!(
-                "{provider} API key is not configured; add it in Settings > Integrations"
-            ))
+            failure.safe_message,
+            format!("{provider} API key is not configured; add it in Settings > Integrations")
         );
     }
 }

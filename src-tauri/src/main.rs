@@ -85,7 +85,8 @@ use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
     FallbackTranscriber, RuntimeTranscriber, TranscriptionJobOutcome, TranscriptionJobStatus,
-    TranscriptionWorker, TranscriptionWorkerOptions, model_supports_live_partials,
+    TranscriptionPartialCallback, TranscriptionWorker, TranscriptionWorkerOptions,
+    model_supports_live_partials,
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
@@ -1465,6 +1466,8 @@ fn process_dictation_recording(
     };
     let transcription_options =
         validate_model_options(&models, &dictation_model, &settings.transcription_options);
+    let transcriber =
+        transcriber.with_file_streaming(transcription_options.streaming_enabled, None);
     let fallback_model_id = if transcription_options.cost_limit_fallback_enabled {
         transcription_options.cost_limit_fallback_model_id.clone()
     } else {
@@ -4788,7 +4791,12 @@ fn kick_transcription_worker(
             }
 
             for started in started_jobs {
-                spawn_transcription_job(started, outcome_tx.clone());
+                spawn_transcription_job(
+                    started,
+                    outcome_tx.clone(),
+                    app.clone(),
+                    backend_state.clone(),
+                );
                 active_jobs = active_jobs.saturating_add(1);
             }
 
@@ -4826,6 +4834,8 @@ fn kick_transcription_worker(
 fn spawn_transcription_job(
     started: StartedTranscriptionJob,
     outcome_tx: mpsc::Sender<(PathBuf, TranscriptionJobOutcome)>,
+    app: AppHandle,
+    backend_state: BackendState,
 ) {
     thread::spawn(move || {
         let audio_path = started.job.audio_path.clone();
@@ -4849,6 +4859,16 @@ fn spawn_transcription_job(
                 return;
             }
         };
+        let partial_audio_path = audio_path.clone();
+        let partial_app = app.clone();
+        let partial_backend = backend_state.clone();
+        let partial_callback: TranscriptionPartialCallback = Arc::new(move |text| {
+            emit_file_stream_partial(&partial_app, &partial_backend, &partial_audio_path, text);
+        });
+        let transcriber = transcriber.with_file_streaming(
+            started.transcription_options.streaming_enabled,
+            Some(partial_callback),
+        );
         let fallback = FallbackTranscriber::configured(
             transcriber.clone(),
             transcriber,
@@ -4880,6 +4900,62 @@ fn spawn_transcription_job(
 
         let _ = outcome_tx.send((audio_path, outcome));
     });
+}
+
+fn emit_file_stream_partial(
+    app: &AppHandle,
+    backend_state: &BackendState,
+    audio_path: &Path,
+    text: String,
+) {
+    let chunk_id = backend_state
+        .lock()
+        .ok()
+        .and_then(|backend| backend.chunk_id_for_audio_path(audio_path))
+        .or_else(|| chunk_id_from_metadata(audio_path));
+    let Some(chunk_id) = chunk_id else {
+        return;
+    };
+    let source = capture_source_identity_from_metadata(audio_path);
+    if source.microphone_slot != Some(MicrophoneSlot::Secondary)
+        && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
+    {
+        let (overlay_position, caption_style) = backend_state
+            .lock()
+            .ok()
+            .map(|backend| {
+                let settings = backend.settings();
+                (
+                    settings.effective_floating_overlay_position(),
+                    settings.floating_overlay_caption_style(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    FloatingOverlayPosition::Off,
+                    AppSettings::default().floating_overlay_caption_style(),
+                )
+            });
+        let snapshot = caption_state.lock().ok().map(|mut runtime| {
+            runtime.show_partial(chunk_id, &text, overlay_position, caption_style);
+            runtime.snapshot()
+        });
+        if let Some(snapshot) = snapshot {
+            publish_overlay_caption_snapshot(app, snapshot, "OpenAI file stream partial");
+        }
+    }
+    if let Err(error) = app.emit(
+        EVENT_LIVE_PARTIAL,
+        LivePartialPayload {
+            source_key: source.source_key,
+            source_label: source.source_label,
+            microphone_slot: source.microphone_slot,
+            chunk_id,
+            text,
+        },
+    ) {
+        eprintln!("[wakenote] WARN failed to emit OpenAI stream partial: {error}");
+    }
 }
 
 fn emit_outcome_to_frontend(

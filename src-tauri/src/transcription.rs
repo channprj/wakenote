@@ -1,4 +1,5 @@
 use std::ffi::{CStr, c_char, c_uint, c_void};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,7 +16,10 @@ use crate::cloud_transcription::{
     TranscriptionFailure,
 };
 use crate::dictionary::DictionaryContext;
-use crate::models::{ModelStore, default_model_registry};
+use crate::models::{
+    ModelStore, OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL, OPENAI_GPT_TRANSCRIBE_MODEL,
+    default_model_registry,
+};
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
@@ -793,11 +797,34 @@ impl Transcriber for WhisperTranscriber {
     }
 }
 
-#[derive(Debug, Clone)]
+pub type TranscriptionPartialCallback = Arc<dyn Fn(String) + Send + Sync>;
+
+#[derive(Clone)]
 pub struct RuntimeTranscriber {
     model_directory: PathBuf,
     suppress_low_confidence_decode: bool,
     cloud: CloudTranscriptionClient,
+    streaming_enabled: bool,
+    partial_callback: Option<TranscriptionPartialCallback>,
+}
+
+impl fmt::Debug for RuntimeTranscriber {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeTranscriber")
+            .field("model_directory", &self.model_directory)
+            .field(
+                "suppress_low_confidence_decode",
+                &self.suppress_low_confidence_decode,
+            )
+            .field("cloud", &self.cloud)
+            .field("streaming_enabled", &self.streaming_enabled)
+            .field(
+                "partial_callback_configured",
+                &self.partial_callback.is_some(),
+            )
+            .finish()
+    }
 }
 
 impl RuntimeTranscriber {
@@ -806,6 +833,8 @@ impl RuntimeTranscriber {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: true,
             cloud: CloudTranscriptionClient::default(),
+            streaming_enabled: false,
+            partial_callback: None,
         }
     }
 
@@ -818,6 +847,8 @@ impl RuntimeTranscriber {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
             cloud: CloudTranscriptionClient::default(),
+            streaming_enabled: false,
+            partial_callback: None,
         }
     }
 
@@ -836,7 +867,19 @@ impl RuntimeTranscriber {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
             cloud: CloudTranscriptionClient::new(credentials)?,
+            streaming_enabled: false,
+            partial_callback: None,
         })
+    }
+
+    pub fn with_file_streaming(
+        mut self,
+        enabled: bool,
+        partial_callback: Option<TranscriptionPartialCallback>,
+    ) -> Self {
+        self.streaming_enabled = enabled;
+        self.partial_callback = partial_callback;
+        self
     }
 
     fn model_runtime(&self, model_id: &str) -> String {
@@ -877,7 +920,23 @@ impl Transcriber for RuntimeTranscriber {
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 "openai-stt" => self
                     .cloud
-                    .transcribe_openai(request.audio_path, request.language, request.dictionary)
+                    .transcribe_openai_model(
+                        request.audio_path,
+                        request.language,
+                        request.dictionary,
+                        match request.model_id {
+                            "openai-gpt-4o-transcribe-diarize" => {
+                                OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL
+                            }
+                            _ => OPENAI_GPT_TRANSCRIBE_MODEL,
+                        },
+                        self.streaming_enabled,
+                        &mut |text| {
+                            if let Some(callback) = self.partial_callback.as_ref() {
+                                callback(text.to_string());
+                            }
+                        },
+                    )
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);

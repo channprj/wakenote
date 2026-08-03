@@ -1,4 +1,5 @@
 use std::fmt;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -274,6 +275,20 @@ pub trait CloudTranscriptionTransport: Send + Sync {
         &self,
         request: CloudTranscriptionRequest,
     ) -> Result<CloudTranscriptionResponse, CloudTransportError>;
+
+    fn execute_stream(
+        &self,
+        request: CloudTranscriptionRequest,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<CloudTranscriptionResponse, CloudTransportError> {
+        let response = self.execute(request)?;
+        if (200..300).contains(&response.status) {
+            for line in response.body.lines() {
+                on_line(line);
+            }
+        }
+        Ok(response)
+    }
 }
 
 #[derive(Clone)]
@@ -289,14 +304,12 @@ impl ReqwestCloudTranscriptionTransport {
             .map_err(|_| CloudTranscriptionError::Request("Cloud"))?;
         Ok(Self { client })
     }
-}
 
-impl CloudTranscriptionTransport for ReqwestCloudTranscriptionTransport {
-    fn execute(
+    fn send(
         &self,
         request: CloudTranscriptionRequest,
-    ) -> Result<CloudTranscriptionResponse, CloudTransportError> {
-        let response = match request {
+    ) -> Result<reqwest::blocking::Response, CloudTransportError> {
+        match request {
             CloudTranscriptionRequest::OpenRouter { url, api_key, body } => self
                 .client
                 .post(url)
@@ -332,11 +345,101 @@ impl CloudTranscriptionTransport for ReqwestCloudTranscriptionTransport {
             } else {
                 CloudTransportError::Request
             }
-        })?;
+        })
+    }
+}
+
+impl CloudTranscriptionTransport for ReqwestCloudTranscriptionTransport {
+    fn execute(
+        &self,
+        request: CloudTranscriptionRequest,
+    ) -> Result<CloudTranscriptionResponse, CloudTransportError> {
+        let response = self.send(request)?;
 
         let status = response.status().as_u16();
         let body = response.text().map_err(|_| CloudTransportError::Request)?;
         Ok(CloudTranscriptionResponse { status, body })
+    }
+
+    fn execute_stream(
+        &self,
+        request: CloudTranscriptionRequest,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<CloudTranscriptionResponse, CloudTransportError> {
+        let response = self.send(request)?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            let body = response.text().map_err(|_| CloudTransportError::Request)?;
+            return Ok(CloudTranscriptionResponse { status, body });
+        }
+        for line in BufReader::new(response).lines() {
+            let line = line.map_err(|_| CloudTransportError::Request)?;
+            on_line(&line);
+        }
+        Ok(CloudTranscriptionResponse {
+            status,
+            body: String::new(),
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+struct OpenAiStreamAccumulator {
+    partial_text: String,
+    final_text: Option<String>,
+    parse_error: bool,
+}
+
+impl OpenAiStreamAccumulator {
+    fn push_line(&mut self, line: &str, on_partial: &mut dyn FnMut(&str)) {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(':') || line == "data: [DONE]" {
+            return;
+        }
+        let Some(payload) = line.strip_prefix("data:").map(str::trim) else {
+            return;
+        };
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(payload) else {
+            self.parse_error = true;
+            return;
+        };
+        match event.get("type").and_then(serde_json::Value::as_str) {
+            Some("transcript.text.delta") => {
+                let Some(delta) = event.get("delta").and_then(serde_json::Value::as_str) else {
+                    self.parse_error = true;
+                    return;
+                };
+                self.partial_text.push_str(delta);
+                on_partial(&self.partial_text);
+            }
+            Some("transcript.text.done") => {
+                if self.final_text.is_some() {
+                    self.parse_error = true;
+                    return;
+                }
+                let Some(text) = event.get("text").and_then(serde_json::Value::as_str) else {
+                    self.parse_error = true;
+                    return;
+                };
+                self.final_text = Some(text.to_string());
+            }
+            Some(_) => {}
+            None => self.parse_error = true,
+        }
+    }
+
+    fn finish(self, provider: &'static str) -> Result<String, CloudTranscriptionError> {
+        if self.parse_error {
+            return Err(CloudTranscriptionError::InvalidResponse(provider));
+        }
+        let text = self
+            .final_text
+            .ok_or(CloudTranscriptionError::InvalidResponse(provider))?;
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(CloudTranscriptionError::EmptyTranscript(provider));
+        }
+        Ok(text.to_string())
     }
 }
 
@@ -414,6 +517,25 @@ impl CloudTranscriptionClient {
         language: TranscriptionLanguage,
         dictionary: &DictionaryContext,
     ) -> Result<String, CloudTranscriptionError> {
+        self.transcribe_openai_model(
+            audio_path,
+            language,
+            dictionary,
+            OPENAI_GPT_TRANSCRIBE_MODEL,
+            false,
+            &mut |_| {},
+        )
+    }
+
+    pub fn transcribe_openai_model(
+        &self,
+        audio_path: &Path,
+        language: TranscriptionLanguage,
+        dictionary: &DictionaryContext,
+        provider_model: &str,
+        streaming: bool,
+        on_partial: &mut dyn FnMut(&str),
+    ) -> Result<String, CloudTranscriptionError> {
         const PROVIDER: &str = "OpenAI";
         let api_key = self
             .credentials
@@ -422,9 +544,12 @@ impl CloudTranscriptionClient {
             .ok_or(CloudTranscriptionError::MissingKey(PROVIDER))?;
         let (audio, format, mime_type) = read_audio(audio_path, PROVIDER)?;
         let mut fields = vec![
-            ("model".to_string(), OPENAI_GPT_TRANSCRIBE_MODEL.to_string()),
+            ("model".to_string(), provider_model.to_string()),
             ("response_format".to_string(), "json".to_string()),
         ];
+        if streaming {
+            fields.push(("stream".to_string(), "true".to_string()));
+        }
         if let Some(language) = language.whisper_code() {
             fields.push(("language".to_string(), language.to_string()));
         }
@@ -443,7 +568,34 @@ impl CloudTranscriptionClient {
             audio,
             fields,
         };
-        self.execute_and_parse(PROVIDER, request)
+        if streaming {
+            self.execute_stream_and_parse(PROVIDER, request, on_partial)
+        } else {
+            self.execute_and_parse(PROVIDER, request)
+        }
+    }
+
+    fn execute_stream_and_parse(
+        &self,
+        provider: &'static str,
+        request: CloudTranscriptionRequest,
+        on_partial: &mut dyn FnMut(&str),
+    ) -> Result<String, CloudTranscriptionError> {
+        let mut stream = OpenAiStreamAccumulator::default();
+        let response = self
+            .transport
+            .execute_stream(request, &mut |line| stream.push_line(line, on_partial))
+            .map_err(|error| {
+                CloudTranscriptionError::Failure(failure_for_transport(provider, error))
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(CloudTranscriptionError::Failure(classify_http_failure(
+                provider,
+                response.status,
+                &response.body,
+            )));
+        }
+        stream.finish(provider)
     }
 
     fn execute_and_parse(
@@ -610,6 +762,79 @@ mod tests {
     }
 
     #[test]
+    fn openai_stream_emits_ordered_cumulative_partials_and_one_final_text() {
+        let (_directory, audio_path) = audio_fixture("wav");
+        let body = [
+            ": keepalive",
+            "",
+            r#"data: {"type":"transcript.text.delta","delta":"Wake"}"#,
+            r#"data: {"type":"transcript.text.delta","delta":"Note works"}"#,
+            r#"data: {"type":"transcript.text.done","text":"WakeNote works"}"#,
+            "data: [DONE]",
+        ]
+        .join("\n");
+        let transport = FakeTransport::responding(CloudTranscriptionResponse { status: 200, body });
+        let client = CloudTranscriptionClient::with_transport(
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            transport.clone(),
+        );
+        let mut partials = Vec::new();
+
+        let text = client
+            .transcribe_openai_model(
+                &audio_path,
+                TranscriptionLanguage::Ko,
+                &DictionaryContext::default(),
+                OPENAI_GPT_TRANSCRIBE_MODEL,
+                true,
+                &mut |partial| partials.push(partial.to_string()),
+            )
+            .expect("streamed transcript");
+
+        assert_eq!(partials, ["Wake", "WakeNote works"]);
+        assert_eq!(text, "WakeNote works");
+        let requests = transport.requests.lock().expect("requests");
+        let CloudTranscriptionRequest::OpenAi { fields, .. } = &requests[0] else {
+            panic!("OpenAI request")
+        };
+        assert!(fields.contains(&("stream".into(), "true".into())));
+        assert!(fields.contains(&("model".into(), OPENAI_GPT_TRANSCRIBE_MODEL.into())));
+    }
+
+    #[test]
+    fn openai_stream_rejects_malformed_missing_and_duplicate_done_events() {
+        for body in [
+            "data: not-json",
+            r#"data: {"type":"transcript.text.delta","delta":"partial"}"#,
+            concat!(
+                "data: {\"type\":\"transcript.text.done\",\"text\":\"one\"}\n",
+                "data: {\"type\":\"transcript.text.done\",\"text\":\"two\"}"
+            ),
+        ] {
+            let (_directory, audio_path) = audio_fixture("wav");
+            let client = CloudTranscriptionClient::with_transport(
+                TranscriptionCredentials::new(None, Some("key".into())),
+                FakeTransport::responding(CloudTranscriptionResponse {
+                    status: 200,
+                    body: body.to_string(),
+                }),
+            );
+
+            assert_eq!(
+                client.transcribe_openai_model(
+                    &audio_path,
+                    TranscriptionLanguage::Auto,
+                    &DictionaryContext::default(),
+                    OPENAI_GPT_TRANSCRIBE_MODEL,
+                    true,
+                    &mut |_| {},
+                ),
+                Err(CloudTranscriptionError::InvalidResponse("OpenAI"))
+            );
+        }
+    }
+
+    #[test]
     fn openrouter_builds_documented_audio_json_without_dictionary_fields() {
         let (_directory, audio_path) = audio_fixture("wav");
         let transport = FakeTransport::responding(success_response("hello"));
@@ -693,6 +918,7 @@ mod tests {
         assert_eq!(audio, b"audio bytes");
         assert!(fields.contains(&("model".into(), OPENAI_GPT_TRANSCRIBE_MODEL.into())));
         assert!(fields.contains(&("response_format".into(), "json".into())));
+        assert!(!fields.iter().any(|(name, _)| name == "stream"));
         assert!(fields.contains(&("language".into(), "ko".into())));
         assert_eq!(
             fields

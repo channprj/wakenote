@@ -2109,7 +2109,8 @@ impl AppBackend {
             &started.model_directory,
             started.credentials.map_err(|error| error.to_string())?,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .with_file_streaming(started.transcription_options.streaming_enabled, None);
         let fallback = FallbackTranscriber::configured(
             runtime.clone(),
             runtime,
