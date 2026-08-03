@@ -8,6 +8,7 @@ import {
   countPendingQueueJobs,
   countRunningQueueJobs,
   countSkippedQueueJobs,
+  countUnreadActivityOutcomes,
   fileUrlFromPath,
   formatAudioPathLabel,
   formatLocalTimestamp,
@@ -173,6 +174,19 @@ describe("transcript history helpers", () => {
     expect(humanizeQueueJobStatus("cancelled")).toBe("Cancelled");
     expect(humanizeQueueJobStatus("skipped")).toBe("Skipped");
     expect(humanizeQueueJobStatus("")).toBe("");
+  });
+
+  it("counts only unread failed, cancelled, and skipped Activity outcomes", () => {
+    const jobs: QueueJob[] = [
+      { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed", is_read: false },
+      { id: 2, audio_path: "/cancelled.wav", model_id: "m", status: "cancelled" },
+      { id: 3, audio_path: "/skipped.wav", model_id: "m", status: "skipped", is_read: false },
+      { id: 4, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
+      { id: 5, audio_path: "/pending.wav", model_id: "m", status: "pending", is_read: false },
+      { id: 6, audio_path: "/completed.wav", model_id: "m", status: "completed" },
+    ];
+
+    expect(countUnreadActivityOutcomes(jobs)).toBe(3);
   });
 
   it("title-cases each TrayState value for status badges", () => {

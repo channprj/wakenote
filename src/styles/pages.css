@@ -965,6 +965,18 @@
   gap: 2px;
 }
 
+.queue-panel tr[data-read="true"] {
+  color: var(--muted-foreground);
+}
+
+.queue-panel tr[data-read="true"] > td:first-child {
+  box-shadow: inset 1px 0 0 var(--border);
+}
+
+.queue-panel tr[data-read="true"] .queue-job__error {
+  color: var(--muted-foreground);
+}
+
 .meeting-row,
 .transcript-entry,
 .report-history__row,

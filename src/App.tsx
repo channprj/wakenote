@@ -31,6 +31,7 @@ import {
   enqueueBacklog,
   loadRecentTranscripts,
   loadSnapshot,
+  markAllActivityRead,
   requestAccessibilityPermission,
   openAccessibilityPermissionSettings,
   requestMicrophonePermission,
@@ -60,6 +61,7 @@ import {
   shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./lib/app-state";
+import { countUnreadActivityOutcomes } from "./lib/transcript-history";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
@@ -501,6 +503,7 @@ export default function App() {
           onEnqueueBacklog={() =>
             void runAction(() => enqueueBacklog(snapshot.settings.save_root))
           }
+          onMarkAllRead={() => void runAction(markAllActivityRead)}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
           onProcessNext={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
@@ -564,7 +567,7 @@ export default function App() {
   return (
     <AppFrame
       activeRoute={activeRoute}
-      queueAttentionCount={snapshot.queue.failed_count}
+      queueAttentionCount={countUnreadActivityOutcomes(snapshot.queue.jobs)}
       onNavigate={setActiveRoute}
       theme={themeMode}
       statusRail={

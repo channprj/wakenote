@@ -12,6 +12,7 @@ function renderQueue(queue: QueueSnapshot) {
       canProcessTranscription
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
+      onMarkAllRead={() => {}}
       onCancelCurrent={() => {}}
       onProcessNext={() => {}}
       onRetry={() => {}}
@@ -56,5 +57,37 @@ describe("QueuePanel compact layout", () => {
     });
 
     expect(markup).not.toContain('data-tone="danger"');
+  });
+
+  it("offers one read action for unread failed, cancelled, and skipped outcomes", () => {
+    const markup = renderQueue({
+      jobs: [
+        { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed" },
+        { id: 2, audio_path: "/cancelled.wav", model_id: "m", status: "cancelled" },
+        { id: 3, audio_path: "/skipped.wav", model_id: "m", status: "skipped" },
+        { id: 4, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 2,
+    });
+
+    expect(markup).toContain("Mark all read");
+    expect(markup).toContain("Mark 3 outcomes as read");
+    expect(markup).toMatch(/<button[^>]*title="Mark 3 outcomes as read"(?![^>]*disabled)/);
+    expect(markup).toContain('data-read="true"');
+  });
+
+  it("disables mark all read when every attention outcome is already read", () => {
+    const markup = renderQueue({
+      jobs: [
+        { id: 1, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 1,
+    });
+
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="No unread outcomes"/);
   });
 });

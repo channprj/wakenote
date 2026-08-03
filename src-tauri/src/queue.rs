@@ -27,6 +27,8 @@ pub struct QueueJob {
     pub model_id: String,
     pub status: QueueJobStatus,
     pub error: Option<String>,
+    #[serde(default)]
+    pub is_read: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcription_options: Option<TranscriptionOptions>,
 }
@@ -90,6 +92,7 @@ impl TranscriptionQueue {
             model_id: model_id.into(),
             status: QueueJobStatus::Pending,
             error: None,
+            is_read: false,
             transcription_options: None,
         });
         (id, true)
@@ -149,6 +152,7 @@ impl TranscriptionQueue {
             job.model_id = model_id;
             job.status = QueueJobStatus::Pending;
             job.error = None;
+            job.is_read = false;
             return Ok(job.id);
         }
 
@@ -241,6 +245,7 @@ impl TranscriptionQueue {
         }
         job.status = QueueJobStatus::Pending;
         job.error = None;
+        job.is_read = false;
         Ok(())
     }
 
@@ -256,6 +261,7 @@ impl TranscriptionQueue {
         }
         job.status = QueueJobStatus::Skipped;
         job.error = None;
+        job.is_read = false;
         Ok(())
     }
 
@@ -282,6 +288,37 @@ impl TranscriptionQueue {
                 .filter(|job| job.status == QueueJobStatus::Failed)
                 .count(),
         }
+    }
+
+    pub fn unread_attention_count(&self) -> usize {
+        self.jobs
+            .iter()
+            .filter(|job| {
+                !job.is_read
+                    && matches!(
+                        job.status,
+                        QueueJobStatus::Failed
+                            | QueueJobStatus::Cancelled
+                            | QueueJobStatus::Skipped
+                    )
+            })
+            .count()
+    }
+
+    pub fn mark_attention_outcomes_read(&mut self) -> usize {
+        let mut marked_count = 0;
+        for job in &mut self.jobs {
+            if !job.is_read
+                && matches!(
+                    job.status,
+                    QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
+                )
+            {
+                job.is_read = true;
+                marked_count += 1;
+            }
+        }
+        marked_count
     }
 
     pub fn jobs_mut(&mut self) -> &mut [QueueJob] {

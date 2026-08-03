@@ -3166,6 +3166,12 @@ fn skip_job(state: State<'_, BackendState>, id: u64) -> Result<QueueSnapshot, St
 }
 
 #[tauri::command]
+fn mark_all_activity_read(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(backend.mark_all_activity_read())
+}
+
+#[tauri::command]
 fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.cancel_current_transcription()
@@ -6726,6 +6732,7 @@ fn main() {
             regenerate_transcript,
             open_transcript_folder,
             skip_job,
+            mark_all_activity_read,
             cancel_current_transcription,
             cancel_current_operation,
             reveal_save_folder,

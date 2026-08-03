@@ -1402,13 +1402,35 @@ svg {
    leftover space, so a tall window does not stretch the summary cards. */
 .queue-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
   min-height: 0;
 }
 
 .queue-table-wrap {
   min-height: 0;
+}
+
+.queue-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.queue-pagination__range {
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-pagination__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
 }
 
 .meeting-panel {

@@ -1502,6 +1502,38 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function markAllActivityRead(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    let marked = false;
+    const jobs = browserSnapshot.queue.jobs.map((job) => {
+      if (
+        job.is_read === true ||
+        !["failed", "cancelled", "skipped"].includes(job.status)
+      ) {
+        return job;
+      }
+
+      marked = true;
+      return { ...job, is_read: true };
+    });
+    if (!marked) {
+      return browserSnapshot;
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
+    return browserSnapshot;
+  }
+
+  await invoke<QueueSnapshot>("mark_all_activity_read");
+  return loadSnapshot();
+}
+
 export async function cancelCurrentOperation(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     const activeModel = browserSnapshot.models.find((model) =>
@@ -1943,7 +1975,12 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
       }
 
       skipped = true;
-      return { ...job, status: "skipped" as const, error: null };
+      return {
+        ...job,
+        status: "skipped" as const,
+        error: null,
+        is_read: false,
+      };
     });
     if (!skipped) {
       return browserSnapshot;

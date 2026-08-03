@@ -2076,6 +2076,13 @@ impl AppBackend {
         Ok(self.queue.snapshot())
     }
 
+    pub fn mark_all_activity_read(&mut self) -> QueueSnapshot {
+        if self.queue.mark_attention_outcomes_read() > 0 {
+            self.persist_queue();
+        }
+        self.queue.snapshot()
+    }
+
     pub fn cancel_current_transcription(&mut self) -> Result<QueueSnapshot, String> {
         match self.queue.cancel_current("cancelled by user") {
             Ok(()) => self.persist_queue(),

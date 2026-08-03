@@ -237,6 +237,33 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
 }
 
 #[test]
+fn backend_persists_marking_all_activity_outcomes_read() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    let mut queue = TranscriptionQueue::new();
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+    let cancelled = queue.enqueue_file("/recordings/cancelled.wav", "whisper-medium");
+    let skipped = queue.enqueue_file("/recordings/skipped.wav", "whisper-medium");
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("fail job");
+    assert_eq!(queue.start_next().expect("start job").id, cancelled);
+    queue
+        .cancel_current("cancelled by user")
+        .expect("cancel job");
+    queue.skip(skipped).expect("skip job");
+    store.save_queue(&queue).expect("save unread outcomes");
+
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("load backend");
+    let marked = backend.mark_all_activity_read();
+    assert!(marked.jobs.iter().all(|job| job.is_read));
+    drop(backend);
+
+    let reloaded = AppBackend::load_from_dir(tmp.path()).expect("reload backend");
+    assert!(reloaded.queue_snapshot().jobs.iter().all(|job| job.is_read));
+}
+
+#[test]
 fn persistence_compacts_completed_queue_history_on_load() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = AppPersistence::new(tmp.path());

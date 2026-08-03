@@ -1,5 +1,8 @@
 import {
   Ban,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
   FileAudio,
   FolderInput,
   ListChecksIcon,
@@ -7,7 +10,7 @@ import {
   RotateCw,
   SkipForward,
 } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
 import { StatusBadge } from "./ui/status-badge";
@@ -15,6 +18,7 @@ import { formatModelLabel } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
   fileUrlFromPath,
+  countUnreadActivityOutcomes,
   formatAudioPathLabel,
   groupQueueJobsByDay,
   humanizeQueueJobStatus,
@@ -22,7 +26,36 @@ import {
   queueJobSidecarPath,
   queueStatsBanner,
 } from "../lib/transcript-history";
-import type { ModelDescriptor, QueueJobStatus, QueueSnapshot } from "../lib/types";
+import type {
+  ModelDescriptor,
+  QueueJob,
+  QueueJobStatus,
+  QueueSnapshot,
+} from "../lib/types";
+
+export const ACTIVITY_PAGE_SIZE = 50;
+
+export function activityPage(
+  jobs: QueueJob[],
+  requestedPage: number,
+  pageSize = ACTIVITY_PAGE_SIZE,
+) {
+  const orderedJobs = groupQueueJobsByDay(jobs).flatMap((group) => group.entries);
+  const total = orderedJobs.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(requestedPage)), pageCount);
+  const offset = (page - 1) * pageSize;
+  const pageJobs = orderedJobs.slice(offset, offset + pageSize);
+
+  return {
+    jobs: pageJobs,
+    page,
+    pageCount,
+    rangeStart: total === 0 ? 0 : offset + 1,
+    rangeEnd: offset + pageJobs.length,
+    total,
+  };
+}
 
 export function queueJobActionState(status: QueueJobStatus) {
   return {
@@ -102,6 +135,7 @@ export function QueuePanel({
   canProcessTranscription,
   onImportAudioFiles,
   onEnqueueBacklog,
+  onMarkAllRead,
   onCancelCurrent,
   onProcessNext,
   onRetry,
@@ -112,16 +146,20 @@ export function QueuePanel({
   canProcessTranscription: boolean;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
+  onMarkAllRead: () => void;
   onCancelCurrent: () => void;
   onProcessNext: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
 }) {
+  const [requestedPage, setRequestedPage] = useState(1);
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
-  const groupedJobs = groupQueueJobsByDay(queue.jobs);
+  const pagination = activityPage(queue.jobs, requestedPage);
+  const groupedJobs = groupQueueJobsByDay(pagination.jobs);
   const statsBanner = queueStatsBanner(queue);
+  const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
 
   return (
     <div className="queue-panel">
@@ -145,6 +183,20 @@ export function QueuePanel({
         <Button type="button" variant="secondary" onClick={onEnqueueBacklog}>
           <FolderInput data-icon="inline-start" />
           Process Backlog
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onMarkAllRead}
+          disabled={unreadOutcomeCount === 0}
+          title={
+            unreadOutcomeCount === 0
+              ? "No unread outcomes"
+              : `Mark ${unreadOutcomeCount} outcomes as read`
+          }
+        >
+          <CheckCheck data-icon="inline-start" />
+          Mark all read
         </Button>
         <Button
           type="button"
@@ -213,7 +265,11 @@ export function QueuePanel({
                       <StatusBadge tone={queueJobStatusBadgeTone(job.status)}>{humanizeQueueJobStatus(job.status)}</StatusBadge>
                     );
                     return (
-                      <tr key={job.id} data-tone={rowTone === "neutral" ? undefined : rowTone}>
+                      <tr
+                        key={job.id}
+                        data-tone={rowTone === "neutral" ? undefined : rowTone}
+                        data-read={job.is_read === true ? true : undefined}
+                      >
                         <td className="queue-job__audio" data-label="Audio">
                           <a className="truncate" href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
                             {formatAudioPathLabel(job.audio_path)}
@@ -275,6 +331,38 @@ export function QueuePanel({
           </tbody>
         </table>
       </div>
+      {pagination.pageCount > 1 ? (
+        <nav className="queue-pagination" aria-label="Activity pages">
+          <span className="queue-pagination__range">
+            {pagination.rangeStart}–{pagination.rangeEnd} of {pagination.total}
+          </span>
+          <div className="queue-pagination__controls">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous Activity page"
+              disabled={pagination.page === 1}
+              onClick={() => setRequestedPage(pagination.page - 1)}
+            >
+              <ChevronLeft data-icon="solo" />
+            </Button>
+            <span aria-live="polite">
+              Page {pagination.page} of {pagination.pageCount}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next Activity page"
+              disabled={pagination.page === pagination.pageCount}
+              onClick={() => setRequestedPage(pagination.page + 1)}
+            >
+              <ChevronRight data-icon="solo" />
+            </Button>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }

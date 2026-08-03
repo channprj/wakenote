@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activityPage,
   cancelCurrentDisabledReason,
   processNextDisabledReason,
   queueJobActionState,
@@ -7,7 +8,44 @@ import {
   queueJobSkipDisabledReason,
   queueToolbarActionState,
 } from "./QueuePanel";
-import type { QueueJobStatus } from "../lib/types";
+import type { QueueJob, QueueJobStatus } from "../lib/types";
+
+describe("Activity pagination", () => {
+  it("shows the newest day first and caps each page at 50 jobs", () => {
+    const olderJobs: QueueJob[] = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      audio_path: `/recordings/20260802/${String(index + 1).padStart(6, "0")}.wav`,
+      model_id: "whisper-medium",
+      status: "completed",
+    }));
+    const newestJob: QueueJob = {
+      id: 51,
+      audio_path: "/recordings/20260803/010203.wav",
+      model_id: "whisper-medium",
+      status: "failed",
+    };
+
+    const first = activityPage([...olderJobs, newestJob], 1);
+    const second = activityPage([...olderJobs, newestJob], 2);
+
+    expect(first).toMatchObject({ page: 1, pageCount: 2, rangeStart: 1, rangeEnd: 50, total: 51 });
+    expect(first.jobs).toHaveLength(50);
+    expect(first.jobs[0]?.id).toBe(51);
+    expect(second).toMatchObject({ page: 2, pageCount: 2, rangeStart: 51, rangeEnd: 51, total: 51 });
+    expect(second.jobs.map((job) => job.id)).toEqual([50]);
+  });
+
+  it("clamps out-of-range pages and keeps an empty queue on page one", () => {
+    expect(activityPage([], 7)).toMatchObject({
+      jobs: [],
+      page: 1,
+      pageCount: 1,
+      rangeStart: 0,
+      rangeEnd: 0,
+      total: 0,
+    });
+  });
+});
 
 describe("queue row actions", () => {
   it.each([

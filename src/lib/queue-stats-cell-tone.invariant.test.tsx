@@ -47,6 +47,7 @@ function renderQueuePanelMarkup(status: QueueJobStatus): string {
       canProcessTranscription
       onImportAudioFiles={() => {}}
       onEnqueueBacklog={() => {}}
+      onMarkAllRead={() => {}}
       onCancelCurrent={() => {}}
       onProcessNext={() => {}}
       onRetry={() => {}}

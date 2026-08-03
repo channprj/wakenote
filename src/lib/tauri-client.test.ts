@@ -36,6 +36,7 @@ import {
   subscribeLlmReportRuns,
   loadRecognizedSources,
   loadSourceCaptureStatus,
+  markAllActivityRead,
   openDictionaryFile,
   reloadDictionaryFile,
   verifyModel,
@@ -1098,5 +1099,60 @@ describe("tauri source capture client (browser fallback)", () => {
     await stopSourceCapture();
     const stopped = await loadSourceCaptureStatus();
     expect(stopped.capturing).toBe(false);
+  });
+});
+
+describe("Activity read state (browser fallback)", () => {
+  it("marks failed, cancelled, and skipped jobs read without changing active work", async () => {
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/read-failed.wav",
+      "/tmp/imported/read-cancelled.wav",
+      "/tmp/imported/read-skipped.wav",
+      "/tmp/imported/keep-pending.wav",
+    ]);
+    const statuses = ["failed", "cancelled", "skipped", "pending"] as const;
+    const paths = [
+      "/tmp/imported/read-failed.wav",
+      "/tmp/imported/read-cancelled.wav",
+      "/tmp/imported/read-skipped.wav",
+      "/tmp/imported/keep-pending.wav",
+    ];
+    paths.forEach((audioPath, index) => {
+      const job = before.queue.jobs.find((candidate) => candidate.audio_path === audioPath);
+      expect(job).toBeDefined();
+      if (job) {
+        job.status = statuses[index];
+        job.is_read = false;
+      }
+    });
+
+    const marked = await markAllActivityRead();
+
+    for (const audioPath of paths.slice(0, 3)) {
+      expect(
+        marked.queue.jobs.find((job) => job.audio_path === audioPath),
+      ).toMatchObject({ is_read: true });
+    }
+    expect(
+      marked.queue.jobs.find((job) => job.audio_path === paths[3]),
+    ).toMatchObject({ status: "pending", is_read: false });
+  });
+
+  it("marks a read failure unread when its outcome changes to skipped", async () => {
+    const before = await enqueueAudioFiles(["/tmp/imported/read-then-skip.wav"]);
+    const job = before.queue.jobs.find(
+      (candidate) => candidate.audio_path === "/tmp/imported/read-then-skip.wav",
+    );
+    expect(job).toBeDefined();
+    if (job) {
+      job.status = "failed";
+      job.is_read = true;
+    }
+
+    const skipped = await skipJob(job?.id ?? -1);
+
+    expect(
+      skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({ status: "skipped", is_read: false });
   });
 });

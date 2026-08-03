@@ -199,6 +199,19 @@ export function countCompletedQueueJobs(jobs: QueueJob[]): number {
   return count;
 }
 
+export function countUnreadActivityOutcomes(jobs: QueueJob[]): number {
+  let count = 0;
+  for (const job of jobs) {
+    if (
+      job.is_read !== true &&
+      ["failed", "cancelled", "skipped"].includes(job.status)
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export interface QueueDayBreakdownEntry {
   status: QueueJobStatus;
   count: number;

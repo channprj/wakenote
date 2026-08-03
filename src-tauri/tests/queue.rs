@@ -34,6 +34,75 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
 }
 
 #[test]
+fn queue_marks_failed_cancelled_and_skipped_outcomes_read() {
+    let mut queue = TranscriptionQueue::new();
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+    let cancelled = queue.enqueue_file("/recordings/cancelled.wav", "whisper-medium");
+    let skipped = queue.enqueue_file("/recordings/skipped.wav", "whisper-medium");
+    let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
+    let completed = queue.enqueue_file("/recordings/completed.wav", "whisper-medium");
+
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("fail job");
+    assert_eq!(queue.start_next().expect("start job").id, cancelled);
+    queue
+        .cancel_current("cancelled by user")
+        .expect("cancel job");
+    queue.skip(skipped).expect("skip job");
+    queue.mark_completed(completed).expect("complete job");
+
+    assert_eq!(queue.unread_attention_count(), 3);
+    assert_eq!(queue.mark_attention_outcomes_read(), 3);
+    assert_eq!(queue.unread_attention_count(), 0);
+    assert!(queue.job(failed).expect("failed job").is_read);
+    assert!(queue.job(cancelled).expect("cancelled job").is_read);
+    assert!(queue.job(skipped).expect("skipped job").is_read);
+    assert!(!queue.job(pending).expect("pending job").is_read);
+    assert!(!queue.job(completed).expect("completed job").is_read);
+    assert_eq!(queue.mark_attention_outcomes_read(), 0);
+}
+
+#[test]
+fn queue_reopened_outcomes_become_unread_again() {
+    let mut queue = TranscriptionQueue::new();
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+    let skipped = queue.enqueue_file("/recordings/skipped.wav", "whisper-medium");
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("fail job");
+    queue.skip(skipped).expect("skip job");
+    queue.mark_attention_outcomes_read();
+
+    queue.retry(failed).expect("retry failed job");
+    queue
+        .requeue_file("/recordings/skipped.wav", "whisper-small")
+        .expect("requeue skipped job");
+
+    assert!(!queue.job(failed).expect("retried job").is_read);
+    assert!(!queue.job(skipped).expect("requeued job").is_read);
+}
+
+#[test]
+fn changing_a_read_failure_to_skipped_makes_the_new_outcome_unread() {
+    let mut queue = TranscriptionQueue::new();
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("fail job");
+    queue.mark_attention_outcomes_read();
+
+    queue.skip(failed).expect("skip failed job");
+
+    assert_eq!(
+        queue.job(failed).expect("skipped job").status,
+        QueueJobStatus::Skipped
+    );
+    assert!(!queue.job(failed).expect("skipped job").is_read);
+    assert_eq!(queue.unread_attention_count(), 1);
+}
+
+#[test]
 fn queue_preserves_transcription_options_across_retry() {
     let mut queue = TranscriptionQueue::new();
     let id = queue.enqueue_file("/recordings/fallback.wav", "openai-gpt-transcribe");
