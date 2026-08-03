@@ -138,6 +138,24 @@ function makeActions(): SettingsActions {
 }
 
 describe("SettingsPage interactions", () => {
+  it("connects the selected settings tab to an existing tab panel", () => {
+    render(
+      <SettingsPage
+        section="models"
+        onSectionChange={() => {}}
+        snapshot={mockSnapshot()}
+        actions={makeActions()}
+      />,
+    );
+
+    const tab = screen.getByRole("tab", { name: "Models" });
+    const panelId = tab.getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId!)).toBe(
+      screen.getByRole("tabpanel"),
+    );
+  });
+
   it("keeps dictation controls unavailable until shortcut dictation is enabled", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

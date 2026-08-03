@@ -88,6 +88,9 @@ describe("model card grid", () => {
     expect(markup).toContain('data-slot="model-card-grid"');
     expect(markup).toContain('data-max-columns="3"');
     expect(markup.match(/class="model-row"/g)).toHaveLength(models.length);
+    expect(markup).toContain('role="list"');
+    expect(markup).toContain('role="listitem"');
+    expect(markup).toContain('aria-label="Whisper Small installation progress"');
   });
 });
 

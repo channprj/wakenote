@@ -2,11 +2,7 @@ import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 export type ListVisibilityMode = "visible" | "hidden";
 
@@ -53,27 +49,29 @@ export function ListVisibilityToolbar({
       data-slot="list-visibility-toolbar"
       className="flex min-w-0 flex-wrap items-center justify-between gap-[var(--space-2)]"
     >
-      <Tabs
+      <ToggleGroup
+        type="single"
         value={mode}
         onValueChange={(value) => {
           if (value === "visible" || value === "hidden") {
             onModeChange(value);
           }
         }}
+        aria-label="List visibility"
+        className="bg-muted p-[3px]"
+        spacing={0}
       >
-        <TabsList aria-label="List visibility">
-          <TabsTrigger value="visible">
-            <EyeIcon data-icon="inline-start" />
-            Visible
-            <Badge variant="outline">{visibleCount}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="hidden">
-            <EyeOffIcon data-icon="inline-start" />
-            Hidden
-            <Badge variant="outline">{hiddenCount}</Badge>
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+        <ToggleGroupItem value="visible">
+          <EyeIcon data-icon="inline-start" />
+          Visible
+          <Badge variant="outline">{visibleCount}</Badge>
+        </ToggleGroupItem>
+        <ToggleGroupItem value="hidden">
+          <EyeOffIcon data-icon="inline-start" />
+          Hidden
+          <Badge variant="outline">{hiddenCount}</Badge>
+        </ToggleGroupItem>
+      </ToggleGroup>
 
       <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]">
         <label className="inline-flex min-h-[var(--control-compact)] items-center gap-[var(--space-2)] text-[length:var(--text-body)] leading-[var(--leading-body)] text-muted-foreground">

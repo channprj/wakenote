@@ -257,10 +257,19 @@ export function ModelManager({
                 </div>
                 <StatusBadge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</StatusBadge>
               </header>
-              <Progress value={progress} />
-              <div className="model-row__capabilities" aria-label="Model capabilities">
+              <Progress
+                value={progress}
+                aria-label={`${model.display_name} installation progress`}
+              />
+              <div
+                className="model-row__capabilities"
+                aria-label="Model capabilities"
+                role="list"
+              >
                 {capabilityLabels.map((label) => (
-                  <span key={label}>{label}</span>
+                  <span key={label} role="listitem">
+                    {label}
+                  </span>
                 ))}
               </div>
               <div className="model-row__scores">

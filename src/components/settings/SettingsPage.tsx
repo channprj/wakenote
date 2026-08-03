@@ -50,6 +50,8 @@ export function SettingsPage({
                 ref={section === item.id ? activeTabRef : undefined}
                 key={item.id}
                 value={item.id}
+                id={`settings-tab-${item.id}`}
+                aria-controls="settings-panel"
                 className="shrink-0 px-2.5"
               >
                 {item.label}
@@ -57,7 +59,15 @@ export function SettingsPage({
             ))}
           </TabsList>
         </div>
-        <div data-slot="settings-section" data-section={section} className="settings-section">
+        <div
+          id="settings-panel"
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${section}`}
+          tabIndex={0}
+          data-slot="settings-section"
+          data-section={section}
+          className="settings-section"
+        >
           <SettingsSectionContent section={section} snapshot={snapshot} actions={actions} />
         </div>
       </Tabs>

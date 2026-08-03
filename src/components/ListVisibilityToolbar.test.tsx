@@ -35,10 +35,10 @@ describe("ListVisibilityToolbar", () => {
     const props = renderToolbar();
 
     expect(
-      screen.getByRole("tab", { name: /Visible3/ }),
+      screen.getByRole("radio", { name: /Visible3/ }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("tab", { name: /Hidden2/ }),
+      screen.getByRole("radio", { name: /Hidden2/ }),
     ).toBeTruthy();
 
     await userEvent.click(
@@ -54,7 +54,7 @@ describe("ListVisibilityToolbar", () => {
       screen.getByRole("button", { name: "Restore selected" }),
     ).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("tab", { name: /Visible3/ }),
+      screen.getByRole("radio", { name: /Visible3/ }),
     );
 
     expect(props.onModeChange).toHaveBeenCalledWith("visible");
