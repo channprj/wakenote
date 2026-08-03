@@ -27,6 +27,7 @@ use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
 use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::transcription_cost::estimated_provider_cost_usd;
 
 const WHISPER_SAMPLE_RATE: usize = 16_000;
 const MIN_TRANSCRIBABLE_SAMPLES: usize = WHISPER_SAMPLE_RATE / 2;
@@ -238,13 +239,14 @@ pub enum TranscriptionJobStatus {
     Failed(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptionJobOutcome {
     pub id: u64,
     pub status: TranscriptionJobStatus,
     pub requested_model_id: Option<String>,
     pub effective_model_id: Option<String>,
     pub fallback_from_model_id: Option<String>,
+    pub usage: Option<TranscriptionUsage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +282,7 @@ impl TranscriptionJobOutcome {
             requested_model_id: None,
             effective_model_id: None,
             fallback_from_model_id: None,
+            usage: None,
         }
     }
 
@@ -290,6 +293,7 @@ impl TranscriptionJobOutcome {
             requested_model_id: Some(execution.requested_model_id.clone()),
             effective_model_id: Some(execution.effective_model_id.clone()),
             fallback_from_model_id: execution.fallback_from_model_id.clone(),
+            usage: execution.usage.clone(),
         }
     }
 
@@ -300,6 +304,7 @@ impl TranscriptionJobOutcome {
             requested_model_id: None,
             effective_model_id: None,
             fallback_from_model_id: None,
+            usage: None,
         }
     }
 }
@@ -375,7 +380,21 @@ impl<T: Transcriber> TranscriptionWorker<T> {
         };
 
         match self.transcriber.transcribe_execution(request) {
-            Ok(execution) => {
+            Ok(mut execution) => {
+                if let Some(usage) = execution.usage.as_mut() {
+                    if usage.audio_duration_ms == 0 {
+                        usage.audio_duration_ms = chunk_duration_ms(&chunk).unwrap_or(0);
+                    }
+                    if usage.provider_cost_usd.is_none()
+                        && let Some(provider) = usage.provider.as_deref()
+                    {
+                        usage.provider_cost_usd = estimated_provider_cost_usd(
+                            provider,
+                            &execution.effective_model_id,
+                            usage.audio_duration_ms,
+                        );
+                    }
+                }
                 let transcript = execution.text.clone();
                 let transcript = self.dictionary.correct(&transcript);
                 if transcript.trim().is_empty() {
@@ -443,6 +462,12 @@ fn chunk_is_system_audio(chunk: &RecordedChunk) -> bool {
         return false;
     };
     metadata.source == ChunkSource::System
+}
+
+fn chunk_duration_ms(chunk: &RecordedChunk) -> Option<u64> {
+    let bytes = std::fs::read(&chunk.metadata_path).ok()?;
+    let metadata = serde_json::from_slice::<ChunkMetadata>(&bytes).ok()?;
+    Some(metadata.duration_ms.max(0) as u64)
 }
 
 pub fn should_suppress_transcript_artifact(text: &str) -> bool {
@@ -1007,7 +1032,30 @@ impl Transcriber for RuntimeTranscriber {
                     requested_model_id: model_id.clone(),
                     effective_model_id: model_id,
                     fallback_from_model_id: None,
-                    usage: None,
+                    usage: Some(TranscriptionUsage {
+                        provider: Some("OpenAI".to_string()),
+                        audio_duration_ms: 0,
+                        provider_cost_usd: None,
+                    }),
+                })
+                .map_err(|error| TranscriptionError::Failure(error.into_failure()));
+        }
+        if runtime == "openrouter-stt" {
+            let model_id = request.model_id.to_string();
+            return self
+                .cloud
+                .transcribe_openrouter(request.audio_path, request.language)
+                .map(|text| TranscriptionExecution {
+                    text,
+                    speaker_turns: Vec::new(),
+                    requested_model_id: model_id.clone(),
+                    effective_model_id: model_id,
+                    fallback_from_model_id: None,
+                    usage: Some(TranscriptionUsage {
+                        provider: Some("OpenRouter".to_string()),
+                        audio_duration_ms: 0,
+                        provider_cost_usd: None,
+                    }),
                 })
                 .map_err(|error| TranscriptionError::Failure(error.into_failure()));
         }

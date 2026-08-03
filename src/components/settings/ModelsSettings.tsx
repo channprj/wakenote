@@ -14,6 +14,7 @@ import { modelStatusBadgeTone } from "@/lib/status-summary";
 import type { AppSnapshot } from "@/lib/types";
 import { SettingsCard } from "./settings-controls";
 import { TranscriptionOptionsSettings } from "./TranscriptionOptionsSettings";
+import { TranscriptionCostDashboard } from "./TranscriptionCostDashboard";
 import type { SettingsActions } from "./types";
 
 export function ModelsSettings({
@@ -81,6 +82,8 @@ export function ModelsSettings({
         models={models}
         onPatch={actions.onPatch}
       />
+
+      <TranscriptionCostDashboard />
 
       <ModelManager
         models={models}

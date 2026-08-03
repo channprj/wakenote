@@ -42,8 +42,8 @@ use wakenote::dictation::{
     DictationRuntime, DictationShortcutEvent, DictationStage, DictationStatePayload,
     ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey, ShortcutRegistrationChange,
     archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
-    normalize_dictation_patch, shortcut_registration_change, transcribe_dictation_recording,
-    validate_dictation_shortcut,
+    normalize_dictation_patch, shortcut_registration_change,
+    transcribe_dictation_recording_execution, validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
 use wakenote::dictionary_file::{
@@ -99,6 +99,10 @@ use wakenote::transcription::{
     TranscriptionPartialCallback, TranscriptionWorker, TranscriptionWorkerOptions,
     model_supports_live_partials,
 };
+use wakenote::transcription_cost::{
+    TranscriptionCostEntry, TranscriptionCostLedger, TranscriptionCostSnapshot,
+    estimated_provider_cost_usd, ledger_path,
+};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
@@ -125,6 +129,7 @@ type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 /// Only one meeting transcribes at a time (one shared GPU context).
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
 type ManualMeetingRecordingState = Arc<Mutex<ManualMeetingRecordingRuntime>>;
+type TranscriptionCostState = Arc<Mutex<TranscriptionCostLedger>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 
@@ -494,6 +499,7 @@ const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
 const EVENT_TRANSCRIPTION_MODEL_FALLBACK: &str = "transcription-model-fallback";
+const EVENT_TRANSCRIPTION_COST_UPDATED: &str = "transcription-cost-updated";
 const EVENT_MANUAL_MEETING_RECORDING_STATE: &str = "manual-meeting-recording-state";
 const MAX_MANUAL_MEETING_DURATION: Duration = Duration::from_secs(5 * 60 * 60);
 const EVENT_SOURCE_DETECTED: &str = "source-detected";
@@ -1639,7 +1645,7 @@ fn process_dictation_recording(
                         credentials: credentials.clone(),
                     });
                     manager.commit(source_key, chunk_id, archive.audio_path.clone());
-                    transcribe_dictation_recording(
+                    transcribe_dictation_recording_execution(
                         &recording,
                         &dictation_model,
                         settings.dictation_language,
@@ -1673,7 +1679,7 @@ fn process_dictation_recording(
                     (result, archive_started.elapsed())
                 });
                 let transcription_started = Instant::now();
-                let result = transcribe_dictation_recording(
+                let result = transcribe_dictation_recording_execution(
                     &recording,
                     &dictation_model,
                     settings.dictation_language,
@@ -1707,7 +1713,42 @@ fn process_dictation_recording(
     );
 
     match result {
-        Ok(Some(text)) => {
+        Ok(Some(mut execution)) => {
+            if let Some(usage) = execution.usage.as_mut() {
+                if usage.audio_duration_ms == 0 {
+                    usage.audio_duration_ms = (recording.samples.len() as u64)
+                        .saturating_mul(1_000)
+                        / u64::from(recording.sample_rate.max(1));
+                }
+                if usage.provider_cost_usd.is_none()
+                    && let Some(provider) = usage.provider.as_deref()
+                {
+                    usage.provider_cost_usd = estimated_provider_cost_usd(
+                        provider,
+                        &execution.effective_model_id,
+                        usage.audio_duration_ms,
+                    );
+                }
+            }
+            let cost_entry = execution.usage.as_ref().and_then(|usage| {
+                usage
+                    .provider
+                    .as_ref()
+                    .map(|provider| TranscriptionCostEntry {
+                        source_id: format!("dictation:{}", recording.started_at.timestamp_micros()),
+                        recorded_at: recording.started_at,
+                        provider: provider.clone(),
+                        model_id: execution.effective_model_id.clone(),
+                        audio_duration_ms: usage.audio_duration_ms,
+                        estimated_cost_usd: usage.provider_cost_usd,
+                        request_count: 1,
+                        unpriced_request_count: u64::from(usage.provider_cost_usd.is_none()),
+                    })
+            });
+            if let Some(entry) = cost_entry {
+                upsert_transcription_cost(app, entry);
+            }
+            let text = execution.text;
             if let Err(error) = TranscriptionSidecar::write_success(&archive, &text) {
                 show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
                 return;
@@ -3159,6 +3200,90 @@ fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSna
     backend.process_next_transcription()
 }
 
+#[tauri::command]
+fn transcription_cost_snapshot(
+    state: State<'_, TranscriptionCostState>,
+) -> Result<TranscriptionCostSnapshot, String> {
+    state
+        .lock()
+        .map(|ledger| ledger.snapshot(Local::now()))
+        .map_err(|error| error.to_string())
+}
+
+fn upsert_transcription_cost(app: &AppHandle, entry: TranscriptionCostEntry) {
+    let Some(state) = app.try_state::<TranscriptionCostState>() else {
+        return;
+    };
+    let snapshot = state.lock().ok().and_then(|mut ledger| {
+        ledger
+            .upsert(entry)
+            .map_err(|error| {
+                eprintln!("[wakenote] WARN transcription cost ledger update failed: {error}");
+            })
+            .ok()?;
+        Some(ledger.snapshot(Local::now()))
+    });
+    if let Some(snapshot) = snapshot {
+        let _ = app.emit(EVENT_TRANSCRIPTION_COST_UPDATED, snapshot);
+    }
+}
+
+fn record_job_transcription_cost(app: &AppHandle, outcome: &TranscriptionJobOutcome) {
+    let Some(usage) = outcome.usage.as_ref() else {
+        return;
+    };
+    let Some(provider) = usage.provider.as_ref() else {
+        return;
+    };
+    let Some(model_id) = outcome.effective_model_id.as_ref() else {
+        return;
+    };
+    upsert_transcription_cost(
+        app,
+        TranscriptionCostEntry {
+            source_id: format!("transcription-job:{}", outcome.id),
+            recorded_at: Utc::now(),
+            provider: provider.clone(),
+            model_id: model_id.clone(),
+            audio_duration_ms: usage.audio_duration_ms,
+            estimated_cost_usd: usage.provider_cost_usd,
+            request_count: 1,
+            unpriced_request_count: u64::from(usage.provider_cost_usd.is_none()),
+        },
+    );
+}
+
+fn record_meeting_transcription_cost(app: &AppHandle, save_root: &Path, id: &str) {
+    let Ok(detail) = wakenote::meeting::meeting_detail(save_root, id) else {
+        return;
+    };
+    let record = detail.record;
+    if record.api_request_count == 0 {
+        return;
+    }
+    let provider = if record.model_id.starts_with("openai-") {
+        "OpenAI"
+    } else if record.model_id.starts_with("openrouter-") {
+        "OpenRouter"
+    } else {
+        return;
+    };
+    upsert_transcription_cost(
+        app,
+        TranscriptionCostEntry {
+            source_id: format!("meeting:{}", record.id),
+            recorded_at: record.updated_at,
+            provider: provider.to_string(),
+            model_id: record.model_id,
+            audio_duration_ms: record.api_audio_duration_ms,
+            estimated_cost_usd: (record.api_cost_microusd > 0)
+                .then_some(record.api_cost_microusd as f64 / 1_000_000.0),
+            request_count: record.api_request_count,
+            unpriced_request_count: record.api_unpriced_request_count,
+        },
+    );
+}
+
 // --- Manual Meeting Mode -------------------------------------------------
 
 fn emit_manual_meeting_status(app: &AppHandle, status: &ManualMeetingRecordingStatus) {
@@ -3437,6 +3562,7 @@ fn schedule_and_spawn_meeting_job(
             ) {
                 eprintln!("[wakenote] meeting job {} error: {error}", current_job.id);
             }
+            record_meeting_transcription_cost(&app, &current_job.save_root, &current_job.id);
 
             let next = meeting_state_for_thread
                 .lock()
@@ -5338,6 +5464,7 @@ fn kick_transcription_worker(
 
             refresh_transcript_day_index(&audio_path);
             emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
+            record_job_transcription_cost(&app, &outcome);
 
             match backend_state.lock() {
                 Ok(mut backend) => {
@@ -6332,6 +6459,9 @@ fn main() {
             let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
             let manual_meeting_recording_state: ManualMeetingRecordingState =
                 Arc::new(Mutex::new(ManualMeetingRecordingRuntime::default()));
+            let transcription_cost_state: TranscriptionCostState = Arc::new(Mutex::new(
+                TranscriptionCostLedger::load(ledger_path(&app_data_dir)),
+            ));
             let llm_run_state: LlmRunState =
                 Arc::new(Mutex::new(LlmRunRuntime::default()));
             let input_monitor_state: InputMonitorState =
@@ -6361,6 +6491,7 @@ fn main() {
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
             app.manage(manual_meeting_recording_state);
+            app.manage(transcription_cost_state);
             app.manage(llm_run_state);
 
             if let Ok(store) = dictionary_state.lock() {
@@ -6575,6 +6706,7 @@ fn main() {
             cancel_current_operation,
             reveal_save_folder,
             process_next_transcription,
+            transcription_cost_snapshot,
             start_live_capture,
             stop_live_capture,
             list_recognized_sources,

@@ -149,6 +149,31 @@ function mockInvoke(command: string) {
         language: "ko",
         error: null,
       });
+    case "transcription_cost_snapshot":
+      return Promise.resolve({
+        currency: "USD",
+        generated_at: "2026-08-03T00:00:00Z",
+        today: {
+          estimated_cost_usd: 0.006,
+          audio_duration_ms: 60_000,
+          request_count: 1,
+          unpriced_request_count: 0,
+        },
+        week: {
+          estimated_cost_usd: 0.006,
+          audio_duration_ms: 60_000,
+          request_count: 1,
+          unpriced_request_count: 0,
+        },
+        month: {
+          estimated_cost_usd: 0.006,
+          audio_duration_ms: 60_000,
+          request_count: 1,
+          unpriced_request_count: 0,
+        },
+        entry_count: 1,
+        disclosure: "Local estimate",
+      });
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
@@ -275,6 +300,17 @@ describe("tauri runtime client snapshots", () => {
       "start_meeting_transcription",
       { id: "meeting-1", request },
     );
+  });
+
+  it("loads the local transcription cost dashboard snapshot", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { loadTranscriptionCostSnapshot } = await import("./tauri-client");
+
+    const snapshot = await loadTranscriptionCostSnapshot();
+
+    expect(snapshot.today.estimated_cost_usd).toBe(0.006);
+    expect(mocks.invoke).toHaveBeenCalledWith("transcription_cost_snapshot");
   });
 
   it("loads recent transcripts through a separate bounded command", async () => {

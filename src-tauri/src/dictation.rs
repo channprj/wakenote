@@ -12,7 +12,8 @@ use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveC
 use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
 use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
 use crate::transcription::{
-    Transcriber, TranscriptionRequest, resample_linear, should_skip_low_signal_audio,
+    Transcriber, TranscriptionExecution, TranscriptionRequest, resample_linear,
+    should_skip_low_signal_audio,
 };
 
 pub const DICTATION_PRESS_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -621,21 +622,34 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
     dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<String>, String> {
+    transcribe_dictation_recording_execution(recording, model_id, language, dictionary, transcriber)
+        .map(|execution| execution.map(|execution| execution.text))
+}
+
+pub fn transcribe_dictation_recording_execution<T: Transcriber>(
+    recording: &DictationRecording,
+    model_id: &str,
+    language: TranscriptionLanguage,
+    dictionary: &DictionaryContext,
+    transcriber: T,
+) -> Result<Option<TranscriptionExecution>, String> {
     let Some(samples) = prepare_dictation_audio(&recording.samples, recording.sample_rate)? else {
         return Ok(None);
     };
     let path = next_temp_wav_path();
     write_dictation_wav(&path, &samples)?;
     let result = transcriber
-        .transcribe(TranscriptionRequest {
+        .transcribe_execution(TranscriptionRequest {
             audio_path: &path,
             model_id,
             language,
             dictionary,
         })
         .map_err(|error| error.to_string())
-        .map(|text| dictionary.correct(&text))
-        .map(|text| (!text.trim().is_empty()).then_some(text));
+        .map(|mut execution| {
+            execution.text = dictionary.correct(&execution.text);
+            (!execution.text.trim().is_empty()).then_some(execution)
+        });
     let _ = std::fs::remove_file(&path);
     result
 }

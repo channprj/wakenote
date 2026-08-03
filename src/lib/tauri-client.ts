@@ -36,6 +36,7 @@ import type {
   MeetingSummary,
   MeetingDetail,
   MeetingTranscriptionRequest,
+  TranscriptionCostSnapshot,
   ManualMeetingRecordingStatus,
   LlmGenerateRequest,
   LlmProgressEvent,
@@ -2081,6 +2082,45 @@ export async function startMeetingTranscription(
     id,
     request,
   });
+}
+
+function emptyTranscriptionCostSnapshot(): TranscriptionCostSnapshot {
+  const empty = {
+    estimated_cost_usd: 0,
+    audio_duration_ms: 0,
+    request_count: 0,
+    unpriced_request_count: 0,
+  };
+  return {
+    currency: "USD",
+    generated_at: new Date().toISOString(),
+    today: { ...empty },
+    week: { ...empty },
+    month: { ...empty },
+    entry_count: 0,
+    disclosure:
+      "Local estimate; verify final charges in your provider billing dashboard.",
+  };
+}
+
+export async function loadTranscriptionCostSnapshot(): Promise<TranscriptionCostSnapshot> {
+  if (!isTauriRuntime()) {
+    return emptyTranscriptionCostSnapshot();
+  }
+  return invoke<TranscriptionCostSnapshot>("transcription_cost_snapshot");
+}
+
+export async function subscribeTranscriptionCostUpdates(
+  callback: (snapshot: TranscriptionCostSnapshot) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<TranscriptionCostSnapshot>(
+    "transcription-cost-updated",
+    (event) => callback(event.payload),
+  );
 }
 
 export async function cancelMeeting(id: string): Promise<void> {

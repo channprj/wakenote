@@ -28,6 +28,7 @@ use crate::transcription::{
     DecodedWindow, RuntimeTranscriber, SpeakerTurn, Transcriber, TranscriptionRequest,
     cached_whisper_context, model_runtime_for_id, transcribe_samples_with_context,
 };
+use crate::transcription_cost::estimated_provider_cost_usd;
 
 /// Frame size used for silence detection. 20 ms is fine-grained enough to find
 /// pause boundaries while keeping the RMS envelope small even for 2h files.
@@ -117,6 +118,14 @@ pub struct MeetingRecord {
     pub transcription_request: Option<MeetingTranscriptionRequest>,
     #[serde(default)]
     pub speaker_turns: Vec<SpeakerTurn>,
+    #[serde(default)]
+    pub api_audio_duration_ms: u64,
+    #[serde(default)]
+    pub api_cost_microusd: u64,
+    #[serde(default)]
+    pub api_request_count: u64,
+    #[serde(default)]
+    pub api_unpriced_request_count: u64,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -644,6 +653,10 @@ pub fn start_recorded_meeting_capture(
         segments: Vec::new(),
         transcription_request: None,
         speaker_turns: Vec::new(),
+        api_audio_duration_ms: 0,
+        api_cost_microusd: 0,
+        api_request_count: 0,
+        api_unpriced_request_count: 0,
         error: None,
     };
 
@@ -781,6 +794,10 @@ pub fn import_meeting(
         segments: Vec::new(),
         transcription_request: None,
         speaker_turns: Vec::new(),
+        api_audio_duration_ms: 0,
+        api_cost_microusd: 0,
+        api_request_count: 0,
+        api_unpriced_request_count: 0,
         error: None,
     };
     record
@@ -843,6 +860,10 @@ pub fn start_recorded_meeting_transcription(
     record.language = request.language;
     record.transcription_request = Some(request);
     record.speaker_turns.clear();
+    record.api_audio_duration_ms = 0;
+    record.api_cost_microusd = 0;
+    record.api_request_count = 0;
+    record.api_unpriced_request_count = 0;
     record.segments.clear();
     record.progress = MeetingProgress::default();
     record.status = MeetingStatus::Pending;
@@ -1187,7 +1208,7 @@ pub fn run_meeting_job(
                 dictionary,
                 progress_cb,
             )
-            .map(|decoded| (decoded, Vec::new()))
+            .map(|decoded| (decoded, Vec::new(), None))
         } else {
             let segment_wav = dir.join(format!(".wakenote-segment-{idx}.wav"));
             let result = write_samples_wav16k(&segment_wav, &samples)
@@ -1203,7 +1224,7 @@ pub fn run_meeting_job(
                             dictionary,
                         })
                 })
-                .map(|execution| {
+                .map(|mut execution| {
                     let text = dictionary.correct(execution.text.trim());
                     let speaker_turns = if transcription_request.speaker_separation_enabled {
                         execution
@@ -1220,12 +1241,25 @@ pub fn run_meeting_job(
                     } else {
                         Vec::new()
                     };
+                    if let Some(usage) = execution.usage.as_mut() {
+                        usage.audio_duration_ms = samples.len() as u64 * 1_000 / 16_000;
+                        if usage.provider_cost_usd.is_none()
+                            && let Some(provider) = usage.provider.as_deref()
+                        {
+                            usage.provider_cost_usd = estimated_provider_cost_usd(
+                                provider,
+                                &execution.effective_model_id,
+                                usage.audio_duration_ms,
+                            );
+                        }
+                    }
                     (
                         DecodedWindow {
                             no_speech: text.is_empty(),
                             text,
                         },
                         speaker_turns,
+                        execution.usage,
                     )
                 });
             let _ = fs::remove_file(segment_wav);
@@ -1233,12 +1267,29 @@ pub fn run_meeting_job(
         };
 
         match decoded {
-            Ok((decoded, speaker_turns)) => {
+            Ok((decoded, speaker_turns, usage)) => {
                 record.segments[idx].status = MeetingSegmentStatus::Completed;
                 record.segments[idx].text = decoded.text.clone();
                 record.segments[idx].no_speech = decoded.no_speech;
                 record.speaker_turns.retain(|turn| turn.part_index != idx);
                 record.speaker_turns.extend(speaker_turns);
+                if let Some(usage) = usage
+                    && let Some(provider) = usage.provider
+                {
+                    record.api_audio_duration_ms = record
+                        .api_audio_duration_ms
+                        .saturating_add(usage.audio_duration_ms);
+                    record.api_request_count = record.api_request_count.saturating_add(1);
+                    if let Some(cost) = usage.provider_cost_usd {
+                        record.api_cost_microusd = record
+                            .api_cost_microusd
+                            .saturating_add((cost * 1_000_000.0).round().max(0.0) as u64);
+                    } else {
+                        record.api_unpriced_request_count =
+                            record.api_unpriced_request_count.saturating_add(1);
+                    }
+                    let _ = provider;
+                }
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
@@ -1603,6 +1654,10 @@ mod tests {
             segments: Vec::new(),
             transcription_request: None,
             speaker_turns: Vec::new(),
+            api_audio_duration_ms: 0,
+            api_cost_microusd: 0,
+            api_request_count: 0,
+            api_unpriced_request_count: 0,
             error: None,
         }
     }

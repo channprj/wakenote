@@ -8,7 +8,7 @@ use wakenote::dictation::{
     ShortcutRegistrationChange, archive_dictation_recording, candidate_dictation_settings,
     modifier_shortcut, prepare_dictation_audio, shortcut_registration_change,
     transcribe_and_type_dictation_recording, transcribe_dictation_recording,
-    validate_dictation_shortcut,
+    transcribe_dictation_recording_execution, validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
 use wakenote::live_capture::{
@@ -18,7 +18,10 @@ use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AppSettings, AudioFormat, DictionaryEntry, SettingsPatch, TranscriptionLanguage,
 };
-use wakenote::transcription::{Transcriber, TranscriptionError, TranscriptionRequest};
+use wakenote::transcription::{
+    Transcriber, TranscriptionError, TranscriptionExecution, TranscriptionRequest,
+    TranscriptionUsage,
+};
 
 struct FakeInput {
     frames: Vec<AudioFrame>,
@@ -48,6 +51,32 @@ impl Transcriber for OrderedFakeTranscriber {
 struct FakeTranscriber {
     request: Arc<Mutex<Option<(PathBuf, String, TranscriptionLanguage)>>>,
     text: String,
+}
+
+struct UsageTranscriber;
+
+impl Transcriber for UsageTranscriber {
+    fn transcribe(&self, _request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        unreachable!("execution path should preserve usage metadata")
+    }
+
+    fn transcribe_execution(
+        &self,
+        request: TranscriptionRequest<'_>,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
+        Ok(TranscriptionExecution {
+            text: "wake note".to_string(),
+            speaker_turns: Vec::new(),
+            requested_model_id: request.model_id.to_string(),
+            effective_model_id: request.model_id.to_string(),
+            fallback_from_model_id: None,
+            usage: Some(TranscriptionUsage {
+                provider: Some("OpenAI".to_string()),
+                audio_duration_ms: 1_000,
+                provider_cost_usd: Some(0.0001),
+            }),
+        })
+    }
 }
 
 impl Transcriber for FakeTranscriber {
@@ -566,6 +595,39 @@ fn dictation_transcription_applies_the_shared_dictionary() {
     .expect("transcription succeeds");
 
     assert_eq!(text.as_deref(), Some("WakeNote"));
+}
+
+#[test]
+fn dictation_transcription_preserves_usage_while_applying_the_dictionary() {
+    let started_at = Utc::now();
+    let dictionary = DictionaryContext::compile(
+        true,
+        &[DictionaryEntry {
+            id: "wake".into(),
+            term: "WakeNote".into(),
+            aliases: vec!["wake note".into()],
+            enabled: true,
+        }],
+    );
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+    };
+
+    let execution = transcribe_dictation_recording_execution(
+        &recording,
+        "openai-gpt-transcribe",
+        TranscriptionLanguage::Auto,
+        &dictionary,
+        UsageTranscriber,
+    )
+    .expect("transcription succeeds")
+    .expect("speech result");
+
+    assert_eq!(execution.text, "WakeNote");
+    assert_eq!(execution.usage.expect("usage").audio_duration_ms, 1_000);
 }
 
 #[test]

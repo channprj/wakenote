@@ -495,6 +495,27 @@ export interface MeetingRecord extends MeetingSummary {
   segments: MeetingSegment[];
   transcription_request: MeetingTranscriptionRequest | null;
   speaker_turns: SpeakerTurn[];
+  api_audio_duration_ms: number;
+  api_cost_microusd: number;
+  api_request_count: number;
+  api_unpriced_request_count: number;
+}
+
+export interface TranscriptionCostPeriod {
+  estimated_cost_usd: number;
+  audio_duration_ms: number;
+  request_count: number;
+  unpriced_request_count: number;
+}
+
+export interface TranscriptionCostSnapshot {
+  currency: "USD";
+  generated_at: string;
+  today: TranscriptionCostPeriod;
+  week: TranscriptionCostPeriod;
+  month: TranscriptionCostPeriod;
+  entry_count: number;
+  disclosure: string;
 }
 
 export interface MeetingDetail {

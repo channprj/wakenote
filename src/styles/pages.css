@@ -657,6 +657,55 @@
   line-height: var(--leading-micro);
 }
 
+.transcription-cost-dashboard {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+.transcription-cost-dashboard__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--leading-micro);
+}
+
+.transcription-cost-dashboard__periods {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.transcription-cost-period {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--muted);
+}
+
+.transcription-cost-period > span,
+.transcription-cost-period > small {
+  overflow-wrap: anywhere;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--leading-micro);
+}
+
+.transcription-cost-period > strong {
+  font-size: var(--text-subtitle);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-subtitle);
+}
+
 .transcripts-panel,
 .transcript-day,
 .transcript-toolbar,
@@ -925,6 +974,10 @@
 }
 
 @media (max-width: 979px) {
+  .transcription-cost-dashboard__periods {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .meeting-mode {
     align-items: flex-start;
     flex-direction: column;
