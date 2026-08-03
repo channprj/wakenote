@@ -133,7 +133,9 @@ const TRAY_ICON_TRANSCRIBING_RGBA: [u8; 4] = [217, 119, 6, 255];
 const TRAY_ICON_DISCONNECTED_RGBA: [u8; 4] = [220, 38, 38, 255];
 const TRAY_ICON_IMAGE_SIZE: u32 = 64;
 const TRAY_ICON_DOT_DIAMETER: u32 = TRAY_ICON_IMAGE_SIZE / 2;
-const TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION: u32 = 1;
+const TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION: u32 = 2;
+const DICTATION_DUPLICATE_INTERVAL_GRACE_MS: i64 = 2_000;
+const DICTATION_DUPLICATE_START_FALLBACK_MS: i64 = 5_000;
 static TRANSCRIPT_DAY_INDEX_REFRESH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const TRANSCRIPT_DAY_INDEX_FILE_NAME: &str = "all.json";
 
@@ -2874,9 +2876,13 @@ fn collect_transcripts_for_compact_day(root: &Path, compact: &str) -> Vec<Recent
         transcript_path_sort_key(left).cmp(&transcript_path_sort_key(right))
     });
 
-    paths
+    let candidates = paths
         .iter()
-        .filter_map(|path| recent_transcript_from_sidecar(path))
+        .filter_map(|path| transcript_display_candidate_from_sidecar(path))
+        .collect();
+    prefer_dictation_transcripts(candidates)
+        .into_iter()
+        .map(|candidate| candidate.transcript)
         .collect()
 }
 
@@ -3010,13 +3016,15 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
         paths.sort_by(|left, right| {
             transcript_path_sort_key(right).cmp(&transcript_path_sort_key(left))
         });
-        for path in paths {
+        let candidates = paths
+            .iter()
+            .filter_map(|path| transcript_display_candidate_from_sidecar(path))
+            .collect();
+        for candidate in prefer_dictation_transcripts(candidates) {
             if transcripts.len() >= limit {
                 break;
             }
-            if let Some(transcript) = recent_transcript_from_sidecar(&path) {
-                transcripts.push(transcript);
-            }
+            transcripts.push(candidate.transcript);
         }
     }
     transcripts
@@ -3124,7 +3132,14 @@ impl DatalessMaterializationGuard {
     }
 }
 
-fn recent_transcript_from_sidecar(path: &Path) -> Option<RecentTranscript> {
+#[derive(Clone)]
+struct TranscriptDisplayCandidate {
+    transcript: RecentTranscript,
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+}
+
+fn transcript_display_candidate_from_sidecar(path: &Path) -> Option<TranscriptDisplayCandidate> {
     let text = fs::read_to_string(path).ok()?.trim().to_string();
     if text.is_empty() {
         return None;
@@ -3150,18 +3165,134 @@ fn recent_transcript_from_sidecar(path: &Path) -> Option<RecentTranscript> {
         .as_ref()
         .and_then(|metadata| metadata.microphone_slot);
 
-    Some(RecentTranscript {
-        transcript_path: path.to_string_lossy().to_string(),
-        audio_path: audio_path_for_transcript(path)
-            .map(|audio_path| audio_path.to_string_lossy().to_string()),
-        recorded_at: recorded_at_for_transcript(path, metadata.as_ref()),
-        text,
-        source,
-        source_label,
-        device_id,
-        device_name,
-        microphone_slot,
+    let recorded_at = recorded_at_for_transcript(path, metadata.as_ref());
+    let started_at = metadata
+        .as_ref()
+        .map(|metadata| metadata.started_at)
+        .or_else(|| parse_recorded_at(&recorded_at));
+    let ended_at = metadata.as_ref().map(|metadata| metadata.ended_at);
+
+    Some(TranscriptDisplayCandidate {
+        transcript: RecentTranscript {
+            transcript_path: path.to_string_lossy().to_string(),
+            audio_path: audio_path_for_transcript(path)
+                .map(|audio_path| audio_path.to_string_lossy().to_string()),
+            recorded_at,
+            text,
+            source,
+            source_label,
+            device_id,
+            device_name,
+            microphone_slot,
+        },
+        started_at,
+        ended_at,
     })
+}
+
+fn prefer_dictation_transcripts(
+    candidates: Vec<TranscriptDisplayCandidate>,
+) -> Vec<TranscriptDisplayCandidate> {
+    let dictations: Vec<TranscriptDisplayCandidate> = candidates
+        .iter()
+        .filter(|candidate| transcript_is_dictation(&candidate.transcript))
+        .cloned()
+        .collect();
+    if dictations.is_empty() {
+        return candidates;
+    }
+
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            transcript_is_dictation(&candidate.transcript)
+                || candidate.transcript.source != ChunkSource::Microphone
+                || !dictations.iter().any(|dictation| {
+                    transcript_intervals_overlap(candidate, dictation)
+                        && transcript_texts_match(
+                            &candidate.transcript.text,
+                            &dictation.transcript.text,
+                        )
+                })
+        })
+        .collect()
+}
+
+fn transcript_is_dictation(transcript: &RecentTranscript) -> bool {
+    transcript
+        .source_label
+        .as_deref()
+        .is_some_and(|label| label.eq_ignore_ascii_case("dictation"))
+}
+
+fn transcript_intervals_overlap(
+    left: &TranscriptDisplayCandidate,
+    right: &TranscriptDisplayCandidate,
+) -> bool {
+    let (Some(left_start), Some(right_start)) = (left.started_at, right.started_at) else {
+        return false;
+    };
+    match (left.ended_at, right.ended_at) {
+        (Some(left_end), Some(right_end)) => {
+            let grace = chrono::Duration::milliseconds(DICTATION_DUPLICATE_INTERVAL_GRACE_MS);
+            left_start <= right_end + grace && right_start <= left_end + grace
+        }
+        _ => {
+            (left_start - right_start).num_milliseconds().abs()
+                <= DICTATION_DUPLICATE_START_FALLBACK_MS
+        }
+    }
+}
+
+fn transcript_texts_match(left: &str, right: &str) -> bool {
+    let left = normalized_transcript_text(left);
+    let right = normalized_transcript_text(right);
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    if left == right {
+        return true;
+    }
+
+    let (shorter, longer) = if left.chars().count() <= right.chars().count() {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let shorter_len = shorter.chars().count();
+    let longer_len = longer.chars().count();
+    if shorter_len >= 4 && longer.contains(shorter) && shorter_len * 100 >= longer_len * 60 {
+        return true;
+    }
+
+    let left_bigrams = transcript_bigrams(&left);
+    let right_bigrams = transcript_bigrams(&right);
+    if left_bigrams.is_empty() || right_bigrams.is_empty() {
+        return false;
+    }
+    let shared = left_bigrams.intersection(&right_bigrams).count();
+    shared * 200 >= (left_bigrams.len() + right_bigrams.len()) * 65
+}
+
+fn normalized_transcript_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn transcript_bigrams(text: &str) -> HashSet<(char, char)> {
+    let characters: Vec<char> = text.chars().collect();
+    characters
+        .windows(2)
+        .map(|window| (window[0], window[1]))
+        .collect()
+}
+
+fn parse_recorded_at(recorded_at: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(recorded_at)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&Utc))
 }
 
 fn transcript_path_sort_key(path: &Path) -> String {
@@ -3721,7 +3852,7 @@ mod tests {
             "source_label": null,
         });
         let index = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": TRANSCRIPT_DAY_INDEX_SCHEMA_VERSION,
             "day": "2026-05-10",
             "generated_at": "2026-05-10T00:00:00Z",
             "source_files": [cached_source_file(&sidecar_path)],
@@ -4073,5 +4204,130 @@ mod tests {
         assert_eq!(transcripts.len(), 2);
         assert_eq!(transcripts[0].text, "second newest");
         assert_eq!(transcripts[1].text, "oldest");
+    }
+
+    fn write_transcript_fixture(
+        day: &Path,
+        stem: &str,
+        text: &str,
+        started_at: DateTime<Utc>,
+        ended_at: DateTime<Utc>,
+        source_label: Option<&str>,
+    ) {
+        let audio_path = day.join(format!("{stem}.wav"));
+        std::fs::write(&audio_path, b"wav").expect("audio");
+        std::fs::write(audio_path.with_extension("txt"), text).expect("transcript");
+        let metadata = ChunkMetadata {
+            model_id: "whisper-medium".into(),
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
+            device_id: "default".into(),
+            device_name: "System Default".into(),
+            sample_rate: 16_000,
+            threshold_dbfs: -42.0,
+            attack_ms: 100,
+            release_ms: 1_000,
+            pre_roll_ms: 1_000,
+            lead_in_padding_ms: 300,
+            post_roll_ms: 300,
+            min_chunk_ms: 600,
+            max_chunk_ms: 120_000,
+            started_at,
+            ended_at,
+            duration_ms: (ended_at - started_at).num_milliseconds(),
+            transcription_status: TranscriptionStatus::Completed,
+            app_version: "0.0.0".into(),
+            used_fallback_device: false,
+            live_capture_chunk_id: None,
+            source: ChunkSource::Microphone,
+            source_label: source_label.map(str::to_string),
+            microphone_slot: None,
+            microphone_inputs: Vec::new(),
+            transcribed_at: None,
+            transcript_text: Some(text.to_string()),
+        };
+        std::fs::write(
+            audio_path.with_extension("json"),
+            serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+        )
+        .expect("metadata");
+    }
+
+    #[test]
+    fn transcript_views_prefer_overlapping_dictation_over_the_same_live_transcript() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260528");
+        std::fs::create_dir_all(&day).expect("day dir");
+        let base = Utc.with_ymd_and_hms(2026, 5, 28, 9, 0, 0).unwrap();
+        write_transcript_fixture(
+            &day,
+            "090000",
+            "wake note 오늘 회의를 시작합니다",
+            base,
+            base + chrono::Duration::seconds(5),
+            None,
+        );
+        write_transcript_fixture(
+            &day,
+            "090001",
+            "WakeNote, 오늘 회의를 시작합니다.",
+            base + chrono::Duration::seconds(1),
+            base + chrono::Duration::seconds(4),
+            Some("dictation"),
+        );
+        write_transcript_fixture(
+            &day,
+            "090002",
+            "겹치지만 내용은 다른 메모",
+            base + chrono::Duration::seconds(2),
+            base + chrono::Duration::seconds(3),
+            None,
+        );
+        write_transcript_fixture(
+            &day,
+            "091000",
+            "WakeNote, 오늘 회의를 시작합니다.",
+            base + chrono::Duration::minutes(10),
+            base + chrono::Duration::minutes(10) + chrono::Duration::seconds(3),
+            None,
+        );
+
+        let day_entries = transcripts_for_day_from_save_root(tmp.path(), "2026-05-28", false);
+        let recent_entries = recent_transcripts_from_save_root(tmp.path(), 10);
+
+        for entries in [&day_entries, &recent_entries] {
+            assert_eq!(entries.len(), 3);
+            assert!(
+                entries
+                    .iter()
+                    .any(|entry| entry.source_label.as_deref() == Some("dictation"))
+            );
+            assert!(!entries.iter().any(|entry| {
+                entry.source_label.is_none() && entry.text == "wake note 오늘 회의를 시작합니다"
+            }));
+            assert!(
+                entries
+                    .iter()
+                    .any(|entry| entry.text == "겹치지만 내용은 다른 메모")
+            );
+            assert!(
+                entries
+                    .iter()
+                    .any(|entry| entry.recorded_at.contains("09:10:00"))
+            );
+        }
+    }
+
+    #[test]
+    fn dictation_duplicate_matching_tolerates_small_transcription_differences() {
+        assert!(transcript_texts_match(
+            "오늘 Wake Note 회의를 시작하겠습니다",
+            "오늘 wakenote 회의를 바로 시작하겠습니다.",
+        ));
+        assert!(!transcript_texts_match(
+            "오늘 WakeNote 회의를 시작하겠습니다",
+            "제품 배포는 다음 주로 연기합니다",
+        ));
     }
 }
