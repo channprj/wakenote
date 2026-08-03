@@ -12,6 +12,7 @@ pub mod live_capture;
 pub mod live_transcription;
 pub mod llm;
 pub mod llm_runs;
+pub mod manual_meeting_capture;
 pub mod meeting;
 pub mod models;
 pub mod multi_capture;

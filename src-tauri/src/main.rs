@@ -9,6 +9,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Local, Utc};
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGEventFlags, CGEventSource, CGEventSourceStateID};
 use serde::Serialize;
@@ -57,7 +58,13 @@ use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
-use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary};
+use wakenote::manual_meeting_capture::{
+    MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
+};
+use wakenote::meeting::{
+    MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary,
+    start_manual_recorded_meeting_capture,
+};
 use wakenote::models::{ModelDescriptor, ModelStore, validate_model_options};
 use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::openai_realtime::{OpenAiRealtimeManager, RealtimePartial, RealtimeSamplesRequest};
@@ -114,6 +121,7 @@ type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 /// Tracks the single in-flight long-form meeting job and its cancel flag.
 /// Only one meeting transcribes at a time (one shared GPU context).
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
+type ManualMeetingRecordingState = Arc<Mutex<ManualMeetingRecordingRuntime>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 
@@ -215,6 +223,104 @@ struct MeetingRuntime {
     cancel: Option<Arc<AtomicBool>>,
     /// Automatic meeting captures waiting for the shared transcription worker.
     queued: VecDeque<MeetingJobSpec>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ManualMeetingRecordingPhase {
+    Off,
+    Recording,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ManualMeetingStopReason {
+    Manual,
+    MaximumDuration,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct ManualMeetingRecordingStatus {
+    generation: u64,
+    state: ManualMeetingRecordingPhase,
+    meeting_id: Option<String>,
+    started_at: Option<String>,
+    elapsed_ms: u64,
+    remaining_ms: u64,
+    inputs: Vec<String>,
+    stop_reason: Option<ManualMeetingStopReason>,
+    error: Option<String>,
+}
+
+#[derive(Default)]
+struct ManualMeetingRecordingRuntime {
+    generation: u64,
+    session: Option<ManualMeetingSession>,
+    last_meeting_id: Option<String>,
+    last_stop_reason: Option<ManualMeetingStopReason>,
+    error: Option<String>,
+}
+
+struct ManualMeetingSession {
+    generation: u64,
+    meeting_id: String,
+    started_at: DateTime<Utc>,
+    started_instant: Instant,
+    microphone: LiveCaptureRuntime<CpalAudioInput>,
+    system: LiveCaptureRuntime<SystemAudioInput>,
+    writer: Option<ManualMeetingWriter>,
+}
+
+impl ManualMeetingRecordingRuntime {
+    fn status(&self, now: Instant) -> ManualMeetingRecordingStatus {
+        let (state, meeting_id, started_at, elapsed_ms, remaining_ms) =
+            if let Some(session) = self.session.as_ref() {
+                let elapsed = now.saturating_duration_since(session.started_instant);
+                (
+                    if session
+                        .writer
+                        .as_ref()
+                        .is_some_and(ManualMeetingWriter::overflowed)
+                    {
+                        ManualMeetingRecordingPhase::Error
+                    } else {
+                        ManualMeetingRecordingPhase::Recording
+                    },
+                    Some(session.meeting_id.clone()),
+                    Some(session.started_at.to_rfc3339()),
+                    elapsed.as_millis().min(u64::MAX as u128) as u64,
+                    MAX_MANUAL_MEETING_DURATION
+                        .saturating_sub(elapsed)
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64,
+                )
+            } else {
+                (
+                    if self.error.is_some() {
+                        ManualMeetingRecordingPhase::Error
+                    } else {
+                        ManualMeetingRecordingPhase::Off
+                    },
+                    self.last_meeting_id.clone(),
+                    None,
+                    0,
+                    MAX_MANUAL_MEETING_DURATION.as_millis() as u64,
+                )
+            };
+        ManualMeetingRecordingStatus {
+            generation: self.generation,
+            state,
+            meeting_id,
+            started_at,
+            elapsed_ms,
+            remaining_ms,
+            inputs: vec!["Microphone".to_string(), "System Audio".to_string()],
+            stop_reason: self.last_stop_reason,
+            error: self.error.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,6 +483,8 @@ const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
 const EVENT_TRANSCRIPTION_MODEL_FALLBACK: &str = "transcription-model-fallback";
+const EVENT_MANUAL_MEETING_RECORDING_STATE: &str = "manual-meeting-recording-state";
+const MAX_MANUAL_MEETING_DURATION: Duration = Duration::from_secs(5 * 60 * 60);
 const EVENT_SOURCE_DETECTED: &str = "source-detected";
 const EVENT_SOURCE_ENDED: &str = "source-ended";
 const EVENT_SOURCE_CAPTURE_STARTED: &str = "source-capture-started";
@@ -3038,6 +3146,217 @@ fn reveal_save_folder(state: State<'_, BackendState>) -> Result<(), String> {
 fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.process_next_transcription()
+}
+
+// --- Manual Meeting Mode -------------------------------------------------
+
+fn emit_manual_meeting_status(app: &AppHandle, status: &ManualMeetingRecordingStatus) {
+    if let Err(error) = app.emit(EVENT_MANUAL_MEETING_RECORDING_STATE, status.clone()) {
+        eprintln!("[wakenote] WARN emit manual meeting state failed: {error}");
+    }
+}
+
+fn finalize_manual_meeting_recording(
+    app: &AppHandle,
+    state: &ManualMeetingRecordingState,
+    generation: u64,
+    reason: ManualMeetingStopReason,
+) -> Result<ManualMeetingRecordingStatus, String> {
+    let mut session = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        if runtime.session.as_ref().map(|session| session.generation) != Some(generation) {
+            return Ok(runtime.status(Instant::now()));
+        }
+        runtime.session.take().expect("generation matched session")
+    };
+    session.microphone.stop();
+    session.system.stop();
+    let result = session
+        .writer
+        .take()
+        .ok_or_else(|| "manual meeting writer is unavailable".to_string())?
+        .finish();
+    let status = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.last_meeting_id = Some(session.meeting_id);
+        match result {
+            Ok(record) => {
+                runtime.last_meeting_id = Some(record.id);
+                runtime.last_stop_reason = Some(reason);
+                runtime.error = None;
+            }
+            Err(error) => {
+                runtime.last_stop_reason = Some(ManualMeetingStopReason::Error);
+                runtime.error = Some(error);
+            }
+        }
+        runtime.status(Instant::now())
+    };
+    emit_manual_meeting_status(app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn manual_meeting_recording_status(
+    app: AppHandle,
+    state: State<'_, ManualMeetingRecordingState>,
+) -> Result<ManualMeetingRecordingStatus, String> {
+    let state = state.inner().clone();
+    let overflow_generation = state.lock().ok().and_then(|runtime| {
+        runtime.session.as_ref().and_then(|session| {
+            session
+                .writer
+                .as_ref()
+                .is_some_and(ManualMeetingWriter::overflowed)
+                .then_some(session.generation)
+        })
+    });
+    if let Some(generation) = overflow_generation {
+        return finalize_manual_meeting_recording(
+            &app,
+            &state,
+            generation,
+            ManualMeetingStopReason::Error,
+        );
+    }
+    state
+        .lock()
+        .map(|runtime| runtime.status(Instant::now()))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_manual_meeting_recording(
+    app: AppHandle,
+    state: State<'_, ManualMeetingRecordingState>,
+    backend_state: State<'_, BackendState>,
+) -> Result<ManualMeetingRecordingStatus, String> {
+    let permission_snapshot = permissions::permission_snapshot();
+    if permission_snapshot.microphone.status != permissions::PermissionGrantStatus::Granted {
+        return Err("Microphone permission is required for Meeting Mode".to_string());
+    }
+    if permission_snapshot.screen_recording.status != permissions::PermissionGrantStatus::Granted {
+        return Err("Screen & System Audio permission is required for Meeting Mode".to_string());
+    }
+    let settings = backend_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings();
+    let state = state.inner().clone();
+    let generation = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        if runtime.session.is_some() {
+            return Err("Meeting Mode is already recording".to_string());
+        }
+        runtime.generation = runtime.generation.saturating_add(1);
+        runtime.error = None;
+        runtime.last_stop_reason = None;
+        runtime.generation
+    };
+    let resolved = CpalAudioInput::resolve_device(
+        &settings.selected_microphone,
+        Some(&settings.selected_microphone_label),
+    )
+    .map_err(|error| error.to_string())?;
+    let microphone_rate = resolved.sample_rate;
+    let started_at = Utc::now();
+    let title = format!(
+        "Meeting {}",
+        started_at.with_timezone(&Local).format("%Y-%m-%d %H:%M")
+    );
+    let recorder = start_manual_recorded_meeting_capture(
+        &expand_user_path(&settings.save_root),
+        &title,
+        "Microphone + System Audio",
+        &settings.selected_model,
+        settings.transcription_language,
+        env!("CARGO_PKG_VERSION"),
+        MANUAL_MEETING_SAMPLE_RATE,
+        started_at.with_timezone(&Local),
+    )?;
+    let meeting_id = recorder.id().to_string();
+    let writer = ManualMeetingWriter::start(recorder, started_at);
+    let microphone_sender = writer.sender(ManualMeetingSource::Microphone);
+    let system_sender = writer.sender(ManualMeetingSource::System);
+
+    let mut microphone = LiveCaptureRuntime::new(CpalAudioInput);
+    if let Err(error) = microphone.start(
+        AudioInputConfig {
+            device_id: resolved.device_id,
+            sample_rate: Some(microphone_rate),
+            label_hint: Some(resolved.device_name),
+        },
+        move |frame| microphone_sender.try_send(frame, microphone_rate),
+    ) {
+        let _ = writer.abort();
+        return Err(error.to_string());
+    }
+    let mut system = LiveCaptureRuntime::new(SystemAudioInput::new());
+    if let Err(error) = system.start(
+        AudioInputConfig {
+            device_id: "system".to_string(),
+            sample_rate: Some(MANUAL_MEETING_SAMPLE_RATE),
+            label_hint: None,
+        },
+        move |frame| system_sender.try_send(frame, MANUAL_MEETING_SAMPLE_RATE),
+    ) {
+        microphone.stop();
+        let _ = writer.abort();
+        return Err(error.to_string());
+    }
+
+    let status = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.session = Some(ManualMeetingSession {
+            generation,
+            meeting_id,
+            started_at,
+            started_instant: Instant::now(),
+            microphone,
+            system,
+            writer: Some(writer),
+        });
+        runtime.status(Instant::now())
+    };
+    emit_manual_meeting_status(&app, &status);
+    let deadline_app = app.clone();
+    let deadline_state = state.clone();
+    thread::spawn(move || {
+        thread::sleep(MAX_MANUAL_MEETING_DURATION);
+        let _ = finalize_manual_meeting_recording(
+            &deadline_app,
+            &deadline_state,
+            generation,
+            ManualMeetingStopReason::MaximumDuration,
+        );
+    });
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_manual_meeting_recording(
+    app: AppHandle,
+    state: State<'_, ManualMeetingRecordingState>,
+) -> Result<ManualMeetingRecordingStatus, String> {
+    let state = state.inner().clone();
+    let generation = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .session
+        .as_ref()
+        .map(|session| session.generation);
+    match generation {
+        Some(generation) => finalize_manual_meeting_recording(
+            &app,
+            &state,
+            generation,
+            ManualMeetingStopReason::Manual,
+        ),
+        None => state
+            .lock()
+            .map(|runtime| runtime.status(Instant::now()))
+            .map_err(|error| error.to_string()),
+    }
 }
 
 // --- Long-form meeting transcription -------------------------------------
@@ -5940,6 +6259,8 @@ fn main() {
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
             let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
+            let manual_meeting_recording_state: ManualMeetingRecordingState =
+                Arc::new(Mutex::new(ManualMeetingRecordingRuntime::default()));
             let llm_run_state: LlmRunState =
                 Arc::new(Mutex::new(LlmRunRuntime::default()));
             let input_monitor_state: InputMonitorState =
@@ -5968,6 +6289,7 @@ fn main() {
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
+            app.manage(manual_meeting_recording_state);
             app.manage(llm_run_state);
 
             if let Ok(store) = dictionary_state.lock() {
@@ -6188,6 +6510,9 @@ fn main() {
             source_capture_status,
             start_source_capture,
             stop_source_capture,
+            manual_meeting_recording_status,
+            start_manual_meeting_recording,
+            stop_manual_meeting_recording,
             list_meetings,
             import_and_start_meeting,
             meeting_detail,
