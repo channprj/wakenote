@@ -2,7 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { QueueJob } from "../lib/types";
 import { QueuePanel } from "./QueuePanel";
 
@@ -56,5 +56,44 @@ describe("QueuePanel pagination", () => {
     expect(screen.getByText("51–51 of 51")).toBeTruthy();
     expect(document.querySelectorAll('[data-slot="queue-table"] tbody > tr:not(.table-group-row)')).toHaveLength(1);
     expect(document.querySelector('a[title="/recordings/20260802/000050.wav"]')).toBeTruthy();
+  });
+
+  it("requires confirmation before scanning the full backlog", async () => {
+    const user = userEvent.setup();
+    const onEnqueueBacklog = vi.fn();
+    render(
+      <QueuePanel
+        queue={{
+          jobs: [],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 0,
+        }}
+        models={[]}
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={onEnqueueBacklog}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+      />,
+    );
+
+    const backlogButton = screen.getAllByRole("button", { name: "Process Backlog" }).at(-1)!;
+    await user.click(backlogButton);
+
+    expect(onEnqueueBacklog).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog", { name: "Process the entire backlog?" })).toBeTruthy();
+    expect(screen.getByText(/scan the full save folder/i)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onEnqueueBacklog).not.toHaveBeenCalled();
+
+    await user.click(backlogButton);
+    await user.click(screen.getByRole("button", { name: "Process entire backlog" }));
+
+    expect(onEnqueueBacklog).toHaveBeenCalledTimes(1);
   });
 });

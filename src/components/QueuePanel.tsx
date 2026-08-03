@@ -11,6 +11,17 @@ import {
   SkipForward,
 } from "lucide-react";
 import { Fragment, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
 import { StatusBadge } from "./ui/status-badge";
@@ -180,10 +191,29 @@ export function QueuePanel({
           <FileAudio data-icon="inline-start" />
           Import Audio
         </Button>
-        <Button type="button" variant="secondary" onClick={onEnqueueBacklog}>
-          <FolderInput data-icon="inline-start" />
-          Process Backlog
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button type="button" variant="secondary">
+              <FolderInput data-icon="inline-start" />
+              Process Backlog
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Process the entire backlog?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will scan the full save folder and queue every supported audio file
+                without a transcript. A large backlog may add many jobs at once.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={onEnqueueBacklog}>
+                Process entire backlog
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <Button
           type="button"
           variant="secondary"
