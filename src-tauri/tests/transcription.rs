@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
+use wakenote::openai_realtime::{RealtimeStoredResult, realtime_result_store};
 use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{DictionaryEntry, TranscriptionLanguage};
@@ -794,6 +795,37 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
             format!("{provider} API key is not configured; add it in Settings > Integrations")
         );
     }
+}
+
+#[test]
+fn runtime_transcriber_consumes_the_realtime_result_without_reuploading_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("live.wav");
+    std::fs::write(&audio_path, b"recorded audio").expect("audio");
+    realtime_result_store().publish(
+        audio_path.clone(),
+        RealtimeStoredResult::Completed(wakenote::transcription::TranscriptionExecution {
+            text: "live transcript".into(),
+            speaker_turns: Vec::new(),
+            requested_model_id: "openai-gpt-live-transcribe".into(),
+            effective_model_id: "openai-gpt-live-transcribe".into(),
+            fallback_from_model_id: None,
+            usage: None,
+        }),
+    );
+    let transcriber = RuntimeTranscriber::new(tmp.path());
+
+    let result = transcriber
+        .transcribe_execution(TranscriptionRequest {
+            audio_path: &audio_path,
+            model_id: "openai-gpt-live-transcribe",
+            language: TranscriptionLanguage::Auto,
+            dictionary: &DictionaryContext::default(),
+        })
+        .expect("realtime result");
+
+    assert_eq!(result.text, "live transcript");
+    assert_eq!(result.effective_model_id, "openai-gpt-live-transcribe");
 }
 
 #[test]

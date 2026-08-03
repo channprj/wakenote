@@ -79,6 +79,7 @@ pub enum LiveTranscriptEvent {
         source_label: String,
         microphone_slot: Option<MicrophoneSlot>,
         chunk_id: u64,
+        model_id: Option<String>,
         audio_path: PathBuf,
         overlay_position: crate::settings::FloatingOverlayPosition,
         will_transcribe: bool,
@@ -1930,10 +1931,10 @@ impl AppBackend {
                         ),
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
-                    if let Some(model_id) = model_id {
+                    if let Some(model_id) = model_id.as_ref() {
                         let (job_id, inserted) = self
                             .queue
-                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id.clone());
                         if inserted {
                             let _ = self.queue.set_transcription_options(
                                 job_id,
@@ -1947,6 +1948,7 @@ impl AppBackend {
                         source_label: "System".to_string(),
                         microphone_slot: None,
                         chunk_id,
+                        model_id: model_id.clone(),
                         audio_path: chunk.audio_path.clone(),
                         overlay_position: self.settings.effective_floating_overlay_position(),
                         will_transcribe: self.should_process_transcriptions(),
@@ -2611,10 +2613,10 @@ impl AppBackend {
                         model_id
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
-                    if let Some(model_id) = model_id {
+                    if let Some(model_id) = model_id.as_ref() {
                         let (job_id, inserted) = self
                             .queue
-                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                            .enqueue_file_if_new(chunk.audio_path.clone(), model_id.clone());
                         if inserted {
                             let _ = self.queue.set_transcription_options(
                                 job_id,
@@ -2628,6 +2630,7 @@ impl AppBackend {
                         source_label: source_label.clone(),
                         microphone_slot,
                         chunk_id,
+                        model_id: model_id.clone(),
                         audio_path: chunk.audio_path.clone(),
                         overlay_position: self.settings.effective_floating_overlay_position(),
                         will_transcribe: self.should_process_transcriptions(),

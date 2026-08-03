@@ -456,6 +456,16 @@ impl CaptureProcessor {
 
         self.completed_chunks.push(chunk.clone());
         if let Some(chunk_id) = chunk_id {
+            let final_duration_ms =
+                active_duration_ms(self.active_samples.len(), self.config.sample_rate);
+            if final_duration_ms > self.last_partial_emit_offset_ms {
+                self.pending_events
+                    .push(CaptureControllerEvent::LiveSamplesReady {
+                        chunk_id,
+                        sample_rate: self.config.sample_rate,
+                        samples: Arc::new(self.active_samples.clone()),
+                    });
+            }
             self.pending_events
                 .push(CaptureControllerEvent::ChunkCompleted { chunk_id, chunk });
         }

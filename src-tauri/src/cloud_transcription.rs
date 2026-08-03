@@ -38,6 +38,10 @@ impl TranscriptionCredentials {
     pub fn openai_configured(&self) -> bool {
         self.openai_api_key.is_some()
     }
+
+    pub(crate) fn openai_api_key(&self) -> Option<&str> {
+        self.openai_api_key.as_deref()
+    }
 }
 
 impl fmt::Debug for TranscriptionCredentials {

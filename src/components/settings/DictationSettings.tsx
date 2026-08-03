@@ -10,6 +10,7 @@ import {
   dictationShortcutFromKeyboardEvent,
   formatDictationShortcut,
 } from "@/lib/dictation-shortcut";
+import { modelSupportsContext } from "@/lib/models";
 import type {
   AppSnapshot,
   DictationBubblePosition,
@@ -238,7 +239,11 @@ export function DictationSettings({
       label: "Default transcription model",
     },
     ...snapshot.models
-      .filter((model) => USABLE_MODEL_STATUSES.has(model.status))
+      .filter(
+        (model) =>
+          USABLE_MODEL_STATUSES.has(model.status) &&
+          modelSupportsContext(model, "dictation"),
+      )
       .map((model) => ({
         value: model.id,
         label: model.display_name,

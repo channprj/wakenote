@@ -60,6 +60,7 @@ use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary};
 use wakenote::models::{ModelDescriptor, ModelStore, validate_model_options};
 use wakenote::multi_capture::MultiCaptureRuntime;
+use wakenote::openai_realtime::{OpenAiRealtimeManager, RealtimePartial, RealtimeSamplesRequest};
 use wakenote::overlay;
 use wakenote::overlay_caption::{
     OVERLAY_CAPTION_FINAL_HOLD, OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT,
@@ -1456,7 +1457,7 @@ fn process_dictation_recording(
     };
     let transcriber = match RuntimeTranscriber::for_dictation_with_credentials(
         &settings.model_directory,
-        credentials,
+        credentials.clone(),
     ) {
         Ok(transcriber) => transcriber,
         Err(error) => {
@@ -1490,39 +1491,86 @@ fn process_dictation_recording(
     );
     let dictionary = DictionaryContext::from_settings(&settings);
     let ((archive_result, archive_elapsed), result, transcription_elapsed) =
-        thread::scope(|scope| {
+        if dictation_model == "openai-gpt-live-transcribe" {
             let archive_started = Instant::now();
-            let recording_for_archive = &recording;
-            let settings_for_archive = &settings;
-            let microphone_for_archive = &microphone;
-            let archive_task = scope.spawn(move || {
-                let result = archive_dictation_recording(
-                    recording_for_archive,
-                    settings_for_archive,
-                    &microphone_for_archive.id,
-                    &microphone_for_archive.label,
-                    false,
-                    env!("CARGO_PKG_VERSION"),
-                );
-                (result, archive_started.elapsed())
-            });
-            let transcription_started = Instant::now();
-            let result = transcribe_dictation_recording(
+            let archive_result = archive_dictation_recording(
                 &recording,
-                &dictation_model,
-                settings.dictation_language,
-                &dictionary,
-                transcriber,
+                &settings,
+                &microphone.id,
+                &microphone.label,
+                false,
+                env!("CARGO_PKG_VERSION"),
             );
-            let transcription_elapsed = transcription_started.elapsed();
-            let archive = archive_task.join().unwrap_or_else(|_| {
-                (
-                    Err("Dictation archive worker panicked".to_string()),
-                    archive_started.elapsed(),
-                )
-            });
-            (archive, result, transcription_elapsed)
-        });
+            let archive_elapsed = archive_started.elapsed();
+            let transcription_started = Instant::now();
+            let result = match (&archive_result, app.try_state::<OpenAiRealtimeManager>()) {
+                (Ok(archive), Some(manager)) => {
+                    let source_key = "dictation".to_string();
+                    let chunk_id = recording.started_at.timestamp_micros().unsigned_abs();
+                    manager.submit_samples(RealtimeSamplesRequest {
+                        source_key: source_key.clone(),
+                        source_label: "Dictation".to_string(),
+                        microphone_slot: None,
+                        chunk_id,
+                        model_id: dictation_model.clone(),
+                        language: settings.dictation_language,
+                        dictionary: dictionary.clone(),
+                        sample_rate: recording.sample_rate,
+                        samples: Arc::new(recording.samples.clone()),
+                        credentials: credentials.clone(),
+                    });
+                    manager.commit(source_key, chunk_id, archive.audio_path.clone());
+                    transcribe_dictation_recording(
+                        &recording,
+                        &dictation_model,
+                        settings.dictation_language,
+                        &dictionary,
+                        transcriber,
+                    )
+                }
+                (Err(error), _) => Err(format!("Could not save dictation: {error}")),
+                (_, None) => Err("OpenAI live transcription is unavailable".to_string()),
+            };
+            (
+                (archive_result, archive_elapsed),
+                result,
+                transcription_started.elapsed(),
+            )
+        } else {
+            thread::scope(|scope| {
+                let archive_started = Instant::now();
+                let recording_for_archive = &recording;
+                let settings_for_archive = &settings;
+                let microphone_for_archive = &microphone;
+                let archive_task = scope.spawn(move || {
+                    let result = archive_dictation_recording(
+                        recording_for_archive,
+                        settings_for_archive,
+                        &microphone_for_archive.id,
+                        &microphone_for_archive.label,
+                        false,
+                        env!("CARGO_PKG_VERSION"),
+                    );
+                    (result, archive_started.elapsed())
+                });
+                let transcription_started = Instant::now();
+                let result = transcribe_dictation_recording(
+                    &recording,
+                    &dictation_model,
+                    settings.dictation_language,
+                    &dictionary,
+                    transcriber,
+                );
+                let transcription_elapsed = transcription_started.elapsed();
+                let archive = archive_task.join().unwrap_or_else(|_| {
+                    (
+                        Err("Dictation archive worker panicked".to_string()),
+                        archive_started.elapsed(),
+                    )
+                });
+                (archive, result, transcription_elapsed)
+            })
+        };
     let archive = match archive_result {
         Ok(chunk) => chunk,
         Err(error) => {
@@ -4447,6 +4495,53 @@ fn kick_transcription_worker_if_needed(
     }
 }
 
+fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial: RealtimePartial) {
+    if partial.microphone_slot != Some(MicrophoneSlot::Secondary)
+        && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
+    {
+        let (overlay_position, caption_style) = backend_state
+            .lock()
+            .ok()
+            .map(|backend| {
+                let settings = backend.settings();
+                (
+                    settings.effective_floating_overlay_position(),
+                    settings.floating_overlay_caption_style(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    FloatingOverlayPosition::Off,
+                    AppSettings::default().floating_overlay_caption_style(),
+                )
+            });
+        let snapshot = caption_state.lock().ok().map(|mut runtime| {
+            runtime.show_partial(
+                partial.chunk_id,
+                &partial.text,
+                overlay_position,
+                caption_style,
+            );
+            runtime.snapshot()
+        });
+        if let Some(snapshot) = snapshot {
+            publish_overlay_caption_snapshot(app, snapshot, "OpenAI realtime partial");
+        }
+    }
+    if let Err(error) = app.emit(
+        EVENT_LIVE_PARTIAL,
+        LivePartialPayload {
+            source_key: partial.source_key,
+            source_label: partial.source_label,
+            microphone_slot: partial.microphone_slot,
+            chunk_id: partial.chunk_id,
+            text: partial.text,
+        },
+    ) {
+        eprintln!("[wakenote] WARN failed to emit OpenAI realtime partial: {error}");
+    }
+}
+
 fn wire_live_transcription(
     app_handle: AppHandle,
     backend_state: BackendState,
@@ -4606,9 +4701,17 @@ fn wire_live_transcription(
         preload_dictation_model(&app_handle, &backend.settings());
     }
 
+    let app_for_realtime = app_handle.clone();
+    let backend_for_realtime = backend_state.clone();
+    let realtime = OpenAiRealtimeManager::new(Arc::new(move |partial| {
+        emit_realtime_partial(&app_for_realtime, &backend_for_realtime, partial);
+    }));
+    app_handle.manage(realtime.clone());
+
     let app_for_handler = app_handle.clone();
     let model_directory_for_handler = model_directory.clone();
     let service_for_handler = service.clone();
+    let realtime_for_handler = realtime.clone();
     let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
         LiveTranscriptEvent::Started {
             source_key,
@@ -4667,6 +4770,32 @@ fn wire_live_transcription(
             sample_rate,
             samples,
         } => {
+            if model_id == "openai-gpt-live-transcribe" {
+                let (dictionary, credentials) = app_for_handler
+                    .try_state::<BackendState>()
+                    .and_then(|state| {
+                        state.lock().ok().map(|backend| {
+                            (
+                                DictionaryContext::from_settings(&backend.settings()),
+                                backend.transcription_credentials().unwrap_or_default(),
+                            )
+                        })
+                    })
+                    .unwrap_or_default();
+                realtime_for_handler.submit_samples(RealtimeSamplesRequest {
+                    source_key,
+                    source_label,
+                    microphone_slot,
+                    chunk_id,
+                    model_id,
+                    language,
+                    dictionary,
+                    sample_rate,
+                    samples,
+                    credentials,
+                });
+                return;
+            }
             if !model_supports_live_partials(&model_directory_for_handler, &model_id) {
                 eprintln!("[wakenote] handler: skip live partial for non-whisper model={model_id}");
                 return;
@@ -4701,6 +4830,7 @@ fn wire_live_transcription(
             source_label,
             microphone_slot,
             chunk_id,
+            model_id,
             audio_path,
             overlay_position: _,
             will_transcribe,
@@ -4709,6 +4839,9 @@ fn wire_live_transcription(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
+            if model_id.as_deref() == Some("openai-gpt-live-transcribe") {
+                realtime_for_handler.commit(source_key.clone(), chunk_id, audio_path.clone());
+            }
             if microphone_slot != Some(MicrophoneSlot::Secondary)
                 && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()
             {

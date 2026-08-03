@@ -20,6 +20,7 @@ use crate::models::{
     ModelStore, OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL, OPENAI_GPT_TRANSCRIBE_MODEL,
     default_model_registry,
 };
+use crate::openai_realtime::{RealtimeStoredResult, realtime_result_store};
 use crate::queue::{QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
@@ -885,6 +886,16 @@ impl RuntimeTranscriber {
     fn model_runtime(&self, model_id: &str) -> String {
         model_runtime_for_id(&self.model_directory, model_id)
     }
+
+    fn wait_for_realtime_result(
+        &self,
+        audio_path: &Path,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
+        match realtime_result_store().wait(audio_path) {
+            RealtimeStoredResult::Completed(execution) => Ok(execution),
+            RealtimeStoredResult::Failed(failure) => Err(TranscriptionError::Failure(failure)),
+        }
+    }
 }
 
 pub fn model_runtime_for_id(model_directory: impl AsRef<Path>, model_id: &str) -> String {
@@ -938,6 +949,9 @@ impl Transcriber for RuntimeTranscriber {
                         },
                     )
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
+                "openai-realtime" => self
+                    .wait_for_realtime_result(request.audio_path)
+                    .map(|execution| execution.text),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);
                     transcriber.suppress_low_confidence_decode =
@@ -945,6 +959,19 @@ impl Transcriber for RuntimeTranscriber {
                     transcriber.transcribe(request)
                 }
             }
+        }
+    }
+
+    fn transcribe_execution(
+        &self,
+        request: TranscriptionRequest<'_>,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
+        if self.model_runtime(request.model_id) == "openai-realtime" {
+            self.wait_for_realtime_result(request.audio_path)
+        } else {
+            let model_id = request.model_id.to_string();
+            self.transcribe(request)
+                .map(|text| TranscriptionExecution::direct(text, &model_id))
         }
     }
 }
