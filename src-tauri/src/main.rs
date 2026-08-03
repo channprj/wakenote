@@ -45,6 +45,9 @@ use wakenote::dictation::{
     validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
+use wakenote::dictionary_file::{
+    DictionaryFileError, DictionaryFileStatus, DictionaryFileStore, DictionaryPoll,
+};
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
     AudioFrame, AudioInputConfig, AudioStreamHandle, CpalAudioInput, LiveCaptureError,
@@ -86,6 +89,7 @@ use wakenote::transcription::{
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
+type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
 type DictationShortcutDispatcher = mpsc::Sender<DictationShortcutEvent>;
@@ -110,6 +114,96 @@ type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
+
+const EVENT_DICTIONARY_CHANGED: &str = "dictionary-changed";
+const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
+
+#[derive(Debug, Clone, PartialEq)]
+enum DictionaryApplyOutcome {
+    Unchanged,
+    Changed(AppSettings),
+    Invalid(DictionaryFileError),
+}
+
+fn apply_dictionary_poll(backend: &mut AppBackend, poll: DictionaryPoll) -> DictionaryApplyOutcome {
+    match poll {
+        DictionaryPoll::Unchanged => DictionaryApplyOutcome::Unchanged,
+        DictionaryPoll::Changed(dictionary) => {
+            let settings = backend.update_settings(SettingsPatch {
+                dictionary: Some(dictionary),
+                ..Default::default()
+            });
+            DictionaryApplyOutcome::Changed(settings)
+        }
+        DictionaryPoll::Invalid(error) => DictionaryApplyOutcome::Invalid(error),
+    }
+}
+
+fn initialize_dictionary_file(
+    backend: &mut AppBackend,
+    path: PathBuf,
+) -> (DictionaryFileStore, DictionaryApplyOutcome) {
+    let mut store = DictionaryFileStore::new(path);
+    let current = backend.settings().dictionary;
+    let outcome = match store.ensure(&current) {
+        Ok(poll) => apply_dictionary_poll(backend, poll),
+        Err(error) => DictionaryApplyOutcome::Invalid(error),
+    };
+    (store, outcome)
+}
+
+fn emit_dictionary_outcome(
+    app: &AppHandle,
+    outcome: &DictionaryApplyOutcome,
+    status: &DictionaryFileStatus,
+) {
+    let event = match outcome {
+        DictionaryApplyOutcome::Unchanged => return,
+        DictionaryApplyOutcome::Changed(_) => EVENT_DICTIONARY_CHANGED,
+        DictionaryApplyOutcome::Invalid(_) => EVENT_DICTIONARY_FILE_ERROR,
+    };
+    if let Err(error) = app.emit(event, status.clone()) {
+        eprintln!("[dictionary-file] could not emit {event}: {error}");
+    }
+}
+
+fn spawn_dictionary_file_watcher(
+    app: AppHandle,
+    backend_state: BackendState,
+    dictionary_state: DictionaryFileState,
+) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            let current = match backend_state.lock() {
+                Ok(backend) => backend.settings().dictionary,
+                Err(error) => {
+                    eprintln!("[dictionary-file] backend lock failed: {error}");
+                    continue;
+                }
+            };
+            let (poll, status) = match dictionary_state.lock() {
+                Ok(mut store) => {
+                    let poll = store.poll(&current);
+                    let status = store.status();
+                    (poll, status)
+                }
+                Err(error) => {
+                    eprintln!("[dictionary-file] store lock failed: {error}");
+                    continue;
+                }
+            };
+            let outcome = match backend_state.lock() {
+                Ok(mut backend) => apply_dictionary_poll(&mut backend, poll),
+                Err(error) => {
+                    eprintln!("[dictionary-file] backend apply lock failed: {error}");
+                    continue;
+                }
+            };
+            emit_dictionary_outcome(&app, &outcome, &status);
+        }
+    });
+}
 
 #[derive(Default)]
 struct MeetingRuntime {
@@ -571,6 +665,50 @@ struct OpenAiKeyStatus {
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.settings())
+}
+
+#[tauri::command]
+fn dictionary_file_status(
+    state: State<'_, DictionaryFileState>,
+) -> Result<DictionaryFileStatus, String> {
+    state
+        .lock()
+        .map(|store| store.status())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_dictionary_file(state: State<'_, DictionaryFileState>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .open_in_default_editor()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn reload_dictionary_file(
+    app: AppHandle,
+    backend_state: State<'_, BackendState>,
+    dictionary_state: State<'_, DictionaryFileState>,
+) -> Result<DictionaryFileStatus, String> {
+    let current = backend_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings()
+        .dictionary;
+    let (poll, status) = {
+        let mut store = dictionary_state.lock().map_err(|error| error.to_string())?;
+        let poll = store.reload(&current);
+        let status = store.status();
+        (poll, status)
+    };
+    let outcome = {
+        let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
+        apply_dictionary_poll(&mut backend, poll)
+    };
+    emit_dictionary_outcome(&app, &outcome, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1639,6 +1777,7 @@ fn handle_dictation_shortcut_event(
 fn update_settings(
     app: AppHandle,
     state: State<'_, BackendState>,
+    dictionary_state: State<'_, DictionaryFileState>,
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
     live_transcriber_state: State<'_, LiveTranscriberState>,
@@ -1649,6 +1788,7 @@ fn update_settings(
     mut patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
     normalize_dictation_patch(&mut patch)?;
+    let dictionary_was_patched = patch.dictionary.is_some();
     let (
         previous_settings,
         launch_at_login_action,
@@ -1680,6 +1820,21 @@ fn update_settings(
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (settings, handler, events)
     };
+    if dictionary_was_patched {
+        match dictionary_state.lock() {
+            Ok(mut store) => {
+                let outcome = match store.save_entries(&settings.dictionary) {
+                    Ok(()) => DictionaryApplyOutcome::Changed(settings.clone()),
+                    Err(error) => DictionaryApplyOutcome::Invalid(error),
+                };
+                let status = store.status();
+                emit_dictionary_outcome(&app, &outcome, &status);
+            }
+            Err(error) => {
+                eprintln!("[dictionary-file] store lock failed after settings save: {error}");
+            }
+        }
+    }
     if previous_settings.dictation_enabled && !settings.dictation_enabled {
         finish_dictation(&app, None);
     }
@@ -5449,12 +5604,13 @@ fn main() {
                 None,
             ))?;
 
-            let backend = app
-                .path()
-                .app_data_dir()
-                .ok()
-                .and_then(|dir| AppBackend::load_from_dir(dir).ok())
-                .unwrap_or_default();
+            let app_data_dir = app.path().app_data_dir()?;
+            let mut backend =
+                AppBackend::load_from_dir(&app_data_dir).unwrap_or_default();
+            let (dictionary_store, dictionary_startup_outcome) = initialize_dictionary_file(
+                &mut backend,
+                app_data_dir.join("dictionary.txt"),
+            );
             let initial_settings_for_runtime = backend.settings();
             let initial_dock_mode = dock_icon_runtime_mode(&initial_settings_for_runtime);
             let show_dock_icon = initial_dock_mode == DockIconRuntimeMode::Visible;
@@ -5464,6 +5620,8 @@ fn main() {
                 show_dock_icon,
             )?;
             let backend_state = Arc::new(Mutex::new(backend));
+            let dictionary_state: DictionaryFileState =
+                Arc::new(Mutex::new(dictionary_store));
             let transcription_state = Arc::new(AtomicBool::new(false));
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
             let overlay_caption_state: OverlayCaptionState =
@@ -5487,6 +5645,7 @@ fn main() {
             let dictation_shortcut_dispatcher =
                 spawn_dictation_shortcut_worker(app.handle().clone())?;
             app.manage(backend_state.clone());
+            app.manage(dictionary_state.clone());
             app.manage(transcription_state.clone());
             app.manage(Mutex::new(
                 MultiCaptureRuntime::<CpalAudioInput>::default(),
@@ -5504,6 +5663,19 @@ fn main() {
             app.manage(source_capture_pause_state.clone());
             app.manage(meeting_state.clone());
             app.manage(llm_run_state);
+
+            if let Ok(store) = dictionary_state.lock() {
+                emit_dictionary_outcome(
+                    app.handle(),
+                    &dictionary_startup_outcome,
+                    &store.status(),
+                );
+            }
+            spawn_dictionary_file_watcher(
+                app.handle().clone(),
+                backend_state.clone(),
+                dictionary_state,
+            );
 
             install_modifier_shortcut_monitors(app.handle(), modifier_shortcut_state)?;
 
@@ -5647,6 +5819,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            dictionary_file_status,
+            open_dictionary_file,
+            reload_dictionary_file,
             load_list_visibility,
             set_list_visibility,
             openrouter_key_status,
@@ -6193,7 +6368,100 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use wakenote::settings::SourceAutoPromptEntry;
+    use wakenote::settings::{DictionaryEntry, SourceAutoPromptEntry};
+
+    fn dictionary_entry(id: &str, term: &str, aliases: &[&str]) -> DictionaryEntry {
+        DictionaryEntry {
+            id: id.to_string(),
+            term: term.to_string(),
+            aliases: aliases.iter().map(|alias| (*alias).to_string()).collect(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn dictionary_file_state_applies_valid_poll_as_complete_patch() {
+        let mut backend = AppBackend::default();
+        let entries = vec![dictionary_entry("dictionary-1", "WakeNote", &["wake note"])];
+
+        let outcome = apply_dictionary_poll(&mut backend, DictionaryPoll::Changed(entries.clone()));
+
+        assert!(matches!(outcome, DictionaryApplyOutcome::Changed(_)));
+        assert_eq!(backend.settings().dictionary, entries);
+    }
+
+    #[test]
+    fn dictionary_file_state_invalid_poll_preserves_backend_settings() {
+        let existing = vec![dictionary_entry("dictionary-1", "WakeNote", &["wake note"])];
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            dictionary: Some(existing.clone()),
+            ..Default::default()
+        });
+        let error = wakenote::dictionary_file::parse_dictionary_text("WakeNote\nwakenote\n", &[])
+            .unwrap_err();
+
+        let outcome = apply_dictionary_poll(&mut backend, DictionaryPoll::Invalid(error));
+
+        assert!(matches!(outcome, DictionaryApplyOutcome::Invalid(_)));
+        assert_eq!(backend.settings().dictionary, existing);
+    }
+
+    #[test]
+    fn dictionary_file_state_keeps_saved_settings_when_file_rewrite_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocking_parent = directory.path().join("not-a-directory");
+        std::fs::write(&blocking_parent, "file").unwrap();
+        let mut store = DictionaryFileStore::new(blocking_parent.join("dictionary.txt"));
+        let mut backend = AppBackend::default();
+        let entries = vec![dictionary_entry("dictionary-1", "WakeNote", &["wake note"])];
+
+        let settings = backend.update_settings(SettingsPatch {
+            dictionary: Some(entries.clone()),
+            ..Default::default()
+        });
+        assert!(store.save_entries(&settings.dictionary).is_err());
+
+        assert_eq!(backend.settings().dictionary, entries);
+        assert!(!store.status().in_sync);
+    }
+
+    #[test]
+    fn dictionary_file_state_startup_applies_existing_valid_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dictionary.txt");
+        std::fs::write(&path, "WakeNote = wake note, wake-note\n").unwrap();
+        let mut backend = AppBackend::default();
+
+        let (store, outcome) = initialize_dictionary_file(&mut backend, path);
+
+        assert!(matches!(outcome, DictionaryApplyOutcome::Changed(_)));
+        assert_eq!(backend.settings().dictionary[0].term, "WakeNote");
+        assert!(store.status().in_sync);
+    }
+
+    #[test]
+    fn dictionary_file_state_startup_invalid_file_keeps_settings_and_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("dictionary.txt");
+        std::fs::write(&path, "WakeNote\nwakenote\n").unwrap();
+        let existing = vec![dictionary_entry(
+            "dictionary-9",
+            "Qwen3 ASR",
+            &["qwen 3 asr"],
+        )];
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            dictionary: Some(existing.clone()),
+            ..Default::default()
+        });
+
+        let (store, outcome) = initialize_dictionary_file(&mut backend, path);
+
+        assert!(matches!(outcome, DictionaryApplyOutcome::Invalid(_)));
+        assert_eq!(backend.settings().dictionary, existing);
+        assert_eq!(store.status().error_line, Some(2));
+    }
 
     #[test]
     fn recognized_source_infos_use_default_auto_prompt() {

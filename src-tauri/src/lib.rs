@@ -6,6 +6,7 @@ pub mod commands;
 pub mod debug_log;
 pub mod dictation;
 pub mod dictionary;
+pub mod dictionary_file;
 pub mod input_monitor;
 pub mod live_capture;
 pub mod live_transcription;
