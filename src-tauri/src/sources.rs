@@ -33,8 +33,8 @@ const RECOGNIZED_SOURCES: &[RecognizedSource] = &[
     RecognizedSource {
         id: "meet",
         label: "Google Meet",
-        description: "Google Meet or browser tabs with Meet in the title",
-        title_patterns: &["google meet", "meet - "],
+        description: "Google Meet tabs and floating meet.google.com call windows",
+        title_patterns: &["google meet", "meet - ", "meet.google.com"],
         default_auto_prompt: true,
     },
     RecognizedSource {
@@ -142,6 +142,16 @@ mod tests {
             match_recognized_source("팀 회의 - Google Meet").map(|s| s.id),
             Some("meet")
         );
+    }
+
+    #[test]
+    fn matches_google_meet_floating_call_window() {
+        assert_eq!(
+            match_recognized_source("meet.google.com").map(|source| source.id),
+            Some("meet")
+        );
+        assert!(match_recognized_source("example.com").is_none());
+        assert!(match_recognized_source("Meeting notes").is_none());
     }
 
     #[test]

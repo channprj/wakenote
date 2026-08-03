@@ -6209,9 +6209,13 @@ mod tests {
         assert_eq!(meet.label, "Google Meet");
         assert_eq!(
             meet.description,
-            "Google Meet or browser tabs with Meet in the title"
+            "Google Meet tabs and floating meet.google.com call windows"
         );
         assert!(meet.auto_prompt);
+        assert_eq!(
+            meet.title_patterns,
+            vec!["google meet", "meet - ", "meet.google.com"]
+        );
         assert_eq!(zoom.label, "Zoom");
         assert!(zoom.auto_prompt);
         assert_eq!(zoom.title_patterns, vec!["zoom", "zoom meeting"]);

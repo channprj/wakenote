@@ -256,6 +256,23 @@ mod tests {
     }
 
     #[test]
+    fn detects_meet_floating_window_beside_unrelated_chrome_tab() {
+        let windows = [
+            window("Weekly plan - Confluence", "Google Chrome", 42),
+            window("meet.google.com", "Google Chrome", 42),
+        ];
+
+        match compute_source_transition(None, &windows, &sources()) {
+            SourceTransition::Detected(detected) => {
+                assert_eq!(detected.source_id, "meet");
+                assert_eq!(detected.app_name, "Google Chrome");
+                assert_eq!(detected.pid, 42);
+            }
+            other => panic!("expected Detected, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn unchanged_while_active_source_still_present() {
         let active = DetectedSource {
             source_id: "meet".into(),
