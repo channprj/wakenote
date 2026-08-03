@@ -192,14 +192,20 @@ describe("capture status presentation", () => {
 
   it("falls back to failed queue warnings when device and runtime are healthy", () => {
     const snapshot = mockSnapshot();
+    const jobs = [1, 2, 3].map((id) => ({
+      id,
+      audio_path: `/tmp/failed-${id}.wav`,
+      model_id: "whisper-medium",
+      status: "failed" as const,
+    }));
 
     expect(
       captureStatusPresentation({
         ...snapshot,
-        queue: { ...snapshot.queue, failed_count: 3 },
+        queue: { ...snapshot.queue, jobs, failed_count: 3 },
         status: {
           ...snapshot.status,
-          queue: { ...snapshot.queue, failed_count: 3 },
+          queue: { ...snapshot.queue, jobs, failed_count: 3 },
         },
       }).warning,
     ).toEqual({
@@ -207,6 +213,45 @@ describe("capture status presentation", () => {
       message: "3 transcription jobs need attention",
       tone: "danger",
     });
+  });
+
+  it("clears the Capture warning after attention outcomes are resolved without deleting history", () => {
+    const snapshot = mockSnapshot();
+    const jobs = [
+      {
+        id: 1,
+        audio_path: "/tmp/failed.wav",
+        model_id: "whisper-medium",
+        status: "failed" as const,
+        is_read: true,
+      },
+      {
+        id: 2,
+        audio_path: "/tmp/cancelled.wav",
+        model_id: "whisper-medium",
+        status: "cancelled" as const,
+        is_read: true,
+      },
+      {
+        id: 3,
+        audio_path: "/tmp/skipped.wav",
+        model_id: "whisper-medium",
+        status: "skipped" as const,
+        is_read: true,
+      },
+    ];
+
+    const presentation = captureStatusPresentation({
+      ...snapshot,
+      queue: { ...snapshot.queue, jobs, failed_count: 1 },
+      status: {
+        ...snapshot.status,
+        queue: { ...snapshot.queue, jobs, failed_count: 1 },
+      },
+    });
+
+    expect(presentation.warning).toBeNull();
+    expect(presentation.queueSummary).toContain("1 failed");
   });
 
   it("hides only the currently dismissed warning key", () => {

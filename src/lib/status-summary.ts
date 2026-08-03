@@ -1,4 +1,7 @@
-import { countCompletedQueueJobs } from "./transcript-history";
+import {
+  countCompletedQueueJobs,
+  countUnreadActivityOutcomes,
+} from "./transcript-history";
 import type {
   AppMode,
   AppSnapshot,
@@ -243,11 +246,11 @@ function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
     };
   }
 
-  const failedCount = snapshot.queue.failed_count;
-  if (failedCount > 0) {
+  const attentionCount = countUnreadActivityOutcomes(snapshot.queue.jobs);
+  if (attentionCount > 0) {
     return {
-      key: `queue-failed:${failedCount}`,
-      message: `${failedCount} transcription ${failedCount === 1 ? "job needs" : "jobs need"} attention`,
+      key: `queue-failed:${attentionCount}`,
+      message: `${attentionCount} transcription ${attentionCount === 1 ? "job needs" : "jobs need"} attention`,
       tone: "danger",
     };
   }

@@ -45,6 +45,24 @@ import type {
 } from "../lib/types";
 
 export const ACTIVITY_PAGE_SIZE = 50;
+export type ActivityView = "all" | "attention" | "resolved";
+
+function isAttentionOutcome(job: QueueJob): boolean {
+  return ["failed", "cancelled", "skipped"].includes(job.status);
+}
+
+export function filterActivityJobs(
+  jobs: QueueJob[],
+  view: ActivityView,
+): QueueJob[] {
+  if (view === "attention") {
+    return jobs.filter((job) => isAttentionOutcome(job) && job.is_read !== true);
+  }
+  if (view === "resolved") {
+    return jobs.filter((job) => isAttentionOutcome(job) && job.is_read === true);
+  }
+  return jobs;
+}
 
 export function activityPage(
   jobs: QueueJob[],
@@ -164,13 +182,37 @@ export function QueuePanel({
   onSkip: (id: number) => void;
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
+  const [activityView, setActivityView] = useState<ActivityView>("all");
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
-  const pagination = activityPage(queue.jobs, requestedPage);
+  const filteredJobs = filterActivityJobs(queue.jobs, activityView);
+  const pagination = activityPage(filteredJobs, requestedPage);
   const groupedJobs = groupQueueJobsByDay(pagination.jobs);
   const statsBanner = queueStatsBanner(queue);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
+  const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved").length;
+  const activityViews: Array<{ id: ActivityView; label: string; count: number }> = [
+    { id: "all", label: "All", count: queue.jobs.length },
+    { id: "attention", label: "Needs attention", count: unreadOutcomeCount },
+    { id: "resolved", label: "Resolved", count: resolvedOutcomeCount },
+  ];
+  const emptyCopy =
+    activityView === "attention"
+      ? {
+          title: "No jobs need attention",
+          description: "New failed, cancelled, or skipped outcomes will appear here.",
+        }
+      : activityView === "resolved"
+        ? {
+            title: "No resolved issues",
+            description: "Outcomes marked as resolved remain available here for review.",
+          }
+        : {
+            title: "No queued transcription jobs",
+            description:
+              "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
+          };
 
   return (
     <div className="queue-panel">
@@ -221,12 +263,12 @@ export function QueuePanel({
           disabled={unreadOutcomeCount === 0}
           title={
             unreadOutcomeCount === 0
-              ? "No unread outcomes"
-              : `Mark ${unreadOutcomeCount} outcomes as read`
+              ? "No unresolved outcomes"
+              : `Mark ${unreadOutcomeCount} outcomes as resolved`
           }
         >
           <CheckCheck data-icon="inline-start" />
-          Mark all read
+          Mark all resolved
         </Button>
         <Button
           type="button"
@@ -248,6 +290,28 @@ export function QueuePanel({
           Cancel Current
         </Button>
       </div>
+      <div className="queue-view-bar">
+        <div className="queue-view-tabs" role="group" aria-label="Activity history views">
+          {activityViews.map((view) => (
+            <Button
+              key={view.id}
+              type="button"
+              size="sm"
+              variant={activityView === view.id ? "secondary" : "ghost"}
+              aria-pressed={activityView === view.id}
+              onClick={() => {
+                setActivityView(view.id);
+                setRequestedPage(1);
+              }}
+            >
+              {view.label} <span>{view.count}</span>
+            </Button>
+          ))}
+        </div>
+        <span className="queue-view-bar__hint">
+          Resolved outcomes stay in history until you reprocess them.
+        </span>
+      </div>
       <div className="table-wrap queue-table-wrap">
         <table data-slot="queue-table">
           <thead>
@@ -259,13 +323,13 @@ export function QueuePanel({
             </tr>
           </thead>
           <tbody>
-            {queue.jobs.length === 0 ? (
+            {filteredJobs.length === 0 ? (
               <tr>
                 <td colSpan={4} className="empty-cell">
                   <EmptyState
                     icon={ListChecksIcon}
-                    title="No queued transcription jobs"
-                    description="Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog."
+                    title={emptyCopy.title}
+                    description={emptyCopy.description}
                   />
                 </td>
               </tr>
@@ -324,6 +388,11 @@ export function QueuePanel({
                           {job.error ? (
                             <span className="queue-job__error overflow-wrap-anywhere" title={job.error}>
                               {job.error}
+                            </span>
+                          ) : null}
+                          {job.is_read === true && isAttentionOutcome(job) ? (
+                            <span className="queue-job__resolution">
+                              <CheckCheck aria-hidden="true" /> Resolved
                             </span>
                           ) : null}
                         </td>

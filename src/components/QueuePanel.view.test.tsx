@@ -72,13 +72,13 @@ describe("QueuePanel compact layout", () => {
       failed_count: 2,
     });
 
-    expect(markup).toContain("Mark all read");
-    expect(markup).toContain("Mark 3 outcomes as read");
-    expect(markup).toMatch(/<button[^>]*title="Mark 3 outcomes as read"(?![^>]*disabled)/);
+    expect(markup).toContain("Mark all resolved");
+    expect(markup).toContain("Mark 3 outcomes as resolved");
+    expect(markup).toMatch(/<button[^>]*title="Mark 3 outcomes as resolved"(?![^>]*disabled)/);
     expect(markup).toContain('data-read="true"');
   });
 
-  it("disables mark all read when every attention outcome is already read", () => {
+  it("disables mark all resolved when every attention outcome is resolved", () => {
     const markup = renderQueue({
       jobs: [
         { id: 1, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
@@ -88,6 +88,6 @@ describe("QueuePanel compact layout", () => {
       failed_count: 1,
     });
 
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="No unread outcomes"/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="No unresolved outcomes"/);
   });
 });

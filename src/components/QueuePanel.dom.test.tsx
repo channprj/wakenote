@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { QueueJob } from "../lib/types";
@@ -95,5 +95,46 @@ describe("QueuePanel pagination", () => {
     await user.click(screen.getByRole("button", { name: "Process entire backlog" }));
 
     expect(onEnqueueBacklog).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches between unresolved attention and resolved issue history", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <QueuePanel
+        queue={{
+          jobs: [
+            { id: 1, audio_path: "/unread.wav", model_id: "m", status: "failed" },
+            { id: 2, audio_path: "/resolved-failed.wav", model_id: "m", status: "failed", is_read: true },
+            { id: 3, audio_path: "/resolved-cancelled.wav", model_id: "m", status: "cancelled", is_read: true },
+            { id: 4, audio_path: "/completed.wav", model_id: "m", status: "completed" },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 2,
+        }}
+        models={[]}
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+      />,
+    );
+    const panel = within(container);
+
+    await user.click(panel.getByRole("button", { name: "Resolved 2" }));
+
+    expect(container.querySelector('a[title="/resolved-failed.wav"]')).toBeTruthy();
+    expect(container.querySelector('a[title="/resolved-cancelled.wav"]')).toBeTruthy();
+    expect(container.querySelector('a[title="/unread.wav"]')).toBeNull();
+    expect(container.querySelector('a[title="/completed.wav"]')).toBeNull();
+
+    await user.click(panel.getByRole("button", { name: "Needs attention 1" }));
+
+    expect(container.querySelector('a[title="/unread.wav"]')).toBeTruthy();
+    expect(container.querySelector('a[title="/resolved-failed.wav"]')).toBeNull();
   });
 });

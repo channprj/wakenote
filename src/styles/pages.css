@@ -959,6 +959,21 @@
   white-space: normal;
 }
 
+.queue-job__resolution {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--leading-micro);
+}
+
+.queue-job__resolution svg {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
 .queue-job__actions-cell .row-actions {
   flex-wrap: nowrap;
   justify-content: flex-end;

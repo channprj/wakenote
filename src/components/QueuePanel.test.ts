@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activityPage,
   cancelCurrentDisabledReason,
+  filterActivityJobs,
   processNextDisabledReason,
   queueJobActionState,
   queueJobRetryDisabledReason,
@@ -44,6 +45,21 @@ describe("Activity pagination", () => {
       rangeEnd: 0,
       total: 0,
     });
+  });
+});
+
+describe("Activity issue views", () => {
+  const jobs: QueueJob[] = [
+    { id: 1, audio_path: "/unread.wav", model_id: "m", status: "failed" },
+    { id: 2, audio_path: "/resolved-failed.wav", model_id: "m", status: "failed", is_read: true },
+    { id: 3, audio_path: "/resolved-skipped.wav", model_id: "m", status: "skipped", is_read: true },
+    { id: 4, audio_path: "/completed.wav", model_id: "m", status: "completed" },
+  ];
+
+  it("keeps resolved outcomes discoverable after they stop requiring attention", () => {
+    expect(filterActivityJobs(jobs, "resolved").map((job) => job.id)).toEqual([2, 3]);
+    expect(filterActivityJobs(jobs, "attention").map((job) => job.id)).toEqual([1]);
+    expect(filterActivityJobs(jobs, "all").map((job) => job.id)).toEqual([1, 2, 3, 4]);
   });
 });
 

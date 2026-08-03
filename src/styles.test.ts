@@ -526,8 +526,9 @@ describe("compact overflow safety contract", () => {
 
     // Only the job table absorbs slack; stats, toolbar, and pagination keep their own height.
     expect(queuePanel).toContain(
-      "grid-template-rows: auto auto minmax(0, 1fr) auto;",
+      "grid-template-rows: auto auto auto minmax(0, 1fr) auto;",
     );
+    expect(cssRule(".queue-view-bar", componentsCss)).toContain("display: flex;");
 
     // Naturally short panels stay top-aligned rather than stretching rows.
     expect(cssRule(".meeting-panel", componentsCss)).toContain(
