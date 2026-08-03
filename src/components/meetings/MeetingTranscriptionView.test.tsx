@@ -332,8 +332,8 @@ describe("MeetingTranscriptionView", () => {
     );
 
     expect(
-      screen.getByRole("tab", { name: /Visible2/ }).getAttribute(
-        "aria-selected",
+      screen.getByRole("radio", { name: /Visible2/ }).getAttribute(
+        "aria-checked",
       ),
     ).toBe("true");
     await userEvent.click(
