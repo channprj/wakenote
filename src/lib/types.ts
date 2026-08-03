@@ -424,6 +424,25 @@ export type MeetingStatus =
 
 export type MeetingSegmentStatus = "pending" | "completed" | "failed";
 
+export type ManualMeetingRecordingPhase = "off" | "recording" | "error";
+
+export type ManualMeetingStopReason =
+  | "manual"
+  | "maximum_duration"
+  | "error";
+
+export interface ManualMeetingRecordingStatus {
+  generation: number;
+  state: ManualMeetingRecordingPhase;
+  meeting_id: string | null;
+  started_at: string | null;
+  elapsed_ms: number;
+  remaining_ms: number;
+  inputs: string[];
+  stop_reason: ManualMeetingStopReason | null;
+  error: string | null;
+}
+
 export interface MeetingProgress {
   segments_total: number;
   segments_done: number;

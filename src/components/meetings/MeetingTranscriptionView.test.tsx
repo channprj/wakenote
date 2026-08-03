@@ -69,6 +69,18 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
     progressById: {},
     liveTextById: {},
     busy: false,
+    manualRecording: {
+      generation: 0,
+      state: "off",
+      meeting_id: null,
+      started_at: null,
+      elapsed_ms: 0,
+      remaining_ms: 18_000_000,
+      inputs: ["Microphone", "System Audio"],
+      stop_reason: null,
+      error: null,
+    },
+    manualRecordingBusy: false,
     error: null,
     visibilityMode: "visible",
     visibleCount: 0,
@@ -77,6 +89,8 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
     visibilityMutating: false,
     visibilityStatus: "",
     onImport: vi.fn(),
+    onStartManualRecording: vi.fn(),
+    onStopManualRecording: vi.fn(),
     onOpen: vi.fn(),
     onBack: vi.fn(),
     onCancel: vi.fn(),
@@ -94,6 +108,65 @@ function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingT
 }
 
 describe("MeetingTranscriptionView", () => {
+  it("starts and stops a five-hour microphone plus system meeting recording", async () => {
+    const onStartManualRecording = vi.fn();
+    const onStopManualRecording = vi.fn();
+    const { rerender } = render(
+      <MeetingTranscriptionView
+        {...props({
+          manualRecording: {
+            generation: 1,
+            state: "off",
+            meeting_id: null,
+            started_at: null,
+            elapsed_ms: 0,
+            remaining_ms: 18_000_000,
+            inputs: ["Microphone", "System Audio"],
+            stop_reason: null,
+            error: null,
+          },
+          onStartManualRecording,
+          onStopManualRecording,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Meeting Mode")).toBeTruthy();
+    expect(screen.getByText("Microphone + System Audio")).toBeTruthy();
+    expect(screen.getByText("5:00:00 maximum")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start meeting recording" }),
+    );
+    expect(onStartManualRecording).toHaveBeenCalledOnce();
+
+    rerender(
+      <MeetingTranscriptionView
+        {...props({
+          manualRecording: {
+            generation: 1,
+            state: "recording",
+            meeting_id: "meeting-live",
+            started_at: "2026-08-03T01:00:00Z",
+            elapsed_ms: 3_723_000,
+            remaining_ms: 14_277_000,
+            inputs: ["Microphone", "System Audio"],
+            stop_reason: null,
+            error: null,
+          },
+          onStartManualRecording,
+          onStopManualRecording,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("1:02:03 elapsed")).toBeTruthy();
+    expect(screen.getByText("3:57:57 remaining")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop and save meeting recording" }),
+    );
+    expect(onStopManualRecording).toHaveBeenCalledOnce();
+  });
+
   it("renders active segment progress, remaining time, and live text", () => {
     const active = meeting({ id: "meeting-active", status: "processing" });
     const markup = renderToStaticMarkup(

@@ -35,6 +35,7 @@ import type {
   SourcePayload,
   MeetingSummary,
   MeetingDetail,
+  ManualMeetingRecordingStatus,
   LlmGenerateRequest,
   LlmProgressEvent,
   LlmReportHistoryDetail,
@@ -62,6 +63,9 @@ let browserCaptureSessionTranscriptionRequested = false;
 // `stopSourceCapture` flips it off so dev reflects session active/inactive.
 let browserSourceCapturing = false;
 let browserDetectedSource: SourcePayload | null = null;
+let browserManualMeetingStartedAt: number | null = null;
+let browserManualMeetingGeneration = 0;
+let browserManualMeetingId: string | null = null;
 let browserOpenRouterApiKey: string | null = null;
 let browserOpenAiApiKey: string | null = null;
 let browserListVisibility = emptyListVisibilityState();
@@ -1964,6 +1968,59 @@ export async function listMeetings(): Promise<MeetingSummary[]> {
     return [];
   }
   return invoke<MeetingSummary[]>("list_meetings");
+}
+
+function browserManualMeetingRecordingStatus(): ManualMeetingRecordingStatus {
+  const elapsedMs = browserManualMeetingStartedAt === null
+    ? 0
+    : Math.min(18_000_000, Date.now() - browserManualMeetingStartedAt);
+  return {
+    generation: browserManualMeetingGeneration,
+    state: browserManualMeetingStartedAt === null ? "off" : "recording",
+    meeting_id: browserManualMeetingId,
+    started_at:
+      browserManualMeetingStartedAt === null
+        ? null
+        : new Date(browserManualMeetingStartedAt).toISOString(),
+    elapsed_ms: elapsedMs,
+    remaining_ms: Math.max(0, 18_000_000 - elapsedMs),
+    inputs: ["Microphone", "System Audio"],
+    stop_reason: null,
+    error: null,
+  };
+}
+
+export async function loadManualMeetingRecordingStatus(): Promise<ManualMeetingRecordingStatus> {
+  if (!isTauriRuntime()) {
+    return browserManualMeetingRecordingStatus();
+  }
+  return invoke<ManualMeetingRecordingStatus>(
+    "manual_meeting_recording_status",
+  );
+}
+
+export async function startManualMeetingRecording(): Promise<ManualMeetingRecordingStatus> {
+  if (!isTauriRuntime()) {
+    if (browserManualMeetingStartedAt === null) {
+      browserManualMeetingStartedAt = Date.now();
+      browserManualMeetingGeneration += 1;
+      browserManualMeetingId = `meeting-manual-${browserManualMeetingGeneration}`;
+    }
+    return browserManualMeetingRecordingStatus();
+  }
+  return invoke<ManualMeetingRecordingStatus>(
+    "start_manual_meeting_recording",
+  );
+}
+
+export async function stopManualMeetingRecording(): Promise<ManualMeetingRecordingStatus> {
+  if (!isTauriRuntime()) {
+    browserManualMeetingStartedAt = null;
+    return browserManualMeetingRecordingStatus();
+  }
+  return invoke<ManualMeetingRecordingStatus>(
+    "stop_manual_meeting_recording",
+  );
 }
 
 /** Open a file picker for a long recording and start batch transcription. */

@@ -6,7 +6,9 @@ import {
   FileAudioIcon,
   FolderOpenIcon,
   Loader2Icon,
+  Mic2Icon,
   RotateCcwIcon,
+  SquareIcon,
   UploadIcon,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -34,6 +36,7 @@ import {
 } from "@/lib/meeting-progress";
 import type {
   MeetingDetail,
+  ManualMeetingRecordingStatus,
   MeetingProgressPayload,
   MeetingSummary,
 } from "@/lib/types";
@@ -45,6 +48,8 @@ export interface MeetingTranscriptionViewProps {
   progressById: Record<string, MeetingProgressPayload>;
   liveTextById: Record<string, string>;
   busy: boolean;
+  manualRecording: ManualMeetingRecordingStatus;
+  manualRecordingBusy: boolean;
   error: string | null;
   visibilityMode: ListVisibilityMode;
   visibleCount: number;
@@ -53,6 +58,8 @@ export interface MeetingTranscriptionViewProps {
   visibilityMutating: boolean;
   visibilityStatus: string;
   onImport: () => void;
+  onStartManualRecording: () => void;
+  onStopManualRecording: () => void;
   onOpen: (id: string) => void;
   onBack: () => void;
   onCancel: (id: string) => void;
@@ -74,6 +81,67 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
 
   return (
     <div data-slot="meeting-transcription-view" className="meeting-panel">
+      <section
+        className="meeting-mode"
+        data-state={props.manualRecording.state}
+        aria-labelledby="meeting-mode-title"
+      >
+        <div className="meeting-mode__content">
+          <span className="meeting-mode__eyebrow">Continuous recording</span>
+          <div className="meeting-mode__title-row">
+            <h2 id="meeting-mode-title">Meeting Mode</h2>
+            <StatusBadge
+              tone={props.manualRecording.state === "recording" ? "danger" : "neutral"}
+            >
+              {props.manualRecording.state === "recording" ? "Recording" : "Off"}
+            </StatusBadge>
+          </div>
+          <p>Microphone + System Audio</p>
+          <div className="meeting-mode__metrics" aria-live="polite">
+            {props.manualRecording.state === "recording" ? (
+              <>
+                <span>{formatClock(props.manualRecording.elapsed_ms)} elapsed</span>
+                <span>{formatClock(props.manualRecording.remaining_ms)} remaining</span>
+              </>
+            ) : (
+              <span>{formatClock(props.manualRecording.remaining_ms)} maximum</span>
+            )}
+          </div>
+        </div>
+        {props.manualRecording.state === "recording" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive"
+            disabled={props.manualRecordingBusy}
+            aria-label="Stop and save meeting recording"
+            onClick={props.onStopManualRecording}
+          >
+            {props.manualRecordingBusy ? (
+              <Loader2Icon data-icon="inline-start" className="meeting-spin" />
+            ) : (
+              <SquareIcon data-icon="inline-start" />
+            )}
+            Stop & save
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled={props.manualRecordingBusy}
+            aria-label="Start meeting recording"
+            onClick={props.onStartManualRecording}
+          >
+            {props.manualRecordingBusy ? (
+              <Loader2Icon data-icon="inline-start" className="meeting-spin" />
+            ) : (
+              <Mic2Icon data-icon="inline-start" />
+            )}
+            Start recording
+          </Button>
+        )}
+      </section>
+
       <div className="meeting-panel__toolbar">
         <Button type="button" size="sm" disabled={props.busy} onClick={props.onImport}>
           {props.busy ? (
@@ -84,7 +152,7 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
           Import meeting audio
         </Button>
         <span className="meeting-panel__hint">
-          Long recordings are transcribed segment by segment · No speaker separation
+          Import an existing recording or transcribe a saved meeting when ready
         </span>
       </div>
 

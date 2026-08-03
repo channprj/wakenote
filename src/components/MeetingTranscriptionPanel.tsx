@@ -10,9 +10,12 @@ import {
   importAndStartMeeting,
   isTauriRuntime,
   listMeetings,
+  loadManualMeetingRecordingStatus,
   meetingDetail,
   openTranscriptFolder,
   resumeMeeting,
+  startManualMeetingRecording,
+  stopManualMeetingRecording,
 } from "../lib/tauri-client";
 import { useListVisibility } from "../hooks/use-list-visibility";
 import { subscribeMeetingEvents } from "../lib/meeting-event-subscriptions";
@@ -20,6 +23,7 @@ import { projectListItems } from "../lib/list-visibility";
 import { isMeetingActive } from "../lib/meeting-progress";
 import type {
   ListVisibilityTarget,
+  ManualMeetingRecordingStatus,
   MeetingDetail,
   MeetingProgressPayload,
   MeetingSummary,
@@ -43,6 +47,19 @@ export function MeetingTranscriptionPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [busy, setBusy] = useState(false);
+  const [manualRecordingBusy, setManualRecordingBusy] = useState(false);
+  const [manualRecording, setManualRecording] =
+    useState<ManualMeetingRecordingStatus>({
+      generation: 0,
+      state: "off",
+      meeting_id: null,
+      started_at: null,
+      elapsed_ms: 0,
+      remaining_ms: 18_000_000,
+      inputs: ["Microphone", "System Audio"],
+      stop_reason: null,
+      error: null,
+    });
   const [error, setError] = useState<string | null>(null);
   const [visibilityMode, setVisibilityMode] =
     useState<ListVisibilityMode>("visible");
@@ -57,6 +74,14 @@ export function MeetingTranscriptionPanel() {
   const refreshMeetings = useCallback(async () => {
     try {
       setMeetings(await listMeetings());
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }, []);
+
+  const refreshManualRecording = useCallback(async () => {
+    try {
+      setManualRecording(await loadManualMeetingRecordingStatus());
     } catch (cause) {
       setError(String(cause));
     }
@@ -126,6 +151,83 @@ export function MeetingTranscriptionPanel() {
       }
     };
   }, [refreshMeetings, openDetail]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void refreshManualRecording();
+    if (isTauriRuntime()) {
+      void import("@tauri-apps/api/event")
+        .then(({ listen }) =>
+          listen<ManualMeetingRecordingStatus>(
+            "manual-meeting-recording-state",
+            (event) => {
+              if (!disposed) {
+                setManualRecording(event.payload);
+                if (event.payload.state !== "recording") {
+                  void refreshMeetings();
+                }
+              }
+            },
+          ),
+        )
+        .then((stop) => {
+          if (disposed) {
+            stop();
+          } else {
+            unlisten = stop;
+          }
+        })
+        .catch((cause) => {
+          if (!disposed) {
+            setError(String(cause));
+          }
+        });
+    }
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refreshManualRecording, refreshMeetings]);
+
+  useEffect(() => {
+    if (manualRecording.state !== "recording") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void refreshManualRecording();
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [manualRecording.state, refreshManualRecording]);
+
+  const onStartManualRecording = useCallback(async () => {
+    setManualRecordingBusy(true);
+    setError(null);
+    try {
+      setManualRecording(await startManualMeetingRecording());
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setManualRecordingBusy(false);
+    }
+  }, []);
+
+  const onStopManualRecording = useCallback(async () => {
+    setManualRecordingBusy(true);
+    setError(null);
+    try {
+      const status = await stopManualMeetingRecording();
+      setManualRecording(status);
+      await refreshMeetings();
+      if (status.meeting_id) {
+        await openDetail(status.meeting_id);
+      }
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setManualRecordingBusy(false);
+    }
+  }, [openDetail, refreshMeetings]);
 
   const onImport = useCallback(async () => {
     setBusy(true);
@@ -261,6 +363,8 @@ export function MeetingTranscriptionPanel() {
       progressById={progressById}
       liveTextById={liveTextById}
       busy={busy}
+      manualRecording={manualRecording}
+      manualRecordingBusy={manualRecordingBusy}
       error={error ?? visibility.error}
       visibilityMode={visibilityMode}
       visibleCount={projectedMeetings.visible.length}
@@ -271,6 +375,8 @@ export function MeetingTranscriptionPanel() {
       }
       visibilityStatus={visibility.announcement}
       onImport={() => void onImport()}
+      onStartManualRecording={() => void onStartManualRecording()}
+      onStopManualRecording={() => void onStopManualRecording()}
       onOpen={(id) => void openDetail(id)}
       onBack={() => {
         setSelectedId(null);

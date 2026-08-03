@@ -115,6 +115,21 @@ function mockInvoke(command: string) {
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "open_transcript_folder":
       return Promise.resolve(null);
+    case "manual_meeting_recording_status":
+    case "start_manual_meeting_recording":
+    case "stop_manual_meeting_recording":
+      return Promise.resolve({
+        generation: 1,
+        state:
+          command === "start_manual_meeting_recording" ? "recording" : "off",
+        meeting_id: "meeting-manual-1",
+        started_at: null,
+        elapsed_ms: 0,
+        remaining_ms: 18_000_000,
+        inputs: ["Microphone", "System Audio"],
+        stop_reason: null,
+        error: null,
+      });
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
@@ -198,6 +213,29 @@ describe("tauri runtime client snapshots", () => {
 
     expect(mocks.invoke).toHaveBeenCalledWith("open_dictionary_file");
     expect(mocks.invoke).toHaveBeenCalledWith("reload_dictionary_file");
+  });
+
+  it("controls manual meeting recording through explicit commands", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const {
+      loadManualMeetingRecordingStatus,
+      startManualMeetingRecording,
+      stopManualMeetingRecording,
+    } = await import("./tauri-client");
+
+    expect((await loadManualMeetingRecordingStatus()).state).toBe("off");
+    expect((await startManualMeetingRecording()).state).toBe("recording");
+    expect((await stopManualMeetingRecording()).state).toBe("off");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "manual_meeting_recording_status",
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "start_manual_meeting_recording",
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "stop_manual_meeting_recording",
+    );
   });
 
   it("loads recent transcripts through a separate bounded command", async () => {
