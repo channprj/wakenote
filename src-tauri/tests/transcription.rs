@@ -117,6 +117,9 @@ fn transcription_worker_records_empty_output_as_no_speech_without_blank_txt() {
     let now = chrono::Utc::now();
     let metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
         device_id: "default".into(),
         device_name: "System Default".into(),
         sample_rate: 16_000,
@@ -272,6 +275,9 @@ fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
     let now = chrono::Utc::now();
     let metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
         device_id: "custom-source-2".into(),
         device_name: "Spotify".into(),
         sample_rate: 16_000,

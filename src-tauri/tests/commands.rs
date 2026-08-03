@@ -20,7 +20,7 @@ use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AudioFormat, CaptureMicrophoneEntry, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch,
-    TranscriptionLanguage,
+    TranscriptionLanguage, TranscriptionOptions,
 };
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest,
@@ -308,6 +308,9 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
     );
     let metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
         device_id: "youtube".into(),
         device_name: "Google Chrome".into(),
         sample_rate: 16_000,
@@ -362,6 +365,9 @@ fn recent_transcript_preserves_microphone_identity() {
     let started_at = chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 3).unwrap();
     let metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
         device_id: "input-1-wired".into(),
         device_name: "Wired".into(),
         sample_rate: 16_000,
@@ -1082,6 +1088,9 @@ fn backend_regenerate_transcript_requeues_completed_audio_and_clears_sidecars() 
     let now = chrono::Utc::now();
     let metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
         device_id: "custom-source-2".into(),
         device_name: "Spotify".into(),
         sample_rate: 16_000,
@@ -3105,4 +3114,36 @@ fn cloud_transcription_dispatch_snapshots_private_provider_credentials() {
     assert!(credentials.openai_configured());
     assert!(!format!("{credentials:?}").contains("sk-openrouter-test"));
     assert!(!format!("{credentials:?}").contains("sk-openai-test"));
+}
+
+#[test]
+fn queued_transcription_keeps_the_options_present_when_it_was_enqueued() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let audio_path = tmp.path().join("sample.wav");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let mut backend = AppBackend::default();
+    let queued_options = TranscriptionOptions {
+        streaming_enabled: true,
+        cost_limit_fallback_enabled: true,
+        cost_limit_fallback_model_id: Some("whisper-medium".into()),
+    };
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("openai-gpt-transcribe".into()),
+        transcription_options: Some(queued_options.clone()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&audio_path, None);
+
+    backend.update_settings(SettingsPatch {
+        transcription_options: Some(TranscriptionOptions::default()),
+        ..SettingsPatch::default()
+    });
+    let started = backend
+        .start_next_transcription_job()
+        .expect("queued cloud job");
+
+    assert_eq!(started.transcription_options, queued_options);
 }

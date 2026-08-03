@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use wakenote::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
+use wakenote::settings::TranscriptionOptions;
 
 #[test]
 fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
@@ -30,6 +31,25 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
     queue.skip(second).expect("skip job");
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Skipped);
     assert_eq!(queue.job(second).unwrap().error, None);
+}
+
+#[test]
+fn queue_preserves_transcription_options_across_retry() {
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file("/recordings/fallback.wav", "openai-gpt-transcribe");
+    let options = TranscriptionOptions {
+        streaming_enabled: true,
+        cost_limit_fallback_enabled: true,
+        cost_limit_fallback_model_id: Some("whisper-medium".to_string()),
+    };
+    queue
+        .set_transcription_options(id, options.clone())
+        .expect("snapshot options");
+
+    queue.mark_failed(id, "billing limit").expect("fail job");
+    queue.retry(id).expect("retry job");
+
+    assert_eq!(queue.job(id).unwrap().transcription_options, Some(options));
 }
 
 #[test]

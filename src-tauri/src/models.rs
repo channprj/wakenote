@@ -214,6 +214,7 @@ pub fn validate_model_options(
                     && fallback.id != primary.id
                     && matches!(fallback.status, ModelStatus::Installed | ModelStatus::Ready)
                     && fallback.capabilities.file_transcription
+                    && (!primary.capabilities.diarization || fallback.capabilities.diarization)
             });
     normalized.cost_limit_fallback_enabled =
         requested.cost_limit_fallback_enabled && fallback_available;

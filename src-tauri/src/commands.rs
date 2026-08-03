@@ -37,12 +37,13 @@ use crate::recorder::{
     microphone_output_label,
 };
 use crate::settings::{
-    AppSettings, MicrophoneSlot, SettingsPatch, TranscriptionLanguage, expand_user_path,
+    AppSettings, MicrophoneSlot, SettingsPatch, TranscriptionLanguage, TranscriptionOptions,
+    expand_user_path,
 };
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
-    RuntimeTranscriber, Transcriber, TranscriptionJobOutcome, TranscriptionWorker,
-    TranscriptionWorkerOptions, apply_outcome,
+    FallbackTranscriber, RuntimeTranscriber, Transcriber, TranscriptionJobOutcome,
+    TranscriptionWorker, TranscriptionWorkerOptions, apply_outcome,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -518,6 +519,9 @@ pub struct StartedTranscriptionJob {
     pub language: TranscriptionLanguage,
     pub suppress_low_confidence_transcripts: bool,
     pub dictionary: DictionaryContext,
+    pub transcription_options: TranscriptionOptions,
+    pub fallback_supports_diarization: bool,
+    pub diarization_required: bool,
     pub credentials: Result<TranscriptionCredentials, String>,
 }
 
@@ -1927,9 +1931,15 @@ impl AppBackend {
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
                     if let Some(model_id) = model_id {
-                        let (_, inserted) = self
+                        let (job_id, inserted) = self
                             .queue
                             .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                        if inserted {
+                            let _ = self.queue.set_transcription_options(
+                                job_id,
+                                self.settings.transcription_options.clone(),
+                            );
+                        }
                         queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
@@ -1978,8 +1988,11 @@ impl AppBackend {
         }
 
         let model_id = model_id.unwrap_or_else(|| self.settings.selected_model.clone());
-        let (_, inserted) = self.queue.enqueue_file_if_new(audio_path, model_id);
+        let (job_id, inserted) = self.queue.enqueue_file_if_new(audio_path, model_id);
         if inserted {
+            let _ = self
+                .queue
+                .set_transcription_options(job_id, self.settings.transcription_options.clone());
             self.persist_queue();
         }
         self.queue.snapshot()
@@ -1995,6 +2008,12 @@ impl AppBackend {
             .queue
             .enqueue_backlog(scan, self.settings.selected_model.clone());
         if !enqueued.is_empty() {
+            for job_id in &enqueued {
+                let _ = self.queue.set_transcription_options(
+                    *job_id,
+                    self.settings.transcription_options.clone(),
+                );
+            }
             let log_root = self.save_root_path();
             for job_id in &enqueued {
                 if let Some(job) = self.queue.job(*job_id) {
@@ -2040,7 +2059,9 @@ impl AppBackend {
         };
         let chunk = RecordedChunk::from_audio_path(audio_path.clone());
         TranscriptionSidecar::reset_for_regenerate(&chunk).map_err(|error| error.to_string())?;
-        self.queue.requeue_file(audio_path, model_id)?;
+        let job_id = self.queue.requeue_file(audio_path, model_id)?;
+        self.queue
+            .set_transcription_options(job_id, self.settings.transcription_options.clone())?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }
@@ -2081,12 +2102,42 @@ impl AppBackend {
     }
 
     pub fn process_next_transcription(&mut self) -> Result<QueueSnapshot, String> {
-        let transcriber = RuntimeTranscriber::for_archival_with_credentials(
-            &self.settings.model_directory,
-            self.transcription_credentials()?,
+        let Some(started) = self.start_next_transcription_job() else {
+            return Ok(self.queue.snapshot());
+        };
+        let runtime = RuntimeTranscriber::for_archival_with_credentials(
+            &started.model_directory,
+            started.credentials.map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
-        self.process_next_transcription_with(transcriber)
+        let fallback = FallbackTranscriber::configured(
+            runtime.clone(),
+            runtime,
+            if started.transcription_options.cost_limit_fallback_enabled {
+                started
+                    .transcription_options
+                    .cost_limit_fallback_model_id
+                    .clone()
+            } else {
+                None
+            },
+            started.fallback_supports_diarization,
+            started.diarization_required,
+        );
+        let worker = TranscriptionWorker::with_options_and_dictionary(
+            fallback,
+            TranscriptionWorkerOptions {
+                language: started.language,
+                suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
+            },
+            started.dictionary,
+        );
+        let outcome = worker
+            .process_started_job(&started.job)
+            .unwrap_or_else(|error| {
+                TranscriptionJobOutcome::failed(started.job.id, error.to_string())
+            });
+        self.finish_transcription_job(outcome)
     }
 
     pub fn process_next_transcription_with<T: Transcriber>(
@@ -2166,6 +2217,8 @@ impl AppBackend {
         let language = self.settings.transcription_language;
         let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
         let dictionary = DictionaryContext::from_settings(&self.settings);
+        let models = self.model_registry();
+        let requested_transcription_options = self.settings.transcription_options.clone();
         let credentials = self.transcription_credentials();
         let mut started_jobs = Vec::new();
 
@@ -2173,12 +2226,30 @@ impl AppBackend {
             .queue
             .start_next_for_model_ids_up_to(&selectable_model_ids, max_running)
         {
+            let requested_options = job
+                .transcription_options
+                .clone()
+                .unwrap_or_else(|| requested_transcription_options.clone());
+            let transcription_options =
+                validate_model_options(&models, &job.model_id, &requested_options);
+            let fallback_supports_diarization = transcription_options
+                .cost_limit_fallback_model_id
+                .as_deref()
+                .and_then(|fallback_id| models.iter().find(|model| model.id == fallback_id))
+                .is_some_and(|model| model.capabilities.diarization);
+            let diarization_required = models
+                .iter()
+                .find(|model| model.id == job.model_id)
+                .is_some_and(|model| model.capabilities.diarization);
             started_jobs.push(StartedTranscriptionJob {
                 job,
                 model_directory: model_directory.clone(),
                 language,
                 suppress_low_confidence_transcripts,
                 dictionary: dictionary.clone(),
+                transcription_options,
+                fallback_supports_diarization,
+                diarization_required,
                 credentials: credentials.clone(),
             });
         }
@@ -2540,9 +2611,15 @@ impl AppBackend {
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
                     if let Some(model_id) = model_id {
-                        let (_, inserted) = self
+                        let (job_id, inserted) = self
                             .queue
                             .enqueue_file_if_new(chunk.audio_path.clone(), model_id);
+                        if inserted {
+                            let _ = self.queue.set_transcription_options(
+                                job_id,
+                                self.settings.transcription_options.clone(),
+                            );
+                        }
                         queue_changed |= inserted;
                     }
                     self.emit_live_event(LiveTranscriptEvent::Committed {
@@ -3820,6 +3897,9 @@ mod tests {
         let started_at = Utc.with_ymd_and_hms(2026, 5, 9, 8, 0, 0).unwrap();
         let metadata = ChunkMetadata {
             model_id: "whisper-medium".into(),
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
             device_id: "default".into(),
             device_name: "System Default".into(),
             sample_rate: 16_000,

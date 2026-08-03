@@ -58,7 +58,7 @@ use wakenote::live_transcription::{
 };
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::meeting::{MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary};
-use wakenote::models::{ModelDescriptor, ModelStore};
+use wakenote::models::{ModelDescriptor, ModelStore, validate_model_options};
 use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
@@ -84,8 +84,8 @@ use wakenote::source_watcher::{
 use wakenote::sources::source_definitions;
 use wakenote::system_audio::{PIPELINE_SAMPLE_RATE, SystemAudioInput, enumerate_windows};
 use wakenote::transcription::{
-    RuntimeTranscriber, TranscriptionJobOutcome, TranscriptionJobStatus, TranscriptionWorker,
-    TranscriptionWorkerOptions, model_supports_live_partials,
+    FallbackTranscriber, RuntimeTranscriber, TranscriptionJobOutcome, TranscriptionJobStatus,
+    TranscriptionWorker, TranscriptionWorkerOptions, model_supports_live_partials,
 };
 
 type BackendState = Arc<Mutex<AppBackend>>;
@@ -121,7 +121,7 @@ const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
 #[derive(Debug, Clone, PartialEq)]
 enum DictionaryApplyOutcome {
     Unchanged,
-    Changed(AppSettings),
+    Changed(Box<AppSettings>),
     Invalid(DictionaryFileError),
 }
 
@@ -133,7 +133,7 @@ fn apply_dictionary_poll(backend: &mut AppBackend, poll: DictionaryPoll) -> Dict
                 dictionary: Some(dictionary),
                 ..Default::default()
             });
-            DictionaryApplyOutcome::Changed(settings)
+            DictionaryApplyOutcome::Changed(Box::new(settings))
         }
         DictionaryPoll::Invalid(error) => DictionaryApplyOutcome::Invalid(error),
     }
@@ -374,6 +374,7 @@ const EVENT_LIVE_PARTIAL: &str = "live-transcript-partial";
 const EVENT_LIVE_COMMITTED: &str = "live-transcript-committed";
 const EVENT_LIVE_FINAL: &str = "live-transcript-final";
 const EVENT_LIVE_FAILED: &str = "live-transcript-failed";
+const EVENT_TRANSCRIPTION_MODEL_FALLBACK: &str = "transcription-model-fallback";
 const EVENT_SOURCE_DETECTED: &str = "source-detected";
 const EVENT_SOURCE_ENDED: &str = "source-ended";
 const EVENT_SOURCE_CAPTURE_STARTED: &str = "source-capture-started";
@@ -487,6 +488,12 @@ struct LiveFailedPayload {
     audio_path: String,
     recorded_at: String,
     error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TranscriptionModelFallbackPayload {
+    requested_model_id: String,
+    effective_model_id: String,
 }
 
 fn dictation_allows_caption_window_mutation(stage: DictationStage) -> bool {
@@ -1430,10 +1437,10 @@ fn process_dictation_recording(
             id: settings.selected_microphone.clone(),
             label: settings.selected_microphone_label.clone(),
         });
-    let credentials = match app.try_state::<BackendState>() {
+    let (credentials, models) = match app.try_state::<BackendState>() {
         Some(state) => match state.lock() {
             Ok(backend) => match backend.transcription_credentials() {
-                Ok(credentials) => credentials,
+                Ok(credentials) => (credentials, backend.model_registry()),
                 Err(error) => {
                     show_dictation_error(app, error);
                     return;
@@ -1444,7 +1451,7 @@ fn process_dictation_recording(
                 return;
             }
         },
-        None => TranscriptionCredentials::default(),
+        None => (TranscriptionCredentials::default(), Vec::new()),
     };
     let transcriber = match RuntimeTranscriber::for_dictation_with_credentials(
         &settings.model_directory,
@@ -1456,6 +1463,28 @@ fn process_dictation_recording(
             return;
         }
     };
+    let transcription_options =
+        validate_model_options(&models, &dictation_model, &settings.transcription_options);
+    let fallback_model_id = if transcription_options.cost_limit_fallback_enabled {
+        transcription_options.cost_limit_fallback_model_id.clone()
+    } else {
+        None
+    };
+    let fallback_supports_diarization = fallback_model_id
+        .as_deref()
+        .and_then(|model_id| models.iter().find(|model| model.id == model_id))
+        .is_some_and(|model| model.capabilities.diarization);
+    let diarization_required = models
+        .iter()
+        .find(|model| model.id == dictation_model)
+        .is_some_and(|model| model.capabilities.diarization);
+    let transcriber = FallbackTranscriber::configured(
+        transcriber.clone(),
+        transcriber,
+        fallback_model_id,
+        fallback_supports_diarization,
+        diarization_required,
+    );
     let dictionary = DictionaryContext::from_settings(&settings);
     let ((archive_result, archive_elapsed), result, transcription_elapsed) =
         thread::scope(|scope| {
@@ -1820,7 +1849,7 @@ fn update_settings(
         match dictionary_state.lock() {
             Ok(mut store) => {
                 let outcome = match store.save_entries(&settings.dictionary) {
-                    Ok(()) => DictionaryApplyOutcome::Changed(settings.clone()),
+                    Ok(()) => DictionaryApplyOutcome::Changed(Box::new(settings.clone())),
                     Err(error) => DictionaryApplyOutcome::Invalid(error),
                 };
                 let status = store.status();
@@ -4820,8 +4849,22 @@ fn spawn_transcription_job(
                 return;
             }
         };
-        let worker = TranscriptionWorker::with_options_and_dictionary(
+        let fallback = FallbackTranscriber::configured(
+            transcriber.clone(),
             transcriber,
+            if started.transcription_options.cost_limit_fallback_enabled {
+                started
+                    .transcription_options
+                    .cost_limit_fallback_model_id
+                    .clone()
+            } else {
+                None
+            },
+            started.fallback_supports_diarization,
+            started.diarization_required,
+        );
+        let worker = TranscriptionWorker::with_options_and_dictionary(
+            fallback,
             TranscriptionWorkerOptions {
                 language: started.language,
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
@@ -4867,6 +4910,22 @@ fn emit_outcome_to_frontend(
     let audio_path_str = audio_path.to_string_lossy().to_string();
     let recorded_at = recorded_at_for_audio_path(audio_path);
     let source_identity = capture_source_identity_from_metadata(audio_path);
+
+    if outcome.fallback_from_model_id.is_some()
+        && let (Some(requested_model_id), Some(effective_model_id)) = (
+            outcome.requested_model_id.clone(),
+            outcome.effective_model_id.clone(),
+        )
+        && let Err(error) = app.emit(
+            EVENT_TRANSCRIPTION_MODEL_FALLBACK,
+            TranscriptionModelFallbackPayload {
+                requested_model_id,
+                effective_model_id,
+            },
+        )
+    {
+        eprintln!("[wakenote] WARN emit model fallback failed: {error}");
+    }
 
     match &outcome.status {
         TranscriptionJobStatus::Completed => {

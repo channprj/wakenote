@@ -5,6 +5,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::settings::TranscriptionOptions;
+
 pub const COMPLETED_JOB_HISTORY_LIMIT: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +27,8 @@ pub struct QueueJob {
     pub model_id: String,
     pub status: QueueJobStatus,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription_options: Option<TranscriptionOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -86,8 +90,21 @@ impl TranscriptionQueue {
             model_id: model_id.into(),
             status: QueueJobStatus::Pending,
             error: None,
+            transcription_options: None,
         });
         (id, true)
+    }
+
+    pub fn set_transcription_options(
+        &mut self,
+        id: u64,
+        options: TranscriptionOptions,
+    ) -> Result<(), String> {
+        let job = self
+            .job_mut(id)
+            .ok_or_else(|| format!("job {id} not found"))?;
+        job.transcription_options = Some(options);
+        Ok(())
     }
 
     pub fn enqueue_backlog(&mut self, scan: BacklogScan, model_id: impl Into<String>) -> Vec<u64> {

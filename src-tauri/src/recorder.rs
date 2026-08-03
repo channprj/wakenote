@@ -34,6 +34,12 @@ pub enum ChunkSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChunkMetadata {
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_from_model_id: Option<String>,
     pub device_id: String,
     pub device_name: String,
     pub sample_rate: u32,
@@ -175,6 +181,9 @@ impl Recorder {
 
         let metadata = ChunkMetadata {
             model_id: request.settings.selected_model.clone(),
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
             device_id: request.device_id.to_string(),
             device_name: request.device_name.to_string(),
             sample_rate: request.sample_rate,
@@ -255,6 +264,22 @@ impl TranscriptionSidecar {
             &chunk.metadata_path,
             TranscriptionStatus::Completed,
             Some(transcript),
+        )
+    }
+
+    pub fn write_success_with_provenance(
+        chunk: &RecordedChunk,
+        transcript: &str,
+        requested_model_id: &str,
+        effective_model_id: &str,
+        fallback_from_model_id: Option<&str>,
+    ) -> Result<(), RecorderError> {
+        Self::write_success(chunk, transcript)?;
+        update_metadata_provenance_if_present(
+            &chunk.metadata_path,
+            requested_model_id,
+            effective_model_id,
+            fallback_from_model_id,
         )
     }
 
@@ -430,6 +455,30 @@ fn update_metadata_status(
     };
     metadata.transcription_status = status;
     metadata.transcript_text = transcript.map(str::to_string);
+    if matches!(
+        metadata.transcription_status,
+        TranscriptionStatus::Queued | TranscriptionStatus::NotRequested
+    ) {
+        metadata.requested_model_id = None;
+        metadata.effective_model_id = None;
+        metadata.fallback_from_model_id = None;
+    }
+    write_metadata(path, &metadata)
+}
+
+fn update_metadata_provenance_if_present(
+    path: &Path,
+    requested_model_id: &str,
+    effective_model_id: &str,
+    fallback_from_model_id: Option<&str>,
+) -> Result<(), RecorderError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
+    metadata.requested_model_id = Some(requested_model_id.to_string());
+    metadata.effective_model_id = Some(effective_model_id.to_string());
+    metadata.fallback_from_model_id = fallback_from_model_id.map(str::to_string);
     write_metadata(path, &metadata)
 }
 
@@ -453,6 +502,9 @@ mod tests {
         let now = Utc::now();
         ChunkMetadata {
             model_id: "whisper-medium".into(),
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
             device_id: "default".into(),
             device_name: "System Default".into(),
             sample_rate: 16_000,
@@ -561,6 +613,33 @@ mod tests {
         assert_eq!(stored.transcript_text.as_deref(), Some("hello"));
         let transcribed_at = stored.transcribed_at.expect("transcribed_at recorded");
         assert!(transcribed_at >= before && transcribed_at <= after);
+    }
+
+    #[test]
+    fn write_success_persists_requested_and_effective_model_provenance() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chunk = seeded_chunk(&tmp, TranscriptionStatus::Queued);
+        TranscriptionSidecar::write_success_with_provenance(
+            &chunk,
+            "fallback transcript",
+            "openai-gpt-transcribe",
+            "whisper-medium",
+            Some("openai-gpt-transcribe"),
+        )
+        .expect("write fallback success");
+
+        let stored: ChunkMetadata =
+            serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata"))
+                .expect("metadata json");
+        assert_eq!(
+            stored.requested_model_id.as_deref(),
+            Some("openai-gpt-transcribe")
+        );
+        assert_eq!(stored.effective_model_id.as_deref(), Some("whisper-medium"));
+        assert_eq!(
+            stored.fallback_from_model_id.as_deref(),
+            Some("openai-gpt-transcribe")
+        );
     }
 
     #[test]

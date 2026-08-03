@@ -64,7 +64,12 @@ export function normalizeTranscriptionOptions(
       candidate.id !== model.id,
   );
   const fallbackAvailable =
-    !model.offline && Boolean(fallback && isReadyOnDeviceFallback(fallback));
+    !model.offline &&
+    Boolean(
+      fallback &&
+        isReadyOnDeviceFallback(fallback) &&
+        (!model.capabilities.diarization || fallback.capabilities.diarization),
+    );
   normalized.cost_limit_fallback_enabled =
     requested.cost_limit_fallback_enabled && fallbackAvailable;
   return normalized;

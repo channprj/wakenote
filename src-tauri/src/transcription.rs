@@ -11,7 +11,8 @@ use whisper_rs::{
 };
 
 use crate::cloud_transcription::{
-    CloudTranscriptionClient, CloudTranscriptionError, TranscriptionCredentials,
+    CloudTranscriptionClient, CloudTranscriptionError, FailureCategory, TranscriptionCredentials,
+    TranscriptionFailure,
 };
 use crate::dictionary::DictionaryContext;
 use crate::models::{ModelStore, default_model_registry};
@@ -44,8 +45,55 @@ pub struct TranscriptionRequest<'a> {
     pub dictionary: &'a DictionaryContext,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeakerTurn {
+    pub speaker_id: String,
+    pub part_index: usize,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptionUsage {
+    pub provider: Option<String>,
+    pub audio_duration_ms: u64,
+    pub provider_cost_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptionExecution {
+    pub text: String,
+    pub speaker_turns: Vec<SpeakerTurn>,
+    pub requested_model_id: String,
+    pub effective_model_id: String,
+    pub fallback_from_model_id: Option<String>,
+    pub usage: Option<TranscriptionUsage>,
+}
+
+impl TranscriptionExecution {
+    fn direct(text: String, model_id: &str) -> Self {
+        Self {
+            text,
+            speaker_turns: Vec::new(),
+            requested_model_id: model_id.to_string(),
+            effective_model_id: model_id.to_string(),
+            fallback_from_model_id: None,
+            usage: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TranscriptionError {
+    #[error("{0}")]
+    Failure(TranscriptionFailure),
+    #[error("{primary}; fallback model {fallback_model_id} failed: {fallback}")]
+    FallbackFailed {
+        primary: Box<TranscriptionError>,
+        fallback_model_id: String,
+        fallback: Box<TranscriptionError>,
+    },
     #[error("model file not found: {0}")]
     ModelMissing(PathBuf),
     #[error("unsupported audio format: {0}")]
@@ -65,10 +113,109 @@ impl TranscriptionError {
             _ => self.to_string(),
         }
     }
+
+    fn is_billing_limit(&self) -> bool {
+        matches!(self, Self::Failure(failure) if failure.category == FailureCategory::BillingLimit)
+    }
 }
 
 pub trait Transcriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError>;
+
+    fn transcribe_execution(
+        &self,
+        request: TranscriptionRequest<'_>,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
+        let model_id = request.model_id.to_string();
+        self.transcribe(request)
+            .map(|text| TranscriptionExecution::direct(text, &model_id))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FallbackTranscriber<P, L> {
+    primary: P,
+    local: L,
+    fallback_model_id: Option<String>,
+    fallback_supports_diarization: bool,
+    diarization_required: bool,
+}
+
+impl<P, L> FallbackTranscriber<P, L> {
+    pub fn new(
+        primary: P,
+        local: L,
+        fallback_model_id: impl Into<String>,
+        fallback_supports_diarization: bool,
+        diarization_required: bool,
+    ) -> Self {
+        Self {
+            primary,
+            local,
+            fallback_model_id: Some(fallback_model_id.into()),
+            fallback_supports_diarization,
+            diarization_required,
+        }
+    }
+
+    pub fn configured(
+        primary: P,
+        local: L,
+        fallback_model_id: Option<String>,
+        fallback_supports_diarization: bool,
+        diarization_required: bool,
+    ) -> Self {
+        Self {
+            primary,
+            local,
+            fallback_model_id,
+            fallback_supports_diarization,
+            diarization_required,
+        }
+    }
+}
+
+impl<P: Transcriber, L: Transcriber> Transcriber for FallbackTranscriber<P, L> {
+    fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        self.transcribe_execution(request)
+            .map(|execution| execution.text)
+    }
+
+    fn transcribe_execution(
+        &self,
+        request: TranscriptionRequest<'_>,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
+        match self.primary.transcribe_execution(request) {
+            Ok(execution) => Ok(execution),
+            Err(primary) if primary.is_billing_limit() => {
+                let Some(fallback_model_id) = self.fallback_model_id.as_deref() else {
+                    return Err(primary);
+                };
+                if self.diarization_required && !self.fallback_supports_diarization {
+                    return Err(primary);
+                }
+                let requested_model_id = request.model_id.to_string();
+                let fallback_request = TranscriptionRequest {
+                    model_id: fallback_model_id,
+                    ..request
+                };
+                match self.local.transcribe_execution(fallback_request) {
+                    Ok(mut execution) => {
+                        execution.requested_model_id = requested_model_id.clone();
+                        execution.effective_model_id = fallback_model_id.to_string();
+                        execution.fallback_from_model_id = Some(requested_model_id);
+                        Ok(execution)
+                    }
+                    Err(fallback) => Err(TranscriptionError::FallbackFailed {
+                        primary: Box::new(primary),
+                        fallback_model_id: fallback_model_id.to_string(),
+                        fallback: Box::new(fallback),
+                    }),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -89,6 +236,9 @@ pub enum TranscriptionJobStatus {
 pub struct TranscriptionJobOutcome {
     pub id: u64,
     pub status: TranscriptionJobStatus,
+    pub requested_model_id: Option<String>,
+    pub effective_model_id: Option<String>,
+    pub fallback_from_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +271,19 @@ impl TranscriptionJobOutcome {
         Self {
             id,
             status: TranscriptionJobStatus::Completed,
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
+        }
+    }
+
+    pub fn completed_with_execution(id: u64, execution: &TranscriptionExecution) -> Self {
+        Self {
+            id,
+            status: TranscriptionJobStatus::Completed,
+            requested_model_id: Some(execution.requested_model_id.clone()),
+            effective_model_id: Some(execution.effective_model_id.clone()),
+            fallback_from_model_id: execution.fallback_from_model_id.clone(),
         }
     }
 
@@ -128,6 +291,9 @@ impl TranscriptionJobOutcome {
         Self {
             id,
             status: TranscriptionJobStatus::Failed(error.into()),
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
         }
     }
 }
@@ -202,8 +368,9 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             dictionary: &self.dictionary,
         };
 
-        match self.transcriber.transcribe(request) {
-            Ok(transcript) => {
+        match self.transcriber.transcribe_execution(request) {
+            Ok(execution) => {
+                let transcript = execution.text.clone();
                 let transcript = self.dictionary.correct(&transcript);
                 if transcript.trim().is_empty() {
                     let message = "No speech detected";
@@ -220,8 +387,16 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                         job.audio_path.display()
                     );
                 }
-                TranscriptionSidecar::write_success(&chunk, &transcript)?;
-                Ok(TranscriptionJobOutcome::completed(job.id))
+                TranscriptionSidecar::write_success_with_provenance(
+                    &chunk,
+                    &transcript,
+                    &execution.requested_model_id,
+                    &execution.effective_model_id,
+                    execution.fallback_from_model_id.as_deref(),
+                )?;
+                Ok(TranscriptionJobOutcome::completed_with_execution(
+                    job.id, &execution,
+                ))
             }
             Err(error) => {
                 let message = error.recoverable_message();
@@ -699,11 +874,11 @@ impl Transcriber for RuntimeTranscriber {
                 "openrouter-stt" => self
                     .cloud
                     .transcribe_openrouter(request.audio_path, request.language)
-                    .map_err(|error| TranscriptionError::Engine(error.to_string())),
+                    .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 "openai-stt" => self
                     .cloud
                     .transcribe_openai(request.audio_path, request.language, request.dictionary)
-                    .map_err(|error| TranscriptionError::Engine(error.to_string())),
+                    .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);
                     transcriber.suppress_low_confidence_decode =
@@ -1549,6 +1724,156 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type TranscriptionCall = (PathBuf, String, TranscriptionLanguage, Option<String>);
+
+    #[derive(Clone)]
+    struct ScriptedTranscriber {
+        result: Result<String, TranscriptionError>,
+        calls: Arc<Mutex<Vec<TranscriptionCall>>>,
+    }
+
+    impl ScriptedTranscriber {
+        fn new(result: Result<String, TranscriptionError>) -> Self {
+            Self {
+                result,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl Transcriber for ScriptedTranscriber {
+        fn transcribe(
+            &self,
+            request: TranscriptionRequest<'_>,
+        ) -> Result<String, TranscriptionError> {
+            self.calls.lock().expect("calls").push((
+                request.audio_path.to_path_buf(),
+                request.model_id.to_string(),
+                request.language,
+                request.dictionary.prompt().map(str::to_string),
+            ));
+            self.result.clone()
+        }
+    }
+
+    fn billing_failure() -> TranscriptionError {
+        TranscriptionError::Failure(crate::cloud_transcription::TranscriptionFailure {
+            provider: Some("OpenAI"),
+            http_status: Some(400),
+            provider_code: Some("credit_balance_exhausted".into()),
+            safe_message: "OpenAI transcription failed with HTTP 400".into(),
+            category: crate::cloud_transcription::FailureCategory::BillingLimit,
+        })
+    }
+
+    fn provider_failure() -> TranscriptionError {
+        TranscriptionError::Failure(crate::cloud_transcription::TranscriptionFailure {
+            provider: Some("OpenAI"),
+            http_status: Some(500),
+            provider_code: None,
+            safe_message: "OpenAI transcription failed with HTTP 500".into(),
+            category: crate::cloud_transcription::FailureCategory::Provider,
+        })
+    }
+
+    #[test]
+    fn fallback_transcriber_retries_one_billing_failure_with_identical_context() {
+        let primary = ScriptedTranscriber::new(Err(billing_failure()));
+        let local = ScriptedTranscriber::new(Ok("WakeNote transcript".into()));
+        let fallback = FallbackTranscriber::new(
+            primary.clone(),
+            local.clone(),
+            "whisper-medium",
+            false,
+            false,
+        );
+        let directory = tempfile::tempdir().expect("tempdir");
+        let audio = directory.path().join("capture.wav");
+        std::fs::write(&audio, b"audio").expect("audio");
+        let dictionary = DictionaryContext::compile(
+            true,
+            &[crate::settings::DictionaryEntry {
+                id: "wake".into(),
+                term: "WakeNote".into(),
+                aliases: Vec::new(),
+                enabled: true,
+            }],
+        );
+
+        let execution = fallback
+            .transcribe_execution(TranscriptionRequest {
+                audio_path: &audio,
+                model_id: "openai-gpt-transcribe",
+                language: TranscriptionLanguage::Ko,
+                dictionary: &dictionary,
+            })
+            .expect("fallback success");
+
+        assert_eq!(execution.text, "WakeNote transcript");
+        assert_eq!(execution.requested_model_id, "openai-gpt-transcribe");
+        assert_eq!(execution.effective_model_id, "whisper-medium");
+        assert_eq!(
+            execution.fallback_from_model_id.as_deref(),
+            Some("openai-gpt-transcribe")
+        );
+        let primary_calls = primary.calls.lock().expect("primary calls");
+        let local_calls = local.calls.lock().expect("local calls");
+        assert_eq!(primary_calls.len(), 1);
+        assert_eq!(local_calls.len(), 1);
+        assert_eq!(primary_calls[0].0, local_calls[0].0);
+        assert_eq!(primary_calls[0].2, local_calls[0].2);
+        assert_eq!(primary_calls[0].3, local_calls[0].3);
+    }
+
+    #[test]
+    fn fallback_transcriber_never_switches_on_non_billing_or_incompatible_requests() {
+        for (primary_error, diarization_required) in
+            [(provider_failure(), false), (billing_failure(), true)]
+        {
+            let primary = ScriptedTranscriber::new(Err(primary_error.clone()));
+            let local = ScriptedTranscriber::new(Ok("must not run".into()));
+            let fallback = FallbackTranscriber::new(
+                primary,
+                local.clone(),
+                "whisper-medium",
+                false,
+                diarization_required,
+            );
+            let result = fallback.transcribe_execution(TranscriptionRequest {
+                audio_path: Path::new("/tmp/audio.wav"),
+                model_id: "openai-gpt-transcribe",
+                language: TranscriptionLanguage::Auto,
+                dictionary: &DictionaryContext::default(),
+            });
+            assert_eq!(result, Err(primary_error));
+            assert!(local.calls.lock().expect("local calls").is_empty());
+        }
+    }
+
+    #[test]
+    fn fallback_transcriber_reports_primary_and_local_failure_context() {
+        let fallback = FallbackTranscriber::new(
+            ScriptedTranscriber::new(Err(billing_failure())),
+            ScriptedTranscriber::new(Err(TranscriptionError::Engine(
+                "local decode failed".into(),
+            ))),
+            "whisper-medium",
+            false,
+            false,
+        );
+        let error = fallback
+            .transcribe_execution(TranscriptionRequest {
+                audio_path: Path::new("/tmp/audio.wav"),
+                model_id: "openai-gpt-transcribe",
+                language: TranscriptionLanguage::Auto,
+                dictionary: &DictionaryContext::default(),
+            })
+            .expect_err("both attempts fail");
+        assert!(error.to_string().contains("OpenAI transcription failed"));
+        assert!(error.to_string().contains("whisper-medium"));
+        assert!(error.to_string().contains("local decode failed"));
+    }
 
     #[test]
     fn reusable_context_cache_loads_the_same_model_once() {

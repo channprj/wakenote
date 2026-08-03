@@ -251,6 +251,7 @@ export interface QueueJob {
   model_id: string;
   status: QueueJobStatus;
   error?: string | null;
+  transcription_options?: TranscriptionOptions | null;
 }
 
 export interface QueueSnapshot {

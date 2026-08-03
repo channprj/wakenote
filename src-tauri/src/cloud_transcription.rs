@@ -56,8 +56,100 @@ fn normalize_secret(secret: Option<String>) -> Option<String> {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureCategory {
+    BillingLimit,
+    RateLimit,
+    Authentication,
+    Provider,
+    Transport,
+    InvalidResponse,
+    Local,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptionFailure {
+    pub provider: Option<&'static str>,
+    pub http_status: Option<u16>,
+    pub provider_code: Option<String>,
+    pub safe_message: String,
+    pub category: FailureCategory,
+}
+
+impl fmt::Display for TranscriptionFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.safe_message)
+    }
+}
+
+impl std::error::Error for TranscriptionFailure {}
+
+const OPENAI_BILLING_LIMIT_CODES: [&str; 4] = [
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+];
+
+pub fn classify_http_failure(
+    provider: &'static str,
+    status: u16,
+    response_body: &str,
+) -> TranscriptionFailure {
+    let provider_code = (provider == "OpenAI")
+        .then(|| serde_json::from_str::<serde_json::Value>(response_body).ok())
+        .flatten()
+        .and_then(|body| {
+            body.get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        });
+    let category = if (provider == "OpenRouter" && status == 402)
+        || (provider == "OpenAI"
+            && provider_code
+                .as_deref()
+                .is_some_and(|code| OPENAI_BILLING_LIMIT_CODES.contains(&code)))
+    {
+        FailureCategory::BillingLimit
+    } else if status == 429 {
+        FailureCategory::RateLimit
+    } else if matches!(status, 401 | 403) {
+        FailureCategory::Authentication
+    } else {
+        FailureCategory::Provider
+    };
+    TranscriptionFailure {
+        provider: Some(provider),
+        http_status: Some(status),
+        provider_code,
+        safe_message: format!("{provider} transcription failed with HTTP {status}"),
+        category,
+    }
+}
+
+pub fn failure_for_transport(
+    provider: &'static str,
+    error: CloudTransportError,
+) -> TranscriptionFailure {
+    let safe_message = match error {
+        CloudTransportError::Timeout => format!("{provider} transcription request timed out"),
+        CloudTransportError::Request => format!("{provider} transcription request failed"),
+    };
+    TranscriptionFailure {
+        provider: Some(provider),
+        http_status: None,
+        provider_code: None,
+        safe_message,
+        category: FailureCategory::Transport,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CloudTranscriptionError {
+    #[error("{0}")]
+    Failure(TranscriptionFailure),
     #[error("{0} API key is not configured; add it in Settings > Integrations")]
     MissingKey(&'static str),
     #[error("could not read audio for {provider}: {message}")]
@@ -77,6 +169,60 @@ pub enum CloudTranscriptionError {
     InvalidResponse(&'static str),
     #[error("{0} returned an empty transcript")]
     EmptyTranscript(&'static str),
+}
+
+impl CloudTranscriptionError {
+    pub fn into_failure(self) -> TranscriptionFailure {
+        let safe_message = self.to_string();
+        match self {
+            Self::Failure(failure) => failure,
+            Self::MissingKey(provider) => TranscriptionFailure {
+                provider: Some(provider),
+                http_status: None,
+                provider_code: None,
+                safe_message,
+                category: FailureCategory::Authentication,
+            },
+            Self::Audio { provider, .. } | Self::UnsupportedAudioFormat(provider) => {
+                TranscriptionFailure {
+                    provider: Some(provider),
+                    http_status: None,
+                    provider_code: None,
+                    safe_message,
+                    category: FailureCategory::Local,
+                }
+            }
+            Self::Timeout(provider) | Self::Request(provider) => TranscriptionFailure {
+                provider: Some(provider),
+                http_status: None,
+                provider_code: None,
+                safe_message,
+                category: FailureCategory::Transport,
+            },
+            Self::HttpStatus { provider, status } => TranscriptionFailure {
+                provider: Some(provider),
+                http_status: Some(status),
+                provider_code: None,
+                safe_message,
+                category: if status == 429 {
+                    FailureCategory::RateLimit
+                } else if matches!(status, 401 | 403) {
+                    FailureCategory::Authentication
+                } else {
+                    FailureCategory::Provider
+                },
+            },
+            Self::InvalidResponse(provider) | Self::EmptyTranscript(provider) => {
+                TranscriptionFailure {
+                    provider: Some(provider),
+                    http_status: None,
+                    provider_code: None,
+                    safe_message,
+                    category: FailureCategory::InvalidResponse,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -305,18 +451,15 @@ impl CloudTranscriptionClient {
         provider: &'static str,
         request: CloudTranscriptionRequest,
     ) -> Result<String, CloudTranscriptionError> {
-        let response = self
-            .transport
-            .execute(request)
-            .map_err(|error| match error {
-                CloudTransportError::Timeout => CloudTranscriptionError::Timeout(provider),
-                CloudTransportError::Request => CloudTranscriptionError::Request(provider),
-            })?;
+        let response = self.transport.execute(request).map_err(|error| {
+            CloudTranscriptionError::Failure(failure_for_transport(provider, error))
+        })?;
         if !(200..300).contains(&response.status) {
-            return Err(CloudTranscriptionError::HttpStatus {
+            return Err(CloudTranscriptionError::Failure(classify_http_failure(
                 provider,
-                status: response.status,
-            });
+                response.status,
+                &response.body,
+            )));
         }
         let parsed: serde_json::Value = serde_json::from_str(&response.body)
             .map_err(|_| CloudTranscriptionError::InvalidResponse(provider))?;
@@ -408,6 +551,62 @@ mod tests {
             status: 200,
             body: serde_json::json!({ "text": text }).to_string(),
         }
+    }
+
+    #[test]
+    fn billing_limit_classification_accepts_only_exact_provider_signals() {
+        for code in [
+            "credit_balance_exhausted",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            let failure = classify_http_failure(
+                "OpenAI",
+                400,
+                &serde_json::json!({ "error": { "code": code, "message": "private" } }).to_string(),
+            );
+            assert_eq!(failure.category, FailureCategory::BillingLimit, "{code}");
+            assert_eq!(failure.provider_code.as_deref(), Some(code));
+            assert!(!failure.safe_message.contains("private"));
+        }
+
+        let openrouter = classify_http_failure("OpenRouter", 402, "billing body");
+        assert_eq!(openrouter.category, FailureCategory::BillingLimit);
+        assert_eq!(openrouter.provider_code, None);
+        assert!(!openrouter.safe_message.contains("billing body"));
+    }
+
+    #[test]
+    fn billing_limit_classification_rejects_rate_auth_provider_and_malformed_failures() {
+        for (provider, status, body, category) in [
+            ("OpenAI", 429, "{}", FailureCategory::RateLimit),
+            ("OpenAI", 401, "{}", FailureCategory::Authentication),
+            ("OpenAI", 403, "{}", FailureCategory::Authentication),
+            (
+                "OpenAI",
+                400,
+                r#"{"error":{"code":"invalid_request_error"}}"#,
+                FailureCategory::Provider,
+            ),
+            ("OpenAI", 500, "{}", FailureCategory::Provider),
+            ("OpenAI", 400, "not json", FailureCategory::Provider),
+            ("OpenRouter", 429, "{}", FailureCategory::RateLimit),
+        ] {
+            assert_eq!(
+                classify_http_failure(provider, status, body).category,
+                category,
+                "{provider} {status}"
+            );
+        }
+        assert_eq!(
+            failure_for_transport("OpenAI", CloudTransportError::Timeout).category,
+            FailureCategory::Transport
+        );
+        assert_eq!(
+            failure_for_transport("OpenAI", CloudTransportError::Request).category,
+            FailureCategory::Transport
+        );
     }
 
     #[test]
@@ -574,13 +773,12 @@ mod tests {
             .transcribe_openrouter(&audio_path, TranscriptionLanguage::Auto)
             .expect_err("provider error");
         let message = error.to_string();
-        assert_eq!(
-            error,
-            CloudTranscriptionError::HttpStatus {
-                provider: "OpenRouter",
-                status: 401,
-            }
-        );
+        let CloudTranscriptionError::Failure(failure) = error else {
+            panic!("structured provider failure")
+        };
+        assert_eq!(failure.provider, Some("OpenRouter"));
+        assert_eq!(failure.http_status, Some(401));
+        assert_eq!(failure.category, FailureCategory::Authentication);
         assert!(!message.contains("sk-secret"));
         assert!(!message.contains("base64"));
     }
@@ -615,10 +813,14 @@ mod tests {
             TranscriptionCredentials::new(Some("key".into()), None),
             FakeTransport::failing(CloudTransportError::Timeout),
         );
-        assert_eq!(
-            client.transcribe_openrouter(&audio_path, TranscriptionLanguage::Auto),
-            Err(CloudTranscriptionError::Timeout("OpenRouter"))
-        );
+        let error = client
+            .transcribe_openrouter(&audio_path, TranscriptionLanguage::Auto)
+            .expect_err("timeout");
+        let CloudTranscriptionError::Failure(failure) = error else {
+            panic!("structured timeout failure")
+        };
+        assert_eq!(failure.category, FailureCategory::Transport);
+        assert_eq!(failure.provider, Some("OpenRouter"));
     }
 
     #[test]
