@@ -8,7 +8,47 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const OPENROUTER_QWEN3_ASR_MODEL: &str = "qwen/qwen3-asr-flash-2026-02-10";
+pub const OPENAI_GPT_LIVE_TRANSCRIBE_MODEL: &str = "gpt-live-transcribe";
 pub const OPENAI_GPT_TRANSCRIBE_MODEL: &str = "gpt-transcribe";
+pub const OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL: &str = "gpt-4o-transcribe-diarize";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingCapability {
+    #[default]
+    Unsupported,
+    Optional,
+    Required,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostReportingCapability {
+    #[default]
+    None,
+    ProviderActual,
+    DurationEstimate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptionContext {
+    File,
+    Realtime,
+    Dictation,
+    Meeting,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    pub file_transcription: bool,
+    pub realtime: bool,
+    pub streaming: StreamingCapability,
+    pub diarization: bool,
+    pub cost_reporting: CostReportingCapability,
+    pub maximum_request_bytes: Option<u64>,
+    pub selectable_contexts: Vec<TranscriptionContext>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,6 +79,145 @@ pub struct ModelDescriptor {
     pub status: ModelStatus,
     pub download_progress: Option<u8>,
     pub download_error: Option<String>,
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+}
+
+pub fn capabilities_for_model(
+    model_id: &str,
+    provider_runtime: &str,
+    offline: bool,
+) -> ModelCapabilities {
+    match model_id {
+        "openai-gpt-live-transcribe" => ModelCapabilities {
+            file_transcription: false,
+            realtime: true,
+            streaming: StreamingCapability::Required,
+            diarization: false,
+            cost_reporting: CostReportingCapability::DurationEstimate,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::Realtime,
+                TranscriptionContext::Dictation,
+            ],
+        },
+        "openai-gpt-transcribe" => ModelCapabilities {
+            file_transcription: true,
+            realtime: true,
+            streaming: StreamingCapability::Optional,
+            diarization: false,
+            cost_reporting: CostReportingCapability::DurationEstimate,
+            maximum_request_bytes: Some(25_000_000),
+            selectable_contexts: vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Realtime,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ],
+        },
+        "openai-gpt-4o-transcribe-diarize" => ModelCapabilities {
+            file_transcription: true,
+            realtime: false,
+            streaming: StreamingCapability::Optional,
+            diarization: true,
+            cost_reporting: CostReportingCapability::DurationEstimate,
+            maximum_request_bytes: Some(25_000_000),
+            selectable_contexts: vec![TranscriptionContext::File, TranscriptionContext::Meeting],
+        },
+        "openrouter-qwen3-asr-flash" => ModelCapabilities {
+            file_transcription: true,
+            realtime: false,
+            streaming: StreamingCapability::Unsupported,
+            diarization: false,
+            cost_reporting: CostReportingCapability::None,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ],
+        },
+        "nemotron-3.5-asr-streaming-0.6b" => ModelCapabilities {
+            file_transcription: true,
+            realtime: true,
+            streaming: StreamingCapability::Unsupported,
+            diarization: false,
+            cost_reporting: CostReportingCapability::None,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Realtime,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ],
+        },
+        _ if offline => ModelCapabilities {
+            file_transcription: true,
+            realtime: false,
+            streaming: StreamingCapability::Unsupported,
+            diarization: false,
+            cost_reporting: CostReportingCapability::None,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ],
+        },
+        _ if matches!(provider_runtime, "openrouter-stt" | "openai-stt") => ModelCapabilities {
+            file_transcription: true,
+            realtime: false,
+            streaming: StreamingCapability::Unsupported,
+            diarization: false,
+            cost_reporting: CostReportingCapability::None,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![TranscriptionContext::File],
+        },
+        _ => ModelCapabilities::default(),
+    }
+}
+
+pub fn model_supports_context(
+    model: &ModelDescriptor,
+    context: TranscriptionContext,
+    diarization_required: bool,
+) -> bool {
+    model.capabilities.selectable_contexts.contains(&context)
+        && (!diarization_required || model.capabilities.diarization)
+}
+
+pub fn validate_model_options(
+    models: &[ModelDescriptor],
+    selected_model_id: &str,
+    requested: &crate::settings::TranscriptionOptions,
+) -> crate::settings::TranscriptionOptions {
+    let mut normalized = requested.clone();
+    let Some(primary) = models.iter().find(|model| model.id == selected_model_id) else {
+        normalized.streaming_enabled = false;
+        normalized.cost_limit_fallback_enabled = false;
+        return normalized;
+    };
+
+    normalized.streaming_enabled = match primary.capabilities.streaming {
+        StreamingCapability::Required => true,
+        StreamingCapability::Optional => requested.streaming_enabled,
+        StreamingCapability::Unsupported => false,
+    };
+
+    let fallback_available = !primary.offline
+        && requested
+            .cost_limit_fallback_model_id
+            .as_deref()
+            .and_then(|fallback_id| models.iter().find(|model| model.id == fallback_id))
+            .is_some_and(|fallback| {
+                fallback.offline
+                    && fallback.id != primary.id
+                    && matches!(fallback.status, ModelStatus::Installed | ModelStatus::Ready)
+                    && fallback.capabilities.file_transcription
+            });
+    normalized.cost_limit_fallback_enabled =
+        requested.cost_limit_fallback_enabled && fallback_available;
+    normalized
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1156,7 +1335,12 @@ impl ModelStore {
 
 fn merge_builtin_cloud_models(registry: &mut BTreeMap<String, ModelDescriptor>) {
     let mut defaults = default_model_registry();
-    for id in ["openrouter-qwen3-asr-flash", "openai-gpt-transcribe"] {
+    for id in [
+        "openrouter-qwen3-asr-flash",
+        "openai-gpt-live-transcribe",
+        "openai-gpt-transcribe",
+        "openai-gpt-4o-transcribe-diarize",
+    ] {
         if let Some(model) = defaults.remove(id) {
             registry.entry(id.to_string()).or_insert(model);
         }
@@ -1340,6 +1524,7 @@ pub fn parse_model_registry_json(
 }
 
 fn descriptor_from_registry_entry(entry: ModelRegistryEntry) -> ModelDescriptor {
+    let capabilities = capabilities_for_model(&entry.id, &entry.provider_runtime, entry.offline);
     ModelDescriptor {
         id: entry.id,
         display_name: entry.display_name,
@@ -1355,6 +1540,7 @@ fn descriptor_from_registry_entry(entry: ModelRegistryEntry) -> ModelDescriptor 
         status: ModelStatus::Missing,
         download_progress: None,
         download_error: None,
+        capabilities,
     }
 }
 
@@ -1389,6 +1575,7 @@ fn infer_local_whisper_cpp_model(path: &Path) -> Result<Option<ModelDescriptor>,
         status: ModelStatus::Missing,
         download_progress: None,
         download_error: None,
+        capabilities: capabilities_for_model(stem, "whisper-rs", true),
     }))
 }
 
@@ -1436,6 +1623,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model("whisper-small", "whisper-rs", true),
         },
     );
 
@@ -1461,6 +1649,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model("whisper-medium", "whisper-rs", true),
         },
     );
 
@@ -1486,6 +1675,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model("whisper-turbo", "whisper-rs", true),
         },
     );
 
@@ -1511,6 +1701,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model("whisper-large", "whisper-rs", true),
         },
     );
 
@@ -1534,6 +1725,11 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model(
+                "parakeet-tdt-0.6b-v3",
+                "sherpa-onnx",
+                true,
+            ),
         },
     );
 
@@ -1563,6 +1759,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model("sensevoice-small", "sherpa-onnx", true),
         },
     );
 
@@ -1600,6 +1797,11 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model(
+                "nemotron-3.5-asr-streaming-0.6b",
+                "sherpa-onnx",
+                true,
+            ),
         },
     );
 
@@ -1633,6 +1835,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 status: ModelStatus::Missing,
                 download_progress: None,
                 download_error: None,
+                capabilities: capabilities_for_model(id, "qwen3-asr", true),
             },
         );
     }
@@ -1648,6 +1851,20 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         (
             "openai-gpt-transcribe",
             "OpenAI · GPT Transcribe",
+            "OpenAI",
+            "openai-stt",
+            9,
+        ),
+        (
+            "openai-gpt-live-transcribe",
+            "OpenAI · GPT Live Transcribe",
+            "OpenAI",
+            "openai-realtime",
+            9,
+        ),
+        (
+            "openai-gpt-4o-transcribe-diarize",
+            "OpenAI · GPT-4o Transcribe Diarize",
             "OpenAI",
             "openai-stt",
             9,
@@ -1679,6 +1896,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 status: ModelStatus::Ready,
                 download_progress: None,
                 download_error: None,
+                capabilities: capabilities_for_model(id, provider_runtime, false),
             },
         );
     }
@@ -1705,6 +1923,116 @@ mod tests {
     const WHISPER_MEDIUM_BOGUS_SHA256: &str =
         "6c14d5adee4f86394037d23e1625d96385c22f032d72d6fdf045dc1741ca091e";
 
+    #[test]
+    fn model_capabilities_match_the_supported_provider_contracts() {
+        let registry = default_model_registry();
+        let live = registry
+            .get("openai-gpt-live-transcribe")
+            .expect("gpt-live descriptor");
+        assert!(!live.capabilities.file_transcription);
+        assert!(live.capabilities.realtime);
+        assert_eq!(live.capabilities.streaming, StreamingCapability::Required);
+        assert!(!live.capabilities.diarization);
+        assert_eq!(
+            live.capabilities.cost_reporting,
+            CostReportingCapability::DurationEstimate
+        );
+
+        let file = registry
+            .get("openai-gpt-transcribe")
+            .expect("gpt-transcribe descriptor");
+        assert!(file.capabilities.file_transcription);
+        assert!(file.capabilities.realtime);
+        assert_eq!(file.capabilities.streaming, StreamingCapability::Optional);
+        assert!(!file.capabilities.diarization);
+
+        let diarize = registry
+            .get("openai-gpt-4o-transcribe-diarize")
+            .expect("diarization descriptor");
+        assert!(diarize.capabilities.file_transcription);
+        assert!(!diarize.capabilities.realtime);
+        assert_eq!(
+            diarize.capabilities.streaming,
+            StreamingCapability::Optional
+        );
+        assert!(diarize.capabilities.diarization);
+        assert_eq!(diarize.capabilities.maximum_request_bytes, Some(25_000_000));
+    }
+
+    #[test]
+    fn model_capabilities_remain_conservative_for_local_and_cloud_models() {
+        let registry = default_model_registry();
+        for model in registry.values().filter(|model| model.offline) {
+            assert!(model.capabilities.file_transcription, "{}", model.id);
+            assert!(!model.capabilities.diarization, "{}", model.id);
+        }
+        for model in registry.values().filter(|model| !model.offline) {
+            assert!(model.download_url.is_none(), "{}", model.id);
+            assert_eq!(model.status, ModelStatus::Ready, "{}", model.id);
+        }
+    }
+
+    #[test]
+    fn transcription_options_follow_streaming_capabilities() {
+        let mut registry = default_model_registry().into_values().collect::<Vec<_>>();
+        let requested = crate::settings::TranscriptionOptions {
+            streaming_enabled: false,
+            cost_limit_fallback_enabled: false,
+            cost_limit_fallback_model_id: None,
+        };
+
+        let live = validate_model_options(&registry, "openai-gpt-live-transcribe", &requested);
+        assert!(live.streaming_enabled);
+
+        let mut unsupported = requested.clone();
+        unsupported.streaming_enabled = true;
+        let openrouter =
+            validate_model_options(&registry, "openrouter-qwen3-asr-flash", &unsupported);
+        assert!(!openrouter.streaming_enabled);
+
+        registry
+            .iter_mut()
+            .find(|model| model.id == "whisper-medium")
+            .expect("local model")
+            .status = ModelStatus::Ready;
+        let optional = validate_model_options(
+            &registry,
+            "openai-gpt-transcribe",
+            &crate::settings::TranscriptionOptions {
+                streaming_enabled: true,
+                cost_limit_fallback_enabled: true,
+                cost_limit_fallback_model_id: Some("whisper-medium".into()),
+            },
+        );
+        assert!(optional.streaming_enabled);
+        assert!(optional.cost_limit_fallback_enabled);
+    }
+
+    #[test]
+    fn unavailable_fallback_keeps_its_id_but_cannot_enable() {
+        let registry = default_model_registry().into_values().collect::<Vec<_>>();
+        for fallback_id in [
+            "whisper-medium",
+            "openrouter-qwen3-asr-flash",
+            "missing-local-model",
+        ] {
+            let normalized = validate_model_options(
+                &registry,
+                "openai-gpt-transcribe",
+                &crate::settings::TranscriptionOptions {
+                    streaming_enabled: false,
+                    cost_limit_fallback_enabled: true,
+                    cost_limit_fallback_model_id: Some(fallback_id.into()),
+                },
+            );
+            assert!(!normalized.cost_limit_fallback_enabled, "{fallback_id}");
+            assert_eq!(
+                normalized.cost_limit_fallback_model_id.as_deref(),
+                Some(fallback_id)
+            );
+        }
+    }
+
     fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
         ModelDescriptor {
             id: id.to_string(),
@@ -1721,6 +2049,7 @@ mod tests {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model(id, "whisper-rs", true),
         }
     }
 
@@ -1740,6 +2069,7 @@ mod tests {
             status: ModelStatus::Missing,
             download_progress: None,
             download_error: None,
+            capabilities: capabilities_for_model(id, "sherpa-onnx", true),
         }
     }
 

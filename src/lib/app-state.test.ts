@@ -94,7 +94,9 @@ describe("app state derivation", () => {
       "qwen3-asr-0.6b",
       "qwen3-asr-1.7b",
       "openrouter-qwen3-asr-flash",
+      "openai-gpt-live-transcribe",
       "openai-gpt-transcribe",
+      "openai-gpt-4o-transcribe-diarize",
     ]);
     for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
       expect(model.languages).toContain("ko");
@@ -113,6 +115,15 @@ describe("app state derivation", () => {
       provider_runtime: "openai-stt",
       offline: false,
       status: "ready",
+    });
+    expect(models.find((model) => model.id === "openai-gpt-live-transcribe")).toMatchObject({
+      provider_runtime: "openai-realtime",
+      capabilities: { streaming: "required", realtime: true },
+    });
+    expect(
+      models.find((model) => model.id === "openai-gpt-4o-transcribe-diarize"),
+    ).toMatchObject({
+      capabilities: { diarization: true, maximum_request_bytes: 25_000_000 },
     });
   });
 

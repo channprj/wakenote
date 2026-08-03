@@ -138,6 +138,16 @@ pub struct DictationOverlayStyle {
     pub background_opacity: u8,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptionOptions {
+    #[serde(default)]
+    pub streaming_enabled: bool,
+    #[serde(default)]
+    pub cost_limit_fallback_enabled: bool,
+    #[serde(default)]
+    pub cost_limit_fallback_model_id: Option<String>,
+}
+
 impl Default for DictationOverlayStyle {
     fn default() -> Self {
         Self {
@@ -329,6 +339,8 @@ pub struct AppSettings {
     pub min_chunk_ms: u64,
     pub max_chunk_ms: u64,
     pub selected_model: String,
+    #[serde(default)]
+    pub transcription_options: TranscriptionOptions,
     pub model_directory: String,
     #[serde(default = "default_true")]
     pub dictionary_enabled: bool,
@@ -439,6 +451,7 @@ pub struct SettingsPatch {
     pub min_chunk_ms: Option<u64>,
     pub max_chunk_ms: Option<u64>,
     pub selected_model: Option<String>,
+    pub transcription_options: Option<TranscriptionOptions>,
     pub model_directory: Option<String>,
     pub dictionary_enabled: Option<bool>,
     pub dictionary: Option<Vec<DictionaryEntry>>,
@@ -1047,6 +1060,13 @@ impl AppSettings {
         if let Some(value) = patch.selected_model {
             self.selected_model = value;
         }
+        if let Some(mut value) = patch.transcription_options {
+            value.cost_limit_fallback_model_id = value
+                .cost_limit_fallback_model_id
+                .map(|model_id| model_id.trim().to_string())
+                .filter(|model_id| !model_id.is_empty());
+            self.transcription_options = value;
+        }
         if let Some(value) = patch.model_directory {
             self.model_directory = value;
         }
@@ -1231,6 +1251,7 @@ impl Default for AppSettings {
             min_chunk_ms: 800,
             max_chunk_ms: 180_000,
             selected_model: "whisper-medium".to_string(),
+            transcription_options: TranscriptionOptions::default(),
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
             dictionary_enabled: true,
             dictionary: Vec::new(),
@@ -1476,6 +1497,45 @@ mod tests {
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+    }
+
+    #[test]
+    fn transcription_options_default_off_for_legacy_settings() {
+        let json = serde_json::to_value(AppSettings::default()).expect("default settings");
+        let mut legacy = json.as_object().expect("settings object").clone();
+        legacy.remove("transcription_options");
+        let settings: AppSettings =
+            serde_json::from_value(serde_json::Value::Object(legacy)).expect("legacy settings");
+
+        assert!(!settings.transcription_options.streaming_enabled);
+        assert!(!settings.transcription_options.cost_limit_fallback_enabled);
+        assert_eq!(
+            settings.transcription_options.cost_limit_fallback_model_id,
+            None
+        );
+    }
+
+    #[test]
+    fn transcription_options_patch_is_persisted_as_one_snapshot() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            transcription_options: Some(TranscriptionOptions {
+                streaming_enabled: true,
+                cost_limit_fallback_enabled: true,
+                cost_limit_fallback_model_id: Some("whisper-medium".into()),
+            }),
+            ..Default::default()
+        });
+
+        assert!(settings.transcription_options.streaming_enabled);
+        assert!(settings.transcription_options.cost_limit_fallback_enabled);
+        assert_eq!(
+            settings
+                .transcription_options
+                .cost_limit_fallback_model_id
+                .as_deref(),
+            Some("whisper-medium")
+        );
     }
 
     #[test]

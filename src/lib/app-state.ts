@@ -5,6 +5,7 @@ import type {
   AppStatus,
   AppPermissions,
   LevelSnapshot,
+  ModelCapabilities,
   ModelDescriptor,
   QueueSnapshot,
   TrayState,
@@ -160,6 +161,11 @@ export function defaultSettings(): AppSettings {
     ...RECORDING_DEFAULTS,
     calibration_completed: false,
     selected_model: "whisper-medium",
+    transcription_options: {
+      streaming_enabled: false,
+      cost_limit_fallback_enabled: false,
+      cost_limit_fallback_model_id: null,
+    },
     model_directory: "~/Library/Application Support/WakeNote/models",
     dictionary_enabled: true,
     dictionary: [],
@@ -242,8 +248,69 @@ export function defaultSettings(): AppSettings {
   };
 }
 
+function mockModelCapabilities(
+  model: Pick<ModelDescriptor, "id" | "offline">,
+): ModelCapabilities {
+  if (model.id === "openai-gpt-live-transcribe") {
+    return {
+      file_transcription: false,
+      realtime: true,
+      streaming: "required",
+      diarization: false,
+      cost_reporting: "duration_estimate",
+      maximum_request_bytes: null,
+      selectable_contexts: ["realtime", "dictation"],
+    };
+  }
+  if (model.id === "openai-gpt-transcribe") {
+    return {
+      file_transcription: true,
+      realtime: true,
+      streaming: "optional",
+      diarization: false,
+      cost_reporting: "duration_estimate",
+      maximum_request_bytes: 25_000_000,
+      selectable_contexts: ["file", "realtime", "dictation", "meeting"],
+    };
+  }
+  if (model.id === "openai-gpt-4o-transcribe-diarize") {
+    return {
+      file_transcription: true,
+      realtime: false,
+      streaming: "optional",
+      diarization: true,
+      cost_reporting: "duration_estimate",
+      maximum_request_bytes: 25_000_000,
+      selectable_contexts: ["file", "meeting"],
+    };
+  }
+  if (model.id === "openrouter-qwen3-asr-flash") {
+    return {
+      file_transcription: true,
+      realtime: false,
+      streaming: "unsupported",
+      diarization: false,
+      cost_reporting: "none",
+      maximum_request_bytes: null,
+      selectable_contexts: ["file", "dictation", "meeting"],
+    };
+  }
+  return {
+    file_transcription: model.offline,
+    realtime: model.id === "nemotron-3.5-asr-streaming-0.6b",
+    streaming: "unsupported",
+    diarization: false,
+    cost_reporting: "none",
+    maximum_request_bytes: null,
+    selectable_contexts:
+      model.id === "nemotron-3.5-asr-streaming-0.6b"
+        ? ["file", "realtime", "dictation", "meeting"]
+        : ["file", "dictation", "meeting"],
+  };
+}
+
 export function mockModels(): ModelDescriptor[] {
-  return [
+  const models: Omit<ModelDescriptor, "capabilities">[] = [
     {
       id: "whisper-large",
       display_name: "Whisper Large",
@@ -416,6 +483,22 @@ export function mockModels(): ModelDescriptor[] {
       download_error: null,
     },
     {
+      id: "openai-gpt-live-transcribe",
+      display_name: "OpenAI · GPT Live Transcribe",
+      engine: "OpenAI",
+      provider_runtime: "openai-realtime",
+      download_url: null,
+      checksum_sha256: null,
+      size_mb: 0,
+      languages: ["ko", "en", "ja", "zh", "es", "fr", "de", "multi"],
+      speed_score: 10,
+      accuracy_score: 9,
+      offline: false,
+      status: "ready",
+      download_progress: null,
+      download_error: null,
+    },
+    {
       id: "openai-gpt-transcribe",
       display_name: "OpenAI · GPT Transcribe",
       engine: "OpenAI",
@@ -431,7 +514,27 @@ export function mockModels(): ModelDescriptor[] {
       download_progress: null,
       download_error: null,
     },
+    {
+      id: "openai-gpt-4o-transcribe-diarize",
+      display_name: "OpenAI · GPT-4o Transcribe Diarize",
+      engine: "OpenAI",
+      provider_runtime: "openai-stt",
+      download_url: null,
+      checksum_sha256: null,
+      size_mb: 0,
+      languages: ["ko", "en", "ja", "zh", "es", "fr", "de", "multi"],
+      speed_score: 8,
+      accuracy_score: 9,
+      offline: false,
+      status: "ready",
+      download_progress: null,
+      download_error: null,
+    },
   ];
+  return models.map((model) => ({
+    ...model,
+    capabilities: mockModelCapabilities(model),
+  }));
 }
 
 export function emptyQueue(): QueueSnapshot {

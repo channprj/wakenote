@@ -46,6 +46,33 @@ export type ModelStatus =
   | "unloaded"
   | "error";
 
+export type StreamingCapability = "unsupported" | "optional" | "required";
+export type CostReportingCapability =
+  | "none"
+  | "provider_actual"
+  | "duration_estimate";
+export type TranscriptionContext =
+  | "file"
+  | "realtime"
+  | "dictation"
+  | "meeting";
+
+export interface ModelCapabilities {
+  file_transcription: boolean;
+  realtime: boolean;
+  streaming: StreamingCapability;
+  diarization: boolean;
+  cost_reporting: CostReportingCapability;
+  maximum_request_bytes: number | null;
+  selectable_contexts: TranscriptionContext[];
+}
+
+export interface TranscriptionOptions {
+  streaming_enabled: boolean;
+  cost_limit_fallback_enabled: boolean;
+  cost_limit_fallback_model_id: string | null;
+}
+
 export type QueueJobStatus =
   | "pending"
   | "running"
@@ -107,6 +134,7 @@ export interface AppSettings {
   min_chunk_ms: number;
   max_chunk_ms: number;
   selected_model: string;
+  transcription_options: TranscriptionOptions;
   model_directory: string;
   dictionary_enabled: boolean;
   dictionary: DictionaryEntry[];
@@ -214,6 +242,7 @@ export interface ModelDescriptor {
   status: ModelStatus;
   download_progress?: number | null;
   download_error?: string | null;
+  capabilities: ModelCapabilities;
 }
 
 export interface QueueJob {

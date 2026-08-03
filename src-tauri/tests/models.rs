@@ -2,6 +2,7 @@ use std::io::{Cursor, Read};
 
 use wakenote::models::{
     ModelDescriptor, ModelDownloadRecord, ModelStatus, ModelStore, ModelStoreError,
+    capabilities_for_model,
 };
 
 struct CancelAfterFirstRead {
@@ -40,6 +41,7 @@ fn descriptor(id: &str, checksum_sha256: Option<&str>) -> ModelDescriptor {
         status: ModelStatus::Missing,
         download_progress: None,
         download_error: None,
+        capabilities: capabilities_for_model(id, "whisper-rs", true),
     }
 }
 
@@ -200,6 +202,7 @@ fn model_store_marks_external_command_models_ready_from_command_files() {
         status: ModelStatus::Missing,
         download_progress: None,
         download_error: None,
+        capabilities: capabilities_for_model("parakeet-tdt-0.6b-v3", "external-command", true),
     }];
 
     store

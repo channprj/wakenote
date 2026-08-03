@@ -21,7 +21,9 @@ use crate::dictation::DictationStage;
 use crate::dictionary::DictionaryContext;
 use crate::live_capture::AudioFrame;
 use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
-use crate::models::{ModelDescriptor, ModelStatus, ModelStore, default_model_registry};
+use crate::models::{
+    ModelDescriptor, ModelStatus, ModelStore, default_model_registry, validate_model_options,
+};
 use crate::multi_capture::MicrophoneMixer;
 use crate::persistence::{
     AppPersistence, ListVisibilityState, PersistenceError, SetListVisibilityRequest,
@@ -677,8 +679,15 @@ impl Default for AppBackend {
 impl AppBackend {
     pub fn load_from_dir(root: impl AsRef<std::path::Path>) -> Result<Self, PersistenceError> {
         let persistence = AppPersistence::new(root);
+        let mut settings = persistence.load_settings()?.unwrap_or_default();
+        let models = model_registry_snapshot(expand_user_path(&settings.model_directory));
+        settings.transcription_options = validate_model_options(
+            &models,
+            &settings.selected_model,
+            &settings.transcription_options,
+        );
         Ok(Self {
-            settings: persistence.load_settings()?.unwrap_or_default(),
+            settings,
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
             secondary_capture: None,
@@ -747,6 +756,12 @@ impl AppBackend {
             }
         }
         self.settings.apply_patch(patch);
+        let models = self.model_registry();
+        self.settings.transcription_options = validate_model_options(
+            &models,
+            &self.settings.selected_model,
+            &self.settings.transcription_options,
+        );
         self.sync_capture_settings();
         self.persist_settings();
         self.settings.clone()
@@ -3285,7 +3300,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "openrouter-stt" | "openai-stt" => true,
+        "openrouter-stt" | "openai-stt" | "openai-realtime" => true,
         "sherpa-onnx" | "external-command" | "qwen3-asr" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
