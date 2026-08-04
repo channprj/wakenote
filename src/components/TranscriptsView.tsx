@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  FileAudio,
   FolderOpen,
   Loader2,
   Mic,
@@ -53,6 +54,11 @@ import {
   SelectValue,
 } from "./ui/select";
 import { TranscriptPlayerDock } from "./transcripts/TranscriptPlayerDock";
+import { Progress } from "./ui/progress";
+import {
+  eligibleAudioMergeEntries,
+  type AudioMergeUiState,
+} from "../lib/audio-merge";
 
 type CopyToastKind = "all" | "selected";
 type DragMode = "select" | "deselect";
@@ -145,6 +151,8 @@ export function TranscriptsView({
   onActiveDayChange,
   onRegenerate,
   onOpenFolder,
+  onMergeAudio,
+  onOpenMergedAudioFolder,
   onGenerateReport,
   onOpenReports,
   onReload,
@@ -152,6 +160,7 @@ export function TranscriptsView({
   openrouterKeyConfigured = false,
   reportError = null,
   reportRun = null,
+  audioMergeState = { status: "idle" },
   visibilityMode = "visible",
   visibleCountByDay = new Map(),
   hiddenCountByDay = new Map(),
@@ -176,6 +185,8 @@ export function TranscriptsView({
     modelId?: string,
   ) => void | Promise<void>;
   onOpenFolder?: (entry: RecentTranscript) => void | Promise<void>;
+  onMergeAudio?: (entries: readonly RecentTranscript[]) => void | Promise<void>;
+  onOpenMergedAudioFolder?: (destinationPath: string) => void | Promise<void>;
   onGenerateReport?: (
     entries: readonly RecentTranscript[],
     kind: LlmReportKind,
@@ -186,6 +197,7 @@ export function TranscriptsView({
   openrouterKeyConfigured?: boolean;
   reportError?: string | null;
   reportRun?: LlmReportRunSnapshot | null;
+  audioMergeState?: AudioMergeUiState;
   visibilityMode?: ListVisibilityMode;
   visibleCountByDay?: ReadonlyMap<string, number>;
   hiddenCountByDay?: ReadonlyMap<string, number>;
@@ -461,6 +473,10 @@ export function TranscriptsView({
         selectedPaths.has(entry.transcript_path),
       ),
     [filteredEntries, selectedPaths],
+  );
+  const selectedAudioMergeEntries = useMemo(
+    () => eligibleAudioMergeEntries(selectedEntries),
+    [selectedEntries],
   );
 
   const handleGenerateReport = useCallback(
@@ -768,6 +784,23 @@ export function TranscriptsView({
                     </>
                   )}
                 </Button>
+                {onMergeAudio && selectedAudioMergeEntries.length >= 2 ? (
+                  <Button
+                    aria-label={`Merge Audio · ${selectedAudioMergeEntries.length}`}
+                    disabled={audioMergeState.status === "running"}
+                    onClick={() => onMergeAudio(selectedAudioMergeEntries)}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    {audioMergeState.status === "running" ? (
+                      <Loader2 className="loading-spin" />
+                    ) : (
+                      <FileAudio />
+                    )}
+                    Merge Audio · {selectedAudioMergeEntries.length}
+                  </Button>
+                ) : null}
                 {canGenerateReports ? (
                   <>
                     <Button
@@ -878,6 +911,12 @@ export function TranscriptsView({
             </Button>
           </div>
         </header>
+        {audioMergeState.status !== "idle" ? (
+          <AudioMergeStatus
+            state={audioMergeState}
+            onOpenFolder={onOpenMergedAudioFolder}
+          />
+        ) : null}
         {hasEntries ? (
           <div
             data-slot="transcript-list"
@@ -1046,6 +1085,89 @@ export function TranscriptsView({
       ) : null}
     </div>
   );
+}
+
+function AudioMergeStatus({
+  state,
+  onOpenFolder,
+}: {
+  state: Exclude<AudioMergeUiState, { status: "idle" }>;
+  onOpenFolder?: (destinationPath: string) => void | Promise<void>;
+}) {
+  if (state.status === "running") {
+    return (
+      <section
+        aria-live="polite"
+        className="transcript-audio-merge-status"
+        data-status="running"
+      >
+        <div className="transcript-audio-merge-status__copy">
+          <strong>Merging audio · {state.percent}%</strong>
+          <span>
+            {audioMergeStageLabel(state.stage)} · {state.completed_inputs} of{" "}
+            {state.total_inputs} files
+            {state.current_input_label ? ` · ${state.current_input_label}` : ""}
+          </span>
+        </div>
+        <Progress aria-label="Audio merge progress" value={state.percent} />
+      </section>
+    );
+  }
+  if (state.status === "saved") {
+    return (
+      <section
+        aria-live="polite"
+        className="transcript-audio-merge-status"
+        data-status="saved"
+      >
+        <div className="transcript-audio-merge-status__copy">
+          <strong>Audio merged · {state.input_count} files</strong>
+          <code title={state.destination_path}>{state.destination_path}</code>
+        </div>
+        {onOpenFolder ? (
+          <Button
+            aria-label="Open merged audio folder"
+            onClick={() => onOpenFolder(state.destination_path)}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            <FolderOpen /> Open Folder
+          </Button>
+        ) : null}
+      </section>
+    );
+  }
+  return (
+    <section
+      aria-live="polite"
+      className="transcript-audio-merge-status"
+      data-status="error"
+    >
+      <div className="transcript-audio-merge-status__copy">
+        <strong>Audio merge failed</strong>
+        <span>{state.message}</span>
+        <span>Selection preserved. Try again.</span>
+      </div>
+    </section>
+  );
+}
+
+function audioMergeStageLabel(stage: string) {
+  switch (stage) {
+    case "preparing":
+      return "Preparing";
+    case "converting":
+      return "Converting";
+    case "combining":
+      return "Combining";
+    case "encoding":
+      return "Encoding M4A";
+    case "saved":
+      return "Saved";
+    default:
+      return stage;
+  }
 }
 
 function TranscriptEntryRow({

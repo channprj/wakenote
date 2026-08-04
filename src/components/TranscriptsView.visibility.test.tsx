@@ -98,3 +98,36 @@ describe("TranscriptsView list visibility", () => {
     );
   });
 });
+
+describe("TranscriptsView audio merge selection", () => {
+  it("offers both selected audio files without clearing selection", async () => {
+    const second: RecentTranscript = {
+      ...entry,
+      transcript_path: "/tmp/WakeNote/20260510/010204.txt",
+      audio_path: "/tmp/WakeNote/20260510/010204.wav",
+      recorded_at: "2026-05-10T01:02:04+09:00",
+      text: "Second transcript",
+    };
+    const onMergeAudio = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: 2 }]}
+        entriesByDay={new Map([[day, [entry, second]]])}
+        onMergeAudio={onMergeAudio}
+      />,
+    );
+
+    const checkboxes = screen.getAllByRole("checkbox", {
+      name: /Select transcript/,
+    });
+    await userEvent.click(checkboxes[0]);
+    await userEvent.click(checkboxes[1]);
+    const merge = screen.getByRole("button", { name: "Merge Audio · 2" });
+    await userEvent.click(merge);
+
+    expect(onMergeAudio).toHaveBeenCalledWith([entry, second]);
+    expect(checkboxes[0].getAttribute("aria-checked")).toBe("true");
+    expect(checkboxes[1].getAttribute("aria-checked")).toBe("true");
+  });
+});

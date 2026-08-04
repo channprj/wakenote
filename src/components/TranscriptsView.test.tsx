@@ -5,6 +5,7 @@ import type {
   RecentTranscript,
   TranscriptDay,
 } from "../lib/types";
+import type { AudioMergeUiState } from "../lib/audio-merge";
 import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import {
   TranscriptsView,
@@ -105,6 +106,9 @@ function view(props: {
   reportRun?: LlmReportRunSnapshot | null;
   onOpenReports?: () => void;
   onOpenFolder?: (entry: RecentTranscript) => void;
+  audioMergeState?: AudioMergeUiState;
+  onMergeAudio?: (entries: readonly RecentTranscript[]) => void;
+  onOpenMergedAudioFolder?: (destinationPath: string) => void;
   visibilityMode?: "visible" | "hidden";
   visibleCountByDay?: Map<string, number>;
   hiddenCountByDay?: Map<string, number>;
@@ -133,6 +137,9 @@ function view(props: {
       reportRun={props.reportRun}
       onOpenReports={props.onOpenReports}
       onOpenFolder={props.onOpenFolder}
+      audioMergeState={props.audioMergeState}
+      onMergeAudio={props.onMergeAudio}
+      onOpenMergedAudioFolder={props.onOpenMergedAudioFolder}
       visibilityMode={props.visibilityMode}
       visibleCountByDay={props.visibleCountByDay}
       hiddenCountByDay={props.hiddenCountByDay}
@@ -145,6 +152,77 @@ function view(props: {
     />,
   );
 }
+
+describe("TranscriptsView audio merge status", () => {
+  const entriesByDay = new Map([
+    [
+      "2026-05-10",
+      [
+        transcript({ text: "First audio" }),
+        transcript({
+          transcript_path: "/tmp/WakeNote/20260510/010204.txt",
+          audio_path: "/tmp/WakeNote/20260510/010204.wav",
+          recorded_at: "2026-05-10T01:02:04+09:00",
+          text: "Second audio",
+        }),
+      ],
+    ],
+  ]);
+
+  it("renders compact live progress for the active merge", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      entriesByDay,
+      audioMergeState: {
+        status: "running",
+        operation_id: "merge-current",
+        stage: "combining",
+        completed_inputs: 1,
+        total_inputs: 2,
+        percent: 55,
+        current_input_label: "010203.m4a",
+      },
+    });
+
+    expect(markup).toContain("Merging audio · 55%");
+    expect(markup).toContain("1 of 2 files");
+    expect(markup).toContain('aria-label="Audio merge progress"');
+  });
+
+  it("shows the saved path and open-folder action", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      entriesByDay,
+      audioMergeState: {
+        status: "saved",
+        operation_id: "merge-current",
+        destination_path: "/tmp/WakeNote merged.m4a",
+        input_count: 2,
+      },
+      onOpenMergedAudioFolder: () => {},
+    });
+
+    expect(markup).toContain("Audio merged · 2 files");
+    expect(markup).toContain("/tmp/WakeNote merged.m4a");
+    expect(markup).toContain('aria-label="Open merged audio folder"');
+  });
+
+  it("keeps merge failures retryable", () => {
+    const markup = view({
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      entriesByDay,
+      audioMergeState: {
+        status: "error",
+        operation_id: "merge-current",
+        message: "Could not encode audio",
+      },
+    });
+
+    expect(markup).toContain("Audio merge failed");
+    expect(markup).toContain("Could not encode audio");
+    expect(markup).toContain("Selection preserved. Try again.");
+  });
+});
 
 describe("TranscriptsView", () => {
   it("shows today's date page by default with weekly calendar pagination", () => {

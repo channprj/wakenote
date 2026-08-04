@@ -369,6 +369,111 @@ describe("tauri runtime client snapshots", () => {
     });
   });
 
+  it("does not start an audio merge when the save dialog is cancelled", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.save.mockResolvedValue(null);
+    const { mergeTranscriptAudio } = await import("./tauri-client");
+    const entries = [
+      {
+        transcript_path: "/tmp/one.txt",
+        audio_path: "/tmp/one.m4a",
+        recorded_at: "2026-08-04T09:00:00+09:00",
+        text: "One",
+      },
+      {
+        transcript_path: "/tmp/two.txt",
+        audio_path: "/tmp/two.wav",
+        recorded_at: "2026-08-04T10:00:00+09:00",
+        text: "Two",
+      },
+    ] satisfies RecentTranscript[];
+
+    await expect(mergeTranscriptAudio(entries, vi.fn())).resolves.toBeNull();
+
+    expect(mocks.save).toHaveBeenCalledOnce();
+    expect(mocks.listen).not.toHaveBeenCalled();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("chooses the destination before invoking merge with timestamps and forwards progress", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    const destinationPath = "/tmp/WakeNote merged.m4a";
+    const unlisten = vi.fn();
+    let progressHandler:
+      | ((event: { payload: Record<string, unknown> }) => void)
+      | undefined;
+    mocks.save.mockResolvedValue(destinationPath);
+    mocks.listen.mockImplementation(async (eventName, handler) => {
+      expect(eventName).toBe("audio-merge-progress");
+      progressHandler = handler;
+      return unlisten;
+    });
+    mocks.invoke.mockImplementation(async (command, args) => {
+      expect(command).toBe("merge_transcript_audio");
+      const request = (args as { request: { operation_id: string } }).request;
+      progressHandler?.({
+        payload: {
+          operation_id: request.operation_id,
+          stage: "saved",
+          completed_inputs: 2,
+          total_inputs: 2,
+          percent: 100,
+          current_input_label: null,
+          destination_path: destinationPath,
+        },
+      });
+      return {
+        operation_id: request.operation_id,
+        destination_path: destinationPath,
+        input_count: 2,
+      };
+    });
+    const { mergeTranscriptAudio } = await import("./tauri-client");
+    const onProgress = vi.fn();
+    const entries = [
+      {
+        transcript_path: "/tmp/one.txt",
+        audio_path: "/tmp/one.m4a",
+        recorded_at: "2026-08-04T09:00:00+09:00",
+        text: "One",
+      },
+      {
+        transcript_path: "/tmp/two.txt",
+        audio_path: "/tmp/two.wav",
+        recorded_at: "2026-08-04T10:00:00+09:00",
+        text: "Two",
+      },
+    ] satisfies RecentTranscript[];
+
+    const result = await mergeTranscriptAudio(entries, onProgress);
+
+    expect(mocks.save).toHaveBeenCalledBefore(mocks.invoke);
+    expect(mocks.invoke).toHaveBeenCalledWith("merge_transcript_audio", {
+      request: expect.objectContaining({
+        operation_id: expect.stringMatching(/^merge-[A-Za-z0-9_-]+$/),
+        destination_path: destinationPath,
+        inputs: [
+          {
+            audio_path: "/tmp/one.m4a",
+            recorded_at: "2026-08-04T09:00:00+09:00",
+          },
+          {
+            audio_path: "/tmp/two.wav",
+            recorded_at: "2026-08-04T10:00:00+09:00",
+          },
+        ],
+      }),
+    });
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "preparing", percent: 0 }),
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "saved", percent: 100 }),
+    );
+    expect(result?.destination_path).toBe(destinationPath);
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
   it("uses durable report run commands and forwards revisioned events", async () => {
     (globalThis as { window?: unknown }).window = {
       __TAURI_INTERNALS__: {},

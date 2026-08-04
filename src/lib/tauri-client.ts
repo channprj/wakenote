@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { normalizeDictationShortcut } from "./dictation-shortcut";
 import { modelSupportsContext } from "./models";
+import {
+  audioMergeDefaultFileName,
+  createAudioMergeOperationId,
+  eligibleAudioMergeEntries,
+} from "./audio-merge";
 import { formatLocalTimestamp } from "./transcript-history";
 import {
   applyListVisibilityRequest,
@@ -48,6 +53,9 @@ import type {
   ListVisibilityState,
   SetListVisibilityRequest,
   DictionaryFileStatus,
+  AudioMergeProgress,
+  AudioMergeResult,
+  MergeAudioRequest,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
 
@@ -1757,6 +1765,107 @@ export async function openTranscriptFolder(path: string): Promise<AppSnapshot> {
 
   await invoke("open_transcript_folder", { path });
   return loadSnapshot();
+}
+
+export async function mergeTranscriptAudio(
+  entries: readonly RecentTranscript[],
+  onProgress: (progress: AudioMergeProgress) => void,
+): Promise<AudioMergeResult | null> {
+  const eligible = eligibleAudioMergeEntries(entries);
+  if (eligible.length < 2) {
+    throw new Error("Select at least two transcripts with audio to merge.");
+  }
+  const defaultFileName = audioMergeDefaultFileName(eligible);
+
+  if (!isTauriRuntime()) {
+    const operationId = createAudioMergeOperationId(0, "browser");
+    const destinationPath = `/tmp/${defaultFileName}`;
+    const base = {
+      operation_id: operationId,
+      total_inputs: eligible.length,
+      current_input_label: null,
+      destination_path: null,
+    };
+    onProgress({
+      ...base,
+      stage: "preparing",
+      completed_inputs: 0,
+      percent: 0,
+    });
+    onProgress({
+      ...base,
+      stage: "combining",
+      completed_inputs: eligible.length,
+      percent: 85,
+    });
+    onProgress({
+      ...base,
+      stage: "encoding",
+      completed_inputs: eligible.length,
+      percent: 90,
+    });
+    onProgress({
+      ...base,
+      stage: "saved",
+      completed_inputs: eligible.length,
+      percent: 100,
+      destination_path: destinationPath,
+    });
+    return {
+      operation_id: operationId,
+      destination_path: destinationPath,
+      input_count: eligible.length,
+    };
+  }
+
+  const destinationPath = await save({
+    defaultPath: defaultFileName,
+    filters: [{ name: "M4A Audio", extensions: ["m4a"] }],
+  });
+  if (!destinationPath) {
+    return null;
+  }
+
+  const operationId = createAudioMergeOperationId();
+  const request: MergeAudioRequest = {
+    operation_id: operationId,
+    destination_path: destinationPath,
+    inputs: eligible.map((entry) => ({
+      audio_path: entry.audio_path as string,
+      recorded_at: entry.recorded_at,
+    })),
+  };
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<AudioMergeProgress>(
+    "audio-merge-progress",
+    (event) => onProgress(event.payload),
+  );
+  try {
+    onProgress({
+      operation_id: operationId,
+      stage: "preparing",
+      completed_inputs: 0,
+      total_inputs: eligible.length,
+      percent: 0,
+      current_input_label: null,
+      destination_path: null,
+    });
+    const result = await invoke<AudioMergeResult>("merge_transcript_audio", {
+      request,
+    });
+    onProgress({
+      operation_id: result.operation_id,
+      stage: "saved",
+      completed_inputs: result.input_count,
+      total_inputs: result.input_count,
+      percent: 100,
+      current_input_label: null,
+      destination_path: result.destination_path,
+    });
+    return result;
+  } finally {
+    unlisten();
+  }
 }
 
 export async function startLiveCapture(): Promise<AppSnapshot> {

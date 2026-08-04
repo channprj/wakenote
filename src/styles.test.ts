@@ -734,6 +734,22 @@ describe("transcript archive density", () => {
     expect(selectedRule).not.toContain("box-shadow");
     expect(textRule).toContain("line-height: var(--leading-body);");
   });
+
+  it("keeps audio merge progress compact and long save paths wrap-safe", () => {
+    const statusRule = cssRule(".transcript-audio-merge-status");
+    const copyRule = cssRule(".transcript-audio-merge-status__copy");
+    const naturalTextRule = cssRule(
+      ".transcript-audio-merge-status__copy strong,\n.transcript-audio-merge-status__copy span",
+    );
+    const pathRule = cssRule(".transcript-audio-merge-status__copy code");
+
+    expect(statusRule).toContain("grid-template-columns: minmax(0, 1fr) auto;");
+    expect(statusRule).toContain("align-items: center;");
+    expect(copyRule).toContain("min-width: 0;");
+    expect(naturalTextRule).toContain("word-break: keep-all;");
+    expect(pathRule).toContain("overflow-wrap: anywhere;");
+    expect(pathRule).toContain("word-break: normal;");
+  });
 });
 
 function cssRule(selector: string, source = css) {

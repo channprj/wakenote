@@ -11,11 +11,16 @@ import { projectListItems } from "../lib/list-visibility";
 import {
   loadTranscriptDays,
   loadTranscriptsForDay,
+  mergeTranscriptAudio,
   openTranscriptFolder,
   rebuildTranscriptDayIndex,
   regenerateTranscript,
   startLlmReport,
 } from "../lib/tauri-client";
+import {
+  nextAudioMergeProgress,
+  type AudioMergeUiState,
+} from "../lib/audio-merge";
 import { transcriptDayFromRecordingReference } from "../lib/transcript-history";
 import type {
   CustomSourceEntry,
@@ -49,6 +54,9 @@ export function TranscriptsPanel({
   const { activeRun, runs } = useLlmReportRuns();
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [audioMergeState, setAudioMergeState] = useState<AudioMergeUiState>({
+    status: "idle",
+  });
   const [visibilityMode, setVisibilityMode] =
     useState<"visible" | "hidden">("visible");
   const visibility = useListVisibility();
@@ -181,6 +189,39 @@ export function TranscriptsPanel({
     await openTranscriptFolder(entry.audio_path ?? entry.transcript_path);
   }, []);
 
+  const mergeAudioEntries = useCallback(
+    async (entries: readonly RecentTranscript[]) => {
+      let operationId = "merge-pending";
+      try {
+        const result = await mergeTranscriptAudio(entries, (progress) => {
+          operationId = progress.operation_id;
+          setAudioMergeState((state) =>
+            nextAudioMergeProgress(state, progress),
+          );
+        });
+        if (result) {
+          setAudioMergeState({
+            status: "saved",
+            operation_id: result.operation_id,
+            destination_path: result.destination_path,
+            input_count: result.input_count,
+          });
+        }
+      } catch (error) {
+        setAudioMergeState({
+          status: "error",
+          operation_id: operationId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const openMergedAudioFolder = useCallback(async (destinationPath: string) => {
+    await openTranscriptFolder(destinationPath);
+  }, []);
+
   const generateReport = useCallback(
     async (entries: readonly RecentTranscript[], kind: LlmReportKind) => {
       if (entries.length === 0) {
@@ -269,9 +310,12 @@ export function TranscriptsPanel({
       openrouterKeyConfigured={openrouterKeyConfigured}
       reportError={reportError}
       reportRun={visibleRun}
+      audioMergeState={audioMergeState}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
       onGenerateReport={generateReport}
+      onMergeAudio={mergeAudioEntries}
+      onOpenMergedAudioFolder={openMergedAudioFolder}
       onOpenReports={onOpenReports}
       onRegenerate={regenerateEntries}
       onReload={reloadDay}

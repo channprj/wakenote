@@ -2058,6 +2058,55 @@ tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+.transcript-audio-merge-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+}
+
+.transcript-audio-merge-status[data-status="running"] [data-slot="progress"] {
+  grid-column: 1 / -1;
+}
+
+.transcript-audio-merge-status[data-status="error"] {
+  border-color: color-mix(in oklch, var(--destructive) 42%, var(--border));
+}
+
+.transcript-audio-merge-status__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.transcript-audio-merge-status__copy strong,
+.transcript-audio-merge-status__copy span {
+  word-break: keep-all;
+}
+
+.transcript-audio-merge-status__copy strong {
+  font-size: var(--text-label);
+  line-height: var(--leading-label);
+}
+
+.transcript-audio-merge-status__copy span {
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.transcript-audio-merge-status__copy code {
+  overflow-wrap: anywhere;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  word-break: normal;
+}
+
 .transcript-source-filter {
   display: inline-flex;
   align-items: center;

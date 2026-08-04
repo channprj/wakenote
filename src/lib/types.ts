@@ -297,6 +297,40 @@ export interface RecentTranscript {
   microphone_slot?: MicrophoneSlot | null;
 }
 
+export interface MergeAudioInput {
+  audio_path: string;
+  recorded_at: string;
+}
+
+export interface MergeAudioRequest {
+  operation_id: string;
+  destination_path: string;
+  inputs: MergeAudioInput[];
+}
+
+export type AudioMergeStage =
+  | "preparing"
+  | "converting"
+  | "combining"
+  | "encoding"
+  | "saved";
+
+export interface AudioMergeProgress {
+  operation_id: string;
+  stage: AudioMergeStage;
+  completed_inputs: number;
+  total_inputs: number;
+  percent: number;
+  current_input_label: string | null;
+  destination_path: string | null;
+}
+
+export interface AudioMergeResult {
+  operation_id: string;
+  destination_path: string;
+  input_count: number;
+}
+
 export type LlmReportKind = "summary" | "detailed_report";
 
 export type LlmCompletionReason =

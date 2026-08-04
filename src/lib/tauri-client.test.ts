@@ -38,10 +38,46 @@ import {
   loadRecognizedSources,
   loadSourceCaptureStatus,
   markAllActivityRead,
+  mergeTranscriptAudio,
   openDictionaryFile,
   reloadDictionaryFile,
   verifyModel,
 } from "./tauri-client";
+
+describe("audio merge browser fallback", () => {
+  it("emits the same staged progress contract without writing a file", async () => {
+    const progress: string[] = [];
+    const result = await mergeTranscriptAudio(
+      [
+        {
+          transcript_path: "/tmp/one.txt",
+          audio_path: "/tmp/one.m4a",
+          recorded_at: "2026-08-04T09:00:00+09:00",
+          text: "One",
+        },
+        {
+          transcript_path: "/tmp/two.txt",
+          audio_path: "/tmp/two.wav",
+          recorded_at: "2026-08-04T10:00:00+09:00",
+          text: "Two",
+        },
+      ],
+      (event) => progress.push(`${event.stage}:${event.percent}`),
+    );
+
+    expect(progress).toEqual([
+      "preparing:0",
+      "combining:85",
+      "encoding:90",
+      "saved:100",
+    ]);
+    expect(result).toEqual({
+      operation_id: "merge-0-browser",
+      destination_path: "/tmp/WakeNote-merged-20260804-090000-to-100000.m4a",
+      input_count: 2,
+    });
+  });
+});
 
 function browserCaptureNumber(audioPath: string | undefined) {
   const match = audioPath?.match(/browser-capture-(\d+)\./);

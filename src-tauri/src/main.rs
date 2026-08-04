@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Wry};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
+use wakenote::audio_merge::{AudioMergeResult, MergeAudioRequest, merge_audio_to_m4a};
 use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
     AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
@@ -2577,6 +2578,21 @@ async fn list_microphones(state: State<'_, BackendState>) -> Result<Vec<Micropho
         backend.settings()
     };
     Ok(resolve_microphones_for_ui(settings).await)
+}
+
+#[tauri::command]
+async fn merge_transcript_audio(
+    app: AppHandle,
+    request: MergeAudioRequest,
+) -> Result<AudioMergeResult, String> {
+    let progress_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        merge_audio_to_m4a(request, move |progress| {
+            let _ = progress_app.emit("audio-merge-progress", progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("audio merge task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -6741,6 +6757,7 @@ fn main() {
             update_settings,
             app_status,
             list_microphones,
+            merge_transcript_audio,
             list_models,
             verify_model,
             download_model,
