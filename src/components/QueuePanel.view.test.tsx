@@ -92,4 +92,31 @@ describe("QueuePanel compact layout", () => {
 
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="No unresolved outcomes"/);
   });
+
+  it("offers playback and Finder access for every Activity item", () => {
+    const markup = renderQueue({
+      jobs: [
+        {
+          id: 1,
+          audio_path: "/recordings/20260804/010203.m4a",
+          model_id: "whisper-small",
+          status: "completed",
+        },
+        {
+          id: 2,
+          audio_path: "/recordings/20260804/010204.wav",
+          model_id: "whisper-small",
+          status: "failed",
+        },
+      ],
+      pending_count: 0,
+      running_count: 0,
+      failed_count: 1,
+    });
+
+    expect(markup).toContain('aria-label="Play audio: 010203.m4a"');
+    expect(markup).toContain('aria-label="Show in Finder: 010203.m4a"');
+    expect(markup).toContain('aria-label="Play audio: 010204.wav"');
+    expect(markup).toContain('aria-label="Show in Finder: 010204.wav"');
+  });
 });

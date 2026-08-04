@@ -359,6 +359,11 @@ export function formatAudioPathLabel(audioPath: string): string {
   return humanizedLast;
 }
 
+export function audioPathBasename(audioPath: string): string {
+  const segments = audioPath.replaceAll("\\", "/").split("/");
+  return segments.filter(Boolean).at(-1) ?? audioPath;
+}
+
 export function humanizeBasenameTime(basename: string): string {
   // 010203.m4a → 01:02:03.m4a; 010203-2.wav → 01:02:03-2.wav
   return basename.replace(/^(\d{2})(\d{2})(\d{2})(?=[.\-])/, "$1:$2:$3");

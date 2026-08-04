@@ -930,7 +930,7 @@
 
 [data-slot="queue-table"] th:nth-child(5),
 .queue-job__actions-cell {
-  width: 112px;
+  width: 176px;
 }
 
 .queue-job__selection-heading,
@@ -992,6 +992,20 @@
   flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 2px;
+}
+
+.activity-audio-player {
+  grid-template-columns: minmax(120px, 1fr) minmax(210px, 320px) auto;
+}
+
+.activity-audio-player .transcript-player-dock__copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .queue-panel tr[data-read="true"] {
@@ -1134,6 +1148,10 @@
   .transcript-player-dock audio,
   .transcript-player-dock__error {
     grid-column: 1 / -1;
+  }
+
+  .activity-audio-player {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .report-history__toolbar {

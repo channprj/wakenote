@@ -32,6 +32,7 @@ import {
   loadRecentTranscripts,
   loadSnapshot,
   markAllActivityRead,
+  openTranscriptFolder,
   requestAccessibilityPermission,
   openAccessibilityPermissionSettings,
   requestMicrophonePermission,
@@ -512,6 +513,7 @@ export default function App() {
           onProcessNext={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
+          onOpenFolder={(path) => void runAction(() => openTranscriptFolder(path))}
           onReprocess={(ids, modelId) =>
             runAction(() => reprocessJobs(ids, modelId))
           }

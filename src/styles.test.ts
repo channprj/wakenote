@@ -494,6 +494,12 @@ describe("compact overflow safety contract", () => {
     );
     expect(compact).toContain(".transcript-player-dock audio");
     expect(compact).toContain("grid-column: 1 / -1;");
+    expect(cssRule(".activity-audio-player", pagesCss)).toContain(
+      "grid-template-columns: minmax(120px, 1fr) minmax(210px, 320px) auto;",
+    );
+    expect(cssRule(".activity-audio-player", compact)).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto;",
+    );
     expect(compact).toContain(".report-history__layout");
     expect(compact).toContain("grid-template-columns: minmax(0, 1fr);");
     expect(cssRule(".transcript-player-dock", pagesCss)).not.toContain(

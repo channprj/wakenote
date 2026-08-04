@@ -277,4 +277,57 @@ describe("QueuePanel pagination", () => {
 
     expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
   });
+
+  it("plays an Activity item in one shared dock and opens its containing folder", async () => {
+    const user = userEvent.setup();
+    const onOpenFolder = vi.fn();
+    render(
+      <QueuePanel
+        queue={{
+          jobs: [
+            {
+              id: 7,
+              audio_path: "/recordings/20260804/010203.m4a",
+              model_id: "whisper-small",
+              status: "completed",
+            },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 0,
+        }}
+        models={[]}
+        selectedModelId="whisper-small"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onOpenFolder={onOpenFolder}
+        onReprocess={async () => true}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Play audio: 010203.m4a" }),
+    );
+
+    const player = screen.getByRole("complementary", {
+      name: "Activity audio player",
+    });
+    expect(player.querySelector("audio")?.getAttribute("src")).toBe(
+      "file:///recordings/20260804/010203.m4a",
+    );
+    expect(within(player).getByText("010203.m4a")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Show in Finder: 010203.m4a" }),
+    );
+    expect(onOpenFolder).toHaveBeenCalledWith(
+      "/recordings/20260804/010203.m4a",
+    );
+  });
 });

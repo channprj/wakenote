@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileAudio,
+  FolderOpen,
   FolderInput,
   ListChecksIcon,
   Play,
@@ -37,6 +38,7 @@ import { formatModelLabel, modelSupportsContext } from "../lib/models";
 import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
 import {
   fileUrlFromPath,
+  audioPathBasename,
   countUnreadActivityOutcomes,
   formatAudioPathLabel,
   groupQueueJobsByDay,
@@ -51,6 +53,7 @@ import type {
   QueueJobStatus,
   QueueSnapshot,
 } from "../lib/types";
+import { ActivityAudioPlayer } from "./activity/ActivityAudioPlayer";
 
 export const ACTIVITY_PAGE_SIZE = 50;
 export type ActivityView = "all" | "attention" | "resolved";
@@ -200,6 +203,7 @@ export function QueuePanel({
   onProcessNext,
   onRetry,
   onSkip,
+  onOpenFolder = () => {},
   onReprocess,
 }: {
   queue: QueueSnapshot;
@@ -213,6 +217,7 @@ export function QueuePanel({
   onProcessNext: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
+  onOpenFolder?: (path: string) => void;
   onReprocess: (ids: number[], modelId: string) => Promise<boolean>;
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
@@ -223,6 +228,7 @@ export function QueuePanel({
   const [requestedReprocessingModelId, setRequestedReprocessingModelId] =
     useState("");
   const [reprocessing, setReprocessing] = useState(false);
+  const [playingJob, setPlayingJob] = useState<QueueJob | null>(null);
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
@@ -573,6 +579,27 @@ export function QueuePanel({
                         <td className="queue-job__actions-cell" data-label="Actions">
                           <div className="row-actions">
                             <Button
+                              aria-label={`Play audio: ${audioPathBasename(job.audio_path)}`}
+                              aria-pressed={playingJob?.id === job.id}
+                              onClick={() => setPlayingJob(job)}
+                              size="icon"
+                              title="Play audio"
+                              type="button"
+                              variant="secondary"
+                            >
+                              <Play data-icon="solo" />
+                            </Button>
+                            <Button
+                              aria-label={`Show in Finder: ${audioPathBasename(job.audio_path)}`}
+                              onClick={() => onOpenFolder(job.audio_path)}
+                              size="icon"
+                              title="Show in Finder"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <FolderOpen data-icon="solo" />
+                            </Button>
+                            <Button
                               type="button"
                               variant="secondary"
                               size="icon"
@@ -635,6 +662,12 @@ export function QueuePanel({
             </Button>
           </div>
         </nav>
+      ) : null}
+      {playingJob ? (
+        <ActivityAudioPlayer
+          job={playingJob}
+          onClose={() => setPlayingJob(null)}
+        />
       ) : null}
     </div>
   );
