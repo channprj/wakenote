@@ -150,6 +150,7 @@ fn cloud_transcription_models_are_ready_and_not_downloadable() {
         ),
         ("openai-gpt-transcribe", "openai-stt", "OpenAI"),
         ("soniox-async-v5", "soniox-async-stt", "Soniox"),
+        ("soniox-realtime-v5", "soniox-realtime", "Soniox"),
     ] {
         let model = registry.get(id).expect("cloud transcription model");
         assert_eq!(model.provider_runtime, runtime);

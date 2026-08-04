@@ -89,6 +89,7 @@ use wakenote::settings::{
     launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_start_on_launch, resolve_auto_prompt,
 };
+use wakenote::soniox_realtime::SonioxRealtimeManager;
 use wakenote::source_watcher::{
     DetectedSource, SOURCE_MISSING_GRACE_POLLS, SourceTransition,
     compute_source_transition_with_missing_grace_and_auto_preemption, should_auto_capture_source,
@@ -1648,36 +1649,53 @@ fn process_dictation_recording(
         diarization_required,
     );
     let dictionary = DictionaryContext::from_settings(&settings);
-    let ((archive_result, archive_elapsed), result, transcription_elapsed) =
-        if dictation_model == "openai-gpt-live-transcribe" {
-            let archive_started = Instant::now();
-            let archive_result = archive_dictation_recording(
-                &recording,
-                &settings,
-                &microphone.id,
-                &microphone.label,
-                false,
-                env!("CARGO_PKG_VERSION"),
-            );
-            let archive_elapsed = archive_started.elapsed();
-            let transcription_started = Instant::now();
-            let result = match (&archive_result, app.try_state::<OpenAiRealtimeManager>()) {
-                (Ok(archive), Some(manager)) => {
-                    let source_key = "dictation".to_string();
-                    let chunk_id = recording.started_at.timestamp_micros().unsigned_abs();
-                    manager.submit_samples(RealtimeSamplesRequest {
-                        source_key: source_key.clone(),
-                        source_label: "Dictation".to_string(),
-                        microphone_slot: None,
-                        chunk_id,
-                        model_id: dictation_model.clone(),
-                        language: settings.dictation_language,
-                        dictionary: dictionary.clone(),
-                        sample_rate: recording.sample_rate,
-                        samples: Arc::new(recording.samples.clone()),
-                        credentials: credentials.clone(),
-                    });
-                    manager.commit(source_key, chunk_id, archive.audio_path.clone());
+    let ((archive_result, archive_elapsed), result, transcription_elapsed) = if matches!(
+        dictation_model.as_str(),
+        "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+    ) {
+        let archive_started = Instant::now();
+        let archive_result = archive_dictation_recording(
+            &recording,
+            &settings,
+            &microphone.id,
+            &microphone.label,
+            false,
+            env!("CARGO_PKG_VERSION"),
+        );
+        let archive_elapsed = archive_started.elapsed();
+        let transcription_started = Instant::now();
+        let result = match &archive_result {
+            Ok(archive) => {
+                let source_key = "dictation".to_string();
+                let chunk_id = recording.started_at.timestamp_micros().unsigned_abs();
+                let request = RealtimeSamplesRequest {
+                    source_key: source_key.clone(),
+                    source_label: "Dictation".to_string(),
+                    microphone_slot: None,
+                    chunk_id,
+                    model_id: dictation_model.clone(),
+                    language: settings.dictation_language,
+                    dictionary: dictionary.clone(),
+                    sample_rate: recording.sample_rate,
+                    samples: Arc::new(recording.samples.clone()),
+                    credentials: credentials.clone(),
+                };
+                let submitted = match dictation_model.as_str() {
+                    "openai-gpt-live-transcribe" => {
+                        app.try_state::<OpenAiRealtimeManager>().map(|manager| {
+                            manager.submit_samples(request);
+                            manager.commit(source_key, chunk_id, archive.audio_path.clone());
+                        })
+                    }
+                    "soniox-realtime-v5" => {
+                        app.try_state::<SonioxRealtimeManager>().map(|manager| {
+                            manager.submit_samples(request);
+                            manager.commit(source_key, chunk_id, archive.audio_path.clone());
+                        })
+                    }
+                    _ => None,
+                };
+                if submitted.is_some() {
                     transcribe_dictation_recording_execution(
                         &recording,
                         &dictation_model,
@@ -1685,50 +1703,52 @@ fn process_dictation_recording(
                         &dictionary,
                         transcriber,
                     )
+                } else {
+                    Err("Real-time transcription is unavailable".to_string())
                 }
-                (Err(error), _) => Err(format!("Could not save dictation: {error}")),
-                (_, None) => Err("OpenAI live transcription is unavailable".to_string()),
-            };
-            (
-                (archive_result, archive_elapsed),
-                result,
-                transcription_started.elapsed(),
-            )
-        } else {
-            thread::scope(|scope| {
-                let archive_started = Instant::now();
-                let recording_for_archive = &recording;
-                let settings_for_archive = &settings;
-                let microphone_for_archive = &microphone;
-                let archive_task = scope.spawn(move || {
-                    let result = archive_dictation_recording(
-                        recording_for_archive,
-                        settings_for_archive,
-                        &microphone_for_archive.id,
-                        &microphone_for_archive.label,
-                        false,
-                        env!("CARGO_PKG_VERSION"),
-                    );
-                    (result, archive_started.elapsed())
-                });
-                let transcription_started = Instant::now();
-                let result = transcribe_dictation_recording_execution(
-                    &recording,
-                    &dictation_model,
-                    settings.dictation_language,
-                    &dictionary,
-                    transcriber,
-                );
-                let transcription_elapsed = transcription_started.elapsed();
-                let archive = archive_task.join().unwrap_or_else(|_| {
-                    (
-                        Err("Dictation archive worker panicked".to_string()),
-                        archive_started.elapsed(),
-                    )
-                });
-                (archive, result, transcription_elapsed)
-            })
+            }
+            Err(error) => Err(format!("Could not save dictation: {error}")),
         };
+        (
+            (archive_result, archive_elapsed),
+            result,
+            transcription_started.elapsed(),
+        )
+    } else {
+        thread::scope(|scope| {
+            let archive_started = Instant::now();
+            let recording_for_archive = &recording;
+            let settings_for_archive = &settings;
+            let microphone_for_archive = &microphone;
+            let archive_task = scope.spawn(move || {
+                let result = archive_dictation_recording(
+                    recording_for_archive,
+                    settings_for_archive,
+                    &microphone_for_archive.id,
+                    &microphone_for_archive.label,
+                    false,
+                    env!("CARGO_PKG_VERSION"),
+                );
+                (result, archive_started.elapsed())
+            });
+            let transcription_started = Instant::now();
+            let result = transcribe_dictation_recording_execution(
+                &recording,
+                &dictation_model,
+                settings.dictation_language,
+                &dictionary,
+                transcriber,
+            );
+            let transcription_elapsed = transcription_started.elapsed();
+            let archive = archive_task.join().unwrap_or_else(|_| {
+                (
+                    Err("Dictation archive worker panicked".to_string()),
+                    archive_started.elapsed(),
+                )
+            });
+            (archive, result, transcription_elapsed)
+        })
+    };
     let archive = match archive_result {
         Ok(chunk) => chunk,
         Err(error) => {
@@ -5152,7 +5172,7 @@ fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial:
             runtime.snapshot()
         });
         if let Some(snapshot) = snapshot {
-            publish_overlay_caption_snapshot(app, snapshot, "OpenAI realtime partial");
+            publish_overlay_caption_snapshot(app, snapshot, "cloud realtime partial");
         }
     }
     if let Err(error) = app.emit(
@@ -5165,7 +5185,7 @@ fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial:
             text: partial.text,
         },
     ) {
-        eprintln!("[wakenote] WARN failed to emit OpenAI realtime partial: {error}");
+        eprintln!("[wakenote] WARN failed to emit cloud realtime partial: {error}");
     }
 }
 
@@ -5328,17 +5348,33 @@ fn wire_live_transcription(
         preload_dictation_model(&app_handle, &backend.settings());
     }
 
-    let app_for_realtime = app_handle.clone();
-    let backend_for_realtime = backend_state.clone();
-    let realtime = OpenAiRealtimeManager::new(Arc::new(move |partial| {
-        emit_realtime_partial(&app_for_realtime, &backend_for_realtime, partial);
+    let app_for_openai_realtime = app_handle.clone();
+    let backend_for_openai_realtime = backend_state.clone();
+    let openai_realtime = OpenAiRealtimeManager::new(Arc::new(move |partial| {
+        emit_realtime_partial(
+            &app_for_openai_realtime,
+            &backend_for_openai_realtime,
+            partial,
+        );
     }));
-    app_handle.manage(realtime.clone());
+    app_handle.manage(openai_realtime.clone());
+
+    let app_for_soniox_realtime = app_handle.clone();
+    let backend_for_soniox_realtime = backend_state.clone();
+    let soniox_realtime = SonioxRealtimeManager::new(Arc::new(move |partial| {
+        emit_realtime_partial(
+            &app_for_soniox_realtime,
+            &backend_for_soniox_realtime,
+            partial,
+        );
+    }));
+    app_handle.manage(soniox_realtime.clone());
 
     let app_for_handler = app_handle.clone();
     let model_directory_for_handler = model_directory.clone();
     let service_for_handler = service.clone();
-    let realtime_for_handler = realtime.clone();
+    let openai_realtime_for_handler = openai_realtime.clone();
+    let soniox_realtime_for_handler = soniox_realtime.clone();
     let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
         LiveTranscriptEvent::Started {
             source_key,
@@ -5416,7 +5452,10 @@ fn wire_live_transcription(
                 );
                 return;
             };
-            if preview_model_id == "openai-gpt-live-transcribe" {
+            if matches!(
+                preview_model_id.as_str(),
+                "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+            ) {
                 let (dictionary, credentials) = app_for_handler
                     .try_state::<BackendState>()
                     .and_then(|state| {
@@ -5428,18 +5467,25 @@ fn wire_live_transcription(
                         })
                     })
                     .unwrap_or_default();
-                realtime_for_handler.submit_samples(RealtimeSamplesRequest {
+                let request = RealtimeSamplesRequest {
                     source_key,
                     source_label,
                     microphone_slot,
                     chunk_id,
-                    model_id: preview_model_id,
+                    model_id: preview_model_id.clone(),
                     language,
                     dictionary,
                     sample_rate,
                     samples,
                     credentials,
-                });
+                };
+                match preview_model_id.as_str() {
+                    "openai-gpt-live-transcribe" => {
+                        openai_realtime_for_handler.submit_samples(request)
+                    }
+                    "soniox-realtime-v5" => soniox_realtime_for_handler.submit_samples(request),
+                    _ => {}
+                }
                 return;
             }
             if !model_supports_live_partials(&model_directory_for_handler, &preview_model_id) {
@@ -5487,8 +5533,18 @@ fn wire_live_transcription(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
-            if model_id.as_deref() == Some("openai-gpt-live-transcribe") {
-                realtime_for_handler.commit(source_key.clone(), chunk_id, audio_path.clone());
+            match model_id.as_deref() {
+                Some("openai-gpt-live-transcribe") => openai_realtime_for_handler.commit(
+                    source_key.clone(),
+                    chunk_id,
+                    audio_path.clone(),
+                ),
+                Some("soniox-realtime-v5") => soniox_realtime_for_handler.commit(
+                    source_key.clone(),
+                    chunk_id,
+                    audio_path.clone(),
+                ),
+                _ => {}
             }
             if microphone_slot != Some(MicrophoneSlot::Secondary)
                 && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()

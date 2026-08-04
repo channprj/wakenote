@@ -1102,7 +1102,7 @@ impl Transcriber for RuntimeTranscriber {
                         },
                     )
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
-                "openai-realtime" => self
+                "openai-realtime" | "soniox-realtime" => self
                     .wait_for_realtime_result(request.audio_path)
                     .map(|execution| execution.text),
                 "soniox-async-stt" => self
@@ -1130,7 +1130,7 @@ impl Transcriber for RuntimeTranscriber {
             transcriber.suppress_low_confidence_decode = self.suppress_low_confidence_decode;
             return transcriber.transcribe_execution(request);
         }
-        if runtime == "openai-realtime" {
+        if matches!(runtime.as_str(), "openai-realtime" | "soniox-realtime") {
             return self.wait_for_realtime_result(request.audio_path);
         }
         if runtime == "openai-stt" {

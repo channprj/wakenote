@@ -3659,9 +3659,11 @@ pub fn live_preview_model_id(
         .find(|model| model.id == settings.selected_model)
         .filter(|model| is_ready(model))
         .filter(|model| {
-            model.id == "openai-gpt-live-transcribe"
-                || (model.provider_runtime == "whisper-rs"
-                    && model_supports_live_partials(&model_directory, &model.id))
+            matches!(
+                model.id.as_str(),
+                "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+            ) || (model.provider_runtime == "whisper-rs"
+                && model_supports_live_partials(&model_directory, &model.id))
         })
     {
         return Some(selected.id.clone());
@@ -3752,7 +3754,8 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "openrouter-stt" | "openai-stt" | "openai-realtime" | "soniox-async-stt" => true,
+        "openrouter-stt" | "openai-stt" | "openai-realtime" | "soniox-async-stt"
+        | "soniox-realtime" => true,
         "sherpa-onnx" | "external-command" | "qwen3-asr" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),

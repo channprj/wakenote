@@ -854,33 +854,35 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
 #[test]
 fn runtime_transcriber_consumes_the_realtime_result_without_reuploading_audio() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("live.wav");
-    std::fs::write(&audio_path, b"recorded audio").expect("audio");
-    realtime_result_store().publish(
-        audio_path.clone(),
-        RealtimeStoredResult::Completed(wakenote::transcription::TranscriptionExecution {
-            text: "live transcript".into(),
-            speaker_turns: Vec::new(),
-            requested_model_id: "openai-gpt-live-transcribe".into(),
-            effective_model_id: "openai-gpt-live-transcribe".into(),
-            fallback_from_model_id: None,
-            usage: None,
-            issue: None,
-        }),
-    );
     let transcriber = RuntimeTranscriber::new(tmp.path());
+    for model_id in ["openai-gpt-live-transcribe", "soniox-realtime-v5"] {
+        let audio_path = tmp.path().join(format!("{model_id}.wav"));
+        std::fs::write(&audio_path, b"recorded audio").expect("audio");
+        realtime_result_store().publish(
+            audio_path.clone(),
+            RealtimeStoredResult::Completed(wakenote::transcription::TranscriptionExecution {
+                text: "live transcript".into(),
+                speaker_turns: Vec::new(),
+                requested_model_id: model_id.into(),
+                effective_model_id: model_id.into(),
+                fallback_from_model_id: None,
+                usage: None,
+                issue: None,
+            }),
+        );
 
-    let result = transcriber
-        .transcribe_execution(TranscriptionRequest {
-            audio_path: &audio_path,
-            model_id: "openai-gpt-live-transcribe",
-            language: TranscriptionLanguage::Auto,
-            dictionary: &DictionaryContext::default(),
-        })
-        .expect("realtime result");
+        let result = transcriber
+            .transcribe_execution(TranscriptionRequest {
+                audio_path: &audio_path,
+                model_id,
+                language: TranscriptionLanguage::Auto,
+                dictionary: &DictionaryContext::default(),
+            })
+            .expect("realtime result");
 
-    assert_eq!(result.text, "live transcript");
-    assert_eq!(result.effective_model_id, "openai-gpt-live-transcribe");
+        assert_eq!(result.text, "live transcript");
+        assert_eq!(result.effective_model_id, model_id);
+    }
 }
 
 #[test]

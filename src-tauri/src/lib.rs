@@ -27,6 +27,7 @@ pub mod queue;
 pub mod recorder;
 pub mod settings;
 pub mod soniox_async;
+pub mod soniox_realtime;
 pub mod source_watcher;
 pub mod sources;
 pub mod storage;

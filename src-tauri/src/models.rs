@@ -101,6 +101,18 @@ pub fn capabilities_for_model(
                 TranscriptionContext::Dictation,
             ],
         },
+        "soniox-realtime-v5" => ModelCapabilities {
+            file_transcription: false,
+            realtime: true,
+            streaming: StreamingCapability::Required,
+            diarization: false,
+            cost_reporting: CostReportingCapability::DurationEstimate,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::Realtime,
+                TranscriptionContext::Dictation,
+            ],
+        },
         "openai-gpt-transcribe" => ModelCapabilities {
             file_transcription: true,
             realtime: true,
@@ -791,7 +803,11 @@ impl ModelStore {
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
         if matches!(
             model.provider_runtime.as_str(),
-            "openrouter-stt" | "openai-stt" | "soniox-async-stt"
+            "openrouter-stt"
+                | "openai-stt"
+                | "openai-realtime"
+                | "soniox-async-stt"
+                | "soniox-realtime"
         ) {
             return Ok(ModelStatus::Ready);
         }
@@ -1355,6 +1371,7 @@ fn merge_builtin_cloud_models(registry: &mut BTreeMap<String, ModelDescriptor>) 
         "openai-gpt-transcribe",
         "openai-gpt-4o-transcribe-diarize",
         "soniox-async-v5",
+        "soniox-realtime-v5",
     ] {
         if let Some(model) = defaults.remove(id) {
             registry.entry(id.to_string()).or_insert(model);
@@ -1891,6 +1908,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             "soniox-async-stt",
             9,
         ),
+        (
+            "soniox-realtime-v5",
+            "Soniox · Real-time V5",
+            "Soniox",
+            "soniox-realtime",
+            9,
+        ),
     ] {
         registry.insert(
             id.to_string(),
@@ -1948,6 +1972,24 @@ mod tests {
     #[test]
     fn model_capabilities_match_the_supported_provider_contracts() {
         let registry = default_model_registry();
+        let soniox_realtime = registry
+            .get("soniox-realtime-v5")
+            .expect("Soniox realtime descriptor");
+        assert_eq!(soniox_realtime.provider_runtime, "soniox-realtime");
+        assert!(!soniox_realtime.capabilities.file_transcription);
+        assert!(soniox_realtime.capabilities.realtime);
+        assert_eq!(
+            soniox_realtime.capabilities.streaming,
+            StreamingCapability::Required
+        );
+        assert_eq!(
+            soniox_realtime.capabilities.selectable_contexts,
+            vec![
+                TranscriptionContext::Realtime,
+                TranscriptionContext::Dictation,
+            ]
+        );
+
         let soniox_async = registry
             .get("soniox-async-v5")
             .expect("Soniox async descriptor");

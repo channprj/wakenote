@@ -106,6 +106,24 @@ fn live_preview_model_fallback_does_not_change_queued_final_model() {
     );
 }
 
+#[test]
+fn live_preview_model_accepts_each_ready_cloud_realtime_model() {
+    let registry = default_model_registry();
+    for model_id in ["openai-gpt-live-transcribe", "soniox-realtime-v5"] {
+        let mut model = registry.get(model_id).expect("realtime model").clone();
+        model.status = ModelStatus::Ready;
+        let settings = wakenote::settings::AppSettings {
+            selected_model: model_id.to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            live_preview_model_id(&settings, &[model], "/tmp/missing-model-directory"),
+            Some(model_id.to_string())
+        );
+    }
+}
+
 #[derive(Clone)]
 struct StaticTranscriber {
     expected_language: TranscriptionLanguage,
