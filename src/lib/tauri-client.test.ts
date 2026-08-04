@@ -10,6 +10,7 @@ import {
   deleteModel,
   deleteOpenRouterApiKey,
   deleteOpenAiApiKey,
+  deleteSonioxApiKey,
   downloadModel,
   enqueueBacklog,
   enqueueAudioFiles,
@@ -28,6 +29,7 @@ import {
   retryLlmReport,
   saveOpenRouterApiKey,
   saveOpenAiApiKey,
+  saveSonioxApiKey,
   saveSettingsPatch,
   skipJob,
   startLiveCapture,
@@ -205,6 +207,20 @@ describe("tauri live capture client", () => {
 
     await deleteOpenAiApiKey();
     expect((await loadSnapshot()).openai_key_configured).toBe(false);
+  });
+
+  it("tracks browser fallback Soniox key state without retaining blank values", async () => {
+    await deleteSonioxApiKey();
+    expect((await loadSnapshot()).soniox_key_configured).toBe(false);
+
+    await expect(saveSonioxApiKey("   ")).rejects.toThrow(
+      "Soniox API key cannot be blank",
+    );
+    const saved = await saveSonioxApiKey(" soniox-browser ");
+    expect(saved.soniox_key_configured).toBe(true);
+
+    await deleteSonioxApiKey();
+    expect((await loadSnapshot()).soniox_key_configured).toBe(false);
   });
 
   it("tracks browser fallback OpenRouter key state and completed durable runs", async () => {
@@ -952,13 +968,17 @@ describe("tauri live capture client", () => {
 
     const snapshot = await reprocessJobs([selected?.id ?? -1], "whisper-small");
 
-    expect(snapshot.queue.jobs.find((job) => job.id === selected?.id)).toMatchObject({
+    expect(
+      snapshot.queue.jobs.find((job) => job.id === selected?.id),
+    ).toMatchObject({
       model_id: "whisper-small",
       status: "pending",
       error: null,
       is_read: false,
     });
-    expect(snapshot.queue.jobs.find((job) => job.id === unselected?.id)).toMatchObject({
+    expect(
+      snapshot.queue.jobs.find((job) => job.id === unselected?.id),
+    ).toMatchObject({
       status: "skipped",
       is_read: true,
     });
@@ -1023,9 +1043,9 @@ describe("tauri live capture client", () => {
     expect(outcome.removed_ids).toEqual([selected?.id]);
     expect(outcome.trashed_ids).toEqual([selected?.id]);
     expect(outcome.failures).toEqual([]);
-    expect(outcome.snapshot.queue.jobs.some((job) => job.id === selected?.id)).toBe(
-      false,
-    );
+    expect(
+      outcome.snapshot.queue.jobs.some((job) => job.id === selected?.id),
+    ).toBe(false);
     expect(
       outcome.snapshot.queue.jobs.some((job) => job.id === unselected?.id),
     ).toBe(true);
@@ -1270,7 +1290,9 @@ describe("Activity read state (browser fallback)", () => {
       "/tmp/imported/keep-pending.wav",
     ];
     paths.forEach((audioPath, index) => {
-      const job = before.queue.jobs.find((candidate) => candidate.audio_path === audioPath);
+      const job = before.queue.jobs.find(
+        (candidate) => candidate.audio_path === audioPath,
+      );
       expect(job).toBeDefined();
       if (job) {
         job.status = statuses[index];
@@ -1299,9 +1321,12 @@ describe("Activity read state (browser fallback)", () => {
   });
 
   it("marks a read failure unread when its outcome changes to skipped", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/read-then-skip.wav"]);
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/read-then-skip.wav",
+    ]);
     const job = before.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/read-then-skip.wav",
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/read-then-skip.wav",
     );
     expect(job).toBeDefined();
     if (job) {

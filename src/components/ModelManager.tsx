@@ -1,4 +1,11 @@
-import { CheckCircle2, CircleX, Download, RotateCw, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleX,
+  Download,
+  RotateCw,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { StatusBadge } from "./ui/status-badge";
@@ -48,6 +55,9 @@ export function cloudCredentialLabel(providerRuntime: string): string | null {
     case "openai-stt":
     case "openai-realtime":
       return "Requires OpenAI API key";
+    case "soniox-async-stt":
+    case "soniox-realtime":
+      return "Requires Soniox API key";
     default:
       return null;
   }
@@ -94,15 +104,20 @@ export function modelActionState(
   model: Pick<ModelDescriptor, "download_url" | "status"> &
     Partial<Pick<ModelDescriptor, "provider_runtime">>,
 ) {
-  const activeDownload = ["downloading", "verifying", "extracting"].includes(model.status);
+  const activeDownload = ["downloading", "verifying", "extracting"].includes(
+    model.status,
+  );
   const usableModel = ["ready", "installed", "unloaded"].includes(model.status);
   const canSetUpQwen = model.provider_runtime === "qwen3-asr";
 
   return {
     canSwitch: usableModel,
-    canDownload: (Boolean(model.download_url) || canSetUpQwen) && model.status === "missing",
+    canDownload:
+      (Boolean(model.download_url) || canSetUpQwen) &&
+      model.status === "missing",
     canVerify: !activeDownload,
-    canRetry: (Boolean(model.download_url) || canSetUpQwen) && model.status === "error",
+    canRetry:
+      (Boolean(model.download_url) || canSetUpQwen) && model.status === "error",
     canCancelDownload: activeDownload,
     canDelete: !activeDownload && model.status !== "missing",
   };
@@ -114,18 +129,28 @@ export type ModelAcquireKind = "download" | "none";
 /// (whisper-rs `.bin` or sherpa-onnx archive, both carry a `download_url`).
 export function modelAcquireAction(
   model: Pick<ModelDescriptor, "provider_runtime" | "download_url" | "status">,
-): { kind: ModelAcquireKind; enabled: boolean; label: string; reason: string | null } {
+): {
+  kind: ModelAcquireKind;
+  enabled: boolean;
+  label: string;
+  reason: string | null;
+} {
   const reason = modelDownloadDisabledReason(model);
   return {
     kind: "download",
     enabled: reason === null,
-    label: model.provider_runtime === "qwen3-asr" ? "Set up Qwen3-ASR" : "Download",
+    label:
+      model.provider_runtime === "qwen3-asr" ? "Set up Qwen3-ASR" : "Download",
     reason,
   };
 }
 
 function isActiveDownload(status: ModelStatus): boolean {
-  return status === "downloading" || status === "verifying" || status === "extracting";
+  return (
+    status === "downloading" ||
+    status === "verifying" ||
+    status === "extracting"
+  );
 }
 
 function isUsable(status: ModelStatus): boolean {
@@ -246,16 +271,23 @@ export function ModelManager({
         const credentialLabel = cloudCredentialLabel(model.provider_runtime);
         const capabilityLabels = modelCapabilityLabels(model);
         return (
-          <article className="model-row" key={model.id} data-selected={selected}>
+          <article
+            className="model-row"
+            key={model.id}
+            data-selected={selected}
+          >
             <div className="model-row__main">
               <header>
                 <div>
                   <strong>{model.display_name}</strong>
                   <span>
-                    {model.engine} · {model.provider_runtime} · {model.offline ? formatModelSize(model.size_mb) : "API"}
+                    {model.engine} · {model.provider_runtime} ·{" "}
+                    {model.offline ? formatModelSize(model.size_mb) : "API"}
                   </span>
                 </div>
-                <StatusBadge tone={modelStatusBadgeTone(model.status)}>{humanizeModelStatus(model.status)}</StatusBadge>
+                <StatusBadge tone={modelStatusBadgeTone(model.status)}>
+                  {humanizeModelStatus(model.status)}
+                </StatusBadge>
               </header>
               <Progress
                 value={progress}

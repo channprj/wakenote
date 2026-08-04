@@ -80,6 +80,8 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
         onDeleteOpenRouterApiKey: () => {},
         onSaveOpenAiApiKey: () => {},
         onDeleteOpenAiApiKey: () => {},
+        onSaveSonioxApiKey: () => {},
+        onDeleteSonioxApiKey: () => {},
       }}
     />,
   );

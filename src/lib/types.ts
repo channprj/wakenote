@@ -718,5 +718,6 @@ export interface AppSnapshot {
   permissions: AppPermissions;
   openrouter_key_configured: boolean;
   openai_key_configured: boolean;
+  soniox_key_configured: boolean;
   dictionary_file_status: DictionaryFileStatus;
 }

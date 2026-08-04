@@ -262,6 +262,28 @@ function mockModelCapabilities(
       selectable_contexts: ["realtime", "dictation"],
     };
   }
+  if (model.id === "soniox-realtime-v5") {
+    return {
+      file_transcription: false,
+      realtime: true,
+      streaming: "required",
+      diarization: false,
+      cost_reporting: "duration_estimate",
+      maximum_request_bytes: null,
+      selectable_contexts: ["realtime", "dictation"],
+    };
+  }
+  if (model.id === "soniox-async-v5") {
+    return {
+      file_transcription: true,
+      realtime: false,
+      streaming: "unsupported",
+      diarization: false,
+      cost_reporting: "duration_estimate",
+      maximum_request_bytes: null,
+      selectable_contexts: ["file", "dictation", "meeting"],
+    };
+  }
   if (model.id === "openai-gpt-transcribe") {
     return {
       file_transcription: true,
@@ -530,6 +552,38 @@ export function mockModels(): ModelDescriptor[] {
       download_progress: null,
       download_error: null,
     },
+    {
+      id: "soniox-async-v5",
+      display_name: "Soniox · Async V5",
+      engine: "Soniox",
+      provider_runtime: "soniox-async-stt",
+      download_url: null,
+      checksum_sha256: null,
+      size_mb: 0,
+      languages: ["ko", "en", "ja", "zh", "es", "fr", "de", "multi"],
+      speed_score: 9,
+      accuracy_score: 9,
+      offline: false,
+      status: "ready",
+      download_progress: null,
+      download_error: null,
+    },
+    {
+      id: "soniox-realtime-v5",
+      display_name: "Soniox · Real-time V5",
+      engine: "Soniox",
+      provider_runtime: "soniox-realtime",
+      download_url: null,
+      checksum_sha256: null,
+      size_mb: 0,
+      languages: ["ko", "en", "ja", "zh", "es", "fr", "de", "multi"],
+      speed_score: 10,
+      accuracy_score: 9,
+      offline: false,
+      status: "ready",
+      download_progress: null,
+      download_error: null,
+    },
   ];
   return models.map((model) => ({
     ...model,
@@ -632,6 +686,7 @@ export function mockSnapshot(): AppSnapshot {
     permissions: defaultPermissions(),
     openrouter_key_configured: false,
     openai_key_configured: false,
+    soniox_key_configured: false,
     dictionary_file_status: {
       path: "~/Library/Application Support/WakeNote/dictionary.txt",
       revision: "browser",

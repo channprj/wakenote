@@ -25,6 +25,8 @@ const actions: SettingsActions = {
   onDeleteOpenRouterApiKey: vi.fn(),
   onSaveOpenAiApiKey: vi.fn(),
   onDeleteOpenAiApiKey: vi.fn(),
+  onSaveSonioxApiKey: vi.fn(),
+  onDeleteSonioxApiKey: vi.fn(),
 };
 
 describe("AudioSettings", () => {

@@ -46,8 +46,7 @@ export function newestLiveTranscriptEntries(
   for (const entry of [...entries].reverse()) {
     const audioPath = entry.audio_path?.trim();
     const key =
-      audioPath ||
-      `${entry.source_key ?? "microphone"}:${entry.chunk_id}`;
+      audioPath || `${entry.source_key ?? "microphone"}:${entry.chunk_id}`;
     if (seen.has(key)) {
       continue;
     }
@@ -115,6 +114,7 @@ function isReadyLivePreviewModel(model: ModelDescriptor) {
   return (
     isReadyModel(model) &&
     (model.id === "openai-gpt-live-transcribe" ||
+      model.id === "soniox-realtime-v5" ||
       model.provider_runtime === "whisper-rs")
   );
 }

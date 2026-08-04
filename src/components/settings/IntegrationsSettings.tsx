@@ -1,7 +1,12 @@
 import { KeyRoundIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,10 +30,14 @@ export function IntegrationsSettings({
   const { settings } = snapshot;
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [openAiApiKey, setOpenAiApiKey] = useState("");
+  const [sonioxApiKey, setSonioxApiKey] = useState("");
 
   return (
     <SettingsGrid maxColumns={3}>
-      <SettingsCard title="Text output" description="Send completed phrases to the active application.">
+      <SettingsCard
+        title="Text output"
+        description="Send completed phrases to the active application."
+      >
         <SettingSwitch
           label="Auto-type transcripts into cursor"
           checked={settings.auto_transcript_input_enabled}
@@ -52,11 +61,16 @@ export function IntegrationsSettings({
         />
       </SettingsCard>
 
-      <SettingsCard title="Floating overlay" description="Live transcript surface above other windows.">
+      <SettingsCard
+        title="Floating overlay"
+        description="Live transcript surface above other windows."
+      >
         <SettingSwitch
           label="Show floating overlay"
           checked={settings.show_floating_overlay}
-          onCheckedChange={(show_floating_overlay) => actions.onPatch({ show_floating_overlay })}
+          onCheckedChange={(show_floating_overlay) =>
+            actions.onPatch({ show_floating_overlay })
+          }
         />
         <SettingSelect
           label="Floating overlay position"
@@ -123,57 +137,51 @@ export function IntegrationsSettings({
       </SettingsCard>
 
       <SettingsCard
-        title="OpenRouter"
-        description="Qwen3 ASR transcription, transcript summaries, and detailed reports."
+        title="External AI API keys"
+        description="Manage cloud transcription and report credentials in one place. Keys stay in WakeNote's private app-data secret store."
       >
-        <Field orientation="responsive" className="settings-row">
-          <FieldContent>
-            <FieldLabel>API Key</FieldLabel>
-            <FieldDescription>
-              Stored in WakeNote&apos;s private app-data secret store, never in the settings file.
-            </FieldDescription>
-          </FieldContent>
-          <div className="settings-inline-control">
-            <Input
-              type="password"
-              autoComplete="off"
-              aria-label="OpenRouter API Key"
-              value={openRouterApiKey}
-              placeholder={
-                snapshot.openrouter_key_configured
-                  ? "Enter a new key to replace the saved key"
-                  : "OpenRouter API key"
-              }
-              onChange={(event) => setOpenRouterApiKey(event.currentTarget.value)}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!openRouterApiKey.trim()}
-              onClick={() => {
-                actions.onSaveOpenRouterApiKey(openRouterApiKey);
-                setOpenRouterApiKey("");
-              }}
-            >
-              <KeyRoundIcon data-icon="inline-start" />
-              Save
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={!snapshot.openrouter_key_configured}
-              onClick={actions.onDeleteOpenRouterApiKey}
-            >
-              <Trash2Icon data-icon="inline-start" />
-              Delete
-            </Button>
-          </div>
-          <StatusBadge tone={snapshot.openrouter_key_configured ? "success" : "warning"}>
-            {snapshot.openrouter_key_configured ? "API key saved" : "API key missing"}
-          </StatusBadge>
-        </Field>
+        <ApiCredentialRow
+          provider="OpenRouter"
+          description="Qwen3 ASR transcription and AI report generation."
+          value={openRouterApiKey}
+          configured={snapshot.openrouter_key_configured}
+          onChange={setOpenRouterApiKey}
+          onSave={() => {
+            actions.onSaveOpenRouterApiKey(openRouterApiKey);
+            setOpenRouterApiKey("");
+          }}
+          onDelete={actions.onDeleteOpenRouterApiKey}
+        />
+        <ApiCredentialRow
+          provider="OpenAI"
+          description="GPT Transcribe file and real-time speech recognition."
+          value={openAiApiKey}
+          configured={snapshot.openai_key_configured}
+          onChange={setOpenAiApiKey}
+          onSave={() => {
+            actions.onSaveOpenAiApiKey(openAiApiKey);
+            setOpenAiApiKey("");
+          }}
+          onDelete={actions.onDeleteOpenAiApiKey}
+        />
+        <ApiCredentialRow
+          provider="Soniox"
+          description="Async V5 and Real-time V5 speech recognition."
+          value={sonioxApiKey}
+          configured={snapshot.soniox_key_configured}
+          onChange={setSonioxApiKey}
+          onSave={() => {
+            actions.onSaveSonioxApiKey(sonioxApiKey);
+            setSonioxApiKey("");
+          }}
+          onDelete={actions.onDeleteSonioxApiKey}
+        />
+      </SettingsCard>
+
+      <SettingsCard
+        title="OpenRouter reports"
+        description="Configure the model and prompts used for transcript summaries and detailed reports."
+      >
         <Field orientation="responsive" className="settings-row">
           <FieldContent>
             <FieldLabel htmlFor="openrouter-model">OpenRouter Model</FieldLabel>
@@ -192,7 +200,9 @@ export function IntegrationsSettings({
           value={settings.llm_max_iterations}
           min={1}
           max={30}
-          onValueChange={(llm_max_iterations) => actions.onPatch({ llm_max_iterations })}
+          onValueChange={(llm_max_iterations) =>
+            actions.onPatch({ llm_max_iterations })
+          }
         />
         <PromptSetting
           label="Summary Prompt Template"
@@ -211,64 +221,71 @@ export function IntegrationsSettings({
           }
         />
       </SettingsCard>
-
-      <SettingsCard
-        title="OpenAI"
-        description="Direct GPT Transcribe speech recognition."
-      >
-        <Field orientation="responsive" className="settings-row">
-          <FieldContent>
-            <FieldLabel>API Key</FieldLabel>
-            <FieldDescription>
-              Stored in WakeNote&apos;s private app-data secret store, never in the settings file.
-            </FieldDescription>
-          </FieldContent>
-          <div className="settings-inline-control">
-            <Input
-              type="password"
-              autoComplete="off"
-              aria-label="OpenAI API Key"
-              value={openAiApiKey}
-              placeholder={
-                snapshot.openai_key_configured
-                  ? "Enter a new key to replace the saved key"
-                  : "OpenAI API key"
-              }
-              onChange={(event) => setOpenAiApiKey(event.currentTarget.value)}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!openAiApiKey.trim()}
-              onClick={() => {
-                actions.onSaveOpenAiApiKey(openAiApiKey);
-                setOpenAiApiKey("");
-              }}
-            >
-              <KeyRoundIcon data-icon="inline-start" />
-              Save
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={!snapshot.openai_key_configured}
-              onClick={actions.onDeleteOpenAiApiKey}
-            >
-              <Trash2Icon data-icon="inline-start" />
-              Delete
-            </Button>
-          </div>
-          <StatusBadge tone={snapshot.openai_key_configured ? "success" : "warning"}>
-            {snapshot.openai_key_configured ? "API key saved" : "API key missing"}
-          </StatusBadge>
-        </Field>
-        <p className="text-muted-foreground text-xs">
-          Required when OpenAI · GPT Transcribe is selected for transcription or Dictation.
-        </p>
-      </SettingsCard>
     </SettingsGrid>
+  );
+}
+
+function ApiCredentialRow({
+  provider,
+  description,
+  value,
+  configured,
+  onChange,
+  onSave,
+  onDelete,
+}: {
+  provider: "OpenRouter" | "OpenAI" | "Soniox";
+  description: string;
+  value: string;
+  configured: boolean;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <Field orientation="responsive" className="settings-row">
+      <FieldContent>
+        <FieldLabel>{provider}</FieldLabel>
+        <FieldDescription>{description}</FieldDescription>
+      </FieldContent>
+      <div className="settings-inline-control">
+        <Input
+          type="password"
+          autoComplete="off"
+          aria-label={`${provider} API Key`}
+          value={value}
+          placeholder={
+            configured
+              ? "Enter a new key to replace the saved key"
+              : `${provider} API key`
+          }
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={!value.trim()}
+          onClick={onSave}
+        >
+          <KeyRoundIcon data-icon="inline-start" />
+          Save
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={!configured}
+          onClick={onDelete}
+        >
+          <Trash2Icon data-icon="inline-start" />
+          Delete
+        </Button>
+      </div>
+      <StatusBadge tone={configured ? "success" : "warning"}>
+        {configured ? "API key saved" : "API key missing"}
+      </StatusBadge>
+    </Field>
   );
 }
 
@@ -283,7 +300,9 @@ function ColorSetting({
 }) {
   return (
     <Field orientation="responsive" className="settings-row">
-      <FieldContent><FieldLabel>{label}</FieldLabel></FieldContent>
+      <FieldContent>
+        <FieldLabel>{label}</FieldLabel>
+      </FieldContent>
       <Input
         aria-label={label}
         type="color"

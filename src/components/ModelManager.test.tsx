@@ -51,12 +51,17 @@ function buttonTag(markup: string, iconClass: string) {
     `<button(?:(?!</button>)[\\s\\S])*?lucide-${iconClass}(?:(?!</button>)[\\s\\S])*?</button>`,
   );
   const match = markup.match(re);
-  expect(match, `expected button containing lucide-${iconClass}`).not.toBeNull();
+  expect(
+    match,
+    `expected button containing lucide-${iconClass}`,
+  ).not.toBeNull();
   return match?.[0] ?? "";
 }
 
 function buttonWithText(markup: string, text: string) {
-  const match = markup.match(new RegExp(`<button[^>]*>[\\s\\S]*?${text}[\\s\\S]*?</button>`));
+  const match = markup.match(
+    new RegExp(`<button[^>]*>[\\s\\S]*?${text}[\\s\\S]*?</button>`),
+  );
   expect(match, `expected ${text} button`).not.toBeNull();
   return match?.[0] ?? "";
 }
@@ -90,18 +95,32 @@ describe("model card grid", () => {
     expect(markup.match(/class="model-row"/g)).toHaveLength(models.length);
     expect(markup).toContain('role="list"');
     expect(markup).toContain('role="listitem"');
-    expect(markup).toContain('aria-label="Whisper Small installation progress"');
+    expect(markup).toContain(
+      'aria-label="Whisper Small installation progress"',
+    );
   });
 });
 
 describe("model manager actions", () => {
   it("enables switching only for usable local models", () => {
-    expect(isDisabled(buttonWithText(renderModel("ready"), "Switch"))).toBe(false);
-    expect(isDisabled(buttonWithText(renderModel("installed"), "Switch"))).toBe(false);
-    expect(isDisabled(buttonWithText(renderModel("unloaded"), "Switch"))).toBe(false);
-    expect(isDisabled(buttonWithText(renderModel("missing"), "Switch"))).toBe(true);
-    expect(isDisabled(buttonWithText(renderModel("downloading"), "Switch"))).toBe(true);
-    expect(isDisabled(buttonWithText(renderModel("error"), "Switch"))).toBe(true);
+    expect(isDisabled(buttonWithText(renderModel("ready"), "Switch"))).toBe(
+      false,
+    );
+    expect(isDisabled(buttonWithText(renderModel("installed"), "Switch"))).toBe(
+      false,
+    );
+    expect(isDisabled(buttonWithText(renderModel("unloaded"), "Switch"))).toBe(
+      false,
+    );
+    expect(isDisabled(buttonWithText(renderModel("missing"), "Switch"))).toBe(
+      true,
+    );
+    expect(
+      isDisabled(buttonWithText(renderModel("downloading"), "Switch")),
+    ).toBe(true);
+    expect(isDisabled(buttonWithText(renderModel("error"), "Switch"))).toBe(
+      true,
+    );
   });
 
   it.each(["downloading", "verifying", "extracting"] satisfies ModelStatus[])(
@@ -117,7 +136,9 @@ describe("model manager actions", () => {
   );
 
   it("routes failed downloads through retry instead of the primary download action", () => {
-    const markup = renderModel("error", { download_error: "network unavailable" });
+    const markup = renderModel("error", {
+      download_error: "network unavailable",
+    });
 
     expect(isDisabled(buttonTag(markup, "download"))).toBe(true);
     expect(isDisabled(buttonTag(markup, "rotate-cw"))).toBe(false);
@@ -159,7 +180,9 @@ describe("model manager actions", () => {
     expect(isDisabled(buttonTag(missingMarkup, "shield-check"))).toBe(false);
     expect(isDisabled(buttonTag(missingMarkup, "trash-2"))).toBe(true);
     expect(
-      isDisabled(buttonTag(renderModel("missing", { download_url: null }), "download")),
+      isDisabled(
+        buttonTag(renderModel("missing", { download_url: null }), "download"),
+      ),
     ).toBe(true);
   });
 
@@ -184,21 +207,26 @@ describe("model manager actions", () => {
     ["openrouter-stt", "Requires OpenRouter API key"],
     ["openai-stt", "Requires OpenAI API key"],
     ["openai-realtime", "Requires OpenAI API key"],
-  ])("keeps %s cloud models selectable without local file actions", (providerRuntime, label) => {
-    const markup = renderModel("ready", {
-      provider_runtime: providerRuntime,
-      offline: false,
-      download_url: null,
-      size_mb: 0,
-    });
+    ["soniox-async-stt", "Requires Soniox API key"],
+    ["soniox-realtime", "Requires Soniox API key"],
+  ])(
+    "keeps %s cloud models selectable without local file actions",
+    (providerRuntime, label) => {
+      const markup = renderModel("ready", {
+        provider_runtime: providerRuntime,
+        offline: false,
+        download_url: null,
+        size_mb: 0,
+      });
 
-    expect(markup).toContain(">API<");
-    expect(markup).toContain(label);
-    expect(isDisabled(buttonWithText(markup, "Switch"))).toBe(false);
-    expect(markup).not.toContain("lucide-download");
-    expect(markup).not.toContain("lucide-shield-check");
-    expect(markup).not.toContain("lucide-trash-2");
-  });
+      expect(markup).toContain(">API<");
+      expect(markup).toContain(label);
+      expect(isDisabled(buttonWithText(markup, "Switch"))).toBe(false);
+      expect(markup).not.toContain("lucide-download");
+      expect(markup).not.toContain("lucide-shield-check");
+      expect(markup).not.toContain("lucide-trash-2");
+    },
+  );
 
   it("renders only declared capability badges", () => {
     const live = mockModels().find(
@@ -243,8 +271,16 @@ describe("model acquire action", () => {
 
   it("blocks download for models without a URL", () => {
     expect(
-      modelAcquireAction({ provider_runtime: "whisper-rs", download_url: null, status: "missing" }),
-    ).toMatchObject({ kind: "download", enabled: false, reason: "No download URL available" });
+      modelAcquireAction({
+        provider_runtime: "whisper-rs",
+        download_url: null,
+        status: "missing",
+      }),
+    ).toMatchObject({
+      kind: "download",
+      enabled: false,
+      reason: "No download URL available",
+    });
   });
 
   it("offers setup for built-in Qwen3-ASR models", () => {
@@ -292,9 +328,13 @@ describe("formatModelSize", () => {
 
 describe("model download error rendering", () => {
   it("wraps download_error in a danger-toned span when present", () => {
-    const markup = renderModel("error", { download_error: "network unavailable" });
+    const markup = renderModel("error", {
+      download_error: "network unavailable",
+    });
 
-    expect(markup).toContain('<span data-tone="danger">network unavailable</span>');
+    expect(markup).toContain(
+      '<span data-tone="danger">network unavailable</span>',
+    );
   });
 
   it("omits the toned span when download_error is null", () => {
@@ -369,7 +409,10 @@ describe("model switch disabled reason", () => {
     "describes switch availability for %s (selected=%s)",
     (status, isSelected, reason) => {
       expect(
-        modelSwitchDisabledReason({ status, provider_runtime: "whisper-rs" }, isSelected),
+        modelSwitchDisabledReason(
+          { status, provider_runtime: "whisper-rs" },
+          isSelected,
+        ),
       ).toBe(reason);
     },
   );
@@ -405,7 +448,10 @@ describe("model download disabled reason", () => {
 
   it("flags error status with download URL as needing Retry", () => {
     expect(
-      modelDownloadDisabledReason({ status: "error", download_url: "https://x" }),
+      modelDownloadDisabledReason({
+        status: "error",
+        download_url: "https://x",
+      }),
     ).toBe("Download failed — use Retry");
   });
 
@@ -426,11 +472,19 @@ describe("model verify disabled reason", () => {
   it.each(["downloading", "verifying", "extracting"] satisfies ModelStatus[])(
     "reports %s as in progress",
     (status) => {
-      expect(modelVerifyDisabledReason({ status })).toBe("Download in progress");
+      expect(modelVerifyDisabledReason({ status })).toBe(
+        "Download in progress",
+      );
     },
   );
 
-  it.each(["ready", "installed", "unloaded", "missing", "error"] satisfies ModelStatus[])(
+  it.each([
+    "ready",
+    "installed",
+    "unloaded",
+    "missing",
+    "error",
+  ] satisfies ModelStatus[])(
     "returns null for non-active-download status %s",
     (status) => {
       expect(modelVerifyDisabledReason({ status })).toBeNull();
@@ -448,9 +502,9 @@ describe("model retry disabled reason", () => {
   it.each(["downloading", "verifying", "extracting"] satisfies ModelStatus[])(
     "flags %s as already in progress",
     (status) => {
-      expect(modelRetryDisabledReason({ status, download_url: "https://x" })).toBe(
-        "Download already in progress",
-      );
+      expect(
+        modelRetryDisabledReason({ status, download_url: "https://x" }),
+      ).toBe("Download already in progress");
     },
   );
 
@@ -460,14 +514,16 @@ describe("model retry disabled reason", () => {
     ).toBe("No download URL available");
   });
 
-  it.each(["ready", "installed", "unloaded", "missing"] satisfies ModelStatus[])(
-    "reports nothing-to-retry for %s",
-    (status) => {
-      expect(
-        modelRetryDisabledReason({ status, download_url: "https://x" }),
-      ).toBe("Nothing to retry");
-    },
-  );
+  it.each([
+    "ready",
+    "installed",
+    "unloaded",
+    "missing",
+  ] satisfies ModelStatus[])("reports nothing-to-retry for %s", (status) => {
+    expect(
+      modelRetryDisabledReason({ status, download_url: "https://x" }),
+    ).toBe("Nothing to retry");
+  });
 });
 
 describe("model cancel download disabled reason", () => {
@@ -478,14 +534,17 @@ describe("model cancel download disabled reason", () => {
     },
   );
 
-  it.each(["ready", "installed", "unloaded", "missing", "error"] satisfies ModelStatus[])(
-    "reports no active download for %s",
-    (status) => {
-      expect(modelCancelDownloadDisabledReason({ status })).toBe(
-        "No active download",
-      );
-    },
-  );
+  it.each([
+    "ready",
+    "installed",
+    "unloaded",
+    "missing",
+    "error",
+  ] satisfies ModelStatus[])("reports no active download for %s", (status) => {
+    expect(modelCancelDownloadDisabledReason({ status })).toBe(
+      "No active download",
+    );
+  });
 });
 
 describe("model delete disabled reason", () => {
@@ -525,25 +584,41 @@ describe("disabled-reason titles render on the action buttons", () => {
   it("surfaces the download/verify/cancel/delete reasons while downloading", () => {
     const markup = renderModel("downloading");
 
-    expect(titleOf(buttonTag(markup, "download"))).toBe("Download already in progress");
-    expect(titleOf(buttonTag(markup, "shield-check"))).toBe("Download in progress");
+    expect(titleOf(buttonTag(markup, "download"))).toBe(
+      "Download already in progress",
+    );
+    expect(titleOf(buttonTag(markup, "shield-check"))).toBe(
+      "Download in progress",
+    );
     expect(titleOf(buttonTag(markup, "circle-x"))).toBe("Cancel Download");
     expect(titleOf(buttonTag(markup, "trash-2"))).toBe("Download in progress");
-    expect(titleOf(buttonTag(markup, "rotate-cw"))).toBe("Download already in progress");
+    expect(titleOf(buttonTag(markup, "rotate-cw"))).toBe(
+      "Download already in progress",
+    );
   });
 
   it("surfaces the switch reason on a missing model and routes failures to Retry", () => {
-    const markup = renderModel("error", { download_url: "https://example.invalid/m.bin" });
-    expect(titleOf(buttonWithText(markup, "Switch"))).toBe("Model has a download error");
-    expect(titleOf(buttonTag(markup, "download"))).toBe("Download failed — use Retry");
+    const markup = renderModel("error", {
+      download_url: "https://example.invalid/m.bin",
+    });
+    expect(titleOf(buttonWithText(markup, "Switch"))).toBe(
+      "Model has a download error",
+    );
+    expect(titleOf(buttonTag(markup, "download"))).toBe(
+      "Download failed — use Retry",
+    );
     expect(titleOf(buttonTag(markup, "rotate-cw"))).toBe("Retry");
   });
 
   it("flags missing-without-url for both Download and Retry", () => {
     const markup = renderModel("missing", { download_url: null });
-    expect(titleOf(buttonTag(markup, "download"))).toBe("No download URL available");
+    expect(titleOf(buttonTag(markup, "download"))).toBe(
+      "No download URL available",
+    );
     expect(titleOf(buttonTag(markup, "rotate-cw"))).toBe("Nothing to retry");
-    expect(titleOf(buttonTag(markup, "trash-2"))).toBe("Model is not downloaded");
+    expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
+      "Model is not downloaded",
+    );
   });
 
   it("explains why the active model cannot be deleted", () => {

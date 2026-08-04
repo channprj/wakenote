@@ -16,7 +16,9 @@ describe("app state derivation", () => {
   });
 
   it("uses the upstream whisper.cpp repository for mock model downloads", () => {
-    const whisperModels = mockModels().filter((model) => model.provider_runtime === "whisper-rs");
+    const whisperModels = mockModels().filter(
+      (model) => model.provider_runtime === "whisper-rs",
+    );
     expect(whisperModels.length).toBeGreaterThan(0);
     for (const model of whisperModels) {
       expect(model.download_url).toMatch(
@@ -46,33 +48,57 @@ describe("app state derivation", () => {
 
   it("maps independent recording/transcription toggles to PRD product modes", () => {
     expect(
-      deriveProductMode({ recording_enabled: true, transcription_enabled: true, pause_all: false }),
+      deriveProductMode({
+        recording_enabled: true,
+        transcription_enabled: true,
+        pause_all: false,
+      }),
     ).toBe("recording_and_transcription");
     expect(
-      deriveProductMode({ recording_enabled: true, transcription_enabled: false, pause_all: false }),
+      deriveProductMode({
+        recording_enabled: true,
+        transcription_enabled: false,
+        pause_all: false,
+      }),
     ).toBe("recording_only");
     expect(
-      deriveProductMode({ recording_enabled: false, transcription_enabled: true, pause_all: false }),
+      deriveProductMode({
+        recording_enabled: false,
+        transcription_enabled: true,
+        pause_all: false,
+      }),
     ).toBe("transcription_only");
     expect(
-      deriveProductMode({ recording_enabled: false, transcription_enabled: false, pause_all: false }),
+      deriveProductMode({
+        recording_enabled: false,
+        transcription_enabled: false,
+        pause_all: false,
+      }),
     ).toBe("paused");
     expect(
-      deriveProductMode({ recording_enabled: true, transcription_enabled: true, pause_all: true }),
+      deriveProductMode({
+        recording_enabled: true,
+        transcription_enabled: true,
+        pause_all: true,
+      }),
     ).toBe("paused");
   });
 
   it("derives tray states from mode and queue activity", () => {
     expect(deriveTrayState("recording_and_transcription", false)).toBe("idle");
-    expect(deriveTrayState("recording_and_transcription", false, false, true)).toBe("listening");
-    expect(deriveTrayState("recording_and_transcription", false, false, true, true)).toBe(
-      "recording",
-    );
-    expect(deriveTrayState("recording_and_transcription", true, false, true, true)).toBe(
-      "recording",
-    );
+    expect(
+      deriveTrayState("recording_and_transcription", false, false, true),
+    ).toBe("listening");
+    expect(
+      deriveTrayState("recording_and_transcription", false, false, true, true),
+    ).toBe("recording");
+    expect(
+      deriveTrayState("recording_and_transcription", true, false, true, true),
+    ).toBe("recording");
     expect(deriveTrayState("recording_only", false)).toBe("idle");
-    expect(deriveTrayState("recording_only", false, false, true)).toBe("listening");
+    expect(deriveTrayState("recording_only", false, false, true)).toBe(
+      "listening",
+    );
     expect(deriveTrayState("transcription_only", false)).toBe("idle");
     expect(deriveTrayState("paused", false)).toBe("paused");
     expect(deriveTrayState("recording_only", true)).toBe("transcribing");
@@ -97,26 +123,41 @@ describe("app state derivation", () => {
       "openai-gpt-live-transcribe",
       "openai-gpt-transcribe",
       "openai-gpt-4o-transcribe-diarize",
+      "soniox-async-v5",
+      "soniox-realtime-v5",
     ]);
-    for (const model of models.filter((model) => model.provider_runtime === "whisper-rs")) {
+    for (const model of models.filter(
+      (model) => model.provider_runtime === "whisper-rs",
+    )) {
       expect(model.languages).toContain("ko");
     }
-    expect(models.find((model) => model.id === "sensevoice-small")?.languages).toContain("ko");
     expect(
-      models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")?.languages,
+      models.find((model) => model.id === "sensevoice-small")?.languages,
     ).toContain("ko");
-    expect(models.find((model) => model.id === "qwen3-asr-0.6b")?.languages).toContain("ko");
-    expect(models.find((model) => model.id === "openrouter-qwen3-asr-flash")).toMatchObject({
+    expect(
+      models.find((model) => model.id === "nemotron-3.5-asr-streaming-0.6b")
+        ?.languages,
+    ).toContain("ko");
+    expect(
+      models.find((model) => model.id === "qwen3-asr-0.6b")?.languages,
+    ).toContain("ko");
+    expect(
+      models.find((model) => model.id === "openrouter-qwen3-asr-flash"),
+    ).toMatchObject({
       provider_runtime: "openrouter-stt",
       offline: false,
       status: "ready",
     });
-    expect(models.find((model) => model.id === "openai-gpt-transcribe")).toMatchObject({
+    expect(
+      models.find((model) => model.id === "openai-gpt-transcribe"),
+    ).toMatchObject({
       provider_runtime: "openai-stt",
       offline: false,
       status: "ready",
     });
-    expect(models.find((model) => model.id === "openai-gpt-live-transcribe")).toMatchObject({
+    expect(
+      models.find((model) => model.id === "openai-gpt-live-transcribe"),
+    ).toMatchObject({
       provider_runtime: "openai-realtime",
       capabilities: { streaming: "required", realtime: true },
     });
@@ -124,6 +165,27 @@ describe("app state derivation", () => {
       models.find((model) => model.id === "openai-gpt-4o-transcribe-diarize"),
     ).toMatchObject({
       capabilities: { diarization: true, maximum_request_bytes: 25_000_000 },
+    });
+    expect(
+      models.find((model) => model.id === "soniox-async-v5"),
+    ).toMatchObject({
+      provider_runtime: "soniox-async-stt",
+      capabilities: {
+        file_transcription: true,
+        realtime: false,
+        selectable_contexts: ["file", "dictation", "meeting"],
+      },
+    });
+    expect(
+      models.find((model) => model.id === "soniox-realtime-v5"),
+    ).toMatchObject({
+      provider_runtime: "soniox-realtime",
+      capabilities: {
+        file_transcription: false,
+        realtime: true,
+        streaming: "required",
+        selectable_contexts: ["realtime", "dictation"],
+      },
     });
   });
 
@@ -144,11 +206,17 @@ describe("app state derivation", () => {
       pending_count: 1,
     };
     const readyModels = snapshot.models.map((model) =>
-      model.id === "whisper-medium" ? { ...model, status: "ready" as const } : model,
+      model.id === "whisper-medium"
+        ? { ...model, status: "ready" as const }
+        : model,
     );
 
-    expect(shouldPollSnapshot(idleStatus, pendingQueue, readyModels)).toBe(true);
-    expect(shouldPollSnapshot(idleStatus, { ...snapshot.queue, running_count: 1 })).toBe(true);
+    expect(shouldPollSnapshot(idleStatus, pendingQueue, readyModels)).toBe(
+      true,
+    );
+    expect(
+      shouldPollSnapshot(idleStatus, { ...snapshot.queue, running_count: 1 }),
+    ).toBe(true);
     expect(shouldPollSnapshot(idleStatus, snapshot.queue)).toBe(false);
   });
 
@@ -169,7 +237,9 @@ describe("app state derivation", () => {
       pending_count: 1,
     };
 
-    expect(shouldPollSnapshot(idleStatus, pendingQueue, snapshot.models)).toBe(false);
+    expect(shouldPollSnapshot(idleStatus, pendingQueue, snapshot.models)).toBe(
+      false,
+    );
   });
 
   it("does not keep polling for pending transcription work when transcription is disabled", () => {
@@ -186,8 +256,12 @@ describe("app state derivation", () => {
       tray_state: "paused" as const,
     };
 
-    expect(shouldPollSnapshot(recordingOnlyStatus, pendingQueue, snapshot.models)).toBe(false);
-    expect(shouldPollSnapshot(pausedStatus, pendingQueue, snapshot.models)).toBe(false);
+    expect(
+      shouldPollSnapshot(recordingOnlyStatus, pendingQueue, snapshot.models),
+    ).toBe(false);
+    expect(
+      shouldPollSnapshot(pausedStatus, pendingQueue, snapshot.models),
+    ).toBe(false);
     expect(
       shouldPollSnapshot(
         { ...recordingOnlyStatus, tray_state: "transcribing" as const },
@@ -206,12 +280,20 @@ describe("app state derivation", () => {
         : model,
     );
     const verifyingModels = snapshot.models.map((model) =>
-      model.id === "whisper-medium" ? { ...model, status: "verifying" as const } : model,
+      model.id === "whisper-medium"
+        ? { ...model, status: "verifying" as const }
+        : model,
     );
 
-    expect(shouldPollSnapshot(idleStatus, snapshot.queue, downloadingModels)).toBe(true);
-    expect(shouldPollSnapshot(idleStatus, snapshot.queue, verifyingModels)).toBe(true);
-    expect(shouldPollSnapshot(idleStatus, snapshot.queue, snapshot.models)).toBe(false);
+    expect(
+      shouldPollSnapshot(idleStatus, snapshot.queue, downloadingModels),
+    ).toBe(true);
+    expect(
+      shouldPollSnapshot(idleStatus, snapshot.queue, verifyingModels),
+    ).toBe(true);
+    expect(
+      shouldPollSnapshot(idleStatus, snapshot.queue, snapshot.models),
+    ).toBe(false);
   });
 
   it("keeps polling while a live input stream error is active", () => {
@@ -219,10 +301,13 @@ describe("app state derivation", () => {
     const streamErrorStatus = {
       ...snapshot.status,
       tray_state: "error" as const,
-      runtime_warning: "Live input stream error: default input stream disconnected",
+      runtime_warning:
+        "Live input stream error: default input stream disconnected",
     };
 
-    expect(shouldPollSnapshot(streamErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
+    expect(
+      shouldPollSnapshot(streamErrorStatus, snapshot.queue, snapshot.models),
+    ).toBe(true);
   });
 
   it("keeps polling while live input remains active under an error state", () => {
@@ -233,7 +318,13 @@ describe("app state derivation", () => {
       live_input_active: true,
     };
 
-    expect(shouldPollSnapshot(activeInputErrorStatus, snapshot.queue, snapshot.models)).toBe(true);
+    expect(
+      shouldPollSnapshot(
+        activeInputErrorStatus,
+        snapshot.queue,
+        snapshot.models,
+      ),
+    ).toBe(true);
   });
 
   it("keeps polling while launch auto-start is pending from an idle snapshot", () => {
@@ -247,16 +338,28 @@ describe("app state derivation", () => {
   });
 
   it("refreshes snapshots when system-audio capture lifecycle events arrive", () => {
-    expect(shouldRefreshSnapshotForTauriEvent("source-capture-started")).toBe(true);
-    expect(shouldRefreshSnapshotForTauriEvent("source-capture-stopped")).toBe(true);
-    expect(shouldRefreshSnapshotForTauriEvent("source-capture-error")).toBe(true);
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-started")).toBe(
+      true,
+    );
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-stopped")).toBe(
+      true,
+    );
+    expect(shouldRefreshSnapshotForTauriEvent("source-capture-error")).toBe(
+      true,
+    );
     expect(shouldRefreshSnapshotForTauriEvent("source-detected")).toBe(false);
-    expect(shouldRefreshSnapshotForTauriEvent("live-transcript-partial")).toBe(false);
+    expect(shouldRefreshSnapshotForTauriEvent("live-transcript-partial")).toBe(
+      false,
+    );
   });
 
   it("changes the polling dependency key when polling inputs change", () => {
     const snapshot = mockSnapshot();
-    const baseKey = pollSnapshotDependencyKey(snapshot.status, snapshot.queue, snapshot.models);
+    const baseKey = pollSnapshotDependencyKey(
+      snapshot.status,
+      snapshot.queue,
+      snapshot.models,
+    );
 
     expect(
       pollSnapshotDependencyKey(
@@ -267,7 +370,11 @@ describe("app state derivation", () => {
     ).not.toBe(baseKey);
     expect(
       pollSnapshotDependencyKey(
-        { ...snapshot.status, runtime_warning: "Live input stream error: default input stream disconnected" },
+        {
+          ...snapshot.status,
+          runtime_warning:
+            "Live input stream error: default input stream disconnected",
+        },
         snapshot.queue,
         snapshot.models,
       ),
@@ -310,15 +417,27 @@ describe("app state derivation", () => {
     };
 
     expect(
-      pollSnapshotDependencyKey(snapshot.status, tinyPendingQueue, snapshot.models),
-    ).not.toBe(pollSnapshotDependencyKey(snapshot.status, mediumPendingQueue, snapshot.models));
+      pollSnapshotDependencyKey(
+        snapshot.status,
+        tinyPendingQueue,
+        snapshot.models,
+      ),
+    ).not.toBe(
+      pollSnapshotDependencyKey(
+        snapshot.status,
+        mediumPendingQueue,
+        snapshot.models,
+      ),
+    );
   });
 
   it("provides browser-safe mock data for Vite development outside Tauri", () => {
     const snapshot = mockSnapshot();
 
     expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
-    expect(snapshot.settings.model_directory).toBe("~/Library/Application Support/WakeNote/models");
+    expect(snapshot.settings.model_directory).toBe(
+      "~/Library/Application Support/WakeNote/models",
+    );
     expect(snapshot.settings.threshold_dbfs).toBe(-40);
     expect(snapshot.settings.mic_input_volume_percent).toBe(100);
     expect(snapshot.settings.attack_ms).toBe(200);
@@ -336,7 +455,9 @@ describe("app state derivation", () => {
     expect(snapshot.settings.theme_mode).toBe("dark");
     expect(snapshot.settings.theme_primary_color).toBe("#000");
     expect(snapshot.microphones[0].id).toBe("default");
-    expect(snapshot.models.map((model) => model.id)).toContain("whisper-medium");
+    expect(snapshot.models.map((model) => model.id)).toContain(
+      "whisper-medium",
+    );
     expect(snapshot.status.threshold_dbfs).toBe(-40);
     expect(snapshot.status.microphone_warning).toBeNull();
     expect(snapshot.status.level).toEqual({

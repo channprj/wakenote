@@ -134,6 +134,8 @@ function makeActions(): SettingsActions {
     onDeleteOpenRouterApiKey: vi.fn(),
     onSaveOpenAiApiKey: vi.fn(),
     onDeleteOpenAiApiKey: vi.fn(),
+    onSaveSonioxApiKey: vi.fn(),
+    onDeleteSonioxApiKey: vi.fn(),
   };
 }
 
@@ -635,12 +637,13 @@ describe("SettingsPage interactions", () => {
     expect(screen.queryByText("Dictionary")).toBeNull();
   });
 
-  it("saves and deletes OpenRouter and OpenAI credentials independently", async () => {
+  it("consolidates and manages all external AI credentials independently", async () => {
     const user = userEvent.setup();
     const actions = makeActions();
     const snapshot = mockSnapshot();
     snapshot.openrouter_key_configured = true;
     snapshot.openai_key_configured = true;
+    snapshot.soniox_key_configured = true;
 
     render(
       <SettingsPage
@@ -651,40 +654,57 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const openRouterCard = screen
-      .getByText("OpenRouter")
+    const credentialCard = screen
+      .getByText("External AI API keys")
       .closest('[data-slot="card"]');
-    const openAiCard = screen.getByText("OpenAI").closest('[data-slot="card"]');
-    if (
-      !(openRouterCard instanceof HTMLElement) ||
-      !(openAiCard instanceof HTMLElement)
-    ) {
-      throw new Error("API key settings cards not found");
+    if (!(credentialCard instanceof HTMLElement)) {
+      throw new Error("External AI API keys card not found");
     }
 
+    const credentialRow = (label: string) => {
+      const row = within(credentialCard)
+        .getByLabelText(label)
+        .closest(".settings-row");
+      if (!(row instanceof HTMLElement))
+        throw new Error(`${label} row not found`);
+      return row;
+    };
+    const openRouterRow = credentialRow("OpenRouter API Key");
+    const openAiRow = credentialRow("OpenAI API Key");
+    const sonioxRow = credentialRow("Soniox API Key");
+
     await user.type(
-      within(openRouterCard).getByLabelText("OpenRouter API Key"),
+      within(openRouterRow).getByLabelText("OpenRouter API Key"),
       "sk-or-test",
     );
     await user.click(
-      within(openRouterCard).getByRole("button", { name: /Save/ }),
+      within(openRouterRow).getByRole("button", { name: /Save/ }),
     );
     expect(actions.onSaveOpenRouterApiKey).toHaveBeenCalledWith("sk-or-test");
     await user.click(
-      within(openRouterCard).getByRole("button", { name: /Delete/ }),
+      within(openRouterRow).getByRole("button", { name: /Delete/ }),
     );
     expect(actions.onDeleteOpenRouterApiKey).toHaveBeenCalledOnce();
 
     await user.type(
-      within(openAiCard).getByLabelText("OpenAI API Key"),
+      within(openAiRow).getByLabelText("OpenAI API Key"),
       "sk-openai-test",
     );
-    await user.click(within(openAiCard).getByRole("button", { name: /Save/ }));
+    await user.click(within(openAiRow).getByRole("button", { name: /Save/ }));
     expect(actions.onSaveOpenAiApiKey).toHaveBeenCalledWith("sk-openai-test");
-    await user.click(
-      within(openAiCard).getByRole("button", { name: /Delete/ }),
-    );
+    await user.click(within(openAiRow).getByRole("button", { name: /Delete/ }));
     expect(actions.onDeleteOpenAiApiKey).toHaveBeenCalledOnce();
+
+    await user.type(
+      within(sonioxRow).getByLabelText("Soniox API Key"),
+      "soniox-test",
+    );
+    await user.click(within(sonioxRow).getByRole("button", { name: /Save/ }));
+    expect(actions.onSaveSonioxApiKey).toHaveBeenCalledWith("soniox-test");
+    await user.click(within(sonioxRow).getByRole("button", { name: /Delete/ }));
+    expect(actions.onDeleteSonioxApiKey).toHaveBeenCalledOnce();
+
+    expect(screen.getByText("OpenRouter reports")).toBeTruthy();
   });
 
   it("only emits solid caption colors and both opacity boundaries", async () => {

@@ -99,6 +99,11 @@ function mockInvoke(command: string) {
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "openrouter_key_status":
     case "openai_key_status":
+    case "soniox_key_status":
+      return Promise.resolve({ configured: false });
+    case "save_soniox_api_key":
+      return Promise.resolve({ configured: true });
+    case "delete_soniox_api_key":
       return Promise.resolve({ configured: false });
     case "dictionary_file_status":
     case "reload_dictionary_file":
@@ -246,7 +251,9 @@ describe("tauri runtime client snapshots", () => {
     expect(snapshot.recent_transcripts).toEqual([]);
     expect(snapshot.openrouter_key_configured).toBe(false);
     expect(snapshot.openai_key_configured).toBe(false);
+    expect(snapshot.soniox_key_configured).toBe(false);
     expect(mocks.invoke).toHaveBeenCalledWith("openai_key_status");
+    expect(mocks.invoke).toHaveBeenCalledWith("soniox_key_status");
     expect(mocks.invoke).toHaveBeenCalledWith("dictionary_file_status");
     expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
       "recent_transcripts",
@@ -267,6 +274,22 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("reload_dictionary_file");
   });
 
+  it("saves and deletes the Soniox key through exact commands", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { saveSonioxApiKey, deleteSonioxApiKey } = await import(
+      "./tauri-client"
+    );
+
+    await saveSonioxApiKey(" soniox-key ");
+    await deleteSonioxApiKey();
+
+    expect(mocks.invoke).toHaveBeenCalledWith("save_soniox_api_key", {
+      apiKey: " soniox-key ",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("delete_soniox_api_key");
+  });
+
   it("controls manual meeting recording through explicit commands", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.invoke.mockImplementation(mockInvoke);
@@ -282,12 +305,8 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith(
       "manual_meeting_recording_status",
     );
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "start_manual_meeting_recording",
-    );
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "stop_manual_meeting_recording",
-    );
+    expect(mocks.invoke).toHaveBeenCalledWith("start_manual_meeting_recording");
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_manual_meeting_recording");
   });
 
   it("starts recorded meeting transcription with an exact option snapshot", async () => {
@@ -304,10 +323,10 @@ describe("tauri runtime client snapshots", () => {
     const meeting = await startMeetingTranscription("meeting-1", request);
 
     expect(meeting.status).toBe("pending");
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      "start_meeting_transcription",
-      { id: "meeting-1", request },
-    );
+    expect(mocks.invoke).toHaveBeenCalledWith("start_meeting_transcription", {
+      id: "meeting-1",
+      request,
+    });
   });
 
   it("loads the local transcription cost dashboard snapshot", async () => {

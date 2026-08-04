@@ -57,6 +57,8 @@ import {
   deleteOpenRouterApiKey,
   saveOpenAiApiKey,
   deleteOpenAiApiKey,
+  saveSonioxApiKey,
+  deleteSonioxApiKey,
   verifyModel,
 } from "./lib/tauri-client";
 import {
@@ -543,7 +545,9 @@ export default function App() {
           onProcessNext={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
-          onOpenFolder={(path) => void runAction(() => openTranscriptFolder(path))}
+          onOpenFolder={(path) =>
+            void runAction(() => openTranscriptFolder(path))
+          }
           onTrash={moveActivityJobsToTrash}
           onReprocess={(ids, modelId) =>
             runAction(() => reprocessJobs(ids, modelId))
@@ -599,6 +603,9 @@ export default function App() {
           onSaveOpenAiApiKey: (apiKey) =>
             void runAction(() => saveOpenAiApiKey(apiKey)),
           onDeleteOpenAiApiKey: () => void runAction(deleteOpenAiApiKey),
+          onSaveSonioxApiKey: (apiKey) =>
+            void runAction(() => saveSonioxApiKey(apiKey)),
+          onDeleteSonioxApiKey: () => void runAction(deleteSonioxApiKey),
         }}
       />
     ),

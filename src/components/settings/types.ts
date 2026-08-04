@@ -21,4 +21,6 @@ export interface SettingsActions {
   onDeleteOpenRouterApiKey: () => void;
   onSaveOpenAiApiKey: (apiKey: string) => void;
   onDeleteOpenAiApiKey: () => void;
+  onSaveSonioxApiKey: (apiKey: string) => void;
+  onDeleteSonioxApiKey: () => void;
 }

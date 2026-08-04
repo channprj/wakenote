@@ -7,13 +7,19 @@ import {
 } from "./models";
 import type { ModelDescriptor } from "./types";
 
-function model(id: string, displayName: string): Pick<ModelDescriptor, "id" | "display_name"> {
+function model(
+  id: string,
+  displayName: string,
+): Pick<ModelDescriptor, "id" | "display_name"> {
   return { id, display_name: displayName };
 }
 
 describe("formatModelLabel", () => {
   it("returns the friendly display name when the model is in the list", () => {
-    const models = [model("whisper-medium", "Whisper Medium"), model("whisper-small", "Whisper Small")];
+    const models = [
+      model("whisper-medium", "Whisper Medium"),
+      model("whisper-small", "Whisper Small"),
+    ];
 
     expect(formatModelLabel("whisper-medium", models)).toBe("Whisper Medium");
     expect(formatModelLabel("whisper-small", models)).toBe("Whisper Small");
@@ -39,8 +45,12 @@ describe("formatModelLabel", () => {
 describe("transcription model capabilities", () => {
   it("mirrors the exact OpenAI streaming and diarization matrix", () => {
     const models = mockModels();
-    const live = models.find((candidate) => candidate.id === "openai-gpt-live-transcribe");
-    const file = models.find((candidate) => candidate.id === "openai-gpt-transcribe");
+    const live = models.find(
+      (candidate) => candidate.id === "openai-gpt-live-transcribe",
+    );
+    const file = models.find(
+      (candidate) => candidate.id === "openai-gpt-transcribe",
+    );
     const diarize = models.find(
       (candidate) => candidate.id === "openai-gpt-4o-transcribe-diarize",
     );
@@ -61,6 +71,29 @@ describe("transcription model capabilities", () => {
     });
   });
 
+  it("mirrors the exact Soniox async and realtime capability matrix", () => {
+    const models = mockModels();
+    const asyncModel = models.find(
+      (candidate) => candidate.id === "soniox-async-v5",
+    );
+    const realtime = models.find(
+      (candidate) => candidate.id === "soniox-realtime-v5",
+    );
+
+    expect(asyncModel?.capabilities).toMatchObject({
+      file_transcription: true,
+      realtime: false,
+      streaming: "unsupported",
+      selectable_contexts: ["file", "dictation", "meeting"],
+    });
+    expect(realtime?.capabilities).toMatchObject({
+      file_transcription: false,
+      realtime: true,
+      streaming: "required",
+      selectable_contexts: ["realtime", "dictation"],
+    });
+  });
+
   it("locks required streaming on and unsupported streaming off", () => {
     const models = mockModels();
     const base = {
@@ -68,12 +101,16 @@ describe("transcription model capabilities", () => {
       cost_limit_fallback_enabled: false,
       cost_limit_fallback_model_id: null,
     };
-    const live = models.find((candidate) => candidate.id === "openai-gpt-live-transcribe");
+    const live = models.find(
+      (candidate) => candidate.id === "openai-gpt-live-transcribe",
+    );
     const openrouter = models.find(
       (candidate) => candidate.id === "openrouter-qwen3-asr-flash",
     );
 
-    expect(normalizeTranscriptionOptions(live, models, base).streaming_enabled).toBe(true);
+    expect(
+      normalizeTranscriptionOptions(live, models, base).streaming_enabled,
+    ).toBe(true);
     expect(
       normalizeTranscriptionOptions(openrouter, models, {
         ...base,
@@ -88,11 +125,13 @@ describe("transcription model capabilities", () => {
         ? { ...candidate, status: "ready" as const }
         : candidate,
     );
-    expect(availableFallbackModels(models).map((candidate) => candidate.id)).toEqual([
-      "whisper-medium",
-    ]);
+    expect(
+      availableFallbackModels(models).map((candidate) => candidate.id),
+    ).toEqual(["whisper-medium"]);
 
-    const primary = models.find((candidate) => candidate.id === "openai-gpt-transcribe");
+    const primary = models.find(
+      (candidate) => candidate.id === "openai-gpt-transcribe",
+    );
     const normalized = normalizeTranscriptionOptions(primary, models, {
       streaming_enabled: false,
       cost_limit_fallback_enabled: true,

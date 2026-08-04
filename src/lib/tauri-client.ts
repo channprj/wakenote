@@ -86,6 +86,7 @@ let browserManualMeetingGeneration = 0;
 let browserManualMeetingId: string | null = null;
 let browserOpenRouterApiKey: string | null = null;
 let browserOpenAiApiKey: string | null = null;
+let browserSonioxApiKey: string | null = null;
 let browserListVisibility = emptyListVisibilityState();
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
@@ -385,6 +386,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
       status: statusFrom(settings, queue),
       openrouter_key_configured: Boolean(browserOpenRouterApiKey),
       openai_key_configured: Boolean(browserOpenAiApiKey),
+      soniox_key_configured: Boolean(browserSonioxApiKey),
     };
     return browserSnapshot;
   }
@@ -398,6 +400,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     permissions,
     openRouterKeyStatus,
     openAiKeyStatus,
+    sonioxKeyStatus,
     dictionaryFileStatus,
   ] = await Promise.all([
     invoke<AppSettings>("get_settings"),
@@ -408,6 +411,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     invoke<AppPermissions>("permission_snapshot"),
     invoke<ApiKeyStatus>("openrouter_key_status"),
     invoke<ApiKeyStatus>("openai_key_status"),
+    invoke<ApiKeyStatus>("soniox_key_status"),
     invoke<DictionaryFileStatus>("dictionary_file_status"),
   ]);
 
@@ -421,6 +425,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     recent_transcripts: [],
     openrouter_key_configured: openRouterKeyStatus.configured,
     openai_key_configured: openAiKeyStatus.configured,
+    soniox_key_configured: sonioxKeyStatus.configured,
     dictionary_file_status: dictionaryFileStatus,
   };
 }
@@ -575,6 +580,7 @@ export async function saveSettingsPatch(
       queue,
       openrouter_key_configured: Boolean(browserOpenRouterApiKey),
       openai_key_configured: Boolean(browserOpenAiApiKey),
+      soniox_key_configured: Boolean(browserSonioxApiKey),
       dictionary_file_status: dictionaryFileStatus,
     };
     return browserSnapshot;
@@ -647,6 +653,38 @@ export async function deleteOpenAiApiKey(): Promise<AppSnapshot> {
   }
 
   await invoke<ApiKeyStatus>("delete_openai_api_key");
+  return loadSnapshot();
+}
+
+export async function saveSonioxApiKey(apiKey: string): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      throw new Error("Soniox API key cannot be blank");
+    }
+    browserSonioxApiKey = trimmed;
+    browserSnapshot = {
+      ...browserSnapshot,
+      soniox_key_configured: true,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<ApiKeyStatus>("save_soniox_api_key", { apiKey });
+  return loadSnapshot();
+}
+
+export async function deleteSonioxApiKey(): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    browserSonioxApiKey = null;
+    browserSnapshot = {
+      ...browserSnapshot,
+      soniox_key_configured: false,
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<ApiKeyStatus>("delete_soniox_api_key");
   return loadSnapshot();
 }
 
@@ -1532,10 +1570,7 @@ export async function markAllActivityRead(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     let marked = false;
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (
-        job.is_read === true ||
-        !isActivityAttentionOutcome(job)
-      ) {
+      if (job.is_read === true || !isActivityAttentionOutcome(job)) {
         return job;
       }
 
@@ -1725,7 +1760,9 @@ export async function reprocessJobs(
   modelId: string,
 ): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
-    const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id)))];
+    const uniqueIds = [
+      ...new Set(ids.filter((id) => Number.isSafeInteger(id))),
+    ];
     const models = browserSnapshot.models ?? mockModels();
     const model = models.find((candidate) => candidate.id === modelId);
     if (
@@ -1753,7 +1790,9 @@ export async function reprocessJobs(
     }
 
     const settings = browserSnapshot.settings ?? defaultSettings();
-    const selectedAudioPaths = new Set(selectedJobs.map((job) => job.audio_path));
+    const selectedAudioPaths = new Set(
+      selectedJobs.map((job) => job.audio_path),
+    );
     const jobs = browserSnapshot.queue.jobs.map((job) =>
       selectedIds.has(job.id)
         ? {
@@ -1773,7 +1812,8 @@ export async function reprocessJobs(
       queue,
       status: statusFrom(settings, queue),
       recent_transcripts: (browserSnapshot.recent_transcripts ?? []).filter(
-        (entry) => !entry.audio_path || !selectedAudioPaths.has(entry.audio_path),
+        (entry) =>
+          !entry.audio_path || !selectedAudioPaths.has(entry.audio_path),
       ),
     };
     return browserSnapshot;
@@ -1787,7 +1827,9 @@ export async function trashActivityJobs(
   ids: number[],
 ): Promise<TrashActivityJobsOutcome> {
   if (!isTauriRuntime()) {
-    const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id)))];
+    const uniqueIds = [
+      ...new Set(ids.filter((id) => Number.isSafeInteger(id))),
+    ];
     const selectedIds = new Set(uniqueIds);
     const selectedJobs = browserSnapshot.queue.jobs.filter((job) =>
       selectedIds.has(job.id),
@@ -2271,9 +2313,10 @@ export async function listTranscriptionModels(): Promise<ModelDescriptor[]> {
 }
 
 function browserManualMeetingRecordingStatus(): ManualMeetingRecordingStatus {
-  const elapsedMs = browserManualMeetingStartedAt === null
-    ? 0
-    : Math.min(18_000_000, Date.now() - browserManualMeetingStartedAt);
+  const elapsedMs =
+    browserManualMeetingStartedAt === null
+      ? 0
+      : Math.min(18_000_000, Date.now() - browserManualMeetingStartedAt);
   return {
     generation: browserManualMeetingGeneration,
     state: browserManualMeetingStartedAt === null ? "off" : "recording",
@@ -2308,9 +2351,7 @@ export async function startManualMeetingRecording(): Promise<ManualMeetingRecord
     }
     return browserManualMeetingRecordingStatus();
   }
-  return invoke<ManualMeetingRecordingStatus>(
-    "start_manual_meeting_recording",
-  );
+  return invoke<ManualMeetingRecordingStatus>("start_manual_meeting_recording");
 }
 
 export async function stopManualMeetingRecording(): Promise<ManualMeetingRecordingStatus> {
@@ -2318,9 +2359,7 @@ export async function stopManualMeetingRecording(): Promise<ManualMeetingRecordi
     browserManualMeetingStartedAt = null;
     return browserManualMeetingRecordingStatus();
   }
-  return invoke<ManualMeetingRecordingStatus>(
-    "stop_manual_meeting_recording",
-  );
+  return invoke<ManualMeetingRecordingStatus>("stop_manual_meeting_recording");
 }
 
 /** Open a file picker for a long recording and start batch transcription. */

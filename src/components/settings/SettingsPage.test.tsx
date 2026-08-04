@@ -28,6 +28,8 @@ const actions: SettingsActions = {
   onDeleteOpenRouterApiKey: vi.fn(),
   onSaveOpenAiApiKey: vi.fn(),
   onDeleteOpenAiApiKey: vi.fn(),
+  onSaveSonioxApiKey: vi.fn(),
+  onDeleteSonioxApiKey: vi.fn(),
 };
 
 function renderSection(
@@ -110,6 +112,10 @@ describe("SettingsPage ownership", () => {
     const advanced = renderSection("advanced");
 
     expect(integrations).toContain("OpenRouter");
+    expect(integrations).toContain("External AI API keys");
+    expect(integrations).toContain("OpenAI");
+    expect(integrations).toContain("Soniox");
+    expect(integrations).toContain("OpenRouter reports");
     expect(integrations).toContain("Floating overlay");
     expect(advanced).toContain("VAD gate");
     expect(advanced).not.toContain("OpenRouter");
