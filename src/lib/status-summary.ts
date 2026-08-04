@@ -1,7 +1,5 @@
-import {
-  countCompletedQueueJobs,
-  countUnreadActivityOutcomes,
-} from "./transcript-history";
+import { countCompletedQueueJobs } from "./transcript-history";
+import type { ActivityAttention } from "./activity-attention";
 import type {
   AppMode,
   AppSnapshot,
@@ -33,16 +31,15 @@ export interface CaptureWarning {
   tone: "warning" | "danger";
 }
 
-// Mirrors QueuePanel queue-stats' per-cell tone mapping at the App-level Queue summary card so
-// the workspace header signals the most attention-grabbing queue state without expanding the card
-// into multiple cells. Priority follows the iter-24 "most immediate blocker first" convention:
-// failed (danger, needs retry) > running (primary, in flight) > pending (warning, backlog) >
-// completed (success, happy-path throughput) > none.
+// Active semantic attention takes priority over lifecycle progress. Raw failed_count
+// is retained in the input type for snapshot compatibility but does not choose tone.
 export function queueCardTone(
   queue: Pick<QueueSnapshot, "failed_count" | "running_count" | "pending_count">,
   completedCount = 0,
+  activityAttention: ActivityAttention | null = null,
 ): "danger" | "primary" | "warning" | "success" | undefined {
-  if (queue.failed_count > 0) return "danger";
+  if (activityAttention?.tone === "danger") return "danger";
+  if (activityAttention?.tone === "warning") return "warning";
   if (queue.running_count > 0) return "primary";
   if (queue.pending_count > 0) return "warning";
   if (completedCount > 0) return "success";
@@ -116,7 +113,7 @@ export function trayStateBadgeTone(state: TrayState | string): StatusTone {
 // Mirrors the iter-68 trayStateBadgeTone / iter-72 modelStatusBadgeTone pattern so all
 // per-row Badge tones in the app derive from a single shared helper family. Lifecycle
 // semantics: running → primary (in flight), completed → success (happy path), failed /
-// cancelled → danger (needs attention), skipped → warning (acknowledged but not done),
+// cancelled / skipped → warning (operational attention), failed → danger,
 // pending → neutral (waiting, no signal). Falls back to "neutral" for unknown strings
 // to keep the Badge contract total when the backend introduces future QueueJobStatus values.
 export function queueJobStatusBadgeTone(status: QueueJobStatus | string): StatusTone {
@@ -126,8 +123,8 @@ export function queueJobStatusBadgeTone(status: QueueJobStatus | string): Status
     case "completed":
       return "success";
     case "failed":
-    case "cancelled":
       return "danger";
+    case "cancelled":
     case "skipped":
       return "warning";
     default:
@@ -138,17 +135,19 @@ export function queueJobStatusBadgeTone(status: QueueJobStatus | string): Status
 // Aggregate-count tone palette shared by QueuePanel's queue-stats banner cells and per-day
 // group-row chips. Distinct from queueJobStatusBadgeTone because it encodes per-bucket
 // attention semantics ("any pending work means backlog → warning") rather than per-row
-// lifecycle semantics ("a pending job is just waiting → neutral"). Mapping: failed /
-// cancelled → danger (needs action), pending / skipped → warning (backlog or acknowledged
-// gap), running → primary (in flight), completed → success (happy-path throughput). Falls
+// lifecycle semantics ("a pending job is just waiting → neutral"). Semantic error is
+// danger; warning, pending, cancelled, and skipped are warning. Running is primary and
+// completed is success. Falls
 // back to "neutral" for unknown strings so the call site can stay total over future
 // QueueJobStatus additions.
 export function queueStatsCellTone(status: QueueJobStatus | string): StatusTone {
   switch (status) {
     case "failed":
-    case "cancelled":
+    case "error":
       return "danger";
     case "pending":
+    case "warning":
+    case "cancelled":
     case "skipped":
       return "warning";
     case "running":
@@ -189,7 +188,10 @@ const modeLabels: Record<AppMode, string> = {
   paused: "Paused",
 };
 
-export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusPresentation {
+export function captureStatusPresentation(
+  snapshot: AppSnapshot,
+  activityAttention: ActivityAttention | null = null,
+): CaptureStatusPresentation {
   const { settings, status, queue } = snapshot;
   const state =
     status.tray_state === "idle" &&
@@ -214,16 +216,28 @@ export function captureStatusPresentation(snapshot: AppSnapshot): CaptureStatusP
     queueCompletedCount,
     levelSummary: `${Math.round(currentDbfs)} dBFS current · ${Math.round(peakDbfs)} dBFS peak`,
     runtimeWarning: status.runtime_warning ?? null,
-    warning: activeWarning(snapshot),
+    warning: activeWarning(snapshot, activityAttention),
   };
 }
 
-function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
+function activeWarning(
+  snapshot: AppSnapshot,
+  activityAttention: ActivityAttention | null,
+): CaptureWarning | null {
   const microphoneWarning = snapshot.status.microphone_warning;
   if (microphoneWarning) {
     return {
       key: `microphone:${microphoneWarning}`,
       message: microphoneWarning,
+      tone: "danger",
+    };
+  }
+
+  const runtimeWarning = snapshot.status.runtime_warning;
+  if (runtimeWarning?.startsWith("Live input stream error:")) {
+    return {
+      key: `runtime:${runtimeWarning}`,
+      message: runtimeWarning,
       tone: "danger",
     };
   }
@@ -237,21 +251,19 @@ function activeWarning(snapshot: AppSnapshot): CaptureWarning | null {
     };
   }
 
-  const runtimeWarning = snapshot.status.runtime_warning;
   if (runtimeWarning) {
     return {
       key: `runtime:${runtimeWarning}`,
       message: runtimeWarning,
-      tone: runtimeWarning.startsWith("Live input stream error:") ? "danger" : "warning",
+      tone: "warning",
     };
   }
 
-  const attentionCount = countUnreadActivityOutcomes(snapshot.queue.jobs);
-  if (attentionCount > 0) {
+  if (activityAttention) {
     return {
-      key: `queue-failed:${attentionCount}`,
-      message: `${attentionCount} transcription ${attentionCount === 1 ? "job needs" : "jobs need"} attention`,
-      tone: "danger",
+      key: `queue-${activityAttention.tone}:${activityAttention.count}`,
+      message: activityAttention.message,
+      tone: activityAttention.tone,
     };
   }
 

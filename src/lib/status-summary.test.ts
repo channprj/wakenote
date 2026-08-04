@@ -200,16 +200,24 @@ describe("capture status presentation", () => {
     }));
 
     expect(
-      captureStatusPresentation({
-        ...snapshot,
-        queue: { ...snapshot.queue, jobs, failed_count: 3 },
-        status: {
-          ...snapshot.status,
+      captureStatusPresentation(
+        {
+          ...snapshot,
           queue: { ...snapshot.queue, jobs, failed_count: 3 },
+          status: {
+            ...snapshot.status,
+            queue: { ...snapshot.queue, jobs, failed_count: 3 },
+          },
         },
-      }).warning,
+        {
+          tone: "danger",
+          count: 3,
+          message: "3 transcription jobs need attention",
+          nextExpiryAt: null,
+        },
+      ).warning,
     ).toEqual({
-      key: "queue-failed:3",
+      key: "queue-danger:3",
       message: "3 transcription jobs need attention",
       tone: "danger",
     });
@@ -280,13 +288,17 @@ describe("queueCardTone", () => {
     ).toBeUndefined();
   });
 
-  it("returns 'danger' when at least one failed job is present", () => {
+  it("returns danger for active error attention regardless of raw failed count", () => {
     expect(
-      queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 }, 0),
+      queueCardTone(
+        { failed_count: 0, running_count: 0, pending_count: 0 },
+        0,
+        { tone: "danger", count: 1, message: "error", nextExpiryAt: null },
+      ),
     ).toBe("danger");
     expect(
       queueCardTone({ failed_count: 42, running_count: 0, pending_count: 0 }, 0),
-    ).toBe("danger");
+    ).toBeUndefined();
   });
 
   it("returns 'primary' when running jobs exist and no failed jobs", () => {
@@ -316,9 +328,13 @@ describe("queueCardTone", () => {
     ).toBe("success");
   });
 
-  it("prioritizes danger over running, pending, and completed", () => {
+  it("prioritizes active error attention over running, pending, and completed", () => {
     expect(
-      queueCardTone({ failed_count: 1, running_count: 1, pending_count: 1 }, 1),
+      queueCardTone(
+        { failed_count: 1, running_count: 1, pending_count: 1 },
+        1,
+        { tone: "danger", count: 1, message: "error", nextExpiryAt: null },
+      ),
     ).toBe("danger");
   });
 
@@ -336,7 +352,7 @@ describe("queueCardTone", () => {
 
   it("defaults completedCount to 0 when omitted (backwards-compat)", () => {
     expect(queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 })).toBeUndefined();
-    expect(queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 })).toBe("danger");
+    expect(queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 })).toBeUndefined();
   });
 });
 
@@ -497,8 +513,8 @@ describe("queueJobStatusBadgeTone", () => {
     expect(queueJobStatusBadgeTone("failed")).toBe("danger");
   });
 
-  it("maps cancelled to danger (needs retry to re-enter the queue)", () => {
-    expect(queueJobStatusBadgeTone("cancelled")).toBe("danger");
+  it("maps cancelled to warning (operational attention)", () => {
+    expect(queueJobStatusBadgeTone("cancelled")).toBe("warning");
   });
 
   it("maps skipped to warning (acknowledged but not done)", () => {
@@ -532,8 +548,13 @@ describe("queueStatsCellTone", () => {
     expect(queueStatsCellTone("failed")).toBe("danger");
   });
 
-  it("maps cancelled to danger (needs retry to re-enter the queue)", () => {
-    expect(queueStatsCellTone("cancelled")).toBe("danger");
+  it("maps cancelled to warning (operational attention)", () => {
+    expect(queueStatsCellTone("cancelled")).toBe("warning");
+  });
+
+  it("maps semantic warning and error buckets", () => {
+    expect(queueStatsCellTone("warning")).toBe("warning");
+    expect(queueStatsCellTone("error")).toBe("danger");
   });
 
   it("maps completed to success (happy-path throughput)", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { QueueJob, QueueSnapshot, RecentTranscript } from "./types";
+import { activityIssueCounts } from "./activity-attention";
 import {
   appendRecentAge,
   countCancelledQueueJobs,
@@ -663,7 +664,7 @@ describe("transcript history helpers", () => {
     ]);
   });
 
-  it("preserves the canonical pending→running→completed→failed→cancelled→skipped order regardless of insertion order", () => {
+  it("preserves the canonical lifecycle and semantic issue order regardless of insertion order", () => {
     const jobs: QueueJob[] = [
       {
         id: 1,
@@ -706,7 +707,8 @@ describe("transcript history helpers", () => {
       { status: "pending", count: 1 },
       { status: "running", count: 1 },
       { status: "completed", count: 1 },
-      { status: "failed", count: 1 },
+      { status: "warning", count: 2 },
+      { status: "error", count: 1 },
       { status: "cancelled", count: 1 },
       { status: "skipped", count: 1 },
     ]);
@@ -738,7 +740,7 @@ describe("transcript history helpers", () => {
     ];
     expect(queueDayBreakdown(jobs)).toEqual([
       { status: "pending", count: 2 },
-      { status: "failed", count: 1 },
+      { status: "error", count: 1 },
     ]);
   });
 
@@ -795,12 +797,13 @@ describe("transcript history helpers", () => {
     expect(byStatus.get("pending")).toBe(countPendingQueueJobs(jobs));
     expect(byStatus.get("running")).toBe(countRunningQueueJobs(jobs));
     expect(byStatus.get("completed")).toBe(countCompletedQueueJobs(jobs));
-    expect(byStatus.get("failed")).toBe(countFailedQueueJobs(jobs));
+    expect(byStatus.get("warning")).toBe(activityIssueCounts(jobs).warning);
+    expect(byStatus.get("error")).toBe(activityIssueCounts(jobs).error);
     expect(byStatus.get("cancelled")).toBe(countCancelledQueueJobs(jobs));
     expect(byStatus.get("skipped")).toBe(countSkippedQueueJobs(jobs));
   });
 
-  it("emits queueStatsBanner cells in the canonical pending→skipped→running→failed→cancelled→completed order", () => {
+  it("emits queueStatsBanner cells with explicit warning and error buckets", () => {
     const queue: QueueSnapshot = {
       jobs: [],
       pending_count: 0,
@@ -811,7 +814,8 @@ describe("transcript history helpers", () => {
       "pending",
       "skipped",
       "running",
-      "failed",
+      "warning",
+      "error",
       "cancelled",
       "completed",
     ]);
@@ -828,13 +832,14 @@ describe("transcript history helpers", () => {
       "Pending",
       "Skipped",
       "Running",
-      "Failed",
+      "Warning",
+      "Error",
       "Cancelled",
       "Completed",
     ]);
   });
 
-  it("sources pending / running / failed counts from QueueSnapshot top-level counters even when jobs[] disagrees", () => {
+  it("sources pending and running from top-level counters while deriving semantic issues from jobs", () => {
     // The backend may truncate jobs[] for display but keeps top-level counters authoritative.
     // The banner must surface the authoritative count, not the visible-jobs[] count.
     const queue: QueueSnapshot = {
@@ -849,7 +854,8 @@ describe("transcript history helpers", () => {
     );
     expect(byStatus.get("pending")).toBe(7);
     expect(byStatus.get("running")).toBe(1);
-    expect(byStatus.get("failed")).toBe(3);
+    expect(byStatus.get("warning")).toBe(0);
+    expect(byStatus.get("error")).toBe(0);
   });
 
   it("derives skipped / cancelled / completed counts from jobs[] (no top-level counter exists)", () => {
@@ -948,8 +954,7 @@ describe("transcript history helpers", () => {
   });
 
   it("pins the banner ordering as distinct from queueDayBreakdown's lifecycle order", () => {
-    // Banner: pending → skipped → running → failed → cancelled → completed
-    // Lifecycle (queueDayBreakdown): pending → running → completed → failed → cancelled → skipped
+    // Banner and day breakdown keep different scan orders while sharing semantic issue buckets.
     // The two surfaces serve different display semantics; they must NOT share an ordered-list helper.
     const queue: QueueSnapshot = {
       jobs: [
@@ -1009,7 +1014,8 @@ describe("transcript history helpers", () => {
       "pending",
       "skipped",
       "running",
-      "failed",
+      "warning",
+      "error",
       "cancelled",
       "completed",
     ]);
@@ -1017,7 +1023,8 @@ describe("transcript history helpers", () => {
       "pending",
       "running",
       "completed",
-      "failed",
+      "warning",
+      "error",
       "cancelled",
       "skipped",
     ]);

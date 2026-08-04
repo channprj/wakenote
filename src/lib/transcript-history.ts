@@ -6,6 +6,12 @@ import type {
   RecentTranscript,
   TrayState,
 } from "./types";
+import {
+  activityIssue,
+  activityIssueCounts,
+  countUnreadActivityOutcomes as countSemanticUnreadActivityOutcomes,
+  isActivityAttentionOutcome,
+} from "./activity-attention";
 
 export interface TranscriptDayGroup<T> {
   day: string;
@@ -200,52 +206,42 @@ export function countCompletedQueueJobs(jobs: QueueJob[]): number {
 }
 
 export function countUnreadActivityOutcomes(jobs: QueueJob[]): number {
-  let count = 0;
-  for (const job of jobs) {
-    if (
-      job.is_read !== true &&
-      ["failed", "cancelled", "skipped"].includes(job.status)
-    ) {
-      count += 1;
-    }
-  }
-  return count;
+  return countSemanticUnreadActivityOutcomes(jobs);
 }
 
+export type QueueActivityBucket =
+  | Exclude<QueueJobStatus, "failed">
+  | "warning"
+  | "error";
+
 export interface QueueDayBreakdownEntry {
-  status: QueueJobStatus;
+  status: QueueActivityBucket;
   count: number;
 }
 
-// Canonical per-day chip breakdown order for the QueuePanel group-row display.
-// Folds six previously inline `if (count > 0) <span data-tone=...>` ternary blocks
-// into one ordered array — only statuses with count > 0 are surfaced. The order
-// (pending → running → completed → failed → cancelled → skipped) is pinned by
-// Activity render tests and matches the lifecycle stages a user
-// expects to scan top-to-bottom (queued work first, then in-flight, then outcomes).
-const QUEUE_DAY_BREAKDOWN_ORDER: readonly QueueJobStatus[] = [
+// Lifecycle counts remain factual while warning/error buckets expose semantic
+// issue severity. Cancelled and skipped therefore also contribute to Warnings.
+const QUEUE_DAY_BREAKDOWN_ORDER: readonly QueueActivityBucket[] = [
   "pending",
   "running",
   "completed",
-  "failed",
+  "warning",
+  "error",
   "cancelled",
   "skipped",
 ];
 
 export function queueDayBreakdown(jobs: QueueJob[]): QueueDayBreakdownEntry[] {
-  const counts: Record<QueueJobStatus, number> = {
-    pending: 0,
-    running: 0,
-    completed: 0,
-    failed: 0,
-    cancelled: 0,
-    skipped: 0,
+  const issueCounts = activityIssueCounts(jobs);
+  const counts: Record<QueueActivityBucket, number> = {
+    pending: countPendingQueueJobs(jobs),
+    running: countRunningQueueJobs(jobs),
+    completed: countCompletedQueueJobs(jobs),
+    warning: issueCounts.warning,
+    error: issueCounts.error,
+    cancelled: countCancelledQueueJobs(jobs),
+    skipped: countSkippedQueueJobs(jobs),
   };
-  for (const job of jobs) {
-    if (job.status in counts) {
-      counts[job.status] += 1;
-    }
-  }
   return QUEUE_DAY_BREAKDOWN_ORDER.map((status) => ({
     status,
     count: counts[status],
@@ -253,24 +249,20 @@ export function queueDayBreakdown(jobs: QueueJob[]): QueueDayBreakdownEntry[] {
 }
 
 export interface QueueStatsBannerEntry {
-  status: QueueJobStatus;
+  status: QueueActivityBucket;
   label: string;
   count: number;
   title: string;
 }
 
-// Canonical queue-stats banner cell order for QueuePanel's top-level summary row.
-// Deliberately different from QUEUE_DAY_BREAKDOWN_ORDER (which follows the job
-// lifecycle): the banner groups attention-worthy statuses together (Pending +
-// Skipped, then Running, then Failed + Cancelled, then Completed) so users can
-// scan backlog/in-flight/outcomes in a single glance. Iter-81's learnings
-// explicitly noted these two orderings serve different display semantics and
-// must NOT share an ordered-list helper.
-const QUEUE_STATS_BANNER_ORDER: readonly QueueJobStatus[] = [
+// Top-level ordering keeps operational states together and makes the semantic
+// warning/error split explicit without discarding cancelled/completed history.
+const QUEUE_STATS_BANNER_ORDER: readonly QueueActivityBucket[] = [
   "pending",
   "skipped",
   "running",
-  "failed",
+  "warning",
+  "error",
   "cancelled",
   "completed",
 ];
@@ -278,17 +270,16 @@ const QUEUE_STATS_BANNER_ORDER: readonly QueueJobStatus[] = [
 export function queueStatsBanner(
   queue: QueueSnapshot,
 ): QueueStatsBannerEntry[] {
-  // Mixed data sources are intentional: QueueSnapshot exposes pending_count /
-  // running_count / failed_count as canonical top-level counters from the
-  // backend, while skipped / cancelled / completed counts are derived from
-  // jobs[] because no top-level counter exists for them. Preserving that mix
-  // (vs. deriving all six from jobs[]) keeps the banner consistent with the
-  // backend's authoritative counters even if jobs[] is truncated for display.
-  const counts: Record<QueueJobStatus, number> = {
+  // Pending/running retain backend-authoritative counters. Semantic issue and
+  // lifecycle history buckets derive from persisted jobs because the snapshot
+  // has no dedicated warning/error counters.
+  const issueCounts = activityIssueCounts(queue.jobs);
+  const counts: Record<QueueActivityBucket, number> = {
     pending: queue.pending_count,
     skipped: countSkippedQueueJobs(queue.jobs),
     running: queue.running_count,
-    failed: queue.failed_count,
+    warning: issueCounts.warning,
+    error: issueCounts.error,
     cancelled: countCancelledQueueJobs(queue.jobs),
     completed: countCompletedQueueJobs(queue.jobs),
   };
@@ -297,9 +288,18 @@ export function queueStatsBanner(
     label: humanizeQueueJobStatus(status),
     count: counts[status],
     title: summarizeQueueJobsByDay(
-      queue.jobs.filter((job) => job.status === status),
+      queue.jobs.filter((job) => jobMatchesBucket(job, status)),
     ),
   }));
+}
+
+function jobMatchesBucket(job: QueueJob, bucket: QueueActivityBucket): boolean {
+  if (bucket === "warning" || bucket === "error") {
+    return (
+      isActivityAttentionOutcome(job) && activityIssue(job)?.severity === bucket
+    );
+  }
+  return job.status === bucket;
 }
 
 export function summarizeQueueJobsByDay(jobs: QueueJob[]): string {

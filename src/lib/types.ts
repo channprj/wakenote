@@ -81,6 +81,33 @@ export type QueueJobStatus =
   | "cancelled"
   | "skipped";
 
+export type QueueIssueSeverity = "warning" | "error";
+
+export type QueueIssueCode =
+  | "empty_transcript"
+  | "no_speech"
+  | "low_confidence"
+  | "transcript_artifact"
+  | "authentication"
+  | "billing_limit"
+  | "rate_limit"
+  | "provider"
+  | "transport"
+  | "invalid_response"
+  | "model"
+  | "audio_decode"
+  | "local_io"
+  | "cancelled"
+  | "skipped"
+  | "unknown";
+
+export interface QueueJobIssue {
+  severity: QueueIssueSeverity;
+  code: QueueIssueCode;
+  message: string;
+  occurred_at?: string | null;
+}
+
 export interface MicrophonePriorityEntry {
   id: string;
   label: string;
@@ -251,6 +278,7 @@ export interface QueueJob {
   model_id: string;
   status: QueueJobStatus;
   error?: string | null;
+  issue?: QueueJobIssue | null;
   is_read?: boolean;
   transcription_options?: TranscriptionOptions | null;
 }
