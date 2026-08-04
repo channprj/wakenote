@@ -2734,6 +2734,40 @@ fn tray_runtime_presentation_uses_red_for_runtime_failures() {
 }
 
 #[test]
+fn resolved_attention_history_does_not_hold_tray_in_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("failed.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio file");
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    let snapshot = backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    let job_id = snapshot.jobs.last().expect("queued job").id;
+
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed(job_id, "first failure"))
+        .expect("fail queue job");
+    assert_eq!(backend.app_status().tray_state, TrayState::Error);
+
+    let resolved = backend.mark_all_activity_read();
+    assert_eq!(resolved.failed_count, 1);
+    assert!(resolved.jobs.last().expect("resolved job").is_read);
+    assert_ne!(backend.app_status().tray_state, TrayState::Error);
+
+    backend.retry_job(job_id).expect("retry job");
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed(job_id, "second failure"))
+        .expect("fail retried job");
+    assert!(
+        !backend
+            .queue_snapshot()
+            .jobs
+            .last()
+            .expect("failed job")
+            .is_read
+    );
+    assert_eq!(backend.app_status().tray_state, TrayState::Error);
+}
+
+#[test]
 fn tray_state_prioritizes_errors_then_transcribing_then_active_recording() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");

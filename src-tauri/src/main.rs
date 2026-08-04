@@ -2470,32 +2470,54 @@ fn overlay_level_emit_due(last_emit: &Mutex<Instant>) -> bool {
     true
 }
 
-async fn resolve_microphones_for_ui(selected_microphone: String) -> Vec<MicrophoneDevice> {
-    let fallback_selected_microphone = selected_microphone.clone();
+async fn resolve_microphones_for_ui(settings: AppSettings) -> Vec<MicrophoneDevice> {
+    let fallback_settings = settings.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (sender, receiver) = mpsc::channel();
-        let selected_for_worker = selected_microphone.clone();
+        let selected_for_worker = settings.selected_microphone.clone();
         thread::spawn(move || {
             let devices =
                 microphone_devices_from_input_devices(&selected_for_worker, list_input_devices());
             let _ = sender.send(devices);
         });
 
-        receiver
-            .recv_timeout(Duration::from_millis(600))
-            .unwrap_or_else(|_| fallback_microphones(&selected_microphone))
+        match receiver.recv_timeout(Duration::from_millis(600)) {
+            Ok(devices) => stable_microphone_options(&settings, devices),
+            Err(_) => fallback_microphones(&settings),
+        }
     })
     .await
-    .unwrap_or_else(|_| fallback_microphones(&fallback_selected_microphone))
+    .unwrap_or_else(|_| fallback_microphones(&fallback_settings))
 }
 
-fn fallback_microphones(selected_microphone: &str) -> Vec<MicrophoneDevice> {
-    vec![MicrophoneDevice {
-        id: "default".to_string(),
-        label: "System Default".to_string(),
-        available: true,
-        fallback: selected_microphone != "default",
-    }]
+fn stable_microphone_options(
+    settings: &AppSettings,
+    mut devices: Vec<MicrophoneDevice>,
+) -> Vec<MicrophoneDevice> {
+    for configured in &settings.capture_microphones {
+        if devices.iter().any(|device| device.id == configured.id) {
+            continue;
+        }
+        devices.push(MicrophoneDevice {
+            id: configured.id.clone(),
+            label: configured.label.clone(),
+            available: false,
+            fallback: false,
+        });
+    }
+    devices
+}
+
+fn fallback_microphones(settings: &AppSettings) -> Vec<MicrophoneDevice> {
+    stable_microphone_options(
+        settings,
+        vec![MicrophoneDevice {
+            id: "default".to_string(),
+            label: "System Default".to_string(),
+            available: true,
+            fallback: settings.selected_microphone != "default",
+        }],
+    )
 }
 
 fn resolve_capture_device_with_timeout(
@@ -2550,11 +2572,11 @@ fn app_status(
 
 #[tauri::command]
 async fn list_microphones(state: State<'_, BackendState>) -> Result<Vec<MicrophoneDevice>, String> {
-    let selected_microphone = {
+    let settings = {
         let backend = state.lock().map_err(|error| error.to_string())?;
-        backend.settings().selected_microphone
+        backend.settings()
     };
-    Ok(resolve_microphones_for_ui(selected_microphone).await)
+    Ok(resolve_microphones_for_ui(settings).await)
 }
 
 #[tauri::command]
@@ -8677,7 +8699,7 @@ mod tests {
 
     #[test]
     fn fallback_microphones_returns_default_device_without_fallback_for_default_selection() {
-        let devices = fallback_microphones("default");
+        let devices = fallback_microphones(&AppSettings::default());
 
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].id, "default");
@@ -8686,10 +8708,43 @@ mod tests {
 
     #[test]
     fn fallback_microphones_marks_default_as_fallback_for_pinned_selection() {
-        let devices = fallback_microphones("input-0-external");
+        let devices = fallback_microphones(&AppSettings {
+            selected_microphone: "input-0-external".to_string(),
+            ..AppSettings::default()
+        });
 
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].id, "default");
         assert!(devices[0].fallback);
+    }
+
+    #[test]
+    fn fallback_microphones_preserves_configured_capture_devices() {
+        let settings = AppSettings {
+            selected_microphone: "input-primary".to_string(),
+            selected_microphone_label: "Studio Mic".to_string(),
+            capture_microphones: vec![
+                wakenote::settings::CaptureMicrophoneEntry {
+                    id: "input-primary".to_string(),
+                    label: "Studio Mic".to_string(),
+                },
+                wakenote::settings::CaptureMicrophoneEntry {
+                    id: "input-secondary".to_string(),
+                    label: "Desk Mic".to_string(),
+                },
+            ],
+            ..AppSettings::default()
+        };
+
+        let devices = fallback_microphones(&settings);
+
+        assert_eq!(devices.len(), 3);
+        assert_eq!(devices[0].id, "default");
+        assert_eq!(devices[1].id, "input-primary");
+        assert_eq!(devices[1].label, "Studio Mic");
+        assert!(!devices[1].available);
+        assert_eq!(devices[2].id, "input-secondary");
+        assert_eq!(devices[2].label, "Desk Mic");
+        assert!(!devices[2].available);
     }
 }

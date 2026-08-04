@@ -2371,7 +2371,7 @@ impl AppBackend {
         let has_active_microphone = is_monitoring;
         let has_error = (!has_active_microphone
             && (self.microphone_warning.is_some() || self.secondary_microphone_warning.is_some()))
-            || queue.failed_count > 0;
+            || self.queue.unread_attention_count() > 0;
         let tray_state = derive_tray_state(
             mode,
             queue.running_count > 0,

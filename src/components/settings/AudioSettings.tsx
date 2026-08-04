@@ -387,12 +387,29 @@ function MicrophoneSelectors({
   const selected = normalizeCaptureMicrophones(value);
   const primary = selected[0];
   const secondary = selected[1];
-  const explicitDevices = microphones.filter(
+  const stableMicrophones = [...microphones];
+  for (const configured of selected) {
+    if (stableMicrophones.some((device) => device.id === configured.id)) {
+      continue;
+    }
+    stableMicrophones.push({
+      id: configured.id,
+      label: configured.label,
+      available: false,
+      fallback: false,
+    });
+  }
+  const explicitDevices = stableMicrophones.filter(
     (device) => device.id !== "default",
   );
   const secondaryDisabled = primary.id === "default";
+  const optionLabel = (id: string) => {
+    const device = stableMicrophones.find((microphone) => microphone.id === id);
+    if (!device) return null;
+    return `${device.label}${device.available ? "" : " (Unavailable)"}`;
+  };
   const deviceEntry = (id: string) => {
-    const device = microphones.find((microphone) => microphone.id === id);
+    const device = stableMicrophones.find((microphone) => microphone.id === id);
     return device ? { id: device.id, label: device.label } : null;
   };
 
@@ -426,11 +443,13 @@ function MicrophoneSelectors({
             className="w-full"
             aria-label="Primary microphone"
           >
-            <SelectValue placeholder="Select Primary microphone" />
+            <SelectValue placeholder="Select Primary microphone">
+              {optionLabel(primary.id)}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              {microphones.map((device) => (
+              {stableMicrophones.map((device) => (
                 <SelectItem key={device.id} value={device.id}>
                   {device.label}
                   {device.available ? "" : " (Unavailable)"}
@@ -463,7 +482,9 @@ function MicrophoneSelectors({
                   ? "Choose a physical Primary first"
                   : "No Secondary microphone"
               }
-            />
+            >
+              {secondary ? optionLabel(secondary.id) : null}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
