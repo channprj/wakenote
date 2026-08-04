@@ -828,6 +828,7 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
     for (model_id, provider) in [
         ("openrouter-qwen3-asr-flash", "OpenRouter"),
         ("openai-gpt-transcribe", "OpenAI"),
+        ("soniox-async-v5", "Soniox"),
     ] {
         let error = transcriber
             .transcribe(TranscriptionRequest {

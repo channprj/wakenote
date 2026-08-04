@@ -28,6 +28,7 @@ use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
 use crate::settings::{TranscriptionLanguage, expand_user_path};
+use crate::soniox_async::SonioxAsyncClient;
 use crate::transcription_cost::estimated_provider_cost_usd;
 
 const WHISPER_SAMPLE_RATE: usize = 16_000;
@@ -950,6 +951,7 @@ pub struct RuntimeTranscriber {
     model_directory: PathBuf,
     suppress_low_confidence_decode: bool,
     cloud: CloudTranscriptionClient,
+    soniox_async: SonioxAsyncClient,
     streaming_enabled: bool,
     partial_callback: Option<TranscriptionPartialCallback>,
 }
@@ -964,6 +966,7 @@ impl fmt::Debug for RuntimeTranscriber {
                 &self.suppress_low_confidence_decode,
             )
             .field("cloud", &self.cloud)
+            .field("soniox_async", &self.soniox_async)
             .field("streaming_enabled", &self.streaming_enabled)
             .field(
                 "partial_callback_configured",
@@ -979,6 +982,7 @@ impl RuntimeTranscriber {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: true,
             cloud: CloudTranscriptionClient::default(),
+            soniox_async: SonioxAsyncClient::default(),
             streaming_enabled: false,
             partial_callback: None,
         }
@@ -993,6 +997,7 @@ impl RuntimeTranscriber {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
             cloud: CloudTranscriptionClient::default(),
+            soniox_async: SonioxAsyncClient::default(),
             streaming_enabled: false,
             partial_callback: None,
         }
@@ -1009,10 +1014,13 @@ impl RuntimeTranscriber {
         model_directory: impl AsRef<Path>,
         credentials: TranscriptionCredentials,
     ) -> Result<Self, CloudTranscriptionError> {
+        let cloud = CloudTranscriptionClient::new(credentials.clone())?;
+        let soniox_async = SonioxAsyncClient::new(credentials)?;
         Ok(Self {
             model_directory: expand_user_path(model_directory.as_ref().to_string_lossy()),
             suppress_low_confidence_decode: false,
-            cloud: CloudTranscriptionClient::new(credentials)?,
+            cloud,
+            soniox_async,
             streaming_enabled: false,
             partial_callback: None,
         })
@@ -1097,6 +1105,10 @@ impl Transcriber for RuntimeTranscriber {
                 "openai-realtime" => self
                     .wait_for_realtime_result(request.audio_path)
                     .map(|execution| execution.text),
+                "soniox-async-stt" => self
+                    .soniox_async
+                    .transcribe(request.audio_path, request.language, request.dictionary)
+                    .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);
                     transcriber.suppress_low_confidence_decode =
@@ -1179,6 +1191,26 @@ impl Transcriber for RuntimeTranscriber {
                     fallback_from_model_id: None,
                     usage: Some(TranscriptionUsage {
                         provider: Some("OpenRouter".to_string()),
+                        audio_duration_ms: 0,
+                        provider_cost_usd: None,
+                    }),
+                    issue: None,
+                })
+                .map_err(|error| TranscriptionError::Failure(error.into_failure()));
+        }
+        if runtime == "soniox-async-stt" {
+            let model_id = request.model_id.to_string();
+            return self
+                .soniox_async
+                .transcribe(request.audio_path, request.language, request.dictionary)
+                .map(|text| TranscriptionExecution {
+                    text,
+                    speaker_turns: Vec::new(),
+                    requested_model_id: model_id.clone(),
+                    effective_model_id: model_id,
+                    fallback_from_model_id: None,
+                    usage: Some(TranscriptionUsage {
+                        provider: Some("Soniox".to_string()),
                         audio_duration_ms: 0,
                         provider_cost_usd: None,
                     }),

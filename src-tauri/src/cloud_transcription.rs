@@ -54,6 +54,10 @@ impl TranscriptionCredentials {
     pub(crate) fn openai_api_key(&self) -> Option<&str> {
         self.openai_api_key.as_deref()
     }
+
+    pub(crate) fn soniox_api_key(&self) -> Option<&str> {
+        self.soniox_api_key.as_deref()
+    }
 }
 
 impl fmt::Debug for TranscriptionCredentials {

@@ -137,6 +137,19 @@ pub fn capabilities_for_model(
                 TranscriptionContext::Meeting,
             ],
         },
+        "soniox-async-v5" => ModelCapabilities {
+            file_transcription: true,
+            realtime: false,
+            streaming: StreamingCapability::Unsupported,
+            diarization: false,
+            cost_reporting: CostReportingCapability::DurationEstimate,
+            maximum_request_bytes: None,
+            selectable_contexts: vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ],
+        },
         "nemotron-3.5-asr-streaming-0.6b" => ModelCapabilities {
             file_transcription: true,
             realtime: true,
@@ -778,7 +791,7 @@ impl ModelStore {
     pub fn verify_model(&self, model: &ModelDescriptor) -> Result<ModelStatus, ModelStoreError> {
         if matches!(
             model.provider_runtime.as_str(),
-            "openrouter-stt" | "openai-stt"
+            "openrouter-stt" | "openai-stt" | "soniox-async-stt"
         ) {
             return Ok(ModelStatus::Ready);
         }
@@ -1341,6 +1354,7 @@ fn merge_builtin_cloud_models(registry: &mut BTreeMap<String, ModelDescriptor>) 
         "openai-gpt-live-transcribe",
         "openai-gpt-transcribe",
         "openai-gpt-4o-transcribe-diarize",
+        "soniox-async-v5",
     ] {
         if let Some(model) = defaults.remove(id) {
             registry.entry(id.to_string()).or_insert(model);
@@ -1870,6 +1884,13 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
             "openai-stt",
             9,
         ),
+        (
+            "soniox-async-v5",
+            "Soniox · Async V5",
+            "Soniox",
+            "soniox-async-stt",
+            9,
+        ),
     ] {
         registry.insert(
             id.to_string(),
@@ -1927,6 +1948,25 @@ mod tests {
     #[test]
     fn model_capabilities_match_the_supported_provider_contracts() {
         let registry = default_model_registry();
+        let soniox_async = registry
+            .get("soniox-async-v5")
+            .expect("Soniox async descriptor");
+        assert_eq!(soniox_async.provider_runtime, "soniox-async-stt");
+        assert!(soniox_async.capabilities.file_transcription);
+        assert!(!soniox_async.capabilities.realtime);
+        assert_eq!(
+            soniox_async.capabilities.streaming,
+            StreamingCapability::Unsupported
+        );
+        assert_eq!(
+            soniox_async.capabilities.selectable_contexts,
+            vec![
+                TranscriptionContext::File,
+                TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
+            ]
+        );
+
         let live = registry
             .get("openai-gpt-live-transcribe")
             .expect("gpt-live descriptor");

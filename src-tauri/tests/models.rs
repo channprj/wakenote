@@ -149,6 +149,7 @@ fn cloud_transcription_models_are_ready_and_not_downloadable() {
             "OpenRouter · Qwen",
         ),
         ("openai-gpt-transcribe", "openai-stt", "OpenAI"),
+        ("soniox-async-v5", "soniox-async-stt", "Soniox"),
     ] {
         let model = registry.get(id).expect("cloud transcription model");
         assert_eq!(model.provider_runtime, runtime);

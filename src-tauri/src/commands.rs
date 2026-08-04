@@ -3752,7 +3752,7 @@ fn selectable_model_ids(model_directory: &str) -> HashSet<String> {
 
 fn model_has_selectable_runtime(store: &ModelStore, model: &ModelDescriptor) -> bool {
     match model.provider_runtime.as_str() {
-        "openrouter-stt" | "openai-stt" | "openai-realtime" => true,
+        "openrouter-stt" | "openai-stt" | "openai-realtime" | "soniox-async-stt" => true,
         "sherpa-onnx" | "external-command" | "qwen3-asr" => store
             .verify_model(model)
             .is_ok_and(|status| matches!(status, ModelStatus::Ready | ModelStatus::Installed)),
