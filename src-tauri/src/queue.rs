@@ -99,6 +99,19 @@ pub struct QueueJob {
     pub transcription_options: Option<TranscriptionOptions>,
 }
 
+impl QueueJob {
+    pub fn is_reprocessable_attention_outcome(&self) -> bool {
+        matches!(
+            self.status,
+            QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
+        ) || (self.status == QueueJobStatus::Completed
+            && self
+                .issue
+                .as_ref()
+                .is_some_and(|issue| issue.severity == QueueIssueSeverity::Warning))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct QueueSnapshot {
     pub jobs: Vec<QueueJob>,
@@ -515,14 +528,7 @@ impl TranscriptionQueue {
 }
 
 fn job_requires_attention(job: &QueueJob) -> bool {
-    matches!(
-        job.status,
-        QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
-    ) || (job.status == QueueJobStatus::Completed
-        && job
-            .issue
-            .as_ref()
-            .is_some_and(|issue| issue.severity == QueueIssueSeverity::Warning))
+    job.is_reprocessable_attention_outcome()
 }
 
 fn collect_pending_audio(root: &Path, pending_audio: &mut Vec<PathBuf>) -> std::io::Result<()> {

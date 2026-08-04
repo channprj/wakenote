@@ -2125,10 +2125,7 @@ impl AppBackend {
                 .queue
                 .job(*id)
                 .ok_or_else(|| format!("job {id} not found"))?;
-            if !matches!(
-                job.status,
-                QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
-            ) {
+            if !job.is_reprocessable_attention_outcome() {
                 return Err(format!(
                     "job {id} cannot be reprocessed from {:?}",
                     job.status
@@ -2471,7 +2468,7 @@ impl AppBackend {
         let has_active_microphone = is_monitoring;
         let has_error = (!has_active_microphone
             && (self.microphone_warning.is_some() || self.secondary_microphone_warning.is_some()))
-            || self.queue.unread_attention_count() > 0;
+            || self.queue.unread_error_count() > 0;
         let tray_state = derive_tray_state(
             mode,
             queue.running_count > 0,

@@ -17,7 +17,7 @@ use wakenote::debug_log::debug_log_path_for;
 use wakenote::live_capture::AudioFrame;
 use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
 use wakenote::models::{ModelStatus, ModelStore, default_model_registry};
-use wakenote::queue::QueueJobStatus;
+use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobIssue, QueueJobStatus};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AudioFormat, CaptureMicrophoneEntry, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch,
@@ -1358,6 +1358,67 @@ fn backend_reprocess_jobs_rejects_an_invalid_batch_without_mutating_the_queue() 
 
     assert!(error.contains("cannot be reprocessed"));
     assert_eq!(backend.queue_snapshot(), before);
+}
+
+#[test]
+fn backend_reprocesses_completed_warning_but_rejects_clean_completed_jobs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let warning_audio = tmp.path().join("warning.wav");
+    let clean_audio = tmp.path().join("clean.wav");
+    std::fs::write(&warning_audio, b"warning audio").expect("warning audio");
+    std::fs::write(&clean_audio, b"clean audio").expect("clean audio");
+    std::fs::write(warning_audio.with_extension("txt"), "[noise]\n").expect("warning transcript");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let warning_id = backend
+        .enqueue_audio_file(&warning_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == warning_audio)
+        .expect("warning job")
+        .id;
+    let clean_id = backend
+        .enqueue_audio_file(&clean_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == clean_audio)
+        .expect("clean job")
+        .id;
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed_with_issue(
+            warning_id,
+            QueueJobIssue::warning(
+                QueueIssueCode::TranscriptArtifact,
+                "Low-confidence transcript: bracket-flood",
+            ),
+        ))
+        .expect("complete warning");
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed(clean_id))
+        .expect("complete clean job");
+
+    let snapshot = backend
+        .reprocess_jobs(vec![warning_id], "whisper-medium".into())
+        .expect("reprocess warning");
+    let warning = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.id == warning_id)
+        .expect("warning job");
+    assert_eq!(warning.status, QueueJobStatus::Pending);
+    assert_eq!(warning.issue, None);
+    assert!(!warning_audio.with_extension("txt").exists());
+
+    let error = backend
+        .reprocess_jobs(vec![clean_id], "whisper-medium".into())
+        .expect_err("clean completed jobs stay ineligible");
+    assert!(error.contains("cannot be reprocessed"));
 }
 
 #[test]
@@ -2931,6 +2992,37 @@ fn resolved_attention_history_does_not_hold_tray_in_error() {
             .is_read
     );
     assert_eq!(backend.app_status().tray_state, TrayState::Error);
+}
+
+#[test]
+fn warning_only_activity_does_not_turn_the_backend_tray_red() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("empty.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio file");
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    let job_id = backend
+        .enqueue_audio_file(&audio_path, Some("openai-gpt-transcribe".to_string()))
+        .jobs
+        .last()
+        .expect("queued job")
+        .id;
+
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed_with_issue(
+            job_id,
+            QueueJobIssue::warning(
+                QueueIssueCode::EmptyTranscript,
+                "OpenAI returned an empty transcript",
+            ),
+        ))
+        .expect("warning outcome");
+
+    let job = backend.queue_snapshot().jobs.pop().expect("warning job");
+    assert_eq!(
+        job.issue.map(|issue| issue.severity),
+        Some(QueueIssueSeverity::Warning),
+    );
+    assert_ne!(backend.app_status().tray_state, TrayState::Error);
 }
 
 #[test]

@@ -350,6 +350,18 @@ impl TranscriptionJobOutcome {
         }
     }
 
+    pub fn completed_with_issue(id: u64, issue: QueueJobIssue) -> Self {
+        Self {
+            id,
+            status: TranscriptionJobStatus::Completed,
+            requested_model_id: None,
+            effective_model_id: None,
+            fallback_from_model_id: None,
+            usage: None,
+            issue: Some(issue),
+        }
+    }
+
     pub fn failed(id: u64, error: impl Into<String>) -> Self {
         let error = error.into();
         Self::failed_with_issue(id, QueueJobIssue::error(QueueIssueCode::Unknown, error))
