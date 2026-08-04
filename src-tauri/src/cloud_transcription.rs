@@ -23,13 +23,19 @@ const CLOUD_TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(55);
 pub struct TranscriptionCredentials {
     openrouter_api_key: Option<String>,
     openai_api_key: Option<String>,
+    soniox_api_key: Option<String>,
 }
 
 impl TranscriptionCredentials {
-    pub fn new(openrouter_api_key: Option<String>, openai_api_key: Option<String>) -> Self {
+    pub fn new(
+        openrouter_api_key: Option<String>,
+        openai_api_key: Option<String>,
+        soniox_api_key: Option<String>,
+    ) -> Self {
         Self {
             openrouter_api_key: normalize_secret(openrouter_api_key),
             openai_api_key: normalize_secret(openai_api_key),
+            soniox_api_key: normalize_secret(soniox_api_key),
         }
     }
 
@@ -39,6 +45,10 @@ impl TranscriptionCredentials {
 
     pub fn openai_configured(&self) -> bool {
         self.openai_api_key.is_some()
+    }
+
+    pub fn soniox_configured(&self) -> bool {
+        self.soniox_api_key.is_some()
     }
 
     pub(crate) fn openai_api_key(&self) -> Option<&str> {
@@ -52,6 +62,7 @@ impl fmt::Debug for TranscriptionCredentials {
             .debug_struct("TranscriptionCredentials")
             .field("openrouter_configured", &self.openrouter_configured())
             .field("openai_configured", &self.openai_configured())
+            .field("soniox_configured", &self.soniox_configured())
             .finish()
     }
 }
@@ -920,7 +931,7 @@ mod tests {
         .join("\n");
         let transport = FakeTransport::responding(CloudTranscriptionResponse { status: 200, body });
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into()), None),
             transport.clone(),
         );
         let mut partials = Vec::new();
@@ -958,7 +969,7 @@ mod tests {
         ] {
             let (_directory, audio_path) = audio_fixture("wav");
             let client = CloudTranscriptionClient::with_transport(
-                TranscriptionCredentials::new(None, Some("key".into())),
+                TranscriptionCredentials::new(None, Some("key".into()), None),
                 FakeTransport::responding(CloudTranscriptionResponse {
                     status: 200,
                     body: body.to_string(),
@@ -984,7 +995,7 @@ mod tests {
         let (_directory, audio_path) = audio_fixture("wav");
         let transport = FakeTransport::responding(success_response("hello"));
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(Some("sk-or-secret".into()), None),
+            TranscriptionCredentials::new(Some("sk-or-secret".into()), None, None),
             transport.clone(),
         );
 
@@ -1036,7 +1047,7 @@ mod tests {
             ],
         );
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into()), None),
             transport.clone(),
         );
 
@@ -1090,7 +1101,7 @@ mod tests {
             .to_string(),
         });
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into()), None),
             transport.clone(),
         );
 
@@ -1124,7 +1135,7 @@ mod tests {
         let (_directory, audio_path) = audio_fixture("wav");
         let transport = FakeTransport::responding(success_response("hello"));
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(None, Some("sk-openai-secret".into())),
+            TranscriptionCredentials::new(None, Some("sk-openai-secret".into()), None),
             transport.clone(),
         );
 
@@ -1180,7 +1191,7 @@ mod tests {
             body: sentinel.to_string(),
         });
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(Some("sk-secret".into()), None),
+            TranscriptionCredentials::new(Some("sk-secret".into()), None, None),
             transport,
         );
 
@@ -1215,7 +1226,7 @@ mod tests {
             ),
         ] {
             let client = CloudTranscriptionClient::with_transport(
-                TranscriptionCredentials::new(Some("key".into()), None),
+                TranscriptionCredentials::new(Some("key".into()), None, None),
                 FakeTransport::responding(response),
             );
             assert_eq!(
@@ -1225,7 +1236,7 @@ mod tests {
         }
 
         let client = CloudTranscriptionClient::with_transport(
-            TranscriptionCredentials::new(Some("key".into()), None),
+            TranscriptionCredentials::new(Some("key".into()), None, None),
             FakeTransport::failing(CloudTransportError::Timeout),
         );
         let error = client
@@ -1243,11 +1254,14 @@ mod tests {
         let credentials = TranscriptionCredentials::new(
             Some("sk-openrouter-secret".into()),
             Some("sk-openai-secret".into()),
+            Some("soniox-secret".into()),
         );
         let debug = format!("{credentials:?}");
         assert!(debug.contains("openrouter_configured: true"));
         assert!(debug.contains("openai_configured: true"));
+        assert!(debug.contains("soniox_configured: true"));
         assert!(!debug.contains("sk-openrouter-secret"));
         assert!(!debug.contains("sk-openai-secret"));
+        assert!(!debug.contains("soniox-secret"));
     }
 }

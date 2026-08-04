@@ -129,6 +129,41 @@ fn persistence_rejects_blank_openai_api_key() {
 }
 
 #[test]
+fn persistence_round_trips_soniox_api_key_separately_from_other_state() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+
+    assert!(!store.soniox_api_key_configured().expect("configured check"));
+    store
+        .save_soniox_api_key("  soniox-test-key  ")
+        .expect("save api key");
+
+    assert!(store.soniox_api_key_configured().expect("configured check"));
+    assert_eq!(
+        store.load_soniox_api_key().expect("load key"),
+        Some("soniox-test-key".to_string())
+    );
+    assert!(!tmp.path().join("settings.json").exists());
+    assert!(!tmp.path().join("openrouter-secrets.json").exists());
+    assert!(!tmp.path().join("openai-secrets.json").exists());
+
+    store.delete_soniox_api_key().expect("delete api key");
+    store
+        .delete_soniox_api_key()
+        .expect("idempotent delete api key");
+    assert!(!store.soniox_api_key_configured().expect("configured check"));
+}
+
+#[test]
+fn persistence_rejects_blank_soniox_api_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+
+    assert!(store.save_soniox_api_key("  ").is_err());
+    assert!(!store.soniox_api_key_configured().expect("configured check"));
+}
+
+#[test]
 fn persistence_migrates_legacy_settings_with_missing_fields() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = AppPersistence::new(tmp.path());

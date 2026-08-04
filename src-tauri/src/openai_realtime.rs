@@ -122,7 +122,7 @@ impl OpenAiRealtimeManager {
     }
 
     pub fn submit_samples(&self, request: RealtimeSamplesRequest) {
-        let _ = self.tx.send(ManagerCommand::Samples(request));
+        let _ = self.tx.send(ManagerCommand::Samples(Box::new(request)));
     }
 
     pub fn commit(&self, source_key: String, chunk_id: u64, audio_path: PathBuf) {
@@ -139,7 +139,7 @@ impl OpenAiRealtimeManager {
 }
 
 enum ManagerCommand {
-    Samples(RealtimeSamplesRequest),
+    Samples(Box<RealtimeSamplesRequest>),
     Commit {
         source_key: String,
         chunk_id: u64,
@@ -174,6 +174,7 @@ async fn manager_loop(
     while let Some(command) = rx.recv().await {
         match command {
             ManagerCommand::Samples(request) => {
+                let request = *request;
                 if request.model_id != "openai-gpt-live-transcribe" {
                     continue;
                 }

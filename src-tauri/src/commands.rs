@@ -1043,6 +1043,38 @@ impl AppBackend {
             .map_err(|error| error.to_string())
     }
 
+    pub fn soniox_api_key_configured(&self) -> Result<bool, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .soniox_api_key_configured()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn load_soniox_api_key(&self) -> Result<Option<String>, String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .load_soniox_api_key()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn save_soniox_api_key(&self, api_key: &str) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .save_soniox_api_key(api_key)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn delete_soniox_api_key(&self) -> Result<(), String> {
+        self.persistence
+            .as_ref()
+            .ok_or_else(|| "App persistence is not configured".to_string())?
+            .delete_soniox_api_key()
+            .map_err(|error| error.to_string())
+    }
+
     pub fn transcription_credentials(&self) -> Result<TranscriptionCredentials, String> {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(TranscriptionCredentials::default());
@@ -1053,6 +1085,9 @@ impl AppBackend {
                 .map_err(|error| error.to_string())?,
             persistence
                 .load_openai_api_key()
+                .map_err(|error| error.to_string())?,
+            persistence
+                .load_soniox_api_key()
                 .map_err(|error| error.to_string())?,
         ))
     }

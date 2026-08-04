@@ -3495,6 +3495,9 @@ fn cloud_transcription_dispatch_snapshots_private_provider_credentials() {
     backend
         .save_openai_api_key(" sk-openai-test ")
         .expect("OpenAI key");
+    backend
+        .save_soniox_api_key(" soniox-test ")
+        .expect("Soniox key");
     backend.update_settings(SettingsPatch {
         model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
         selected_model: Some("openrouter-qwen3-asr-flash".into()),
@@ -3509,8 +3512,10 @@ fn cloud_transcription_dispatch_snapshots_private_provider_credentials() {
 
     assert!(credentials.openrouter_configured());
     assert!(credentials.openai_configured());
+    assert!(credentials.soniox_configured());
     assert!(!format!("{credentials:?}").contains("sk-openrouter-test"));
     assert!(!format!("{credentials:?}").contains("sk-openai-test"));
+    assert!(!format!("{credentials:?}").contains("soniox-test"));
 }
 
 #[test]

@@ -22,6 +22,11 @@ struct OpenAiSecrets {
     api_key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct SonioxSecrets {
+    api_key: String,
+}
+
 const LIST_VISIBILITY_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +193,42 @@ impl AppPersistence {
         Ok(self.load_openai_api_key()?.is_some())
     }
 
+    pub fn load_soniox_api_key(&self) -> Result<Option<String>, PersistenceError> {
+        let Some(secrets) = read_json_if_exists::<SonioxSecrets>(&self.soniox_secrets_path())?
+        else {
+            return Ok(None);
+        };
+        let api_key = secrets.api_key.trim();
+        Ok((!api_key.is_empty()).then(|| api_key.to_string()))
+    }
+
+    pub fn save_soniox_api_key(&self, api_key: &str) -> Result<(), PersistenceError> {
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(PersistenceError::InvalidSecret(
+                "Soniox API key cannot be blank".to_string(),
+            ));
+        }
+        write_json_atomic(
+            &self.soniox_secrets_path(),
+            &SonioxSecrets {
+                api_key: api_key.to_string(),
+            },
+        )
+    }
+
+    pub fn delete_soniox_api_key(&self) -> Result<(), PersistenceError> {
+        match std::fs::remove_file(self.soniox_secrets_path()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn soniox_api_key_configured(&self) -> Result<bool, PersistenceError> {
+        Ok(self.load_soniox_api_key()?.is_some())
+    }
+
     pub fn load_queue(&self) -> Result<Option<TranscriptionQueue>, PersistenceError> {
         let Some(mut queue) = read_json_if_exists::<TranscriptionQueue>(&self.queue_path())? else {
             return Ok(None);
@@ -274,6 +315,10 @@ impl AppPersistence {
 
     fn openai_secrets_path(&self) -> PathBuf {
         self.root.join("openai-secrets.json")
+    }
+
+    fn soniox_secrets_path(&self) -> PathBuf {
+        self.root.join("soniox-secrets.json")
     }
 
     fn list_visibility_path(&self) -> PathBuf {

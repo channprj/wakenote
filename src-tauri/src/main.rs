@@ -797,6 +797,11 @@ struct OpenAiKeyStatus {
     configured: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SonioxKeyStatus {
+    configured: bool,
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
@@ -916,6 +921,31 @@ fn delete_openai_api_key(state: State<'_, BackendState>) -> Result<OpenAiKeyStat
     let backend = state.lock().map_err(|error| error.to_string())?;
     backend.delete_openai_api_key()?;
     Ok(OpenAiKeyStatus { configured: false })
+}
+
+#[tauri::command]
+fn soniox_key_status(state: State<'_, BackendState>) -> Result<SonioxKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    Ok(SonioxKeyStatus {
+        configured: backend.soniox_api_key_configured()?,
+    })
+}
+
+#[tauri::command]
+fn save_soniox_api_key(
+    state: State<'_, BackendState>,
+    api_key: String,
+) -> Result<SonioxKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.save_soniox_api_key(&api_key)?;
+    Ok(SonioxKeyStatus { configured: true })
+}
+
+#[tauri::command]
+fn delete_soniox_api_key(state: State<'_, BackendState>) -> Result<SonioxKeyStatus, String> {
+    let backend = state.lock().map_err(|error| error.to_string())?;
+    backend.delete_soniox_api_key()?;
+    Ok(SonioxKeyStatus { configured: false })
 }
 
 #[tauri::command]
@@ -6784,6 +6814,9 @@ fn main() {
             openai_key_status,
             save_openai_api_key,
             delete_openai_api_key,
+            soniox_key_status,
+            save_soniox_api_key,
+            delete_soniox_api_key,
             overlay_caption_snapshot,
             debug_show_overlay_caption,
             debug_hide_overlay_caption,
