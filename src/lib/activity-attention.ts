@@ -182,6 +182,15 @@ export function activityJobPresentation(job: QueueJob): ActivityJobPresentation 
     };
   }
 
+  if (job.status === "cancelled" || job.status === "skipped") {
+    return {
+      ...base,
+      issueLabel: null,
+      issueTone: null,
+      message: issue.message,
+    };
+  }
+
   return {
     primaryLabel: issue.severity === "warning" ? "Warning" : "Failed",
     primaryTone: issue.severity === "warning" ? "warning" : "danger",

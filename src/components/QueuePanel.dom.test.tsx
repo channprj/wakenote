@@ -70,11 +70,91 @@ function paginatedJobs(): QueueJob[] {
 }
 
 describe("QueuePanel pagination", () => {
+  it("renders content warnings separately from processing errors", () => {
+    const nowMs = Date.parse("2026-08-04T12:00:00.000Z");
+    const warningIssue = {
+      severity: "warning" as const,
+      code: "empty_transcript" as const,
+      message: "OpenAI returned an empty transcript",
+      occurred_at: new Date(nowMs - 1_000).toISOString(),
+    };
+    render(
+      <QueuePanel
+        nowMs={nowMs}
+        queue={{
+          jobs: [
+            {
+              id: 1,
+              audio_path: "/empty.wav",
+              model_id: "openai",
+              status: "failed",
+              issue: warningIssue,
+            },
+            {
+              id: 2,
+              audio_path: "/artifact.wav",
+              model_id: "whisper",
+              status: "completed",
+              issue: {
+                ...warningIssue,
+                code: "transcript_artifact",
+                message: "Transcript may contain an artifact",
+              },
+            },
+            {
+              id: 3,
+              audio_path: "/auth.wav",
+              model_id: "openai",
+              status: "failed",
+              issue: {
+                severity: "error",
+                code: "authentication",
+                message: "Authentication failed",
+                occurred_at: new Date(nowMs - 20 * 60_000).toISOString(),
+              },
+            },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 2,
+        }}
+        models={[]}
+        selectedModelId="whisper-medium"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onReprocess={async () => true}
+      />,
+    );
+
+    const emptyRow = screen.getAllByTitle("/empty.wav")[0].closest("tr")!;
+    const artifactRow = screen
+      .getAllByTitle("/artifact.wav")[0]
+      .closest("tr")!;
+    const authRow = screen.getAllByTitle("/auth.wav")[0].closest("tr")!;
+    expect(within(emptyRow).getByText("Warning").dataset.tone).toBe("warning");
+    expect(within(artifactRow).getByText("Completed").dataset.tone).toBe("success");
+    expect(within(artifactRow).getByText("Warning").dataset.tone).toBe("warning");
+    expect(within(authRow).getByText("Failed").dataset.tone).toBe("danger");
+    expect(screen.getByText("Warnings").parentElement?.dataset.tone).toBe(
+      "warning",
+    );
+    expect(screen.getByText("Errors").parentElement?.dataset.tone).toBe(
+      "danger",
+    );
+  });
+
   it("moves between 50-item Activity pages without rendering the whole queue", async () => {
     const user = userEvent.setup();
     const jobs = paginatedJobs();
     render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs,
           pending_count: 0,
@@ -110,6 +190,7 @@ describe("QueuePanel pagination", () => {
     const onEnqueueBacklog = vi.fn();
     render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [],
           pending_count: 0,
@@ -150,6 +231,7 @@ describe("QueuePanel pagination", () => {
     const user = userEvent.setup();
     const { container } = render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
             { id: 1, audio_path: "/unread.wav", model_id: "m", status: "failed" },
@@ -203,6 +285,7 @@ describe("QueuePanel pagination", () => {
       }));
       const { container } = render(
         <QueuePanel
+          nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
           queue={{ jobs, pending_count: 0, running_count: 0, failed_count: 26 }}
           models={[
             readyFileModel("whisper-medium", "Whisper Medium"),
@@ -246,6 +329,7 @@ describe("QueuePanel pagination", () => {
     const onReprocess = vi.fn().mockResolvedValue(true);
     render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
             { id: 1, audio_path: "/one.wav", model_id: "old", status: "failed" },
@@ -283,6 +367,7 @@ describe("QueuePanel pagination", () => {
     const onTrash = vi.fn().mockResolvedValue([1, 2]);
     render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
             { id: 1, audio_path: "/done.wav", model_id: "old", status: "completed" },
@@ -335,6 +420,7 @@ describe("QueuePanel pagination", () => {
     const onOpenFolder = vi.fn();
     render(
       <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
             {

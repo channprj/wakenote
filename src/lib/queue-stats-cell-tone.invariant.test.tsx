@@ -18,7 +18,7 @@ const STATS_LABELS: Record<QueueJobStatus, string> = {
   pending: "Pending",
   running: "Running",
   completed: "Completed",
-  failed: "Failed",
+  failed: "Errors",
   cancelled: "Cancelled",
   skipped: "Skipped",
 };
@@ -42,6 +42,7 @@ function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
 function renderQueuePanelMarkup(status: QueueJobStatus): string {
   return renderToStaticMarkup(
     <QueuePanel
+      nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
       queue={buildQueueSnapshot(status)}
       models={mockModels()}
       canProcessTranscription
@@ -67,8 +68,9 @@ function extractStatsCellTone(markup: string, label: string): string {
 }
 
 function extractGroupChipTone(markup: string, status: QueueJobStatus): string {
+  const bucket = status === "failed" ? "error" : status;
   const match = markup.match(
-    new RegExp(`<span data-tone="([a-z]+)">\\d+ ${status}<\\/span>`),
+    new RegExp(`<span data-tone="([a-z]+)">\\d+ ${bucket}<\\/span>`),
   );
   expect(match, `expected per-day group-row chip for "${status}"`).not.toBeNull();
   return match?.[1] ?? "";

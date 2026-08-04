@@ -758,6 +758,21 @@ describe("transcript archive density", () => {
   });
 });
 
+describe("Activity summary severity layout", () => {
+  it("auto-fits every semantic bucket and keeps warning and danger tokens", () => {
+    const statsRule = cssRule(".queue-stats", componentsCss);
+    expect(statsRule).toContain(
+      "grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));",
+    );
+    expect(componentsCss).toContain(
+      '.queue-stats div[data-tone="warning"] strong',
+    );
+    expect(componentsCss).toContain(
+      '.queue-stats div[data-tone="danger"] strong',
+    );
+  });
+});
+
 function cssRule(selector: string, source = css) {
   const start = source.indexOf(`${selector} {`);
   expect(start, `expected CSS rule for ${selector}`).toBeGreaterThanOrEqual(0);

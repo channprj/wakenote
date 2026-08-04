@@ -7,6 +7,7 @@ import { QueuePanel } from "./QueuePanel";
 function renderQueue(queue: QueueSnapshot) {
   return renderToStaticMarkup(
     <QueuePanel
+      nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
       queue={queue}
       models={[]}
       canProcessTranscription

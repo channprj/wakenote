@@ -36,14 +36,20 @@ import {
 } from "./ui/select";
 import { StatusBadge } from "./ui/status-badge";
 import { formatModelLabel, modelSupportsContext } from "../lib/models";
-import { queueJobStatusBadgeTone, queueStatsCellTone } from "../lib/status-summary";
+import { queueStatsCellTone } from "../lib/status-summary";
+import {
+  activityAttentionAt,
+  activityJobPresentation,
+  countUnreadActivityOutcomes,
+  isActivityAttentionOutcome,
+  isRecentUnreadWarning,
+  isReprocessableActivityJob,
+} from "../lib/activity-attention";
 import {
   fileUrlFromPath,
   audioPathBasename,
-  countUnreadActivityOutcomes,
   formatAudioPathLabel,
   groupQueueJobsByDay,
-  humanizeQueueJobStatus,
   queueDayBreakdown,
   queueJobSidecarPath,
   queueStatsBanner,
@@ -59,25 +65,25 @@ import { ActivityAudioPlayer } from "./activity/ActivityAudioPlayer";
 export const ACTIVITY_PAGE_SIZE = 50;
 export type ActivityView = "all" | "attention" | "resolved";
 
-function isAttentionOutcome(job: QueueJob): boolean {
-  return ["failed", "cancelled", "skipped"].includes(job.status);
-}
-
 export function filterActivityJobs(
   jobs: QueueJob[],
   view: ActivityView,
 ): QueueJob[] {
   if (view === "attention") {
-    return jobs.filter((job) => isAttentionOutcome(job) && job.is_read !== true);
+    return jobs.filter(
+      (job) => isActivityAttentionOutcome(job) && job.is_read !== true,
+    );
   }
   if (view === "resolved") {
-    return jobs.filter((job) => isAttentionOutcome(job) && job.is_read === true);
+    return jobs.filter(
+      (job) => isActivityAttentionOutcome(job) && job.is_read === true,
+    );
   }
   return jobs;
 }
 
 export function isReprocessableJob(job: QueueJob): boolean {
-  return isAttentionOutcome(job);
+  return isReprocessableActivityJob(job);
 }
 
 export function reprocessingModels(models: ModelDescriptor[]): ModelDescriptor[] {
@@ -197,6 +203,7 @@ export function QueuePanel({
   models,
   selectedModelId,
   canProcessTranscription,
+  nowMs,
   onImportAudioFiles,
   onEnqueueBacklog,
   onMarkAllRead,
@@ -212,6 +219,7 @@ export function QueuePanel({
   models: ModelDescriptor[];
   selectedModelId: string;
   canProcessTranscription: boolean;
+  nowMs: number;
   onImportAudioFiles: () => void;
   onEnqueueBacklog: () => void;
   onMarkAllRead: () => void;
@@ -240,6 +248,7 @@ export function QueuePanel({
   const pagination = activityPage(filteredJobs, requestedPage);
   const groupedJobs = groupQueueJobsByDay(pagination.jobs);
   const statsBanner = queueStatsBanner(queue);
+  const activeAttention = activityAttentionAt(queue.jobs, nowMs);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
   const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved").length;
   const availableReprocessingModels = reprocessingModels(models);
@@ -277,7 +286,8 @@ export function QueuePanel({
     activityView === "attention"
       ? {
           title: "No jobs need attention",
-          description: "New failed, cancelled, or skipped outcomes will appear here.",
+          description:
+            "New warnings, errors, cancelled, or skipped outcomes will appear here.",
         }
       : activityView === "resolved"
         ? {
@@ -369,7 +379,7 @@ export function QueuePanel({
         {statsBanner.map(({ status, label, count, title }) => (
           <div
             key={status}
-            data-tone={count > 0 ? queueStatsCellTone(status) : undefined}
+            data-tone={queueSummaryCellTone(status, count)}
             title={title || undefined}
           >
             <span>{label}</span>
@@ -610,10 +620,13 @@ export function QueuePanel({
                     const actions = queueJobActionState(job.status);
                     const retryReason = queueJobRetryDisabledReason(job.status);
                     const skipReason = queueJobSkipDisabledReason(job.status);
-                    const rowTone = queueJobStatusBadgeTone(job.status);
+                    const presentation = activityJobPresentation(job);
+                    const rowTone = presentation.primaryTone;
                     const sidecarPath = queueJobSidecarPath(job.audio_path, job.status);
                     const statusBadge = (
-                      <StatusBadge tone={queueJobStatusBadgeTone(job.status)}>{humanizeQueueJobStatus(job.status)}</StatusBadge>
+                      <StatusBadge tone={presentation.primaryTone}>
+                        {presentation.primaryLabel}
+                      </StatusBadge>
                     );
                     return (
                       <tr
@@ -653,12 +666,17 @@ export function QueuePanel({
                           ) : (
                             statusBadge
                           )}
-                          {job.error ? (
-                            <span className="queue-job__error overflow-wrap-anywhere" title={job.error}>
-                              {job.error}
+                          {presentation.issueLabel && presentation.issueTone ? (
+                            <StatusBadge tone={presentation.issueTone}>
+                              {presentation.issueLabel}
+                            </StatusBadge>
+                          ) : null}
+                          {presentation.message ? (
+                            <span className="queue-job__error overflow-wrap-anywhere" title={presentation.message}>
+                              {presentation.message}
                             </span>
                           ) : null}
-                          {job.is_read === true && isAttentionOutcome(job) ? (
+                          {job.is_read === true && isActivityAttentionOutcome(job) ? (
                             <span className="queue-job__resolution">
                               <CheckCheck aria-hidden="true" /> Resolved
                             </span>
@@ -759,4 +777,19 @@ export function QueuePanel({
       ) : null}
     </div>
   );
+
+  function queueSummaryCellTone(status: string, count: number) {
+    if (count === 0) {
+      return undefined;
+    }
+    if (status === "warning") {
+      return queue.jobs.some((job) => isRecentUnreadWarning(job, nowMs))
+        ? "warning"
+        : undefined;
+    }
+    if (status === "error") {
+      return activeAttention?.tone === "danger" ? "danger" : undefined;
+    }
+    return queueStatsCellTone(status);
+  }
 }

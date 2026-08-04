@@ -285,7 +285,12 @@ export function queueStatsBanner(
   };
   return QUEUE_STATS_BANNER_ORDER.map((status) => ({
     status,
-    label: humanizeQueueJobStatus(status),
+    label:
+      status === "warning"
+        ? "Warnings"
+        : status === "error"
+          ? "Errors"
+          : humanizeQueueJobStatus(status),
     count: counts[status],
     title: summarizeQueueJobsByDay(
       queue.jobs.filter((job) => jobMatchesBucket(job, status)),

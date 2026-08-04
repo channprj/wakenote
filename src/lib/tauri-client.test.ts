@@ -964,6 +964,48 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it("reprocesses completed warnings but rejects clean completed jobs", async () => {
+    await downloadModel("whisper-small");
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/reprocess-warning.wav",
+      "/tmp/imported/reprocess-clean.wav",
+    ]);
+    const warningJob = before.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/reprocess-warning.wav",
+    );
+    const cleanJob = before.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/reprocess-clean.wav",
+    );
+    if (warningJob) {
+      warningJob.status = "completed";
+      warningJob.issue = {
+        severity: "warning",
+        code: "transcript_artifact",
+        message: "Transcript may contain an artifact",
+        occurred_at: "2026-08-04T12:00:00.000Z",
+      };
+    }
+    if (cleanJob) {
+      cleanJob.status = "completed";
+    }
+
+    const reprocessed = await reprocessJobs(
+      [warningJob?.id ?? -1],
+      "whisper-small",
+    );
+    expect(
+      reprocessed.queue.jobs.find((job) => job.id === warningJob?.id),
+    ).toMatchObject({ status: "pending", issue: null, is_read: false });
+
+    const unchanged = await reprocessJobs(
+      [cleanJob?.id ?? -1],
+      "whisper-small",
+    );
+    expect(
+      unchanged.queue.jobs.find((job) => job.id === cleanJob?.id),
+    ).toMatchObject({ status: "completed" });
+  });
+
   it("removes selected browser Activity jobs through the Trash outcome contract", async () => {
     const before = await enqueueAudioFiles([
       "/tmp/imported/trash-selected.wav",
@@ -1205,18 +1247,26 @@ describe("tauri source capture client (browser fallback)", () => {
 });
 
 describe("Activity read state (browser fallback)", () => {
-  it("marks failed, cancelled, and skipped jobs read without changing active work", async () => {
+  it("marks issue outcomes including completed warnings read without changing active work", async () => {
     const before = await enqueueAudioFiles([
       "/tmp/imported/read-failed.wav",
       "/tmp/imported/read-cancelled.wav",
       "/tmp/imported/read-skipped.wav",
+      "/tmp/imported/read-completed-warning.wav",
       "/tmp/imported/keep-pending.wav",
     ]);
-    const statuses = ["failed", "cancelled", "skipped", "pending"] as const;
+    const statuses = [
+      "failed",
+      "cancelled",
+      "skipped",
+      "completed",
+      "pending",
+    ] as const;
     const paths = [
       "/tmp/imported/read-failed.wav",
       "/tmp/imported/read-cancelled.wav",
       "/tmp/imported/read-skipped.wav",
+      "/tmp/imported/read-completed-warning.wav",
       "/tmp/imported/keep-pending.wav",
     ];
     paths.forEach((audioPath, index) => {
@@ -1225,18 +1275,26 @@ describe("Activity read state (browser fallback)", () => {
       if (job) {
         job.status = statuses[index];
         job.is_read = false;
+        if (job.status === "completed") {
+          job.issue = {
+            severity: "warning",
+            code: "transcript_artifact",
+            message: "Transcript may contain an artifact",
+            occurred_at: "2026-08-04T12:00:00.000Z",
+          };
+        }
       }
     });
 
     const marked = await markAllActivityRead();
 
-    for (const audioPath of paths.slice(0, 3)) {
+    for (const audioPath of paths.slice(0, 4)) {
       expect(
         marked.queue.jobs.find((job) => job.audio_path === audioPath),
       ).toMatchObject({ is_read: true });
     }
     expect(
-      marked.queue.jobs.find((job) => job.audio_path === paths[3]),
+      marked.queue.jobs.find((job) => job.audio_path === paths[4]),
     ).toMatchObject({ status: "pending", is_read: false });
   });
 

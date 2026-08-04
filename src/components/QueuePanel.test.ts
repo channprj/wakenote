@@ -116,6 +116,32 @@ describe("Activity issue reprocessing", () => {
     },
   );
 
+  it("includes completed warnings but rejects clean completed jobs", () => {
+    const completedWarning: QueueJob = {
+      id: 1,
+      audio_path: "/warning.wav",
+      model_id: "old",
+      status: "completed",
+      issue: {
+        severity: "warning",
+        code: "transcript_artifact",
+        message: "Transcript may contain an artifact",
+        occurred_at: "2026-08-04T12:00:00.000Z",
+      },
+    };
+    const cleanCompleted: QueueJob = {
+      ...completedWarning,
+      id: 2,
+      issue: null,
+    };
+
+    expect(isReprocessableJob(completedWarning)).toBe(true);
+    expect(isReprocessableJob(cleanCompleted)).toBe(false);
+    expect(filterActivityJobs([completedWarning], "attention")).toEqual([
+      completedWarning,
+    ]);
+  });
+
   it("offers only ready file-transcription models and prefers the current model", () => {
     const models = [
       model("ready-file", "ready", ["file"]),

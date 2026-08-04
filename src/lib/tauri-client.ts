@@ -3,6 +3,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { normalizeDictationShortcut } from "./dictation-shortcut";
 import { modelSupportsContext } from "./models";
 import {
+  activityIssue,
+  isActivityAttentionOutcome,
+  isReprocessableActivityJob,
+} from "./activity-attention";
+import {
   audioMergeDefaultFileName,
   createAudioMergeOperationId,
   eligibleAudioMergeEntries,
@@ -332,7 +337,10 @@ function statusFrom(
     tray_state: deriveTrayState(
       mode,
       queue.running_count > 0,
-      queue.failed_count > 0,
+      queue.jobs.some(
+        (job) =>
+          job.is_read !== true && activityIssue(job)?.severity === "error",
+      ),
       activeCapture,
       isRecording,
     ),
@@ -1493,6 +1501,13 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
         ...job,
         status: "cancelled" as const,
         error: "cancelled by user",
+        issue: {
+          severity: "warning" as const,
+          code: "cancelled" as const,
+          message: "cancelled by user",
+          occurred_at: new Date().toISOString(),
+        },
+        is_read: false,
       };
     });
     if (!cancelled) {
@@ -1519,7 +1534,7 @@ export async function markAllActivityRead(): Promise<AppSnapshot> {
     const jobs = browserSnapshot.queue.jobs.map((job) => {
       if (
         job.is_read === true ||
-        !["failed", "cancelled", "skipped"].includes(job.status)
+        !isActivityAttentionOutcome(job)
       ) {
         return job;
       }
@@ -1597,7 +1612,12 @@ export async function processNextTranscription(): Promise<AppSnapshot> {
       }
 
       processedAudioPath = job.audio_path;
-      return { ...job, status: "completed" as const, error: null };
+      return {
+        ...job,
+        status: "completed" as const,
+        error: null,
+        issue: null,
+      };
     });
     if (processedAudioPath.length === 0) {
       return browserSnapshot;
@@ -1658,6 +1678,7 @@ export async function regenerateTranscript(
         model_id: regenerationModelId,
         status: "pending" as const,
         error: null,
+        issue: null,
       };
     });
     if (blocked) {
@@ -1671,6 +1692,7 @@ export async function regenerateTranscript(
         model_id: regenerationModelId,
         status: "pending",
         error: null,
+        issue: null,
       });
       changed = true;
     }
@@ -1723,7 +1745,7 @@ export async function reprocessJobs(
       selectedJobs.length !== selectedIds.size ||
       selectedJobs.some(
         (job) =>
-          !["failed", "cancelled", "skipped"].includes(job.status) ||
+          !isReprocessableActivityJob(job) ||
           !isBrowserImportableAudioPath(job.audio_path),
       )
     ) {
@@ -1739,6 +1761,7 @@ export async function reprocessJobs(
             model_id: modelId,
             status: "pending" as const,
             error: null,
+            issue: null,
             is_read: false,
             transcription_options: settings.transcription_options,
           }
@@ -2162,7 +2185,13 @@ export async function retryJob(id: number): Promise<AppSnapshot> {
       }
 
       retried = true;
-      return { ...job, status: "pending" as const, error: null };
+      return {
+        ...job,
+        status: "pending" as const,
+        error: null,
+        issue: null,
+        is_read: false,
+      };
     });
     if (!retried) {
       return browserSnapshot;
@@ -2198,6 +2227,12 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
         ...job,
         status: "skipped" as const,
         error: null,
+        issue: {
+          severity: "warning" as const,
+          code: "skipped" as const,
+          message: "Skipped",
+          occurred_at: new Date().toISOString(),
+        },
         is_read: false,
       };
     });

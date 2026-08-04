@@ -832,8 +832,8 @@ describe("transcript history helpers", () => {
       "Pending",
       "Skipped",
       "Running",
-      "Warning",
-      "Error",
+      "Warnings",
+      "Errors",
       "Cancelled",
       "Completed",
     ]);
