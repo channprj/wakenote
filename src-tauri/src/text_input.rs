@@ -1,31 +1,12 @@
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
-#[cfg(target_os = "macos")]
-use std::thread;
-#[cfg(target_os = "macos")]
-use std::time::Duration;
 
 #[cfg(target_os = "macos")]
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use enigo::{Enigo, Keyboard, Settings};
 #[cfg(target_os = "macos")]
-use objc2::rc::Retained;
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 #[cfg(target_os = "macos")]
-use objc2::runtime::ProtocolObject;
-#[cfg(target_os = "macos")]
-use objc2::{AnyThread, msg_send};
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{NSArray, NSData, NSString};
-
-#[cfg(target_os = "macos")]
-const fn macos_paste_keycode() -> u16 {
-    // kVK_ANSI_V. A shortcut must use the physical ANSI keycode instead of
-    // asking the active input source to translate the character "v". Enigo's
-    // character lookup falls back to keycode 0 (ANSI A) when translation
-    // fails, which turns Command+V into Command+A.
-    0x09
-}
+use objc2_foundation::NSString;
 
 pub fn should_type_transcript_text(text: &str) -> bool {
     !text.trim().is_empty()
@@ -64,130 +45,75 @@ pub fn auto_transcript_input_should_type(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClipboardAfterPaste {
+pub enum ClipboardAfterInput {
     KeepInputText,
-    RestorePrevious,
+    PreservePrevious,
 }
 
-pub const fn dictation_clipboard_after_paste(copy_to_clipboard: bool) -> ClipboardAfterPaste {
+pub const fn dictation_clipboard_after_input(copy_to_clipboard: bool) -> ClipboardAfterInput {
     if copy_to_clipboard {
-        ClipboardAfterPaste::KeepInputText
+        ClipboardAfterInput::KeepInputText
     } else {
-        ClipboardAfterPaste::RestorePrevious
+        ClipboardAfterInput::PreservePrevious
     }
 }
 
 pub fn type_text_into_focused_cursor(text: &str) -> Result<(), String> {
-    type_text_into_focused_cursor_with_clipboard(text, ClipboardAfterPaste::KeepInputText)
+    type_text_into_focused_cursor_with_clipboard(text, ClipboardAfterInput::KeepInputText)
 }
 
 pub fn type_text_into_focused_cursor_with_clipboard(
     text: &str,
-    clipboard_after_paste: ClipboardAfterPaste,
+    clipboard_after_input: ClipboardAfterInput,
 ) -> Result<(), String> {
     if !should_type_transcript_text(text) {
         return Ok(());
     }
 
-    type_text_into_focused_cursor_platform(text, clipboard_after_paste)
+    type_text_into_focused_cursor_platform(text, clipboard_after_input)
 }
 
-trait ClipboardPasteBackend {
-    type Snapshot;
-
-    fn snapshot_clipboard(&mut self) -> Result<Self::Snapshot, String>;
+trait TextInputBackend {
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String>;
-    fn can_paste(&self) -> bool;
-    fn request_paste_access(&mut self);
-    fn paste_clipboard(&mut self) -> Result<(), String>;
-    fn wait_for_paste(&mut self);
-    fn restore_clipboard(&mut self, snapshot: Self::Snapshot) -> Result<(), String>;
+    fn can_type(&self) -> bool;
+    fn request_type_access(&mut self);
+    fn type_text(&mut self, text: &str) -> Result<(), String>;
 }
 
-fn copy_and_paste_with_backend(
+fn input_text_with_backend(
     text: &str,
-    clipboard_after_paste: ClipboardAfterPaste,
-    backend: &mut impl ClipboardPasteBackend,
+    clipboard_after_input: ClipboardAfterInput,
+    backend: &mut impl TextInputBackend,
 ) -> Result<(), String> {
-    match clipboard_after_paste {
-        ClipboardAfterPaste::KeepInputText => {
+    match clipboard_after_input {
+        ClipboardAfterInput::KeepInputText => {
             backend.copy_to_clipboard(text)?;
-            if !backend.can_paste() {
-                backend.request_paste_access();
-                if !backend.can_paste() {
+            if !backend.can_type() {
+                backend.request_type_access();
+                if !backend.can_type() {
                     return Err(accessibility_permission_error().to_string());
                 }
             }
-            backend.paste_clipboard()
+            backend.type_text(text)
         }
-        ClipboardAfterPaste::RestorePrevious => {
-            if !backend.can_paste() {
-                backend.request_paste_access();
-                if !backend.can_paste() {
+        ClipboardAfterInput::PreservePrevious => {
+            if !backend.can_type() {
+                backend.request_type_access();
+                if !backend.can_type() {
                     return Err(accessibility_permission_preserving_clipboard_error().to_string());
                 }
             }
 
-            let snapshot = backend.snapshot_clipboard()?;
-            if let Err(copy_error) = backend.copy_to_clipboard(text) {
-                return restore_after_error(backend, snapshot, copy_error);
-            }
-            if let Err(paste_error) = backend.paste_clipboard() {
-                return restore_after_error(backend, snapshot, paste_error);
-            }
-            backend.wait_for_paste();
-            backend.restore_clipboard(snapshot)
+            backend.type_text(text)
         }
     }
 }
 
-fn restore_after_error<B: ClipboardPasteBackend>(
-    backend: &mut B,
-    snapshot: B::Snapshot,
-    operation_error: String,
-) -> Result<(), String> {
-    match backend.restore_clipboard(snapshot) {
-        Ok(()) => Err(operation_error),
-        Err(restore_error) => Err(format!(
-            "{operation_error}; restoring the previous clipboard also failed: {restore_error}"
-        )),
-    }
-}
+#[cfg(target_os = "macos")]
+struct MacTextInputBackend;
 
 #[cfg(target_os = "macos")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MacClipboardSnapshot {
-    items: Vec<Vec<(String, Vec<u8>)>>,
-}
-
-#[cfg(target_os = "macos")]
-struct MacClipboardPasteBackend;
-
-#[cfg(target_os = "macos")]
-impl ClipboardPasteBackend for MacClipboardPasteBackend {
-    type Snapshot = MacClipboardSnapshot;
-
-    fn snapshot_clipboard(&mut self) -> Result<Self::Snapshot, String> {
-        let pasteboard = NSPasteboard::generalPasteboard();
-        let mut snapshot = MacClipboardSnapshot { items: Vec::new() };
-        let Some(items) = pasteboard.pasteboardItems() else {
-            return Ok(snapshot);
-        };
-
-        for item in items.iter() {
-            let mut representations = Vec::new();
-            for pasteboard_type in item.types().iter() {
-                let data = item.dataForType(&pasteboard_type).ok_or_else(|| {
-                    format!("Could not read clipboard data of type {}", pasteboard_type)
-                })?;
-                representations.push((pasteboard_type.to_string(), data.to_vec()));
-            }
-            snapshot.items.push(representations);
-        }
-
-        Ok(snapshot)
-    }
-
+impl TextInputBackend for MacTextInputBackend {
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
         let pasteboard = NSPasteboard::generalPasteboard();
         let text = NSString::from_str(text);
@@ -198,15 +124,15 @@ impl ClipboardPasteBackend for MacClipboardPasteBackend {
         Ok(())
     }
 
-    fn can_paste(&self) -> bool {
+    fn can_type(&self) -> bool {
         crate::permissions::accessibility_access_is_granted()
     }
 
-    fn request_paste_access(&mut self) {
+    fn request_type_access(&mut self) {
         let _ = crate::permissions::request_accessibility_access();
     }
 
-    fn paste_clipboard(&mut self) -> Result<(), String> {
+    fn type_text(&mut self, text: &str) -> Result<(), String> {
         static INPUT: OnceLock<Mutex<Option<Enigo>>> = OnceLock::new();
         let mut input = INPUT
             .get_or_init(|| Mutex::new(None))
@@ -218,182 +144,155 @@ impl ClipboardPasteBackend for MacClipboardPasteBackend {
                     .map_err(|error| format!("Could not initialize native text input: {error}"))?,
             );
         }
-        let input = input.as_mut().expect("native text input initialized");
         input
-            .key(Key::Meta, Direction::Press)
-            .map_err(|error| format!("Could not press Command for Dictation paste: {error}"))?;
-        let paste_result = input
-            .raw(macos_paste_keycode(), Direction::Click)
-            .map_err(|error| format!("Could not press V for Dictation paste: {error}"));
-        let release_result = input
-            .key(Key::Meta, Direction::Release)
-            .map_err(|error| format!("Could not release Command after Dictation paste: {error}"));
-        paste_result.and(release_result)
-    }
-
-    fn wait_for_paste(&mut self) {
-        // The key event is delivered asynchronously. Keep the temporary text
-        // on the pasteboard long enough for the focused app to consume it.
-        thread::sleep(Duration::from_millis(120));
-    }
-
-    fn restore_clipboard(&mut self, snapshot: Self::Snapshot) -> Result<(), String> {
-        let pasteboard = NSPasteboard::generalPasteboard();
-        if snapshot.items.is_empty() {
-            pasteboard.clearContents();
-            return Ok(());
-        }
-
-        let mut items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> =
-            Vec::with_capacity(snapshot.items.len());
-        for representations in snapshot.items {
-            let item: Retained<NSPasteboardItem> =
-                unsafe { msg_send![NSPasteboardItem::alloc(), init] };
-            for (pasteboard_type, bytes) in representations {
-                let pasteboard_type = NSString::from_str(&pasteboard_type);
-                let data = NSData::with_bytes(&bytes);
-                if !item.setData_forType(&data, &pasteboard_type) {
-                    return Err(format!(
-                        "Could not restore clipboard data of type {pasteboard_type}"
-                    ));
-                }
-            }
-            items.push(ProtocolObject::from_retained(item));
-        }
-        let items = NSArray::from_retained_slice(&items);
-        pasteboard.clearContents();
-        if !pasteboard.writeObjects(&items) {
-            return Err("Could not restore the previous clipboard".to_string());
-        }
-        Ok(())
+            .as_mut()
+            .expect("native text input initialized")
+            .text(text)
+            .map_err(|error| format!("Could not type Dictation text: {error}"))
     }
 }
 
 #[cfg(target_os = "macos")]
 fn type_text_into_focused_cursor_platform(
     text: &str,
-    clipboard_after_paste: ClipboardAfterPaste,
+    clipboard_after_input: ClipboardAfterInput,
 ) -> Result<(), String> {
-    static CLIPBOARD_INPUT: OnceLock<Mutex<()>> = OnceLock::new();
-    let _operation = CLIPBOARD_INPUT
+    static TEXT_INPUT: OnceLock<Mutex<()>> = OnceLock::new();
+    let _operation = TEXT_INPUT
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .map_err(|error| format!("Could not lock the clipboard text input: {error}"))?;
-    copy_and_paste_with_backend(text, clipboard_after_paste, &mut MacClipboardPasteBackend)
+        .map_err(|error| format!("Could not lock the native text input: {error}"))?;
+    input_text_with_backend(text, clipboard_after_input, &mut MacTextInputBackend)
 }
 
 #[cfg(not(target_os = "macos"))]
 fn type_text_into_focused_cursor_platform(
     _text: &str,
-    _clipboard_after_paste: ClipboardAfterPaste,
+    _clipboard_after_input: ClipboardAfterInput,
 ) -> Result<(), String> {
     Err("automatic transcript input is only supported on macOS".to_string())
 }
 
 pub fn accessibility_permission_error() -> &'static str {
-    "The Dictation result was copied to the clipboard. WakeNote needs Accessibility permission to paste it. Open System Settings → Privacy & Security → Accessibility and enable WakeNote."
+    "The Dictation result was copied to the clipboard. WakeNote needs Accessibility permission to type it. Open System Settings → Privacy & Security → Accessibility and enable WakeNote."
 }
 
 pub fn accessibility_permission_preserving_clipboard_error() -> &'static str {
-    "WakeNote needs Accessibility permission to paste the Dictation result while preserving the clipboard. Open System Settings → Privacy & Security → Accessibility and enable WakeNote."
+    "WakeNote needs Accessibility permission to type the Dictation result while preserving the clipboard. Open System Settings → Privacy & Security → Accessibility and enable WakeNote."
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
-    struct NativeClipboardRestoreGuard(Option<MacClipboardSnapshot>);
-
-    #[cfg(target_os = "macos")]
-    impl Drop for NativeClipboardRestoreGuard {
-        fn drop(&mut self) {
-            if let Some(snapshot) = self.0.take() {
-                let _ = MacClipboardPasteBackend.restore_clipboard(snapshot);
-            }
-        }
-    }
-
     #[derive(Default)]
-    struct RecordingClipboardPasteBackend {
-        can_paste: bool,
+    struct RecordingTextInputBackend {
+        can_type: bool,
         grant_after_request: bool,
         copy_error: Option<String>,
-        paste_error: Option<String>,
-        restore_error: Option<String>,
+        type_error: Option<String>,
+        clipboard: String,
+        focused_text: String,
+        overwrite_before_input: Option<String>,
         events: Vec<String>,
     }
 
-    impl ClipboardPasteBackend for RecordingClipboardPasteBackend {
-        type Snapshot = String;
-
-        fn snapshot_clipboard(&mut self) -> Result<Self::Snapshot, String> {
-            self.events.push("snapshot".to_string());
-            Ok("previous clipboard".to_string())
-        }
-
+    impl TextInputBackend for RecordingTextInputBackend {
         fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
             self.events.push(format!("copy:{text}"));
             if let Some(error) = self.copy_error.clone() {
                 return Err(error);
             }
+            self.clipboard = text.to_string();
             Ok(())
         }
 
-        fn can_paste(&self) -> bool {
-            self.can_paste
+        fn can_type(&self) -> bool {
+            self.can_type
         }
 
-        fn request_paste_access(&mut self) {
+        fn request_type_access(&mut self) {
             self.events.push("request-access".to_string());
-            self.can_paste = self.grant_after_request;
+            self.can_type = self.grant_after_request;
         }
 
-        fn paste_clipboard(&mut self) -> Result<(), String> {
-            self.events.push("paste".to_string());
-            if let Some(error) = self.paste_error.clone() {
+        fn type_text(&mut self, text: &str) -> Result<(), String> {
+            self.events.push(format!("type:{text}"));
+            if let Some(error) = self.type_error.clone() {
                 return Err(error);
             }
-            Ok(())
-        }
-
-        fn wait_for_paste(&mut self) {
-            self.events.push("wait-for-paste".to_string());
-        }
-
-        fn restore_clipboard(&mut self, snapshot: Self::Snapshot) -> Result<(), String> {
-            self.events.push(format!("restore:{snapshot}"));
-            if let Some(error) = self.restore_error.clone() {
-                return Err(error);
+            if let Some(clipboard) = self.overwrite_before_input.take() {
+                self.clipboard = clipboard;
             }
+            self.focused_text.push_str(text);
             Ok(())
         }
     }
 
     #[test]
-    fn dictation_copies_transcript_before_pasting() {
-        let mut backend = RecordingClipboardPasteBackend {
-            can_paste: true,
+    fn dictation_copies_transcript_before_typing() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
             ..Default::default()
         };
 
-        copy_and_paste_with_backend(
+        input_text_with_backend(
             "마이크 테스트",
-            ClipboardAfterPaste::KeepInputText,
+            ClipboardAfterInput::KeepInputText,
             &mut backend,
         )
-        .expect("clipboard paste");
+        .expect("dictation input");
 
-        assert_eq!(backend.events, ["copy:마이크 테스트", "paste"]);
+        assert_eq!(backend.events, ["copy:마이크 테스트", "type:마이크 테스트"]);
+        assert_eq!(backend.clipboard, "마이크 테스트");
+        assert_eq!(backend.focused_text, "마이크 테스트");
     }
 
     #[test]
-    fn denied_paste_access_still_leaves_transcript_on_clipboard() {
-        let mut backend = RecordingClipboardPasteBackend::default();
+    fn dictation_copy_mode_inserts_transcript_even_if_clipboard_changes_before_delivery() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
+            clipboard: "existing clipboard".to_string(),
+            overwrite_before_input: Some("existing clipboard".to_string()),
+            ..Default::default()
+        };
 
-        let error = copy_and_paste_with_backend(
+        input_text_with_backend(
+            "새 디테이션 결과",
+            ClipboardAfterInput::KeepInputText,
+            &mut backend,
+        )
+        .expect("dictation input");
+
+        assert_eq!(backend.focused_text, "새 디테이션 결과");
+    }
+
+    #[test]
+    fn dictation_preserve_mode_inserts_transcript_even_if_clipboard_changes_before_delivery() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
+            clipboard: "existing clipboard".to_string(),
+            overwrite_before_input: Some("existing clipboard".to_string()),
+            ..Default::default()
+        };
+
+        input_text_with_backend(
+            "새 디테이션 결과",
+            ClipboardAfterInput::PreservePrevious,
+            &mut backend,
+        )
+        .expect("dictation input");
+
+        assert_eq!(backend.focused_text, "새 디테이션 결과");
+    }
+
+    #[test]
+    fn denied_type_access_still_leaves_transcript_on_clipboard() {
+        let mut backend = RecordingTextInputBackend::default();
+
+        let error = input_text_with_backend(
             "clipboard fallback",
-            ClipboardAfterPaste::KeepInputText,
+            ClipboardAfterInput::KeepInputText,
             &mut backend,
         )
         .expect_err("denied");
@@ -408,115 +307,108 @@ mod tests {
     }
 
     #[test]
-    fn restore_mode_pastes_then_restores_the_previous_clipboard() {
-        let mut backend = RecordingClipboardPasteBackend {
-            can_paste: true,
+    fn preserve_mode_types_without_touching_the_clipboard() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
+            clipboard: "previous clipboard".to_string(),
             ..Default::default()
         };
 
-        copy_and_paste_with_backend(
+        input_text_with_backend(
             "temporary text",
-            ClipboardAfterPaste::RestorePrevious,
+            ClipboardAfterInput::PreservePrevious,
             &mut backend,
         )
-        .expect("clipboard paste");
+        .expect("dictation input");
 
-        assert_eq!(
-            backend.events,
-            [
-                "snapshot",
-                "copy:temporary text",
-                "paste",
-                "wait-for-paste",
-                "restore:previous clipboard",
-            ]
-        );
+        assert_eq!(backend.events, ["type:temporary text"]);
+        assert_eq!(backend.clipboard, "previous clipboard");
+        assert_eq!(backend.focused_text, "temporary text");
     }
 
     #[test]
-    fn denied_restore_mode_does_not_touch_the_clipboard() {
-        let mut backend = RecordingClipboardPasteBackend::default();
+    fn denied_preserve_mode_does_not_touch_the_clipboard() {
+        let mut backend = RecordingTextInputBackend {
+            clipboard: "previous clipboard".to_string(),
+            ..Default::default()
+        };
 
-        let error = copy_and_paste_with_backend(
+        let error = input_text_with_backend(
             "temporary text",
-            ClipboardAfterPaste::RestorePrevious,
+            ClipboardAfterInput::PreservePrevious,
             &mut backend,
         )
         .expect_err("denied");
 
         assert_eq!(backend.events, ["request-access"]);
+        assert_eq!(backend.clipboard, "previous clipboard");
         assert_eq!(error, accessibility_permission_preserving_clipboard_error());
     }
 
     #[test]
-    fn restore_mode_recovers_the_clipboard_after_copy_failure() {
-        let mut backend = RecordingClipboardPasteBackend {
-            can_paste: true,
+    fn copy_mode_stops_before_typing_when_clipboard_write_fails() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
             copy_error: Some("copy failed".to_string()),
             ..Default::default()
         };
 
-        let error = copy_and_paste_with_backend(
+        let error = input_text_with_backend(
             "temporary text",
-            ClipboardAfterPaste::RestorePrevious,
+            ClipboardAfterInput::KeepInputText,
             &mut backend,
         )
         .expect_err("copy failure");
 
-        assert_eq!(
-            backend.events,
-            [
-                "snapshot",
-                "copy:temporary text",
-                "restore:previous clipboard",
-            ]
-        );
+        assert_eq!(backend.events, ["copy:temporary text"]);
+        assert!(backend.focused_text.is_empty());
         assert_eq!(error, "copy failed");
     }
 
     #[test]
-    fn restore_mode_recovers_the_clipboard_after_paste_failure() {
-        let mut backend = RecordingClipboardPasteBackend {
-            can_paste: true,
-            paste_error: Some("paste failed".to_string()),
+    fn copy_mode_keeps_transcript_on_clipboard_when_direct_input_fails() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
+            type_error: Some("input failed".to_string()),
             ..Default::default()
         };
 
-        let error = copy_and_paste_with_backend(
+        let error = input_text_with_backend(
             "temporary text",
-            ClipboardAfterPaste::RestorePrevious,
+            ClipboardAfterInput::KeepInputText,
             &mut backend,
         )
-        .expect_err("paste failure");
+        .expect_err("input failure");
 
         assert_eq!(
             backend.events,
-            [
-                "snapshot",
-                "copy:temporary text",
-                "paste",
-                "restore:previous clipboard",
-            ]
+            ["copy:temporary text", "type:temporary text"]
         );
-        assert_eq!(error, "paste failed");
+        assert_eq!(backend.clipboard, "temporary text");
+        assert!(backend.focused_text.is_empty());
+        assert_eq!(error, "input failed");
     }
 
     #[test]
-    fn restore_failure_is_reported_after_a_successful_paste() {
-        let mut backend = RecordingClipboardPasteBackend {
-            can_paste: true,
-            restore_error: Some("restore failed".to_string()),
+    fn preserve_mode_keeps_existing_clipboard_when_direct_input_fails() {
+        let mut backend = RecordingTextInputBackend {
+            can_type: true,
+            type_error: Some("input failed".to_string()),
+            clipboard: "previous clipboard".to_string(),
             ..Default::default()
         };
 
-        let error = copy_and_paste_with_backend(
+        let error = input_text_with_backend(
             "temporary text",
-            ClipboardAfterPaste::RestorePrevious,
+            ClipboardAfterInput::PreservePrevious,
             &mut backend,
         )
-        .expect_err("restore failure");
+        .expect_err("input failure");
 
-        assert_eq!(error, "restore failed");
+        assert_eq!(backend.events, ["type:temporary text"]);
+        assert_eq!(backend.clipboard, "previous clipboard");
+        assert!(backend.focused_text.is_empty());
+        assert_eq!(error, "input failed");
     }
 
     #[test]
@@ -535,92 +427,13 @@ mod tests {
     #[test]
     fn dictation_clipboard_setting_maps_to_the_requested_final_state() {
         assert_eq!(
-            dictation_clipboard_after_paste(true),
-            ClipboardAfterPaste::KeepInputText
+            dictation_clipboard_after_input(true),
+            ClipboardAfterInput::KeepInputText
         );
         assert_eq!(
-            dictation_clipboard_after_paste(false),
-            ClipboardAfterPaste::RestorePrevious
+            dictation_clipboard_after_input(false),
+            ClipboardAfterInput::PreservePrevious
         );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn paste_shortcut_uses_layout_independent_ansi_v_keycode() {
-        assert_eq!(macos_paste_keycode(), 0x09);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "mutates the live macOS pasteboard and restores it before returning"]
-    fn macos_pasteboard_snapshot_round_trip_preserves_items_and_types() {
-        let mut backend = MacClipboardPasteBackend;
-        let original = backend.snapshot_clipboard().expect("original clipboard");
-        let _restore_original = NativeClipboardRestoreGuard(Some(original.clone()));
-        let expected = MacClipboardSnapshot {
-            items: vec![
-                vec![
-                    (
-                        "com.wakenote.test.first".to_string(),
-                        b"first representation".to_vec(),
-                    ),
-                    (
-                        "com.wakenote.test.second".to_string(),
-                        vec![0, 1, 2, 3, 255],
-                    ),
-                ],
-                vec![(
-                    "com.wakenote.test.third".to_string(),
-                    b"second item".to_vec(),
-                )],
-            ],
-        };
-
-        backend
-            .restore_clipboard(expected.clone())
-            .expect("write test clipboard");
-        let snapshot = backend
-            .snapshot_clipboard()
-            .expect("snapshot test clipboard");
-        backend
-            .copy_to_clipboard("temporary Dictation text")
-            .expect("replace clipboard");
-        backend
-            .restore_clipboard(snapshot)
-            .expect("restore test clipboard");
-
-        assert_eq!(
-            backend.snapshot_clipboard().expect("restored clipboard"),
-            expected
-        );
-        backend
-            .restore_clipboard(original.clone())
-            .expect("restore original clipboard");
-        assert_eq!(
-            backend
-                .snapshot_clipboard()
-                .expect("original clipboard restored"),
-            original
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "mutates the live macOS pasteboard and restores it before returning"]
-    fn macos_pasteboard_copy_preserves_unicode_text_without_a_utf8_locale() {
-        let mut backend = MacClipboardPasteBackend;
-        let original = backend.snapshot_clipboard().expect("original clipboard");
-        let _restore_original = NativeClipboardRestoreGuard(Some(original));
-        let expected = "한글 Dictation 테스트";
-
-        backend
-            .copy_to_clipboard(expected)
-            .expect("copy Unicode Dictation text");
-
-        let actual = NSPasteboard::generalPasteboard()
-            .stringForType(unsafe { NSPasteboardTypeString })
-            .expect("plain-text clipboard representation");
-        assert_eq!(actual.to_string(), expected);
     }
 
     #[test]

@@ -1400,12 +1400,12 @@ fn type_dictation_text_on_main_thread(
 ) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        let clipboard_after_paste = wakenote::text_input::dictation_clipboard_after_paste(
+        let clipboard_after_input = wakenote::text_input::dictation_clipboard_after_input(
             settings.dictation_copy_to_clipboard,
         );
         if let Err(error) = wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
             &text,
-            clipboard_after_paste,
+            clipboard_after_input,
         ) {
             show_dictation_error(&app_for_task, error);
             return;
