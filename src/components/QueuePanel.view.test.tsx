@@ -118,5 +118,6 @@ describe("QueuePanel compact layout", () => {
     expect(markup).toContain('aria-label="Show in Finder: 010203.m4a"');
     expect(markup).toContain('aria-label="Play audio: 010204.wav"');
     expect(markup).toContain('aria-label="Show in Finder: 010204.wav"');
+    expect(markup).toContain("<th>Actions</th>");
   });
 });

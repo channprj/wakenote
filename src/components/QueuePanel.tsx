@@ -488,7 +488,7 @@ export function QueuePanel({
               <th>Audio</th>
               <th>Model</th>
               <th>Status</th>
-              <th>Action</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -580,7 +580,7 @@ export function QueuePanel({
                           <div className="row-actions">
                             <Button
                               aria-label={`Play audio: ${audioPathBasename(job.audio_path)}`}
-                              aria-pressed={playingJob?.id === job.id}
+                              data-active={playingJob?.id === job.id || undefined}
                               onClick={() => setPlayingJob(job)}
                               size="icon"
                               title="Play audio"
