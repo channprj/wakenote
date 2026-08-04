@@ -44,7 +44,7 @@ use crate::settings::{
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
     FallbackTranscriber, RuntimeTranscriber, Transcriber, TranscriptionJobOutcome,
-    TranscriptionWorker, TranscriptionWorkerOptions, apply_outcome,
+    TranscriptionWorker, TranscriptionWorkerOptions, apply_outcome, model_supports_live_partials,
 };
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
@@ -3509,6 +3509,47 @@ pub fn model_registry_snapshot(
         .collect();
     models.sort_by(|left, right| left.id.cmp(&right.id));
     models
+}
+
+pub fn live_preview_model_id(
+    settings: &AppSettings,
+    models: &[ModelDescriptor],
+    model_directory: impl AsRef<Path>,
+) -> Option<String> {
+    let is_ready = |model: &ModelDescriptor| {
+        matches!(
+            model.status,
+            ModelStatus::Ready | ModelStatus::Installed | ModelStatus::Unloaded
+        )
+    };
+    if let Some(selected) = models
+        .iter()
+        .find(|model| model.id == settings.selected_model)
+        .filter(|model| is_ready(model))
+        .filter(|model| {
+            model.id == "openai-gpt-live-transcribe"
+                || (model.provider_runtime == "whisper-rs"
+                    && model_supports_live_partials(&model_directory, &model.id))
+        })
+    {
+        return Some(selected.id.clone());
+    }
+
+    let mut candidates = models
+        .iter()
+        .filter(|model| model.offline)
+        .filter(|model| model.provider_runtime == "whisper-rs")
+        .filter(|model| is_ready(model))
+        .filter(|model| model_supports_live_partials(&model_directory, &model.id))
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .speed_score
+            .cmp(&left.speed_score)
+            .then_with(|| right.accuracy_score.cmp(&left.accuracy_score))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    candidates.first().map(|model| model.id.clone())
 }
 
 pub fn derive_mode(settings: &AppSettings) -> AppMode {

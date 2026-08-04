@@ -7,7 +7,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { newestTranscriptTextEntries } from "@/lib/live-transcripts";
+import { newestLiveTranscriptEntries } from "@/lib/live-transcripts";
 import {
   appendRecentAge,
   fileUrlFromPath,
@@ -35,7 +35,7 @@ export function LiveTranscriptList({
   liveActive: boolean;
   now?: Date;
 }) {
-  const visibleEntries = newestTranscriptTextEntries(entries);
+  const visibleEntries = newestLiveTranscriptEntries(entries);
 
   if (visibleEntries.length === 0) {
     return (
@@ -96,6 +96,12 @@ function labelForEntry(entry: TranscriptEntry): ReactNode {
 }
 
 function textForEntry(entry: TranscriptEntry, now: Date): string {
+  if (entry.status === "listening" && !entry.text.trim()) {
+    return "Waiting for speech";
+  }
+  if (entry.status === "failed" && !entry.text.trim()) {
+    return "Final transcript needs review";
+  }
   if (entry.status !== "final") {
     return entry.text;
   }

@@ -91,4 +91,35 @@ describe("LiveTranscriptList", () => {
     expect(markup).toContain("No speech captured yet");
     expect(markup).not.toContain("data-status=");
   });
+
+  it("shows an empty listening lifecycle row while waiting for speech", () => {
+    const markup = renderToStaticMarkup(
+      <LiveTranscriptList
+        entries={[entry({ status: "listening", text: "" })]}
+        liveActive
+      />,
+    );
+
+    expect(markup).toContain('<li data-status="listening">');
+    expect(markup).toContain("Listening");
+    expect(markup).toContain("Waiting for speech");
+  });
+
+  it("keeps the last preview visible when finalization needs review", () => {
+    const markup = renderToStaticMarkup(
+      <LiveTranscriptList
+        entries={[
+          entry({
+            status: "failed",
+            text: "last useful preview",
+            error: "final pass failed",
+          }),
+        ]}
+        liveActive
+      />,
+    );
+
+    expect(markup).toContain("Review");
+    expect(markup).toContain("last useful preview");
+  });
 });

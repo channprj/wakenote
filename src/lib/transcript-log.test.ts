@@ -105,9 +105,30 @@ describe("reduceTranscriptLog", () => {
 
     expect(entries[0]).toMatchObject({
       chunk_id: 3,
-      status: "partial",
+      status: "queued",
       text: "한국어 회의 내용을 실시간으로 표시합니다.",
       audio_path: "/tmp/3.m4a",
+    });
+  });
+
+  it("ignores late partials after failure and retains the last preview text", () => {
+    const entries = apply([
+      { type: "started", chunk_id: 4, started_at: "2026-05-09T08:00:00Z" },
+      { type: "partial", chunk_id: 4, text: "last useful preview" },
+      { type: "committed", chunk_id: 4, audio_path: "/tmp/4.m4a" },
+      {
+        type: "failed",
+        chunk_id: 4,
+        audio_path: "/tmp/4.m4a",
+        error: "final pass failed",
+      },
+      { type: "partial", chunk_id: 4, text: "stale partial" },
+    ]);
+
+    expect(entries[0]).toMatchObject({
+      status: "failed",
+      text: "last useful preview",
+      error: "final pass failed",
     });
   });
 

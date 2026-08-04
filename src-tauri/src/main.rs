@@ -29,7 +29,7 @@ use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
     AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
     MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
-    TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio,
+    TrayMenuPresentation, TrayRuntimePresentation, TrayState, UploadedAudio, live_preview_model_id,
     main_window_close_action, microphone_devices_from_input_devices,
     open_containing_folder_request, recorded_at_for_audio_path,
     refresh_transcript_day_index_for_recording_path, reveal_save_folder_request,
@@ -3931,13 +3931,15 @@ fn start_live_capture_runtime(
     // first utterance produces captions immediately instead of being dropped
     // while the model loads. Best-effort — a failure just falls back to the
     // original lazy load on the first partial request.
-    if let (Some(transcriber_state), Some(model_id)) = (
-        app.try_state::<LiveTranscriberState>(),
-        backend_state
-            .lock()
-            .ok()
-            .map(|backend| backend.settings().selected_model),
-    ) && let Ok(slot) = transcriber_state.lock()
+    let preview_model = backend_state.lock().ok().and_then(|backend| {
+        let settings = backend.settings();
+        let models = backend.model_registry();
+        live_preview_model_id(&settings, &models, &settings.model_directory)
+            .filter(|model_id| model_supports_live_partials(&settings.model_directory, model_id))
+    });
+    if let (Some(transcriber_state), Some(model_id)) =
+        (app.try_state::<LiveTranscriberState>(), preview_model)
+        && let Ok(slot) = transcriber_state.lock()
         && let Some(service) = slot.as_ref()
     {
         service.preload(model_id);
@@ -5351,7 +5353,26 @@ fn wire_live_transcription(
             sample_rate,
             samples,
         } => {
-            if model_id == "openai-gpt-live-transcribe" {
+            let preview_model_id = app_for_handler
+                .try_state::<BackendState>()
+                .and_then(|state| {
+                    state.lock().ok().and_then(|backend| {
+                        let mut settings = backend.settings();
+                        settings.selected_model = model_id.clone();
+                        live_preview_model_id(
+                            &settings,
+                            &backend.model_registry(),
+                            &model_directory_for_handler,
+                        )
+                    })
+                });
+            let Some(preview_model_id) = preview_model_id else {
+                eprintln!(
+                    "[wakenote] handler: no ready live preview model for final model={model_id}"
+                );
+                return;
+            };
+            if preview_model_id == "openai-gpt-live-transcribe" {
                 let (dictionary, credentials) = app_for_handler
                     .try_state::<BackendState>()
                     .and_then(|state| {
@@ -5368,7 +5389,7 @@ fn wire_live_transcription(
                     source_label,
                     microphone_slot,
                     chunk_id,
-                    model_id,
+                    model_id: preview_model_id,
                     language,
                     dictionary,
                     sample_rate,
@@ -5377,12 +5398,14 @@ fn wire_live_transcription(
                 });
                 return;
             }
-            if !model_supports_live_partials(&model_directory_for_handler, &model_id) {
-                eprintln!("[wakenote] handler: skip live partial for non-whisper model={model_id}");
+            if !model_supports_live_partials(&model_directory_for_handler, &preview_model_id) {
+                eprintln!(
+                    "[wakenote] handler: skip unsupported live preview model={preview_model_id} final_model={model_id}"
+                );
                 return;
             }
             eprintln!(
-                "[wakenote] handler: submit live partial chunk_id={chunk_id} model={model_id} samples={} rate={sample_rate}",
+                "[wakenote] handler: submit live partial chunk_id={chunk_id} preview_model={preview_model_id} final_model={model_id} samples={} rate={sample_rate}",
                 samples.len()
             );
             service_for_handler.submit(LivePartialRequest {
@@ -5390,7 +5413,7 @@ fn wire_live_transcription(
                 source_label,
                 microphone_slot,
                 chunk_id,
-                model_id,
+                model_id: preview_model_id,
                 language,
                 suppress_low_confidence_transcripts,
                 dictionary: app_for_handler

@@ -34,6 +34,7 @@ import {
 import { humanizeTrayState } from "@/lib/transcript-history";
 import type { TranscriptEntry } from "@/lib/transcript-log";
 import type { AppSettings, AppSnapshot } from "@/lib/types";
+import { livePreviewPresentation } from "@/lib/live-transcripts";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Onboarding } from "@/components/Onboarding";
 import { LiveTranscriptList } from "./LiveTranscriptList";
@@ -73,6 +74,10 @@ export function CapturePage({
   const startReason = startLiveCaptureDisabledReason(settings, status, input.canStart);
   const stopReason = stopLiveCaptureDisabledReason(status);
   const presentation = captureStatusPresentation(snapshot);
+  const previewPresentation = livePreviewPresentation(
+    settings.selected_model,
+    snapshot.models,
+  );
   const waveformState: RecorderWaveformState = recording
     ? "recording"
     : waveform.phase === "decaying"
@@ -181,7 +186,7 @@ export function CapturePage({
       <Card size="sm" data-slot="live-transcript-card" className="live-transcript-card">
         <CardHeader>
           <CardTitle>Live transcript</CardTitle>
-          <CardDescription>The latest three decoded phrases.</CardDescription>
+          <CardDescription>{previewPresentation.description}</CardDescription>
         </CardHeader>
         <CardContent>
           <LiveTranscriptList

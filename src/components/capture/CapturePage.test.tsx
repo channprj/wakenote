@@ -76,4 +76,35 @@ describe("CapturePage", () => {
       LONG_CONTENT.korean,
     );
   });
+
+  it("explains when live text is provisional and final transcription stays selected", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.selected_model = "qwen3-asr-1.7b";
+    snapshot.status.active_model = "qwen3-asr-1.7b";
+    snapshot.models.find((model) => model.id === "qwen3-asr-1.7b")!.status =
+      "ready";
+    snapshot.models.find((model) => model.id === "whisper-turbo")!.status =
+      "ready";
+
+    const markup = renderCapture(snapshot);
+
+    expect(markup).toContain(
+      "Live preview uses Whisper Turbo; final transcription remains Qwen3-ASR 1.7B.",
+    );
+  });
+
+  it("explains final-only waiting when no preview model is ready", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.selected_model = "openrouter-qwen3-asr-flash";
+    snapshot.status.active_model = "openrouter-qwen3-asr-flash";
+    snapshot.models.find(
+      (model) => model.id === "openrouter-qwen3-asr-flash",
+    )!.status = "ready";
+
+    const markup = renderCapture(snapshot);
+
+    expect(markup).toContain(
+      "Live preview waits for a compatible model; final transcription uses OpenRouter · Qwen3 ASR Flash.",
+    );
+  });
 });

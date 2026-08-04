@@ -94,15 +94,23 @@ export function reduceTranscriptLog(
         if (entry.status === "final" || entry.status === "failed") {
           return entry;
         }
-        return { ...entry, status: "partial", text: event.text };
+        return {
+          ...entry,
+          status: entry.status === "queued" ? "queued" : "partial",
+          text: event.text,
+        };
       });
 
     case "committed":
-      return updateEntry(entries, event, (entry) => ({
-        ...entry,
-        status: entry.status === "final" ? entry.status : "queued",
-        audio_path: event.audio_path,
-      }));
+      return updateEntry(entries, event, (entry) =>
+        entry.status === "final" || entry.status === "failed"
+          ? entry
+          : {
+              ...entry,
+              status: "queued",
+              audio_path: event.audio_path,
+            },
+      );
 
     case "final":
       return updateOrAppendByAudio(

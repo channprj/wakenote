@@ -7,15 +7,16 @@ use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
-    audio_playback_content_type, main_window_close_action, microphone_devices_from_input_devices,
-    open_containing_folder_request, reveal_save_folder_request, tray_icon_image_for_presentation,
-    tray_menu_presentation, tray_presentation_for_state, tray_runtime_presentation,
-    validate_audio_playback_file, with_live_runtime_warning, with_runtime_warning,
+    audio_playback_content_type, live_preview_model_id, main_window_close_action,
+    microphone_devices_from_input_devices, open_containing_folder_request,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
+    with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::debug_log::debug_log_path_for;
 use wakenote::live_capture::AudioFrame;
 use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
-use wakenote::models::{ModelStatus, ModelStore};
+use wakenote::models::{ModelStatus, ModelStore, default_model_registry};
 use wakenote::queue::QueueJobStatus;
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
@@ -32,6 +33,77 @@ fn epoch_local_path_parts() -> (String, String) {
         local.format("%Y%m%d").to_string(),
         local.format("%H%M%S").to_string(),
     )
+}
+
+#[test]
+fn live_preview_model_prefers_speed_then_accuracy_then_id_without_mutating_final_identity() {
+    let mut registry = default_model_registry();
+    let mut selected = registry.remove("qwen3-asr-1.7b").expect("selected model");
+    selected.status = ModelStatus::Ready;
+    let mut alpha = registry.remove("whisper-small").expect("whisper small");
+    alpha.id = "whisper-alpha".to_string();
+    alpha.display_name = "Whisper Alpha".to_string();
+    alpha.speed_score = 9;
+    alpha.accuracy_score = 8;
+    alpha.status = ModelStatus::Ready;
+    let mut beta = alpha.clone();
+    beta.id = "whisper-beta".to_string();
+    beta.display_name = "Whisper Beta".to_string();
+    let mut accurate = alpha.clone();
+    accurate.id = "whisper-accurate".to_string();
+    accurate.display_name = "Whisper Accurate".to_string();
+    accurate.accuracy_score = 9;
+    let models = vec![selected, beta, alpha, accurate];
+    let settings = wakenote::settings::AppSettings {
+        selected_model: "qwen3-asr-1.7b".to_string(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        live_preview_model_id(&settings, &models, "/tmp/missing-model-directory"),
+        Some("whisper-accurate".to_string())
+    );
+    assert_eq!(settings.selected_model, "qwen3-asr-1.7b");
+
+    let tied = models
+        .into_iter()
+        .filter(|model| model.id != "whisper-accurate")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        live_preview_model_id(&settings, &tied, "/tmp/missing-model-directory"),
+        Some("whisper-alpha".to_string())
+    );
+}
+
+#[test]
+fn live_preview_model_fallback_does_not_change_queued_final_model() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = tmp.path().join("capture.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio");
+    let mut backend = AppBackend::default();
+    let queued = backend.enqueue_audio_file(&audio_path, Some("qwen3-asr-1.7b".to_string()));
+    let mut registry = default_model_registry();
+    let mut selected = registry.remove("qwen3-asr-1.7b").expect("selected model");
+    selected.status = ModelStatus::Ready;
+    let mut preview = registry.remove("whisper-small").expect("preview model");
+    preview.status = ModelStatus::Ready;
+    let settings = wakenote::settings::AppSettings {
+        selected_model: "qwen3-asr-1.7b".to_string(),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        live_preview_model_id(
+            &settings,
+            &[selected, preview],
+            "/tmp/missing-model-directory",
+        ),
+        Some("whisper-small".to_string())
+    );
+    assert_eq!(
+        queued.jobs.last().expect("queued job").model_id,
+        "qwen3-asr-1.7b"
+    );
 }
 
 #[derive(Clone)]
