@@ -325,6 +325,13 @@ impl TranscriptionQueue {
         &mut self.jobs
     }
 
+    pub fn remove_jobs(&mut self, ids: &[u64]) -> usize {
+        let ids = ids.iter().copied().collect::<HashSet<_>>();
+        let before = self.jobs.len();
+        self.jobs.retain(|job| !ids.contains(&job.id));
+        before - self.jobs.len()
+    }
+
     pub fn prune_completed_history(&mut self, max_completed: usize) -> bool {
         let completed_count = self
             .jobs

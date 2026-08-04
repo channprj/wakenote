@@ -1361,6 +1361,100 @@ fn backend_reprocess_jobs_rejects_an_invalid_batch_without_mutating_the_queue() 
 }
 
 #[test]
+fn backend_removes_only_jobs_whose_audio_reached_trash_or_was_already_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let trashed_audio = tmp.path().join("trashed.wav");
+    let failed_audio = tmp.path().join("failed.wav");
+    let missing_audio = tmp.path().join("missing.wav");
+    for path in [&trashed_audio, &failed_audio, &missing_audio] {
+        std::fs::write(path, b"audio").expect("audio fixture");
+    }
+    let mut backend = AppBackend::default();
+    let trashed_id = backend
+        .enqueue_audio_file(&trashed_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == trashed_audio)
+        .expect("trashed job")
+        .id;
+    let failed_id = backend
+        .enqueue_audio_file(&failed_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == failed_audio)
+        .expect("failed job")
+        .id;
+    let missing_id = backend
+        .enqueue_audio_file(&missing_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == missing_audio)
+        .expect("missing job")
+        .id;
+    std::fs::remove_file(&missing_audio).expect("remove missing fixture");
+
+    let outcome = backend
+        .trash_activity_jobs_with(
+            vec![trashed_id, failed_id, missing_id, trashed_id],
+            |path| {
+                if path == failed_audio {
+                    return Err("Trash is unavailable".to_string());
+                }
+                std::fs::remove_file(path).map_err(|error| error.to_string())
+            },
+        )
+        .expect("valid batch");
+
+    assert_eq!(outcome.removed_ids, vec![trashed_id, missing_id]);
+    assert_eq!(outcome.trashed_ids, vec![trashed_id]);
+    assert_eq!(outcome.missing_ids, vec![missing_id]);
+    assert_eq!(outcome.failures.len(), 1);
+    assert_eq!(outcome.failures[0].id, failed_id);
+    assert_eq!(outcome.failures[0].audio_path, failed_audio);
+    assert_eq!(outcome.failures[0].error, "Trash is unavailable");
+    assert_eq!(outcome.queue.jobs.len(), 1);
+    assert_eq!(outcome.queue.jobs[0].id, failed_id);
+    assert!(failed_audio.exists());
+    assert!(!trashed_audio.exists());
+}
+
+#[test]
+fn backend_rejects_a_running_job_before_moving_any_audio_to_trash() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let audio_path = tmp.path().join("running.wav");
+    std::fs::write(&audio_path, b"audio").expect("audio fixture");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let job_id = backend
+        .enqueue_audio_file(&audio_path, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == audio_path)
+        .expect("running job")
+        .id;
+    backend
+        .start_next_transcription_job()
+        .expect("start transcription job");
+    let before = backend.queue_snapshot();
+
+    let error = backend
+        .trash_activity_jobs_with(vec![job_id], |path| {
+            std::fs::remove_file(path).map_err(|error| error.to_string())
+        })
+        .expect_err("running job cannot be trashed");
+
+    assert!(error.contains("currently running"));
+    assert_eq!(backend.queue_snapshot(), before);
+    assert!(audio_path.exists());
+}
+
+#[test]
 fn backend_system_capture_emits_live_transcript_events() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

@@ -32,3 +32,4 @@ pub mod system_audio;
 pub mod text_input;
 pub mod transcription;
 pub mod transcription_cost;
+pub mod trash;

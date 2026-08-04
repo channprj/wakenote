@@ -223,7 +223,7 @@ describe("QueuePanel pagination", () => {
 
       const panel = within(container);
       await user.click(
-        panel.getByRole("checkbox", { name: "Select all 51 matching issues" }),
+        panel.getByRole("checkbox", { name: "Select all 51 matching items" }),
       );
       expect(panel.getByText("51 selected")).toBeTruthy();
       expect(panel.getByRole("button", { name: "Reprocess 51" })).toBeTruthy();
@@ -271,11 +271,63 @@ describe("QueuePanel pagination", () => {
     );
 
     await user.click(
-      screen.getByRole("checkbox", { name: "Select one.wav for reprocessing" }),
+      screen.getByRole("checkbox", { name: "Select one.wav" }),
     );
     await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
 
     expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
+  });
+
+  it("confirms before moving every selected non-running Activity item to Trash", async () => {
+    const user = userEvent.setup();
+    const onTrash = vi.fn().mockResolvedValue([1, 2]);
+    render(
+      <QueuePanel
+        queue={{
+          jobs: [
+            { id: 1, audio_path: "/done.wav", model_id: "old", status: "completed" },
+            { id: 2, audio_path: "/failed.wav", model_id: "old", status: "failed" },
+            { id: 3, audio_path: "/active.wav", model_id: "old", status: "running" },
+          ],
+          pending_count: 0,
+          running_count: 1,
+          failed_count: 1,
+        }}
+        models={[readyFileModel("whisper-small", "Whisper Small")]}
+        selectedModelId="whisper-small"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onTrash={onTrash}
+        onReprocess={async () => true}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all 2 matching items" }),
+    );
+    expect(screen.queryByRole("checkbox", { name: "Select active.wav" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Move 2 to Trash" }));
+
+    expect(onTrash).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Move 2 recordings to Trash?",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText(/Activity records will be removed/i)).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Move recordings to Trash" }),
+    );
+
+    expect(onTrash).toHaveBeenCalledWith([1, 2]);
   });
 
   it("plays an Activity item in one shared dock and opens its containing folder", async () => {

@@ -22,6 +22,7 @@ import {
   processNextTranscription,
   regenerateTranscript,
   reprocessJobs,
+  trashActivityJobs,
   openTranscriptFolder,
   retryJob,
   retryLlmReport,
@@ -961,6 +962,31 @@ describe("tauri live capture client", () => {
       status: "skipped",
       is_read: true,
     });
+  });
+
+  it("removes selected browser Activity jobs through the Trash outcome contract", async () => {
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/trash-selected.wav",
+      "/tmp/imported/trash-unselected.wav",
+    ]);
+    const selected = before.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/trash-selected.wav",
+    );
+    const unselected = before.queue.jobs.find(
+      (job) => job.audio_path === "/tmp/imported/trash-unselected.wav",
+    );
+
+    const outcome = await trashActivityJobs([selected?.id ?? -1]);
+
+    expect(outcome.removed_ids).toEqual([selected?.id]);
+    expect(outcome.trashed_ids).toEqual([selected?.id]);
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.snapshot.queue.jobs.some((job) => job.id === selected?.id)).toBe(
+      false,
+    );
+    expect(
+      outcome.snapshot.queue.jobs.some((job) => job.id === unselected?.id),
+    ).toBe(true);
   });
 
   it("queues one simulated browser capture chunk after threshold activation", async () => {

@@ -56,6 +56,8 @@ import type {
   AudioMergeProgress,
   AudioMergeResult,
   MergeAudioRequest,
+  TrashActivityJobsOutcome,
+  TrashActivityJobsResult,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
 
@@ -1756,6 +1758,51 @@ export async function reprocessJobs(
 
   await invoke<QueueSnapshot>("reprocess_jobs", { ids, modelId });
   return loadSnapshot();
+}
+
+export async function trashActivityJobs(
+  ids: number[],
+): Promise<TrashActivityJobsOutcome> {
+  if (!isTauriRuntime()) {
+    const uniqueIds = [...new Set(ids.filter((id) => Number.isSafeInteger(id)))];
+    const selectedIds = new Set(uniqueIds);
+    const selectedJobs = browserSnapshot.queue.jobs.filter((job) =>
+      selectedIds.has(job.id),
+    );
+    if (uniqueIds.length === 0) {
+      throw new Error("Select at least one Activity item to move to Trash.");
+    }
+    if (selectedJobs.length !== selectedIds.size) {
+      throw new Error("One or more selected Activity items no longer exist.");
+    }
+    const running = selectedJobs.find((job) => job.status === "running");
+    if (running) {
+      throw new Error(`Job ${running.id} is currently running.`);
+    }
+
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(
+      browserSnapshot.queue.jobs.filter((job) => !selectedIds.has(job.id)),
+    );
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
+    return {
+      queue,
+      removed_ids: uniqueIds,
+      trashed_ids: uniqueIds,
+      missing_ids: [],
+      failures: [],
+      snapshot: browserSnapshot,
+    };
+  }
+
+  const result = await invoke<TrashActivityJobsResult>("trash_activity_jobs", {
+    ids,
+  });
+  return { ...result, snapshot: await loadSnapshot() };
 }
 
 export async function openTranscriptFolder(path: string): Promise<AppSnapshot> {

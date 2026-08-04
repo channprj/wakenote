@@ -45,6 +45,7 @@ import {
   processNextTranscription,
   reloadDictionaryFile,
   reprocessJobs,
+  trashActivityJobs,
   retryJob,
   saveOpenRouterApiKey,
   saveSettingsPatch,
@@ -403,6 +404,32 @@ export default function App() {
     }
   }
 
+  async function moveActivityJobsToTrash(ids: number[]): Promise<number[]> {
+    setBusy(true);
+    setError(null);
+    try {
+      const outcome = await trashActivityJobs(ids);
+      setSnapshot((current) =>
+        preserveRecentTranscripts(current, outcome.snapshot),
+      );
+      if (outcome.failures.length > 0) {
+        const detail = outcome.failures
+          .slice(0, 3)
+          .map((failure) => `${failure.audio_path}: ${failure.error}`)
+          .join("; ");
+        setError(
+          `${outcome.failures.length} selected ${outcome.failures.length === 1 ? "recording was" : "recordings were"} not moved to Trash. ${detail}`,
+        );
+      }
+      return outcome.removed_ids;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      return [];
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const themeMode = snapshot.settings.theme_mode === "light" ? "light" : "dark";
 
   useEffect(() => {
@@ -514,6 +541,7 @@ export default function App() {
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}
           onOpenFolder={(path) => void runAction(() => openTranscriptFolder(path))}
+          onTrash={moveActivityJobsToTrash}
           onReprocess={(ids, modelId) =>
             runAction(() => reprocessJobs(ids, modelId))
           }

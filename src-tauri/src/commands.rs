@@ -516,6 +516,22 @@ pub struct UploadedAudio {
     pub stored_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashActivityJobFailure {
+    pub id: u64,
+    pub audio_path: PathBuf,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashActivityJobsResult {
+    pub queue: QueueSnapshot,
+    pub removed_ids: Vec<u64>,
+    pub trashed_ids: Vec<u64>,
+    pub missing_ids: Vec<u64>,
+    pub failures: Vec<TrashActivityJobFailure>,
+}
+
 #[derive(Debug, Clone)]
 pub struct StartedTranscriptionJob {
     pub job: crate::queue::QueueJob,
@@ -2128,6 +2144,82 @@ impl AppBackend {
         }
         self.persist_queue();
         Ok(self.queue.snapshot())
+    }
+
+    pub fn trash_activity_jobs_with<F>(
+        &mut self,
+        ids: Vec<u64>,
+        mut move_to_trash: F,
+    ) -> Result<TrashActivityJobsResult, String>
+    where
+        F: FnMut(&Path) -> Result<(), String>,
+    {
+        let ids = ids.into_iter().collect::<BTreeSet<_>>();
+        if ids.is_empty() {
+            return Err("select at least one Activity item to move to Trash".to_string());
+        }
+
+        let mut jobs = Vec::with_capacity(ids.len());
+        for id in ids {
+            let job = self
+                .queue
+                .job(id)
+                .ok_or_else(|| format!("job {id} not found"))?
+                .clone();
+            if job.status == QueueJobStatus::Running {
+                return Err(format!("job {id} is currently running"));
+            }
+            jobs.push(job);
+        }
+
+        let mut removed_ids = Vec::new();
+        let mut trashed_ids = Vec::new();
+        let mut missing_ids = Vec::new();
+        let mut failures = Vec::new();
+        for job in jobs {
+            match job.audio_path.try_exists() {
+                Ok(false) => {
+                    removed_ids.push(job.id);
+                    missing_ids.push(job.id);
+                }
+                Err(error) => failures.push(TrashActivityJobFailure {
+                    id: job.id,
+                    audio_path: job.audio_path,
+                    error: error.to_string(),
+                }),
+                Ok(true) if !is_importable_audio_path(&job.audio_path) => {
+                    failures.push(TrashActivityJobFailure {
+                        id: job.id,
+                        audio_path: job.audio_path,
+                        error: "only m4a and wav audio files can be moved to Trash".to_string(),
+                    });
+                }
+                Ok(true) => match move_to_trash(&job.audio_path) {
+                    Ok(()) => {
+                        removed_ids.push(job.id);
+                        trashed_ids.push(job.id);
+                    }
+                    Err(error) => failures.push(TrashActivityJobFailure {
+                        id: job.id,
+                        audio_path: job.audio_path,
+                        error,
+                    }),
+                },
+            }
+        }
+
+        if !removed_ids.is_empty() {
+            self.queue.remove_jobs(&removed_ids);
+            self.persist_queue();
+        }
+
+        Ok(TrashActivityJobsResult {
+            queue: self.queue.snapshot(),
+            removed_ids,
+            trashed_ids,
+            missing_ids,
+            failures,
+        })
     }
 
     pub fn skip_job(&mut self, id: u64) -> Result<QueueSnapshot, String> {

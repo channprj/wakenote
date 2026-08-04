@@ -10,6 +10,7 @@ import {
   Play,
   RotateCw,
   SkipForward,
+  Trash2,
 } from "lucide-react";
 import { Fragment, useState } from "react";
 import {
@@ -204,6 +205,7 @@ export function QueuePanel({
   onRetry,
   onSkip,
   onOpenFolder = () => {},
+  onTrash = async () => [],
   onReprocess,
 }: {
   queue: QueueSnapshot;
@@ -218,6 +220,7 @@ export function QueuePanel({
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
   onOpenFolder?: (path: string) => void;
+  onTrash?: (ids: number[]) => Promise<number[]>;
   onReprocess: (ids: number[], modelId: string) => Promise<boolean>;
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
@@ -228,6 +231,7 @@ export function QueuePanel({
   const [requestedReprocessingModelId, setRequestedReprocessingModelId] =
     useState("");
   const [reprocessing, setReprocessing] = useState(false);
+  const [trashing, setTrashing] = useState(false);
   const [playingJob, setPlayingJob] = useState<QueueJob | null>(null);
   const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
   const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
@@ -247,14 +251,21 @@ export function QueuePanel({
     : preferredModelId;
   const filteredReprocessableJobs = filteredJobs.filter(isReprocessableJob);
   const filteredReprocessableIds = filteredReprocessableJobs.map((job) => job.id);
-  const selectedIds = filteredReprocessableIds.filter((id) =>
+  const filteredSelectableIds = filteredJobs
+    .filter((job) => job.status !== "running")
+    .map((job) => job.id);
+  const selectedIds = filteredSelectableIds.filter((id) =>
     selectedJobIds.has(id),
   );
+  const selectedReprocessableIds = filteredReprocessableIds.filter((id) =>
+    selectedJobIds.has(id),
+  );
+  const hasSelectableJobs = queue.jobs.some((job) => job.status !== "running");
   const hasReprocessableJobs = queue.jobs.some(isReprocessableJob);
   const allMatchingSelected =
-    filteredReprocessableIds.length > 0 &&
-    filteredReprocessableIds.every((id) => selectedJobIds.has(id));
-  const someMatchingSelected = filteredReprocessableIds.some((id) =>
+    filteredSelectableIds.length > 0 &&
+    filteredSelectableIds.every((id) => selectedJobIds.has(id));
+  const someMatchingSelected = filteredSelectableIds.some((id) =>
     selectedJobIds.has(id),
   );
   const activityViews: Array<{ id: ActivityView; label: string; count: number }> = [
@@ -294,7 +305,7 @@ export function QueuePanel({
   function setAllMatchingSelected(checked: boolean) {
     setSelectedJobIds((current) => {
       const next = new Set(current);
-      for (const id of filteredReprocessableIds) {
+      for (const id of filteredSelectableIds) {
         if (checked) {
           next.add(id);
         } else {
@@ -306,16 +317,49 @@ export function QueuePanel({
   }
 
   async function handleReprocess() {
-    if (selectedIds.length === 0 || !reprocessingModelId || reprocessing) {
+    if (
+      selectedReprocessableIds.length === 0 ||
+      !reprocessingModelId ||
+      reprocessing
+    ) {
       return;
     }
     setReprocessing(true);
     try {
-      if (await onReprocess(selectedIds, reprocessingModelId)) {
-        setSelectedJobIds(new Set());
+      if (await onReprocess(selectedReprocessableIds, reprocessingModelId)) {
+        setSelectedJobIds((current) => {
+          const next = new Set(current);
+          for (const id of selectedReprocessableIds) {
+            next.delete(id);
+          }
+          return next;
+        });
       }
     } finally {
       setReprocessing(false);
+    }
+  }
+
+  async function handleTrash() {
+    if (selectedIds.length === 0 || trashing) {
+      return;
+    }
+    setTrashing(true);
+    try {
+      const removedIds = await onTrash(selectedIds);
+      const removed = new Set(removedIds);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        for (const id of removed) {
+          next.delete(id);
+        }
+        return next;
+      });
+      if (playingJob && removed.has(playingJob.id)) {
+        setPlayingJob(null);
+      }
+    } finally {
+      setTrashing(false);
     }
   }
 
@@ -416,14 +460,14 @@ export function QueuePanel({
             ))}
           </div>
           <span className="queue-view-bar__hint">
-            Resolved outcomes stay in history until you reprocess them.
+            Resolved outcomes stay in history until reprocessed or moved to Trash.
           </span>
         </div>
-        {hasReprocessableJobs ? (
-          <div className="queue-reprocess-controls" aria-label="Reprocess selected issues">
+        {hasSelectableJobs ? (
+          <div className="queue-reprocess-controls" aria-label="Selected Activity items">
             <div className="queue-reprocess-controls__select-all">
               <Checkbox
-                aria-label={`Select all ${filteredReprocessableIds.length} matching issues`}
+                aria-label={`Select all ${filteredSelectableIds.length} matching items`}
                 checked={
                   allMatchingSelected
                     ? true
@@ -431,7 +475,7 @@ export function QueuePanel({
                       ? "indeterminate"
                       : false
                 }
-                disabled={filteredReprocessableIds.length === 0}
+                disabled={filteredSelectableIds.length === 0}
                 onCheckedChange={(checked) =>
                   setAllMatchingSelected(checked === true)
                 }
@@ -441,42 +485,86 @@ export function QueuePanel({
             <span className="queue-reprocess-controls__count" aria-live="polite">
               {selectedIds.length} selected
             </span>
-            <Select
-              value={reprocessingModelId || undefined}
-              onValueChange={setRequestedReprocessingModelId}
-              disabled={availableReprocessingModels.length === 0 || reprocessing}
-            >
-              <SelectTrigger size="sm" aria-label="Reprocessing model">
-                <SelectValue placeholder="No model ready" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableReprocessingModels.map((model) => (
-                  <SelectItem key={model.id} value={model.id}>
-                    {model.display_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => void handleReprocess()}
-              disabled={
-                selectedIds.length === 0 || !reprocessingModelId || reprocessing
-              }
-              title={
-                availableReprocessingModels.length === 0
-                  ? "No ready file transcription model"
-                  : selectedIds.length === 0
-                    ? "Select at least one issue"
-                    : `Reprocess ${selectedIds.length} selected ${selectedIds.length === 1 ? "job" : "jobs"}`
-              }
-            >
-              <RotateCw data-icon="inline-start" />
-              {reprocessing
-                ? "Reprocessing…"
-                : `Reprocess ${selectedIds.length || ""}`.trim()}
-            </Button>
+            {hasReprocessableJobs ? (
+              <>
+                <Select
+                  value={reprocessingModelId || undefined}
+                  onValueChange={setRequestedReprocessingModelId}
+                  disabled={availableReprocessingModels.length === 0 || reprocessing}
+                >
+                  <SelectTrigger size="sm" aria-label="Reprocessing model">
+                    <SelectValue placeholder="No model ready" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableReprocessingModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleReprocess()}
+                  disabled={
+                    selectedReprocessableIds.length === 0 ||
+                    !reprocessingModelId ||
+                    reprocessing
+                  }
+                  title={
+                    availableReprocessingModels.length === 0
+                      ? "No ready file transcription model"
+                      : selectedReprocessableIds.length === 0
+                        ? "Select at least one issue"
+                        : `Reprocess ${selectedReprocessableIds.length} selected ${selectedReprocessableIds.length === 1 ? "job" : "jobs"}`
+                  }
+                >
+                  <RotateCw data-icon="inline-start" />
+                  {reprocessing
+                    ? "Reprocessing…"
+                    : `Reprocess ${selectedReprocessableIds.length || ""}`.trim()}
+                </Button>
+              </>
+            ) : null}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={selectedIds.length === 0 || trashing}
+                >
+                  <Trash2 data-icon="inline-start" />
+                  {trashing
+                    ? "Moving…"
+                    : selectedIds.length > 0
+                      ? `Move ${selectedIds.length} to Trash`
+                      : "Move to Trash"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Move {selectedIds.length} {selectedIds.length === 1 ? "recording" : "recordings"} to Trash?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Activity records will be removed and the selected audio files will
+                    move to the macOS Trash. Transcript text files stay in place, and
+                    recordings remain recoverable until you empty the Trash.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => void handleTrash()}
+                  >
+                    Move recordings to Trash
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         ) : null}
       </div>
@@ -534,9 +622,9 @@ export function QueuePanel({
                         data-read={job.is_read === true ? true : undefined}
                       >
                         <td className="queue-job__selection" data-label="Select">
-                          {isReprocessableJob(job) ? (
+                          {job.status !== "running" ? (
                             <Checkbox
-                              aria-label={`Select ${formatAudioPathLabel(job.audio_path)} for reprocessing`}
+                              aria-label={`Select ${formatAudioPathLabel(job.audio_path)}`}
                               checked={selectedJobIds.has(job.id)}
                               onCheckedChange={(checked) =>
                                 setJobSelected(job.id, checked === true)

@@ -262,6 +262,24 @@ export interface QueueSnapshot {
   failed_count: number;
 }
 
+export interface TrashActivityJobFailure {
+  id: number;
+  audio_path: string;
+  error: string;
+}
+
+export interface TrashActivityJobsResult {
+  queue: QueueSnapshot;
+  removed_ids: number[];
+  trashed_ids: number[];
+  missing_ids: number[];
+  failures: TrashActivityJobFailure[];
+}
+
+export interface TrashActivityJobsOutcome extends TrashActivityJobsResult {
+  snapshot: AppSnapshot;
+}
+
 export type ListVisibilityKind =
   | "meeting"
   | "transcript"

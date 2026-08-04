@@ -113,6 +113,14 @@ function mockInvoke(command: string) {
       return Promise.resolve(null);
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
+    case "trash_activity_jobs":
+      return Promise.resolve({
+        queue,
+        removed_ids: [7],
+        trashed_ids: [7],
+        missing_ids: [],
+        failures: [],
+      });
     case "open_transcript_folder":
       return Promise.resolve(null);
     case "manual_meeting_recording_status":
@@ -367,6 +375,20 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("open_transcript_folder", {
       path: "/tmp/WakeNote/20260611/024304-spotify.m4a",
     });
+  });
+
+  it("moves selected Activity jobs to Trash and reloads the Tauri snapshot", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { trashActivityJobs } = await import("./tauri-client");
+
+    const outcome = await trashActivityJobs([7]);
+
+    expect(outcome.removed_ids).toEqual([7]);
+    expect(mocks.invoke).toHaveBeenCalledWith("trash_activity_jobs", {
+      ids: [7],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
   });
 
   it("does not start an audio merge when the save dialog is cancelled", async () => {
