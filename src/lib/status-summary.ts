@@ -242,6 +242,14 @@ function activeWarning(
     };
   }
 
+  if (activityAttention?.tone === "danger") {
+    return {
+      key: `queue-danger:${activityAttention.count}`,
+      message: activityAttention.message,
+      tone: "danger",
+    };
+  }
+
   const silenceWarning = snapshot.status.silence_warning;
   if (silenceWarning) {
     return {
@@ -259,11 +267,11 @@ function activeWarning(
     };
   }
 
-  if (activityAttention) {
+  if (activityAttention?.tone === "warning") {
     return {
-      key: `queue-${activityAttention.tone}:${activityAttention.count}`,
+      key: `queue-warning:${activityAttention.count}`,
       message: activityAttention.message,
-      tone: activityAttention.tone,
+      tone: "warning",
     };
   }
 

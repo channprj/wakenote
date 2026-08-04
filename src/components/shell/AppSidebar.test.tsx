@@ -8,6 +8,7 @@ describe("AppSidebar", () => {
       <AppSidebar
         activeRoute="meetings"
         queueAttentionCount={2}
+        queueAttentionTone="danger"
         onNavigate={() => {}}
       />,
     );
@@ -28,6 +29,7 @@ describe("AppSidebar", () => {
       <AppSidebar
         activeRoute="capture"
         queueAttentionCount={3}
+        queueAttentionTone="danger"
         onNavigate={() => {}}
       />,
     );
@@ -43,6 +45,7 @@ describe("AppSidebar", () => {
       <AppSidebar
         activeRoute="capture"
         queueAttentionCount={120}
+        queueAttentionTone="danger"
         onNavigate={() => {}}
       />,
     );
@@ -59,5 +62,21 @@ describe("AppSidebar", () => {
     }
     expect(markup).toContain(">99+</span>");
     expect(markup).not.toContain(">120</span>");
+  });
+
+  it("shows recent quality attention as a warning badge", () => {
+    const markup = renderToStaticMarkup(
+      <AppSidebar
+        activeRoute="capture"
+        queueAttentionCount={1}
+        queueAttentionTone="warning"
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(markup).toMatch(
+      /data-route="activity"[\s\S]*?data-tone="warning"[\s\S]*?>1<\/span>/,
+    );
+    expect(markup).not.toContain('data-tone="danger"');
   });
 });

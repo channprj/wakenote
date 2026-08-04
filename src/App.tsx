@@ -13,6 +13,7 @@ import { RecordingStatusRail } from "./components/shell/RecordingStatusRail";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { newestTranscriptTextEntries } from "./lib/live-transcripts";
+import { useActivityAttention } from "./hooks/use-activity-attention";
 import type { PrimaryRoute, SettingsSection } from "./lib/navigation";
 import {
   reduceTranscriptLog,
@@ -64,7 +65,6 @@ import {
   shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./lib/app-state";
-import { countUnreadActivityOutcomes } from "./lib/transcript-history";
 import type { AppSnapshot, AppSettings } from "./lib/types";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
@@ -127,6 +127,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
+  const activityAttention = useActivityAttention(snapshot.queue.jobs);
   const launchAutoStartPollUntilMs = useRef(
     Date.now() + launchAutoStartPollWindowMs,
   );
@@ -468,6 +469,7 @@ export default function App() {
     capture: (
       <CapturePage
         snapshot={snapshot}
+        activityAttention={activityAttention.attention}
         transcriptEntries={transcriptEntries}
         busy={busy}
         onStart={() => void runAction(startLiveCapture)}
@@ -527,6 +529,7 @@ export default function App() {
         description="Track pending, active, completed, and failed transcription jobs."
       >
         <QueuePanel
+          nowMs={activityAttention.nowMs}
           queue={snapshot.queue}
           models={snapshot.models}
           selectedModelId={snapshot.settings.selected_model}
@@ -604,7 +607,8 @@ export default function App() {
   return (
     <AppFrame
       activeRoute={activeRoute}
-      queueAttentionCount={countUnreadActivityOutcomes(snapshot.queue.jobs)}
+      queueAttentionCount={activityAttention.attention?.count ?? 0}
+      queueAttentionTone={activityAttention.attention?.tone ?? "warning"}
       onNavigate={setActiveRoute}
       theme={themeMode}
       statusRail={

@@ -373,6 +373,21 @@ export function QueuePanel({
     }
   }
 
+  function queueSummaryCellTone(status: string, count: number) {
+    if (count === 0) {
+      return undefined;
+    }
+    if (status === "warning") {
+      return queue.jobs.some((job) => isRecentUnreadWarning(job, nowMs))
+        ? "warning"
+        : undefined;
+    }
+    if (status === "error") {
+      return activeAttention?.tone === "danger" ? "danger" : undefined;
+    }
+    return queueStatsCellTone(status);
+  }
+
   return (
     <div className="queue-panel">
       <div data-slot="queue-summary" className="queue-stats">
@@ -778,18 +793,4 @@ export function QueuePanel({
     </div>
   );
 
-  function queueSummaryCellTone(status: string, count: number) {
-    if (count === 0) {
-      return undefined;
-    }
-    if (status === "warning") {
-      return queue.jobs.some((job) => isRecentUnreadWarning(job, nowMs))
-        ? "warning"
-        : undefined;
-    }
-    if (status === "error") {
-      return activeAttention?.tone === "danger" ? "danger" : undefined;
-    }
-    return queueStatsCellTone(status);
-  }
 }

@@ -35,6 +35,7 @@ import { humanizeTrayState } from "@/lib/transcript-history";
 import type { TranscriptEntry } from "@/lib/transcript-log";
 import type { AppSettings, AppSnapshot } from "@/lib/types";
 import { livePreviewPresentation } from "@/lib/live-transcripts";
+import type { ActivityAttention } from "@/lib/activity-attention";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Onboarding } from "@/components/Onboarding";
 import { LiveTranscriptList } from "./LiveTranscriptList";
@@ -46,6 +47,7 @@ import {
 
 export interface CapturePageProps {
   snapshot: AppSnapshot;
+  activityAttention: ActivityAttention | null;
   transcriptEntries: TranscriptEntry[];
   busy: boolean;
   onStart: () => void;
@@ -57,6 +59,7 @@ export interface CapturePageProps {
 
 export function CapturePage({
   snapshot,
+  activityAttention,
   transcriptEntries,
   busy,
   onStart,
@@ -73,7 +76,7 @@ export function CapturePage({
   const showStop = status.live_input_active && !streamErrored;
   const startReason = startLiveCaptureDisabledReason(settings, status, input.canStart);
   const stopReason = stopLiveCaptureDisabledReason(status);
-  const presentation = captureStatusPresentation(snapshot);
+  const presentation = captureStatusPresentation(snapshot, activityAttention);
   const previewPresentation = livePreviewPresentation(
     settings.selected_model,
     snapshot.models,

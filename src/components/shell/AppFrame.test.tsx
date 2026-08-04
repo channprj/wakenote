@@ -9,6 +9,7 @@ describe("AppFrame", () => {
       <AppFrame
         activeRoute="transcripts"
         queueAttentionCount={0}
+        queueAttentionTone="warning"
         onNavigate={() => {}}
         statusRail={<div data-testid="rail">Recording</div>}
       >

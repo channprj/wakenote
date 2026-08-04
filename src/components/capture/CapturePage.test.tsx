@@ -3,16 +3,19 @@ import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
 import type { TranscriptEntry } from "@/lib/transcript-log";
 import type { AppSnapshot } from "@/lib/types";
+import type { ActivityAttention } from "@/lib/activity-attention";
 import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import { CapturePage } from "./CapturePage";
 
 function renderCapture(
   snapshot: AppSnapshot,
   transcriptEntries: TranscriptEntry[] = [],
+  activityAttention: ActivityAttention | null = null,
 ) {
   return renderToStaticMarkup(
     <CapturePage
       snapshot={snapshot}
+      activityAttention={activityAttention}
       transcriptEntries={transcriptEntries}
       busy={false}
       onStart={() => {}}
@@ -25,6 +28,19 @@ function renderCapture(
 }
 
 describe("CapturePage", () => {
+  it("renders recent transcription quality attention as a warning alert", () => {
+    const markup = renderCapture(mockSnapshot(), [], {
+      tone: "warning",
+      count: 1,
+      message: "1 transcription warning needs review",
+      nextExpiryAt: Date.parse("2026-08-04T00:10:00.000Z"),
+    });
+
+    expect(markup).toContain('data-tone="warning"');
+    expect(markup).toContain("1 transcription warning needs review");
+    expect(markup).not.toContain('data-tone="danger"');
+  });
+
   it("shows only Start Input while capture is stopped", () => {
     const markup = renderCapture(mockSnapshot());
 

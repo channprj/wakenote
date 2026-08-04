@@ -223,6 +223,45 @@ describe("capture status presentation", () => {
     });
   });
 
+  it("shows recent transcription quality attention in yellow", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation(snapshot, {
+        tone: "warning",
+        count: 1,
+        message: "1 transcription warning needs review",
+        nextExpiryAt: Date.parse("2026-08-04T00:10:00.000Z"),
+      }).warning,
+    ).toEqual({
+      key: "queue-warning:1",
+      message: "1 transcription warning needs review",
+      tone: "warning",
+    });
+  });
+
+  it("prioritizes Activity errors over recoverable runtime warnings", () => {
+    const snapshot = mockSnapshot();
+
+    expect(
+      captureStatusPresentation(
+        {
+          ...snapshot,
+          status: {
+            ...snapshot.status,
+            runtime_warning: "Live input dropped stale frames",
+          },
+        },
+        {
+          tone: "danger",
+          count: 1,
+          message: "1 transcription job needs attention",
+          nextExpiryAt: null,
+        },
+      ).warning,
+    ).toMatchObject({ key: "queue-danger:1", tone: "danger" });
+  });
+
   it("clears the Capture warning after attention outcomes are resolved without deleting history", () => {
     const snapshot = mockSnapshot();
     const jobs = [

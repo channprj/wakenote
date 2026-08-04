@@ -33,10 +33,12 @@ function attentionCountLabel(count: number): string {
 export function AppSidebar({
   activeRoute,
   queueAttentionCount,
+  queueAttentionTone,
   onNavigate,
 }: {
   activeRoute: PrimaryRoute;
   queueAttentionCount: number;
+  queueAttentionTone: "warning" | "danger";
   onNavigate: (route: PrimaryRoute) => void;
 }) {
   return (
@@ -73,7 +75,7 @@ export function AppSidebar({
                     <Icon data-icon="inline-start" />
                     <span className="app-sidebar__nav-label">{item.label}</span>
                     {item.id === "activity" && queueAttentionCount > 0 ? (
-                      <StatusBadge tone="danger">
+                      <StatusBadge tone={queueAttentionTone}>
                         {attentionCountLabel(queueAttentionCount)}
                       </StatusBadge>
                     ) : null}
