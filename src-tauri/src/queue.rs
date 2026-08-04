@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::settings::TranscriptionOptions;
@@ -20,6 +21,69 @@ pub enum QueueJobStatus {
     Skipped,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueIssueSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueIssueCode {
+    EmptyTranscript,
+    NoSpeech,
+    LowConfidence,
+    TranscriptArtifact,
+    Authentication,
+    BillingLimit,
+    RateLimit,
+    Provider,
+    Transport,
+    InvalidResponse,
+    Model,
+    AudioDecode,
+    LocalIo,
+    Cancelled,
+    Skipped,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueJobIssue {
+    pub severity: QueueIssueSeverity,
+    pub code: QueueIssueCode,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<String>,
+}
+
+impl QueueJobIssue {
+    pub fn warning(code: QueueIssueCode, message: impl Into<String>) -> Self {
+        Self {
+            severity: QueueIssueSeverity::Warning,
+            code,
+            message: message.into(),
+            occurred_at: None,
+        }
+    }
+
+    pub fn error(code: QueueIssueCode, message: impl Into<String>) -> Self {
+        Self {
+            severity: QueueIssueSeverity::Error,
+            code,
+            message: message.into(),
+            occurred_at: None,
+        }
+    }
+
+    pub fn stamp_if_missing(&mut self) {
+        if self.occurred_at.is_none() {
+            self.occurred_at = Some(Utc::now().to_rfc3339());
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueJob {
     pub id: u64,
@@ -27,6 +91,8 @@ pub struct QueueJob {
     pub model_id: String,
     pub status: QueueJobStatus,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<QueueJobIssue>,
     #[serde(default)]
     pub is_read: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -92,6 +158,7 @@ impl TranscriptionQueue {
             model_id: model_id.into(),
             status: QueueJobStatus::Pending,
             error: None,
+            issue: None,
             is_read: false,
             transcription_options: None,
         });
@@ -124,6 +191,8 @@ impl TranscriptionQueue {
                     job.model_id = model_id.clone();
                     job.status = QueueJobStatus::Pending;
                     job.error = None;
+                    job.issue = None;
+                    job.is_read = false;
                     enqueued.push(job.id);
                 }
                 continue;
@@ -152,6 +221,7 @@ impl TranscriptionQueue {
             job.model_id = model_id;
             job.status = QueueJobStatus::Pending;
             job.error = None;
+            job.issue = None;
             job.is_read = false;
             return Ok(job.id);
         }
@@ -174,6 +244,7 @@ impl TranscriptionQueue {
             .find(|job| job.status == QueueJobStatus::Pending)?;
         job.status = QueueJobStatus::Running;
         job.error = None;
+        job.issue = None;
         Some(job.clone())
     }
 
@@ -201,6 +272,7 @@ impl TranscriptionQueue {
         })?;
         job.status = QueueJobStatus::Running;
         job.error = None;
+        job.issue = None;
         Some(job.clone())
     }
 
@@ -210,17 +282,34 @@ impl TranscriptionQueue {
             .iter_mut()
             .find(|job| job.status == QueueJobStatus::Running)
             .ok_or_else(|| "no running job".to_string())?;
+        let reason = reason.into();
+        let mut issue = QueueJobIssue::warning(QueueIssueCode::Cancelled, reason.clone());
+        issue.stamp_if_missing();
         job.status = QueueJobStatus::Cancelled;
-        job.error = Some(reason.into());
+        job.error = Some(reason);
+        job.issue = Some(issue);
+        job.is_read = false;
         Ok(())
     }
 
     pub fn mark_failed(&mut self, id: u64, error: impl Into<String>) -> Result<(), String> {
+        let error = error.into();
+        self.mark_failed_with_issue(id, QueueJobIssue::error(QueueIssueCode::Unknown, error))
+    }
+
+    pub fn mark_failed_with_issue(
+        &mut self,
+        id: u64,
+        mut issue: QueueJobIssue,
+    ) -> Result<(), String> {
         let job = self
             .job_mut(id)
             .ok_or_else(|| format!("job {id} not found"))?;
+        issue.stamp_if_missing();
         job.status = QueueJobStatus::Failed;
-        job.error = Some(error.into());
+        job.error = Some(issue.message.clone());
+        job.issue = Some(issue);
+        job.is_read = false;
         Ok(())
     }
 
@@ -230,6 +319,27 @@ impl TranscriptionQueue {
             .ok_or_else(|| format!("job {id} not found"))?;
         job.status = QueueJobStatus::Completed;
         job.error = None;
+        job.issue = None;
+        job.is_read = false;
+        Ok(())
+    }
+
+    pub fn mark_completed_with_issue(
+        &mut self,
+        id: u64,
+        mut issue: QueueJobIssue,
+    ) -> Result<(), String> {
+        if issue.severity != QueueIssueSeverity::Warning {
+            return Err("completed jobs can only carry warning issues".to_string());
+        }
+        let job = self
+            .job_mut(id)
+            .ok_or_else(|| format!("job {id} not found"))?;
+        issue.stamp_if_missing();
+        job.status = QueueJobStatus::Completed;
+        job.error = None;
+        job.issue = Some(issue);
+        job.is_read = false;
         Ok(())
     }
 
@@ -245,6 +355,7 @@ impl TranscriptionQueue {
         }
         job.status = QueueJobStatus::Pending;
         job.error = None;
+        job.issue = None;
         job.is_read = false;
         Ok(())
     }
@@ -261,6 +372,9 @@ impl TranscriptionQueue {
         }
         job.status = QueueJobStatus::Skipped;
         job.error = None;
+        let mut issue = QueueJobIssue::warning(QueueIssueCode::Skipped, "Skipped by user");
+        issue.stamp_if_missing();
+        job.issue = Some(issue);
         job.is_read = false;
         Ok(())
     }
@@ -293,14 +407,21 @@ impl TranscriptionQueue {
     pub fn unread_attention_count(&self) -> usize {
         self.jobs
             .iter()
+            .filter(|job| !job.is_read && job_requires_attention(job))
+            .count()
+    }
+
+    pub fn unread_error_count(&self) -> usize {
+        self.jobs
+            .iter()
             .filter(|job| {
                 !job.is_read
-                    && matches!(
-                        job.status,
-                        QueueJobStatus::Failed
-                            | QueueJobStatus::Cancelled
-                            | QueueJobStatus::Skipped
-                    )
+                    && job_requires_attention(job)
+                    && job
+                        .issue
+                        .as_ref()
+                        .map(|issue| issue.severity == QueueIssueSeverity::Error)
+                        .unwrap_or(job.status == QueueJobStatus::Failed)
             })
             .count()
     }
@@ -308,12 +429,7 @@ impl TranscriptionQueue {
     pub fn mark_attention_outcomes_read(&mut self) -> usize {
         let mut marked_count = 0;
         for job in &mut self.jobs {
-            if !job.is_read
-                && matches!(
-                    job.status,
-                    QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
-                )
-            {
+            if !job.is_read && job_requires_attention(job) {
                 job.is_read = true;
                 marked_count += 1;
             }
@@ -323,6 +439,39 @@ impl TranscriptionQueue {
 
     pub fn jobs_mut(&mut self) -> &mut [QueueJob] {
         &mut self.jobs
+    }
+
+    pub fn normalize_legacy_issues(&mut self) -> bool {
+        let mut changed = false;
+        for job in &mut self.jobs {
+            if job.issue.is_some() {
+                continue;
+            }
+            let issue = match job.status {
+                QueueJobStatus::Failed => {
+                    let message = job.error.as_deref().unwrap_or("Transcription failed");
+                    let normalized = message.trim();
+                    if normalized == "No speech detected" {
+                        QueueJobIssue::warning(QueueIssueCode::NoSpeech, message)
+                    } else if normalized.ends_with("returned an empty transcript") {
+                        QueueJobIssue::warning(QueueIssueCode::EmptyTranscript, message)
+                    } else {
+                        QueueJobIssue::error(QueueIssueCode::Unknown, message)
+                    }
+                }
+                QueueJobStatus::Cancelled => QueueJobIssue::warning(
+                    QueueIssueCode::Cancelled,
+                    job.error.as_deref().unwrap_or("Cancelled"),
+                ),
+                QueueJobStatus::Skipped => {
+                    QueueJobIssue::warning(QueueIssueCode::Skipped, "Skipped by user")
+                }
+                _ => continue,
+            };
+            job.issue = Some(issue);
+            changed = true;
+        }
+        changed
     }
 
     pub fn remove_jobs(&mut self, ids: &[u64]) -> usize {
@@ -363,6 +512,17 @@ impl TranscriptionQueue {
             .filter(|job| job.status == QueueJobStatus::Running)
             .count()
     }
+}
+
+fn job_requires_attention(job: &QueueJob) -> bool {
+    matches!(
+        job.status,
+        QueueJobStatus::Failed | QueueJobStatus::Cancelled | QueueJobStatus::Skipped
+    ) || (job.status == QueueJobStatus::Completed
+        && job
+            .issue
+            .as_ref()
+            .is_some_and(|issue| issue.severity == QueueIssueSeverity::Warning))
 }
 
 fn collect_pending_audio(root: &Path, pending_audio: &mut Vec<PathBuf>) -> std::io::Result<()> {

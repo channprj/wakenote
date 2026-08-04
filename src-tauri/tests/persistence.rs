@@ -2,7 +2,7 @@ use wakenote::commands::AppBackend;
 use wakenote::persistence::{
     AppPersistence, ListVisibilityKind, ListVisibilityTarget, SetListVisibilityRequest,
 };
-use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
+use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
 use wakenote::settings::{
     AppSettings, DictionaryEntry, FloatingOverlayPosition, SettingsPatch, ThemeMode,
 };
@@ -234,6 +234,60 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
         loaded.enqueue_file("/recordings/20260506/230911.wav", "whisper-medium")
     };
     assert_eq!(third, 3);
+}
+
+#[test]
+fn persistence_normalizes_legacy_activity_issues_without_starting_a_warning_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    std::fs::write(
+        tmp.path().join("transcription-queue.json"),
+        r#"{
+          "jobs": [
+            {"id": 1, "audio_path": "/recordings/empty.wav", "model_id": "openai-gpt-transcribe", "status": "failed", "error": "OpenAI returned an empty transcript", "is_read": false},
+            {"id": 2, "audio_path": "/recordings/silent.wav", "model_id": "whisper-medium", "status": "failed", "error": "No speech detected", "is_read": true},
+            {"id": 3, "audio_path": "/recordings/broken.wav", "model_id": "whisper-medium", "status": "failed", "error": "model missing", "is_read": false}
+          ],
+          "next_id": 3
+        }"#,
+    )
+    .expect("legacy queue");
+
+    let queue = store.load_queue().expect("load queue").expect("queue");
+    let empty = queue.job(1).expect("empty transcript job");
+    assert_eq!(empty.status, QueueJobStatus::Failed);
+    assert_eq!(
+        empty.error.as_deref(),
+        Some("OpenAI returned an empty transcript")
+    );
+    assert_eq!(
+        empty
+            .issue
+            .as_ref()
+            .map(|issue| (issue.severity, issue.code)),
+        Some((QueueIssueSeverity::Warning, QueueIssueCode::EmptyTranscript)),
+    );
+    assert_eq!(empty.issue.as_ref().expect("issue").occurred_at, None);
+
+    let silent = queue.job(2).expect("silent job");
+    assert_eq!(
+        silent
+            .issue
+            .as_ref()
+            .map(|issue| (issue.severity, issue.code)),
+        Some((QueueIssueSeverity::Warning, QueueIssueCode::NoSpeech)),
+    );
+    assert!(silent.is_read);
+
+    let broken = queue.job(3).expect("broken job");
+    assert_eq!(
+        broken
+            .issue
+            .as_ref()
+            .map(|issue| (issue.severity, issue.code)),
+        Some((QueueIssueSeverity::Error, QueueIssueCode::Unknown)),
+    );
+    assert_eq!(broken.issue.as_ref().expect("issue").occurred_at, None);
 }
 
 #[test]

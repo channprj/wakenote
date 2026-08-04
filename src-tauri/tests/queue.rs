@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use wakenote::queue::{BacklogScan, QueueJobStatus, TranscriptionQueue};
+use wakenote::queue::{
+    BacklogScan, QueueIssueCode, QueueIssueSeverity, QueueJobIssue, QueueJobStatus,
+    TranscriptionQueue,
+};
 use wakenote::settings::TranscriptionOptions;
 
 #[test]
@@ -31,6 +34,55 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
     queue.skip(second).expect("skip job");
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Skipped);
     assert_eq!(queue.job(second).unwrap().error, None);
+}
+
+#[test]
+fn queue_persists_warning_issues_and_clears_them_when_retried() {
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file("/recordings/empty.wav", "openai-gpt-transcribe");
+    let warning = QueueJobIssue {
+        severity: QueueIssueSeverity::Warning,
+        code: QueueIssueCode::EmptyTranscript,
+        message: "OpenAI returned an empty transcript".to_string(),
+        occurred_at: Some("2026-08-04T01:02:03+00:00".to_string()),
+    };
+
+    queue
+        .mark_failed_with_issue(id, warning.clone())
+        .expect("warning outcome");
+
+    let encoded = serde_json::to_string(&queue).expect("serialize queue");
+    let mut decoded: TranscriptionQueue = serde_json::from_str(&encoded).expect("queue json");
+    assert_eq!(decoded.job(id).expect("job").issue, Some(warning));
+    assert_eq!(decoded.unread_attention_count(), 1);
+    assert_eq!(decoded.unread_error_count(), 0);
+
+    decoded.retry(id).expect("retry warning");
+    assert_eq!(decoded.job(id).expect("retried job").issue, None);
+    assert_eq!(decoded.job(id).expect("retried job").error, None);
+}
+
+#[test]
+fn completed_warnings_participate_in_attention_without_becoming_errors() {
+    let mut queue = TranscriptionQueue::new();
+    let warning = queue.enqueue_file("/recordings/artifact.wav", "whisper-medium");
+    let clean = queue.enqueue_file("/recordings/clean.wav", "whisper-medium");
+    queue
+        .mark_completed_with_issue(
+            warning,
+            QueueJobIssue::warning(
+                QueueIssueCode::TranscriptArtifact,
+                "Low-confidence transcript: common-hallucination",
+            ),
+        )
+        .expect("completed warning");
+    queue.mark_completed(clean).expect("clean completion");
+
+    assert_eq!(queue.unread_attention_count(), 1);
+    assert_eq!(queue.unread_error_count(), 0);
+    assert_eq!(queue.mark_attention_outcomes_read(), 1);
+    assert!(queue.job(warning).expect("warning").is_read);
+    assert!(!queue.job(clean).expect("clean").is_read);
 }
 
 #[test]

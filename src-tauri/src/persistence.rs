@@ -194,6 +194,7 @@ impl AppPersistence {
         };
         let original = queue.clone();
         queue.recover_running_as_pending();
+        queue.normalize_legacy_issues();
         queue.prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
         if queue != original {
             self.save_queue(&queue)?;
