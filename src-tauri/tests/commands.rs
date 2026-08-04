@@ -3113,7 +3113,7 @@ fn reveal_save_folder_request_uses_current_save_root() {
 }
 
 #[test]
-fn open_containing_folder_request_uses_the_transcript_parent_folder() {
+fn open_containing_folder_request_reveals_an_existing_file_in_finder() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let day_dir = tmp.path().join("20260611");
     std::fs::create_dir_all(&day_dir).expect("day dir");
@@ -3123,7 +3123,8 @@ fn open_containing_folder_request_uses_the_transcript_parent_folder() {
     let request = open_containing_folder_request(&transcript_path).expect("folder request");
 
     assert_eq!(request.program, PathBuf::from("/usr/bin/open"));
-    assert_eq!(request.path, day_dir);
+    assert_eq!(request.path, transcript_path);
+    assert!(request.reveal);
 }
 
 #[test]

@@ -3219,7 +3219,11 @@ fn trash_activity_jobs(
 #[tauri::command]
 fn open_transcript_folder(path: String) -> Result<(), String> {
     let request = open_containing_folder_request(PathBuf::from(path))?;
-    Command::new(request.program)
+    let mut command = Command::new(request.program);
+    if request.reveal {
+        command.arg("-R");
+    }
+    command
         .arg(request.path)
         .spawn()
         .map(|_| ())

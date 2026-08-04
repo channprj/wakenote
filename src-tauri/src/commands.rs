@@ -276,6 +276,7 @@ pub fn tray_menu_presentation(settings: &AppSettings, status: &AppStatus) -> Tra
 pub struct RevealSaveFolderRequest {
     pub program: PathBuf,
     pub path: PathBuf,
+    pub reveal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,6 +360,7 @@ pub fn reveal_save_folder_request(settings: &AppSettings) -> RevealSaveFolderReq
     RevealSaveFolderRequest {
         program: PathBuf::from("/usr/bin/open"),
         path: expand_user_path(&settings.save_root),
+        reveal: false,
     }
 }
 
@@ -366,20 +368,26 @@ pub fn open_containing_folder_request(
     path: impl AsRef<Path>,
 ) -> Result<RevealSaveFolderRequest, String> {
     let expanded = expand_user_path(path.as_ref().to_string_lossy());
-    let folder = if expanded.is_dir() {
-        expanded
+    let (path, reveal) = if expanded.is_file() {
+        (expanded, true)
+    } else if expanded.is_dir() {
+        (expanded, false)
     } else {
-        expanded
-            .parent()
-            .ok_or_else(|| "path has no containing folder".to_string())?
-            .to_path_buf()
+        (
+            expanded
+                .parent()
+                .ok_or_else(|| "path has no containing folder".to_string())?
+                .to_path_buf(),
+            false,
+        )
     };
-    if !folder.is_dir() {
+    if !reveal && !path.is_dir() {
         return Err("containing folder does not exist".to_string());
     }
     Ok(RevealSaveFolderRequest {
         program: PathBuf::from("/usr/bin/open"),
-        path: folder,
+        path,
+        reveal,
     })
 }
 
