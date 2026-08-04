@@ -70,6 +70,7 @@ pub enum FailureCategory {
     Authentication,
     Provider,
     Transport,
+    EmptyTranscript,
     InvalidResponse,
     Local,
     Cancelled,
@@ -219,15 +220,20 @@ impl CloudTranscriptionError {
                     FailureCategory::Provider
                 },
             },
-            Self::InvalidResponse(provider) | Self::EmptyTranscript(provider) => {
-                TranscriptionFailure {
-                    provider: Some(provider),
-                    http_status: None,
-                    provider_code: None,
-                    safe_message,
-                    category: FailureCategory::InvalidResponse,
-                }
-            }
+            Self::InvalidResponse(provider) => TranscriptionFailure {
+                provider: Some(provider),
+                http_status: None,
+                provider_code: None,
+                safe_message,
+                category: FailureCategory::InvalidResponse,
+            },
+            Self::EmptyTranscript(provider) => TranscriptionFailure {
+                provider: Some(provider),
+                http_status: None,
+                provider_code: None,
+                safe_message,
+                category: FailureCategory::EmptyTranscript,
+            },
         }
     }
 }
@@ -881,6 +887,22 @@ mod tests {
         assert_eq!(
             failure_for_transport("OpenAI", CloudTransportError::Request).category,
             FailureCategory::Transport
+        );
+    }
+
+    #[test]
+    fn blank_transcript_is_distinct_from_a_malformed_provider_response() {
+        assert_eq!(
+            CloudTranscriptionError::EmptyTranscript("OpenAI")
+                .into_failure()
+                .category,
+            FailureCategory::EmptyTranscript,
+        );
+        assert_eq!(
+            CloudTranscriptionError::InvalidResponse("OpenAI")
+                .into_failure()
+                .category,
+            FailureCategory::InvalidResponse,
         );
     }
 

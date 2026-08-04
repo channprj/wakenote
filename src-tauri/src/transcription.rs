@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use whisper_rs::{
@@ -22,7 +23,7 @@ use crate::models::{
     default_model_registry,
 };
 use crate::openai_realtime::{RealtimeStoredResult, realtime_result_store};
-use crate::queue::{QueueJobStatus, TranscriptionQueue};
+use crate::queue::{QueueIssueCode, QueueJobIssue, QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
@@ -76,6 +77,7 @@ pub struct TranscriptionExecution {
     pub effective_model_id: String,
     pub fallback_from_model_id: Option<String>,
     pub usage: Option<TranscriptionUsage>,
+    pub issue: Option<QueueJobIssue>,
 }
 
 impl TranscriptionExecution {
@@ -87,6 +89,14 @@ impl TranscriptionExecution {
             effective_model_id: model_id.to_string(),
             fallback_from_model_id: None,
             usage: None,
+            issue: None,
+        }
+    }
+
+    fn direct_with_issue(text: String, model_id: &str, issue: Option<QueueJobIssue>) -> Self {
+        Self {
+            issue,
+            ..Self::direct(text, model_id)
         }
     }
 }
@@ -123,6 +133,46 @@ impl TranscriptionError {
 
     fn is_billing_limit(&self) -> bool {
         matches!(self, Self::Failure(failure) if failure.category == FailureCategory::BillingLimit)
+    }
+
+    fn queue_issue(&self) -> QueueJobIssue {
+        let message = self.recoverable_message();
+        match self {
+            Self::Failure(failure) => match failure.category {
+                FailureCategory::EmptyTranscript => {
+                    QueueJobIssue::warning(QueueIssueCode::EmptyTranscript, message)
+                }
+                FailureCategory::BillingLimit => {
+                    QueueJobIssue::error(QueueIssueCode::BillingLimit, message)
+                }
+                FailureCategory::RateLimit => {
+                    QueueJobIssue::error(QueueIssueCode::RateLimit, message)
+                }
+                FailureCategory::Authentication => {
+                    QueueJobIssue::error(QueueIssueCode::Authentication, message)
+                }
+                FailureCategory::Provider => {
+                    QueueJobIssue::error(QueueIssueCode::Provider, message)
+                }
+                FailureCategory::Transport => {
+                    QueueJobIssue::error(QueueIssueCode::Transport, message)
+                }
+                FailureCategory::InvalidResponse => {
+                    QueueJobIssue::error(QueueIssueCode::InvalidResponse, message)
+                }
+                FailureCategory::Local => QueueJobIssue::error(QueueIssueCode::LocalIo, message),
+                FailureCategory::Cancelled => {
+                    QueueJobIssue::warning(QueueIssueCode::Cancelled, message)
+                }
+            },
+            Self::ModelMissing(_) => QueueJobIssue::error(QueueIssueCode::Model, message),
+            Self::UnsupportedAudioFormat(_) | Self::M4a(_) | Self::Wav(_) => {
+                QueueJobIssue::error(QueueIssueCode::AudioDecode, message)
+            }
+            Self::FallbackFailed { .. } | Self::Engine(_) => {
+                QueueJobIssue::error(QueueIssueCode::Unknown, message)
+            }
+        }
     }
 }
 
@@ -247,6 +297,7 @@ pub struct TranscriptionJobOutcome {
     pub effective_model_id: Option<String>,
     pub fallback_from_model_id: Option<String>,
     pub usage: Option<TranscriptionUsage>,
+    pub issue: Option<QueueJobIssue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +334,7 @@ impl TranscriptionJobOutcome {
             effective_model_id: None,
             fallback_from_model_id: None,
             usage: None,
+            issue: None,
         }
     }
 
@@ -294,17 +346,24 @@ impl TranscriptionJobOutcome {
             effective_model_id: Some(execution.effective_model_id.clone()),
             fallback_from_model_id: execution.fallback_from_model_id.clone(),
             usage: execution.usage.clone(),
+            issue: execution.issue.clone(),
         }
     }
 
     pub fn failed(id: u64, error: impl Into<String>) -> Self {
+        let error = error.into();
+        Self::failed_with_issue(id, QueueJobIssue::error(QueueIssueCode::Unknown, error))
+    }
+
+    pub fn failed_with_issue(id: u64, issue: QueueJobIssue) -> Self {
         Self {
             id,
-            status: TranscriptionJobStatus::Failed(error.into()),
+            status: TranscriptionJobStatus::Failed(issue.message.clone()),
             requested_model_id: None,
             effective_model_id: None,
             fallback_from_model_id: None,
             usage: None,
+            issue: Some(issue),
         }
     }
 }
@@ -398,9 +457,11 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                 let transcript = execution.text.clone();
                 let transcript = self.dictionary.correct(&transcript);
                 if transcript.trim().is_empty() {
-                    let message = "No speech detected";
-                    TranscriptionSidecar::write_error(&chunk, message)?;
-                    return Ok(TranscriptionJobOutcome::failed(job.id, message));
+                    let issue = execution.issue.take().unwrap_or_else(|| {
+                        QueueJobIssue::warning(QueueIssueCode::NoSpeech, "No speech detected")
+                    });
+                    TranscriptionSidecar::write_error(&chunk, &issue.message)?;
+                    return Ok(TranscriptionJobOutcome::failed_with_issue(job.id, issue));
                 }
                 let suppress_artifacts = self.suppress_low_confidence_transcripts
                     && should_apply_artifact_suppression(&chunk);
@@ -411,6 +472,10 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                         reason.code(),
                         job.audio_path.display()
                     );
+                    execution.issue = Some(QueueJobIssue::warning(
+                        QueueIssueCode::TranscriptArtifact,
+                        format!("Low-confidence transcript: {}", reason.code()),
+                    ));
                 }
                 TranscriptionSidecar::write_success_with_provenance(
                     &chunk,
@@ -424,9 +489,9 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                 ))
             }
             Err(error) => {
-                let message = error.recoverable_message();
-                TranscriptionSidecar::write_error(&chunk, &message)?;
-                Ok(TranscriptionJobOutcome::failed(job.id, message))
+                let issue = error.queue_issue();
+                TranscriptionSidecar::write_error(&chunk, &issue.message)?;
+                Ok(TranscriptionJobOutcome::failed_with_issue(job.id, issue))
             }
         }
     }
@@ -765,6 +830,14 @@ pub fn apply_outcome(
     queue: &mut TranscriptionQueue,
     outcome: TranscriptionJobOutcome,
 ) -> Result<(), TranscriptionWorkerError> {
+    apply_outcome_at(queue, outcome, Utc::now())
+}
+
+pub fn apply_outcome_at(
+    queue: &mut TranscriptionQueue,
+    mut outcome: TranscriptionJobOutcome,
+    occurred_at: DateTime<Utc>,
+) -> Result<(), TranscriptionWorkerError> {
     if queue.job(outcome.id).is_some_and(|job| {
         matches!(
             job.status,
@@ -774,12 +847,26 @@ pub fn apply_outcome(
         return Ok(());
     }
 
+    if let Some(issue) = outcome.issue.as_mut() {
+        issue.occurred_at = Some(occurred_at.to_rfc3339());
+    }
+
     match outcome.status {
-        TranscriptionJobStatus::Completed => queue
-            .mark_completed(outcome.id)
-            .map_err(TranscriptionWorkerError::Queue),
+        TranscriptionJobStatus::Completed => match outcome.issue {
+            Some(issue) => queue
+                .mark_completed_with_issue(outcome.id, issue)
+                .map_err(TranscriptionWorkerError::Queue),
+            None => queue
+                .mark_completed(outcome.id)
+                .map_err(TranscriptionWorkerError::Queue),
+        },
         TranscriptionJobStatus::Failed(error) => queue
-            .mark_failed(outcome.id, error)
+            .mark_failed_with_issue(
+                outcome.id,
+                outcome
+                    .issue
+                    .unwrap_or_else(|| QueueJobIssue::error(QueueIssueCode::Unknown, error)),
+            )
             .map_err(TranscriptionWorkerError::Queue),
     }
 }
@@ -805,6 +892,14 @@ impl WhisperTranscriber {
 
 impl Transcriber for WhisperTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        self.transcribe_execution(request)
+            .map(|execution| execution.text)
+    }
+
+    fn transcribe_execution(
+        &self,
+        request: TranscriptionRequest<'_>,
+    ) -> Result<TranscriptionExecution, TranscriptionError> {
         let model_path = self.model_path(request.model_id);
         if !model_path.exists() {
             return Err(TranscriptionError::ModelMissing(model_path));
@@ -812,15 +907,27 @@ impl Transcriber for WhisperTranscriber {
 
         let samples = decode_audio_for_whisper(request.audio_path)?;
         if should_skip_low_signal_audio(&samples) {
-            return Ok(String::new());
+            return Ok(TranscriptionExecution::direct_with_issue(
+                String::new(),
+                request.model_id,
+                Some(QueueJobIssue::warning(
+                    QueueIssueCode::NoSpeech,
+                    "No speech detected",
+                )),
+            ));
         }
-        run_whisper(
+        let decoded = run_whisper_with_quality(
             &model_path,
             &samples,
             request.language,
             self.suppress_low_confidence_decode,
             request.dictionary.prompt(),
-        )
+        )?;
+        Ok(TranscriptionExecution::direct_with_issue(
+            decoded.text,
+            request.model_id,
+            decoded.issue,
+        ))
     }
 }
 
@@ -993,6 +1100,12 @@ impl Transcriber for RuntimeTranscriber {
         request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionExecution, TranscriptionError> {
         let runtime = self.model_runtime(request.model_id);
+        let command_path = ModelStore::new(&self.model_directory).command_path(request.model_id);
+        if runtime == "whisper-rs" && !command_path.exists() {
+            let mut transcriber = WhisperTranscriber::new(&self.model_directory);
+            transcriber.suppress_low_confidence_decode = self.suppress_low_confidence_decode;
+            return transcriber.transcribe_execution(request);
+        }
         if runtime == "openai-realtime" {
             return self.wait_for_realtime_result(request.audio_path);
         }
@@ -1037,6 +1150,7 @@ impl Transcriber for RuntimeTranscriber {
                         audio_duration_ms: 0,
                         provider_cost_usd: None,
                     }),
+                    issue: None,
                 })
                 .map_err(|error| TranscriptionError::Failure(error.into_failure()));
         }
@@ -1056,6 +1170,7 @@ impl Transcriber for RuntimeTranscriber {
                         audio_duration_ms: 0,
                         provider_cost_usd: None,
                     }),
+                    issue: None,
                 })
                 .map_err(|error| TranscriptionError::Failure(error.into_failure()));
         }
@@ -1621,13 +1736,18 @@ pub fn cached_whisper_context(
     })
 }
 
-fn run_whisper(
+struct WhisperDecodeResult {
+    text: String,
+    issue: Option<QueueJobIssue>,
+}
+
+fn run_whisper_with_quality(
     model_path: &Path,
     samples: &[f32],
     language: TranscriptionLanguage,
     suppress_low_confidence_decode: bool,
     initial_prompt: Option<&str>,
-) -> Result<String, TranscriptionError> {
+) -> Result<WhisperDecodeResult, TranscriptionError> {
     let context = cached_whisper_context(model_path)?;
     let (language_code, detect_language) = match language.whisper_code() {
         Some(code) => (Some(code), false),
@@ -1655,11 +1775,18 @@ fn run_whisper(
         )?;
     }
 
-    Ok(finalize_whisper_transcript(
-        &transcript,
-        &qualities,
-        suppress_low_confidence_decode,
-    ))
+    let low_confidence = should_suppress_low_confidence_decode(&transcript, &qualities);
+    let issue = low_confidence.then(|| {
+        QueueJobIssue::warning(QueueIssueCode::LowConfidence, "Low-confidence transcript")
+    });
+    Ok(WhisperDecodeResult {
+        text: if suppress_low_confidence_decode && low_confidence {
+            String::new()
+        } else {
+            transcript.trim().to_string()
+        },
+        issue,
+    })
 }
 
 fn run_whisper_pass(
@@ -1711,6 +1838,7 @@ fn dictation_whisper_retry_language(
     .flatten()
 }
 
+#[cfg(test)]
 fn finalize_whisper_transcript(
     transcript: &str,
     qualities: &[DecodedSegmentQuality],

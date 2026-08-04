@@ -3,17 +3,19 @@ use std::path::PathBuf;
 use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
 use wakenote::openai_realtime::{RealtimeStoredResult, realtime_result_store};
-use wakenote::queue::{QueueJobStatus, TranscriptionQueue};
+use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{DictionaryEntry, TranscriptionLanguage};
 use wakenote::transcription::{
     DecodedSegmentQuality, RuntimeTranscriber, Transcriber, TranscriptArtifactReason,
     TranscriptionError, TranscriptionJobOutcome, TranscriptionRequest, TranscriptionWorker,
-    TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome, decode_audio_for_whisper,
-    default_whisper_context_parameters, model_supports_live_partials, should_skip_low_signal_audio,
-    should_suppress_low_confidence_decode, should_suppress_transcript_artifact,
-    transcript_artifact_reason,
+    TranscriptionWorkerOptions, WhisperTranscriber, apply_outcome, apply_outcome_at,
+    decode_audio_for_whisper, default_whisper_context_parameters, model_supports_live_partials,
+    should_skip_low_signal_audio, should_suppress_low_confidence_decode,
+    should_suppress_transcript_artifact, transcript_artifact_reason,
 };
+
+use chrono::TimeZone;
 
 #[derive(Clone)]
 struct StaticTranscriber {
@@ -165,6 +167,10 @@ fn transcription_worker_records_empty_output_as_no_speech_without_blank_txt() {
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Failed);
     assert_eq!(job.error.as_deref(), Some("No speech detected"));
+    assert_eq!(
+        job.issue.as_ref().map(|issue| (issue.severity, issue.code)),
+        Some((QueueIssueSeverity::Warning, QueueIssueCode::NoSpeech)),
+    );
     assert!(!audio_path.with_extension("txt").exists());
     assert_eq!(
         std::fs::read_to_string(audio_path.with_extension("error.txt")).expect("error sidecar"),
@@ -202,6 +208,18 @@ fn transcription_worker_preserves_bracketed_artifact_transcripts_in_txt() {
     assert_eq!(
         queue.job(id).expect("job").status,
         QueueJobStatus::Completed
+    );
+    assert_eq!(
+        queue
+            .job(id)
+            .expect("job")
+            .issue
+            .as_ref()
+            .map(|issue| (issue.severity, issue.code)),
+        Some((
+            QueueIssueSeverity::Warning,
+            QueueIssueCode::TranscriptArtifact,
+        )),
     );
     assert_eq!(
         std::fs::read_to_string(audio_path.with_extension("txt")).expect("preserved transcript"),
@@ -610,6 +628,10 @@ fn transcription_worker_writes_error_and_marks_job_failed() {
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Failed);
     assert_eq!(job.error.as_deref(), Some("model checksum mismatch"));
+    assert_eq!(
+        job.issue.as_ref().map(|issue| (issue.severity, issue.code)),
+        Some((QueueIssueSeverity::Error, QueueIssueCode::Unknown)),
+    );
     assert!(audio_path.exists());
     assert!(!audio_path.with_extension("txt").exists());
     assert_eq!(
@@ -659,6 +681,37 @@ fn cancelled_transcription_job_ignores_late_worker_outcome() {
     let job = queue.job(id).expect("job");
     assert_eq!(job.status, QueueJobStatus::Cancelled);
     assert_eq!(job.error.as_deref(), Some("cancelled by user"));
+}
+
+#[test]
+fn applying_an_outcome_stamps_the_issue_at_the_terminal_boundary() {
+    let mut queue = TranscriptionQueue::new();
+    let id = queue.enqueue_file("/recordings/empty.wav", "openai-gpt-transcribe");
+    queue.start_next().expect("start job");
+    let occurred_at = chrono::Utc.with_ymd_and_hms(2026, 8, 4, 1, 2, 3).unwrap();
+
+    apply_outcome_at(
+        &mut queue,
+        TranscriptionJobOutcome::failed_with_issue(
+            id,
+            wakenote::queue::QueueJobIssue::warning(
+                QueueIssueCode::EmptyTranscript,
+                "OpenAI returned an empty transcript",
+            ),
+        ),
+        occurred_at,
+    )
+    .expect("apply warning");
+
+    assert_eq!(
+        queue
+            .job(id)
+            .expect("job")
+            .issue
+            .as_ref()
+            .and_then(|issue| issue.occurred_at.as_deref()),
+        Some("2026-08-04T01:02:03+00:00"),
+    );
 }
 
 #[test]
@@ -811,6 +864,7 @@ fn runtime_transcriber_consumes_the_realtime_result_without_reuploading_audio() 
             effective_model_id: "openai-gpt-live-transcribe".into(),
             fallback_from_model_id: None,
             usage: None,
+            issue: None,
         }),
     );
     let transcriber = RuntimeTranscriber::new(tmp.path());

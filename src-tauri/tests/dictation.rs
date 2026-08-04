@@ -75,6 +75,7 @@ impl Transcriber for UsageTranscriber {
                 audio_duration_ms: 1_000,
                 provider_cost_usd: Some(0.0001),
             }),
+            issue: None,
         })
     }
 }

@@ -628,6 +628,7 @@ fn publish_completed_result(
                 audio_duration_ms,
                 provider_cost_usd: None,
             }),
+            issue: None,
         }),
     );
 }
@@ -775,6 +776,7 @@ mod tests {
                 effective_model_id: "openai-gpt-live-transcribe".into(),
                 fallback_from_model_id: None,
                 usage: None,
+                issue: None,
             }),
         );
 
