@@ -13,6 +13,7 @@ use whisper_rs::{
     get_lang_str,
 };
 
+use crate::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use crate::cloud_transcription::{
     CloudTranscriptionClient, CloudTranscriptionError, FailureCategory, TranscriptionCredentials,
     TranscriptionFailure,
@@ -22,7 +23,6 @@ use crate::models::{
     ModelStore, OPENAI_GPT_4O_TRANSCRIBE_DIARIZE_MODEL, OPENAI_GPT_TRANSCRIBE_MODEL,
     default_model_registry,
 };
-use crate::openai_realtime::{RealtimeStoredResult, realtime_result_store};
 use crate::queue::{QueueIssueCode, QueueJobIssue, QueueJobStatus, TranscriptionQueue};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,

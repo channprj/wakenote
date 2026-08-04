@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -13,10 +13,12 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, header::AUTHORIZATION};
 
-use crate::cloud_transcription::{FailureCategory, TranscriptionCredentials, TranscriptionFailure};
-use crate::dictionary::DictionaryContext;
+use crate::cloud_realtime::{
+    RealtimePartial, RealtimePartialCallback, RealtimeSamplesRequest, RealtimeStoredResult,
+    realtime_result_store,
+};
+use crate::cloud_transcription::{FailureCategory, TranscriptionFailure};
 use crate::models::OPENAI_GPT_LIVE_TRANSCRIBE_MODEL;
-use crate::settings::{MicrophoneSlot, TranscriptionLanguage};
 use crate::transcription::{TranscriptionExecution, TranscriptionUsage};
 
 const REALTIME_URL: &str = "wss://api.openai.com/v1/realtime";
@@ -24,91 +26,6 @@ const REALTIME_SAMPLE_RATE: u32 = 24_000;
 const FINAL_QUIET_PERIOD: Duration = Duration::from_millis(350);
 const PARTIAL_COMPLETION_WAIT: Duration = Duration::from_secs(5);
 const COMMIT_COMPLETION_WAIT: Duration = Duration::from_secs(15);
-const RESULT_WAIT_TIMEOUT: Duration = Duration::from_secs(75);
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RealtimeStoredResult {
-    Completed(TranscriptionExecution),
-    Failed(TranscriptionFailure),
-}
-
-#[derive(Clone, Default)]
-pub struct RealtimeResultStore {
-    inner: Arc<(Mutex<HashMap<PathBuf, RealtimeStoredResult>>, Condvar)>,
-}
-
-impl RealtimeResultStore {
-    pub fn publish(&self, audio_path: PathBuf, result: RealtimeStoredResult) {
-        let (lock, ready) = &*self.inner;
-        if let Ok(mut results) = lock.lock() {
-            results.insert(audio_path, result);
-            ready.notify_all();
-        }
-    }
-
-    pub fn wait(&self, audio_path: &Path) -> RealtimeStoredResult {
-        let (lock, ready) = &*self.inner;
-        let Ok(results) = lock.lock() else {
-            return RealtimeStoredResult::Failed(local_failure(
-                FailureCategory::Transport,
-                "OpenAI live transcription result store is unavailable",
-            ));
-        };
-        let Ok((mut results, timeout)) =
-            ready.wait_timeout_while(results, RESULT_WAIT_TIMEOUT, |results| {
-                !results.contains_key(audio_path)
-            })
-        else {
-            return RealtimeStoredResult::Failed(local_failure(
-                FailureCategory::Transport,
-                "OpenAI live transcription result wait failed",
-            ));
-        };
-        if timeout.timed_out() {
-            return RealtimeStoredResult::Failed(local_failure(
-                FailureCategory::Transport,
-                "OpenAI live transcription timed out",
-            ));
-        }
-        results.remove(audio_path).unwrap_or_else(|| {
-            RealtimeStoredResult::Failed(local_failure(
-                FailureCategory::InvalidResponse,
-                "OpenAI live transcription result is missing",
-            ))
-        })
-    }
-}
-
-pub fn realtime_result_store() -> &'static RealtimeResultStore {
-    static STORE: OnceLock<RealtimeResultStore> = OnceLock::new();
-    STORE.get_or_init(RealtimeResultStore::default)
-}
-
-#[derive(Debug, Clone)]
-pub struct RealtimeSamplesRequest {
-    pub source_key: String,
-    pub source_label: String,
-    pub microphone_slot: Option<MicrophoneSlot>,
-    pub chunk_id: u64,
-    pub model_id: String,
-    pub language: TranscriptionLanguage,
-    pub dictionary: DictionaryContext,
-    pub sample_rate: u32,
-    pub samples: Arc<Vec<f32>>,
-    pub credentials: TranscriptionCredentials,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RealtimePartial {
-    pub source_key: String,
-    pub source_label: String,
-    pub microphone_slot: Option<MicrophoneSlot>,
-    pub chunk_id: u64,
-    pub text: String,
-}
-
-pub type RealtimePartialCallback = Arc<dyn Fn(RealtimePartial) + Send + Sync>;
-
 #[derive(Clone)]
 pub struct OpenAiRealtimeManager {
     tx: mpsc::UnboundedSender<ManagerCommand>,
@@ -762,28 +679,5 @@ mod tests {
             })),
             ServerEvent::CommitEmpty
         );
-    }
-
-    #[test]
-    fn openai_realtime_result_store_delivers_once_by_audio_path() {
-        let store = RealtimeResultStore::default();
-        let path = PathBuf::from("/tmp/wakenote-live.wav");
-        store.publish(
-            path.clone(),
-            RealtimeStoredResult::Completed(TranscriptionExecution {
-                text: "hello".into(),
-                speaker_turns: Vec::new(),
-                requested_model_id: "openai-gpt-live-transcribe".into(),
-                effective_model_id: "openai-gpt-live-transcribe".into(),
-                fallback_from_model_id: None,
-                usage: None,
-                issue: None,
-            }),
-        );
-
-        let RealtimeStoredResult::Completed(result) = store.wait(&path) else {
-            panic!("completed result")
-        };
-        assert_eq!(result.text, "hello");
     }
 }

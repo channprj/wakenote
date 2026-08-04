@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use wakenote::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
-use wakenote::openai_realtime::{RealtimeStoredResult, realtime_result_store};
 use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{DictionaryEntry, TranscriptionLanguage};

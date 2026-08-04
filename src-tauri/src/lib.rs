@@ -2,6 +2,7 @@ pub mod audio;
 pub mod audio_analysis;
 pub mod audio_merge;
 pub mod capture;
+pub mod cloud_realtime;
 pub mod cloud_transcription;
 pub mod commands;
 pub mod debug_log;

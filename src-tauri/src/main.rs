@@ -25,6 +25,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::audio_merge::{AudioMergeResult, MergeAudioRequest, merge_audio_to_m4a};
+use wakenote::cloud_realtime::{RealtimePartial, RealtimeSamplesRequest};
 use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
     AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
@@ -71,7 +72,7 @@ use wakenote::models::{
     model_supports_context, validate_model_options,
 };
 use wakenote::multi_capture::MultiCaptureRuntime;
-use wakenote::openai_realtime::{OpenAiRealtimeManager, RealtimePartial, RealtimeSamplesRequest};
+use wakenote::openai_realtime::OpenAiRealtimeManager;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
     OVERLAY_CAPTION_FINAL_HOLD, OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT,
