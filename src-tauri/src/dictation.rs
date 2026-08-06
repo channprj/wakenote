@@ -15,6 +15,7 @@ use crate::transcription::{
     Transcriber, TranscriptionExecution, TranscriptionRequest, resample_linear,
     should_skip_low_signal_audio,
 };
+use crate::voice_leveling::AudioFrameProcessor;
 
 pub const DICTATION_PRESS_DEBOUNCE: Duration = Duration::from_millis(300);
 pub const DICTATION_MAX_RECORDING_DURATION: Duration = Duration::from_secs(10 * 60);
@@ -316,10 +317,10 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
     pub fn start_recording_with_frame_handler<F>(
         &mut self,
         config: AudioInputConfig,
-        on_frame: F,
+        mut on_frame: F,
     ) -> Result<u64, String>
     where
-        F: Fn(&AudioFrame) + Send + Sync + 'static,
+        F: FnMut(&AudioFrame) + Send + 'static,
     {
         if self.stage != DictationStage::Recording {
             return Err("dictation is not ready to record".to_string());
@@ -335,6 +336,45 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         let callback_samples = self.samples.clone();
         self.capture
             .start(config, move |frame| {
+                if let Ok(mut samples) = callback_samples.lock() {
+                    samples.extend_from_slice(&frame.samples);
+                }
+                on_frame(&frame);
+            })
+            .map_err(|error| error.to_string())?;
+
+        let recording_id = self.next_recording_id;
+        self.next_recording_id = self.next_recording_id.saturating_add(1);
+        self.active_recording_id = Some(recording_id);
+        self.sample_rate = Some(sample_rate);
+        self.started_at = Some(Utc::now());
+        Ok(recording_id)
+    }
+
+    pub fn start_recording_with_processor<P, F>(
+        &mut self,
+        config: AudioInputConfig,
+        processor: P,
+        mut on_frame: F,
+    ) -> Result<u64, String>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(&AudioFrame) + Send + 'static,
+    {
+        if self.stage != DictationStage::Recording {
+            return Err("dictation is not ready to record".to_string());
+        }
+        let sample_rate = config
+            .sample_rate
+            .filter(|sample_rate| *sample_rate > 0)
+            .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
+        self.samples
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
+        let callback_samples = self.samples.clone();
+        self.capture
+            .start_processed(config, processor, move |frame| {
                 if let Ok(mut samples) = callback_samples.lock() {
                     samples.extend_from_slice(&frame.samples);
                 }

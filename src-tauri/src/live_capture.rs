@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use thiserror::Error;
 
+use crate::voice_leveling::AudioFrameProcessor;
+
 const FRAME_DISPATCH_QUEUE_CAPACITY: usize = 512;
 const CPAL_STREAM_READY_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -114,7 +116,7 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
     pub fn start(
         &mut self,
         config: AudioInputConfig,
-        on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
+        on_frame: impl FnMut(AudioFrame) + Send + 'static,
     ) -> Result<(), LiveCaptureError> {
         if self
             .stream
@@ -138,6 +140,46 @@ impl<B: AudioInputBackend> LiveCaptureRuntime<B> {
         self.stream = Some(stream);
         self.dispatcher = Some(dispatcher);
         Ok(())
+    }
+
+    pub fn start_processed<P, F>(
+        &mut self,
+        config: AudioInputConfig,
+        mut processor: P,
+        mut on_frame: F,
+    ) -> Result<(), LiveCaptureError>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(AudioFrame) + Send + 'static,
+    {
+        self.start(config, move |frame| {
+            for processed in processor.process(frame) {
+                on_frame(processed);
+            }
+        })
+    }
+
+    pub fn start_processed_with_warnings<P, F, W>(
+        &mut self,
+        config: AudioInputConfig,
+        mut processor: P,
+        mut on_frame: F,
+        mut on_warning: W,
+    ) -> Result<(), LiveCaptureError>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(AudioFrame) + Send + 'static,
+        W: FnMut(String) + Send + 'static,
+    {
+        self.start(config, move |frame| {
+            let processed = processor.process(frame);
+            if let Some(warning) = processor.take_warning() {
+                on_warning(warning);
+            }
+            for frame in processed {
+                on_frame(frame);
+            }
+        })
     }
 
     pub fn stop(&mut self) {
@@ -171,7 +213,7 @@ impl<B: AudioInputBackend> AudioStreamHandle for LiveCaptureRuntime<B> {
 
 impl FrameDispatcher {
     fn new(
-        on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
+        mut on_frame: impl FnMut(AudioFrame) + Send + 'static,
     ) -> (Self, Arc<dyn Fn(AudioFrame) + Send + Sync>) {
         let queue = Arc::new(FrameDispatchQueue::new());
         let callback_queue = queue.clone();

@@ -171,6 +171,7 @@ export function defaultSettings(): AppSettings {
     dictionary_enabled: true,
     dictionary: [],
     vad_enabled: false,
+    voice_auto_level_enabled: true,
     launch_at_login: false,
     start_live_input_on_launch: true,
     input_monitoring_enabled: false,

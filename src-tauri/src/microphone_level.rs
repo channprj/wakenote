@@ -189,18 +189,6 @@ impl<B: MicrophoneVolumeBackend> MicrophoneLevelService<B> {
         configured: &CaptureMicrophoneEntry,
         devices: &[SystemInputDevice],
     ) -> Result<String, MicrophoneLevelError> {
-        if configured.id == "default" {
-            let uid = self
-                .backend
-                .default_input_uid()?
-                .ok_or_else(|| MicrophoneLevelError::DeviceUnavailable(configured.label.clone()))?;
-            return devices
-                .iter()
-                .any(|device| device.uid == uid)
-                .then_some(uid)
-                .ok_or_else(|| MicrophoneLevelError::DeviceUnavailable(configured.label.clone()));
-        }
-
         if let Some(uid) = configured
             .core_audio_uid
             .as_deref()
@@ -211,6 +199,18 @@ impl<B: MicrophoneVolumeBackend> MicrophoneLevelService<B> {
                 .iter()
                 .any(|device| device.uid == uid)
                 .then(|| uid.to_string())
+                .ok_or_else(|| MicrophoneLevelError::DeviceUnavailable(configured.label.clone()));
+        }
+
+        if configured.id == "default" {
+            let uid = self
+                .backend
+                .default_input_uid()?
+                .ok_or_else(|| MicrophoneLevelError::DeviceUnavailable(configured.label.clone()))?;
+            return devices
+                .iter()
+                .any(|device| device.uid == uid)
+                .then_some(uid)
                 .ok_or_else(|| MicrophoneLevelError::DeviceUnavailable(configured.label.clone()));
         }
 
@@ -462,6 +462,23 @@ mod tests {
             .level_for(&legacy_entry("default", "System Default"))
             .unwrap();
         assert_eq!(level.volume_percent, Some(65));
+    }
+
+    #[test]
+    fn resolved_default_uid_stays_pinned_for_an_active_capture() {
+        let backend = FakeVolumeBackend::with_devices([
+            device("uid-a", "Built-in Mic", 30, true),
+            device("uid-b", "USB Mic", 65, true),
+        ])
+        .with_default_uid("uid-b");
+        let service = MicrophoneLevelService::new(backend);
+        let configured = CaptureMicrophoneEntry {
+            id: "default".into(),
+            label: "System Default".into(),
+            core_audio_uid: Some("uid-a".into()),
+        };
+
+        assert_eq!(service.resolved_uid_for(&configured).unwrap(), "uid-a");
     }
 
     #[test]

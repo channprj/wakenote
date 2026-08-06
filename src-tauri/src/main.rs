@@ -110,6 +110,9 @@ use wakenote::transcription_cost::{
     TranscriptionCostEntry, TranscriptionCostLedger, TranscriptionCostSnapshot,
     estimated_provider_cost_usd, ledger_path,
 };
+use wakenote::voice_leveling::{
+    ServiceHardwareLevelControl, VoiceAwareMicrophoneProcessor, VoiceLevelingPolicy,
+};
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
@@ -2154,19 +2157,46 @@ fn handle_dictation_shortcut_event(
                     microphone.label
                 ));
             }
+            let configured_microphone = CaptureMicrophoneEntry {
+                id: resolved.device_id.clone(),
+                label: resolved.device_name.clone(),
+                core_audio_uid: resolved.core_audio_uid.clone(),
+            };
             let callback_app = app.clone();
             let callback_throttle =
                 Arc::new(Mutex::new(Instant::now() - OVERLAY_LEVEL_EMIT_INTERVAL));
+            let voice_leveling_policy = app
+                .try_state::<VoiceLevelingPolicy>()
+                .map(|state| state.inner().clone())
+                .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
+            let hardware_control = app
+                .try_state::<MicrophoneLevelState>()
+                .map(|state| state.inner().clone())
+                .and_then(|service| {
+                    service
+                        .level_for(&configured_microphone)
+                        .ok()
+                        .filter(|level| level.writable && level.volume_percent.is_some())
+                        .map(|_| {
+                            ServiceHardwareLevelControl::new(service, configured_microphone.clone())
+                        })
+                });
+            let processor = VoiceAwareMicrophoneProcessor::new(
+                resolved.sample_rate,
+                voice_leveling_policy,
+                hardware_control,
+            );
             let recording_id = state
                 .lock()
                 .map_err(|error| error.to_string())?
-                .start_recording_with_frame_handler(
+                .start_recording_with_processor(
                     AudioInputConfig {
                         device_id: resolved.device_id,
                         sample_rate: Some(resolved.sample_rate),
                         label_hint,
                         core_audio_uid: resolved.core_audio_uid,
                     },
+                    processor,
                     move |frame| {
                         if !overlay_level_emit_due(&callback_throttle) {
                             return;
@@ -2232,6 +2262,7 @@ fn update_settings(
     source_capture_lifecycle_state: State<'_, SourceCaptureLifecycleState>,
     detected_source_state: State<'_, DetectedSourceState>,
     meeting_state: State<'_, MeetingState>,
+    voice_leveling_policy: State<'_, VoiceLevelingPolicy>,
     mut patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
     normalize_dictation_patch(&mut patch)?;
@@ -2263,6 +2294,7 @@ fn update_settings(
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (settings, handler, events)
     };
+    voice_leveling_policy.set_enabled(settings.voice_auto_level_enabled);
     if dictionary_was_patched {
         match dictionary_state.lock() {
             Ok(mut store) => {
@@ -3810,6 +3842,11 @@ fn start_manual_meeting_recording(
         configured.core_audio_uid.as_deref(),
     )
     .map_err(|error| error.to_string())?;
+    let configured_microphone = CaptureMicrophoneEntry {
+        id: resolved.device_id.clone(),
+        label: resolved.device_name.clone(),
+        core_audio_uid: resolved.core_audio_uid.clone(),
+    };
     let microphone_rate = resolved.sample_rate;
     let started_at = Utc::now();
     let title = format!(
@@ -3830,15 +3867,35 @@ fn start_manual_meeting_recording(
     let writer = ManualMeetingWriter::start(recorder, started_at);
     let microphone_sender = writer.sender(ManualMeetingSource::Microphone);
     let system_sender = writer.sender(ManualMeetingSource::System);
+    let voice_leveling_policy = app
+        .try_state::<VoiceLevelingPolicy>()
+        .map(|state| state.inner().clone())
+        .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
+    let hardware_control = app
+        .try_state::<MicrophoneLevelState>()
+        .map(|state| state.inner().clone())
+        .and_then(|service| {
+            service
+                .level_for(&configured_microphone)
+                .ok()
+                .filter(|level| level.writable && level.volume_percent.is_some())
+                .map(|_| ServiceHardwareLevelControl::new(service, configured_microphone.clone()))
+        });
+    let processor = VoiceAwareMicrophoneProcessor::new(
+        microphone_rate,
+        voice_leveling_policy,
+        hardware_control,
+    );
 
     let mut microphone = LiveCaptureRuntime::new(CpalAudioInput);
-    if let Err(error) = microphone.start(
+    if let Err(error) = microphone.start_processed(
         AudioInputConfig {
             device_id: resolved.device_id,
             sample_rate: Some(microphone_rate),
             label_hint: Some(resolved.device_name),
             core_audio_uid: resolved.core_audio_uid,
         },
+        processor,
         move |frame| microphone_sender.try_send(frame, microphone_rate),
     ) {
         let _ = writer.abort();
@@ -4337,6 +4394,11 @@ fn start_live_capture_slot_runtime(
         requested_core_audio_uid.clone(),
     )
     .map_err(|error| error.to_string())?;
+    let configured_microphone = CaptureMicrophoneEntry {
+        id: resolved.device_id.clone(),
+        label: resolved.device_name.clone(),
+        core_audio_uid: resolved.core_audio_uid.clone(),
+    };
     if requested_device_id != "default" && resolved.used_fallback_device {
         return Err(format!(
             "{} is disconnected; waiting for the same device",
@@ -4380,10 +4442,27 @@ fn start_live_capture_slot_runtime(
             .checked_sub(Duration::from_millis(100))
             .unwrap_or_else(Instant::now),
     ));
+    let voice_leveling_policy = app
+        .try_state::<VoiceLevelingPolicy>()
+        .map(|state| state.inner().clone())
+        .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
+    let hardware_control = app
+        .try_state::<MicrophoneLevelState>()
+        .map(|state| state.inner().clone())
+        .and_then(|service| {
+            service
+                .level_for(&configured_microphone)
+                .ok()
+                .filter(|level| level.writable && level.volume_percent.is_some())
+                .map(|_| ServiceHardwareLevelControl::new(service, configured_microphone))
+        });
+    let processor =
+        VoiceAwareMicrophoneProcessor::new(sample_rate, voice_leveling_policy, hardware_control);
+    let warning_backend = Arc::clone(backend_state);
     let start_result = live_state
         .lock()
         .map_err(|error| error.to_string())?
-        .start_slot(
+        .start_slot_processed_with_warnings(
             slot,
             AudioInputConfig {
                 device_id,
@@ -4391,6 +4470,7 @@ fn start_live_capture_slot_runtime(
                 label_hint: requested_label_hint,
                 core_audio_uid: requested_core_audio_uid,
             },
+            processor,
             move |frame| {
                 if let Some(input_monitor) = callback_input_monitor.as_ref()
                     && let Ok(monitor) = input_monitor.try_lock()
@@ -4431,6 +4511,11 @@ fn start_live_capture_slot_runtime(
                         callback_backend.clone(),
                         callback_transcription.clone(),
                     );
+                }
+            },
+            move |warning| {
+                if let Ok(mut backend) = warning_backend.lock() {
+                    backend.set_microphone_slot_warning(slot, warning);
                 }
             },
         );
@@ -6970,6 +7055,9 @@ fn main() {
             let microphone_level_state: MicrophoneLevelState = Arc::new(
                 MicrophoneLevelService::new(PlatformVolumeBackend::new()),
             );
+            let voice_leveling_policy = VoiceLevelingPolicy::new(
+                initial_settings_for_runtime.voice_auto_level_enabled,
+            );
             let input_monitor_state: InputMonitorState =
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
             let dictation_state: DictationState =
@@ -7000,6 +7088,7 @@ fn main() {
             app.manage(transcription_cost_state);
             app.manage(llm_run_state);
             app.manage(microphone_level_state.clone());
+            app.manage(voice_leveling_policy);
             spawn_microphone_input_level_observer(
                 app.handle().clone(),
                 backend_state.clone(),

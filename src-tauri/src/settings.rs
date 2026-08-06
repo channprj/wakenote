@@ -341,6 +341,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
     pub vad_enabled: bool,
+    #[serde(default = "default_true")]
+    pub voice_auto_level_enabled: bool,
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
     #[serde(default)]
@@ -449,6 +451,7 @@ pub struct SettingsPatch {
     pub dictionary_enabled: Option<bool>,
     pub dictionary: Option<Vec<DictionaryEntry>>,
     pub vad_enabled: Option<bool>,
+    pub voice_auto_level_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
     pub input_monitoring_enabled: Option<bool>,
@@ -1076,6 +1079,9 @@ impl AppSettings {
         if let Some(value) = patch.vad_enabled {
             self.vad_enabled = value;
         }
+        if let Some(value) = patch.voice_auto_level_enabled {
+            self.voice_auto_level_enabled = value;
+        }
         if let Some(value) = patch.launch_at_login {
             self.launch_at_login = value;
         }
@@ -1252,6 +1258,7 @@ impl Default for AppSettings {
             dictionary_enabled: true,
             dictionary: Vec::new(),
             vad_enabled: false,
+            voice_auto_level_enabled: true,
             launch_at_login: false,
             start_live_input_on_launch: true,
             input_monitoring_enabled: false,
@@ -1672,6 +1679,21 @@ mod tests {
         let settings: AppSettings = serde_json::from_value(json).unwrap();
         let saved = serde_json::to_value(settings).unwrap();
         assert!(saved.get("mic_input_volume_percent").is_none());
+    }
+
+    #[test]
+    fn voice_auto_level_defaults_on_and_persists_off() {
+        assert!(AppSettings::default().voice_auto_level_enabled);
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            voice_auto_level_enabled: Some(false),
+            ..Default::default()
+        });
+        assert!(!settings.voice_auto_level_enabled);
+
+        let restored: AppSettings =
+            serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+        assert!(!restored.voice_auto_level_enabled);
     }
 
     #[test]

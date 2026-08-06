@@ -196,7 +196,9 @@ export function SettingSlider({
           <FieldDescription>{description}</FieldDescription>
         ) : null}
       </FieldContent>
-      <div className="settings-slider">
+      <div
+        className={`settings-slider${valueLabel ? " settings-slider--wide-output" : ""}`}
+      >
         <Slider
           aria-label={label}
           aria-disabled={disabled}

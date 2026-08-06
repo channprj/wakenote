@@ -148,6 +148,14 @@ export function AudioSettings({
             actions.onPatch({ capture_microphones })
           }
         />
+        <SettingSwitch
+          label="Voice-aware Auto Level"
+          description="Detect speech locally, prevent repeated clipping, and raise quiet voices. The system input slider may move while recording."
+          checked={settings.voice_auto_level_enabled}
+          onCheckedChange={(voice_auto_level_enabled) =>
+            actions.onPatch({ voice_auto_level_enabled })
+          }
+        />
         <MicrophoneInputVolumeRows snapshot={snapshot} actions={actions} />
         <SettingSwitch
           label="Merge microphone inputs"
@@ -279,6 +287,7 @@ function MicrophoneInputVolumeRows({
     );
     const available = level?.available === true;
     const writable = available && level.writable;
+    const autoLevelEnabled = snapshot.settings.voice_auto_level_enabled;
     const value = level?.volume_percent ?? 0;
     const label =
       configured.length === 1
@@ -286,14 +295,18 @@ function MicrophoneInputVolumeRows({
         : `${index === 0 ? "Primary" : "Secondary"} Input Volume`;
     const valueLabel = !available
       ? "Unavailable"
-      : !writable
-        ? "Digital auto level only"
-        : undefined;
+      : autoLevelEnabled
+        ? writable
+          ? "Hardware + digital auto level"
+          : "Digital auto level only"
+        : "Manual system volume";
     const description = !available
       ? (level?.error ?? "This microphone is not currently available.")
       : !writable
         ? "This microphone does not expose writable macOS input volume."
-        : "Current macOS input volume. It may also change outside WakeNote.";
+        : autoLevelEnabled
+          ? "Current macOS input volume. Auto Level may adjust it while recording."
+          : "Current macOS input volume. It may also change outside WakeNote.";
 
     return (
       <SettingSlider

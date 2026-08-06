@@ -177,6 +177,7 @@ export interface AppSettings {
   dictionary_enabled: boolean;
   dictionary: DictionaryEntry[];
   vad_enabled: boolean;
+  voice_auto_level_enabled: boolean;
   launch_at_login: boolean;
   start_live_input_on_launch: boolean;
   input_monitoring_enabled: boolean;

@@ -543,6 +543,39 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it("enables voice-aware auto level by default and explains hardware fallback", async () => {
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.microphone_input_levels[0] = {
+      ...snapshot.microphone_input_levels[0],
+      writable: false,
+    };
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const autoLevel = screen.getByRole("switch", {
+      name: "Voice-aware Auto Level",
+    });
+    expect(autoLevel.getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByText("Digital auto level only")).not.toBeNull();
+    expect(
+      screen.queryByText(
+        "Detect speech locally, prevent repeated clipping, and raise quiet voices. The system input slider may move while recording.",
+      ),
+    ).not.toBeNull();
+
+    await userEvent.click(autoLevel);
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      voice_auto_level_enabled: false,
+    });
+  });
+
   it("preserves the Save Root patch key", () => {
     const actions = makeActions();
     render(

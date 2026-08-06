@@ -37,3 +37,4 @@ pub mod text_input;
 pub mod transcription;
 pub mod transcription_cost;
 pub mod trash;
+pub mod voice_leveling;

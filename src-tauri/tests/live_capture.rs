@@ -6,6 +6,7 @@ use wakenote::live_capture::{
     LiveCaptureError, LiveCaptureRuntime, resolve_input_device_from_candidates,
     resolve_input_device_from_candidates_with_uid,
 };
+use wakenote::voice_leveling::AudioFrameProcessor;
 
 type FrameCallback = Arc<dyn Fn(AudioFrame) + Send + Sync>;
 
@@ -27,6 +28,19 @@ fn audio_frame(samples: Vec<f32>, duration_ms: u64) -> AudioFrame {
         captured_at: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
             + chrono::Duration::milliseconds(duration_ms as i64),
     }
+}
+
+struct ScalingProcessor(f32);
+
+impl AudioFrameProcessor for ScalingProcessor {
+    fn process(&mut self, mut frame: AudioFrame) -> Vec<AudioFrame> {
+        for sample in &mut frame.samples {
+            *sample *= self.0;
+        }
+        vec![frame]
+    }
+
+    fn reset(&mut self) {}
 }
 
 impl AudioStreamHandle for FakeHandle {
@@ -85,6 +99,32 @@ fn live_capture_runtime_starts_once_and_delivers_audio_frames() {
     assert!(runtime.is_running());
     assert_eq!(emitter.starts(), 1);
     assert_eq!(received.duration_ms, 20);
+}
+
+#[test]
+fn processed_runtime_delivers_each_output_once() {
+    let input = FakeInput::default();
+    let emitter = input.clone();
+    let (received_tx, received_rx) = mpsc::channel();
+    let mut runtime = LiveCaptureRuntime::new(input);
+
+    runtime
+        .start_processed(
+            AudioInputConfig::default(),
+            ScalingProcessor(2.0),
+            move |frame| received_tx.send(frame).expect("received frame"),
+        )
+        .expect("start processed capture");
+    emitter.emit(audio_frame(vec![0.25, -0.25], 10));
+
+    assert_eq!(
+        received_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("processed frame")
+            .samples,
+        vec![0.5, -0.5]
+    );
+    assert!(received_rx.try_recv().is_err());
 }
 
 #[test]

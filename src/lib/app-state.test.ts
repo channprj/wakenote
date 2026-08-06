@@ -15,6 +15,10 @@ describe("app state derivation", () => {
     expect(defaultSettings().merge_microphone_inputs).toBe(true);
   });
 
+  it("enables local voice-aware auto level by default", () => {
+    expect(defaultSettings().voice_auto_level_enabled).toBe(true);
+  });
+
   it("uses the upstream whisper.cpp repository for mock model downloads", () => {
     const whisperModels = mockModels().filter(
       (model) => model.provider_runtime === "whisper-rs",

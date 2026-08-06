@@ -352,6 +352,15 @@
   white-space: nowrap;
 }
 
+.settings-slider--wide-output {
+  grid-template-columns: minmax(80px, 1fr) max-content;
+}
+
+.settings-slider--wide-output output {
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .settings-path-list {
   display: grid;
   min-width: 0;

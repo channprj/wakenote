@@ -6,6 +6,26 @@ use wakenote::live_capture::{
 };
 use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::settings::MicrophoneSlot;
+use wakenote::voice_leveling::AudioFrameProcessor;
+
+struct StatefulScalingProcessor {
+    multiplier: f32,
+    frames_seen: usize,
+}
+
+impl AudioFrameProcessor for StatefulScalingProcessor {
+    fn process(&mut self, mut frame: AudioFrame) -> Vec<AudioFrame> {
+        self.frames_seen += 1;
+        for sample in &mut frame.samples {
+            *sample *= self.multiplier * self.frames_seen as f32;
+        }
+        vec![frame]
+    }
+
+    fn reset(&mut self) {
+        self.frames_seen = 0;
+    }
+}
 
 #[derive(Default)]
 struct ScriptedInput;
@@ -94,6 +114,51 @@ fn two_microphone_slots_start_dispatch_and_stop_independently() {
     runtime.stop_slot(MicrophoneSlot::Secondary);
     assert!(runtime.is_running(MicrophoneSlot::Primary));
     assert!(!runtime.is_running(MicrophoneSlot::Secondary));
+}
+
+#[test]
+fn microphone_slots_keep_independent_processor_state() {
+    let mut runtime = MultiCaptureRuntime::<ScriptedInput>::default();
+    let (primary_tx, primary_rx) = mpsc::channel();
+    let (secondary_tx, secondary_rx) = mpsc::channel();
+
+    runtime
+        .start_slot_processed(
+            MicrophoneSlot::Primary,
+            config("primary"),
+            StatefulScalingProcessor {
+                multiplier: 2.0,
+                frames_seen: 0,
+            },
+            move |frame| primary_tx.send(frame).expect("primary frame"),
+        )
+        .expect("start primary");
+    runtime
+        .start_slot_processed(
+            MicrophoneSlot::Secondary,
+            config("secondary"),
+            StatefulScalingProcessor {
+                multiplier: 3.0,
+                frames_seen: 0,
+            },
+            move |frame| secondary_tx.send(frame).expect("secondary frame"),
+        )
+        .expect("start secondary");
+
+    assert_eq!(
+        primary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("primary processed")
+            .samples,
+        vec![0.2]
+    );
+    assert_eq!(
+        secondary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("secondary processed")
+            .samples,
+        vec![0.6]
+    );
 }
 
 #[test]

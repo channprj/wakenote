@@ -6,6 +6,7 @@ use crate::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureError, LiveCaptureRuntime,
 };
 use crate::settings::MicrophoneSlot;
+use crate::voice_leveling::AudioFrameProcessor;
 
 pub const MICROPHONE_MIX_REORDER_MS: u64 = 100;
 
@@ -264,7 +265,7 @@ impl<B: AudioInputBackend + Default> MultiCaptureRuntime<B> {
         &mut self,
         slot: MicrophoneSlot,
         config: AudioInputConfig,
-        on_frame: impl Fn(AudioFrame) + Send + Sync + 'static,
+        on_frame: impl FnMut(AudioFrame) + Send + 'static,
     ) -> Result<(), LiveCaptureError> {
         if let Some(runtime) = self.runtimes.get_mut(&slot) {
             return runtime.start(config, on_frame);
@@ -272,6 +273,50 @@ impl<B: AudioInputBackend + Default> MultiCaptureRuntime<B> {
 
         let mut runtime = LiveCaptureRuntime::new(B::default());
         runtime.start(config, on_frame)?;
+        self.runtimes.insert(slot, runtime);
+        Ok(())
+    }
+
+    pub fn start_slot_processed<P, F>(
+        &mut self,
+        slot: MicrophoneSlot,
+        config: AudioInputConfig,
+        processor: P,
+        on_frame: F,
+    ) -> Result<(), LiveCaptureError>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(AudioFrame) + Send + 'static,
+    {
+        if let Some(runtime) = self.runtimes.get_mut(&slot) {
+            return runtime.start_processed(config, processor, on_frame);
+        }
+
+        let mut runtime = LiveCaptureRuntime::new(B::default());
+        runtime.start_processed(config, processor, on_frame)?;
+        self.runtimes.insert(slot, runtime);
+        Ok(())
+    }
+
+    pub fn start_slot_processed_with_warnings<P, F, W>(
+        &mut self,
+        slot: MicrophoneSlot,
+        config: AudioInputConfig,
+        processor: P,
+        on_frame: F,
+        on_warning: W,
+    ) -> Result<(), LiveCaptureError>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(AudioFrame) + Send + 'static,
+        W: FnMut(String) + Send + 'static,
+    {
+        if let Some(runtime) = self.runtimes.get_mut(&slot) {
+            return runtime.start_processed_with_warnings(config, processor, on_frame, on_warning);
+        }
+
+        let mut runtime = LiveCaptureRuntime::new(B::default());
+        runtime.start_processed_with_warnings(config, processor, on_frame, on_warning)?;
         self.runtimes.insert(slot, runtime);
         Ok(())
     }

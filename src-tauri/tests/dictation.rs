@@ -22,6 +22,20 @@ use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionExecution, TranscriptionRequest,
     TranscriptionUsage,
 };
+use wakenote::voice_leveling::AudioFrameProcessor;
+
+struct ScalingProcessor(f32);
+
+impl AudioFrameProcessor for ScalingProcessor {
+    fn process(&mut self, mut frame: AudioFrame) -> Vec<AudioFrame> {
+        for sample in &mut frame.samples {
+            *sample *= self.0;
+        }
+        vec![frame]
+    }
+
+    fn reset(&mut self) {}
+}
 
 struct FakeInput {
     frames: Vec<AudioFrame>,
@@ -355,6 +369,42 @@ fn hold_to_talk_stops_only_on_release() {
 
     runtime.finish();
     assert_eq!(runtime.stage(), DictationStage::Idle);
+}
+
+#[test]
+fn dictation_records_processed_microphone_samples() {
+    let mut runtime = DictationRuntime::new(FakeInput {
+        frames: vec![AudioFrame {
+            samples: vec![0.2, -0.2],
+            duration_ms: 10,
+            captured_at: Utc::now(),
+        }],
+    });
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+        DictationAction::StartRecording
+    );
+    runtime
+        .start_recording_with_processor(
+            AudioInputConfig {
+                device_id: "fake".to_string(),
+                sample_rate: Some(48_000),
+                label_hint: None,
+                core_audio_uid: None,
+            },
+            ScalingProcessor(2.0),
+            |_| {},
+        )
+        .expect("processed dictation starts");
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::StopAndTranscribe
+    );
+
+    assert_eq!(
+        runtime.stop_recording().expect("recording stops").samples,
+        vec![0.4, -0.4]
+    );
 }
 
 #[test]
