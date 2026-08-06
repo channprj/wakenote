@@ -225,6 +225,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Secondary microphone | none | one distinct physical input |
 | Merge microphone inputs | `on` | `on` / `off` |
 | Threshold | `-40 dBFS` | `-90 … -10` |
+| Voice-aware Auto Level | `on` | Local RNN speech detection, adaptive digital gain, clipping protection, and hardware input-volume recommendations when the microphone allows them |
 | Mic input volume | Current macOS value | `0 … 100%`; system-authoritative and not reset with recording defaults |
 | Attack | `200 ms` | `50 … 2,000 ms` |
 | Release | `1,000 ms` | `250 … 5,000 ms` |
@@ -395,6 +396,9 @@ Use the actual generated filename for `<version>`.
 - Watch each microphone status row for Active, Waiting, or Reconnecting state.
 - The input-volume row mirrors macOS. `Digital auto level only` means the device exposes no writable hardware volume; capture remains available and the row is intentionally read-only.
 - Some USB interfaces manage gain with a physical knob and do not expose a macOS input-volume property.
+- With **Voice-aware Auto Level** enabled, WakeNote detects speech locally and may move a writable macOS input slider during capture. Primary and Secondary microphones are adjusted independently.
+- `Hardware + digital auto level` combines macOS input-volume recommendations with adaptive digital gain. `Digital auto level only` keeps the local digital protection when the device is read-only.
+- Disable **Voice-aware Auto Level** to use `Manual system volume`. Samples already clipped by the microphone's analog-to-digital converter cannot be reconstructed; lower the physical gain when clipping persists.
 
 ### The level moves but no chunk starts
 
