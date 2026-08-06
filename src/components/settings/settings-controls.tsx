@@ -42,7 +42,9 @@ export function SettingsCard({
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
-        <FieldGroup className="gap-0 divide-y divide-border">{children}</FieldGroup>
+        <FieldGroup className="gap-0 divide-y divide-border">
+          {children}
+        </FieldGroup>
       </CardContent>
     </Card>
   );
@@ -64,10 +66,16 @@ export function SettingSwitch({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <Field orientation="horizontal" className="settings-row" data-disabled={disabled || undefined}>
+    <Field
+      orientation="horizontal"
+      className="settings-row"
+      data-disabled={disabled || undefined}
+    >
       <FieldContent>
         <FieldTitle>{label}</FieldTitle>
-        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        {description ? (
+          <FieldDescription>{description}</FieldDescription>
+        ) : null}
       </FieldContent>
       <Switch
         aria-label={label}
@@ -103,13 +111,24 @@ export function SettingSelect<T extends string>({
   onValueChange: (value: T) => void;
 }) {
   return (
-    <Field orientation="responsive" className="settings-row" data-disabled={disabled || undefined}>
+    <Field
+      orientation="responsive"
+      className="settings-row"
+      data-disabled={disabled || undefined}
+    >
       <FieldContent>
         <FieldLabel>{label}</FieldLabel>
-        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        {description ? (
+          <FieldDescription>{description}</FieldDescription>
+        ) : null}
       </FieldContent>
       <Select value={value} disabled={disabled} onValueChange={onValueChange}>
-        <SelectTrigger size="sm" className="min-w-40" aria-label={label} title={title}>
+        <SelectTrigger
+          size="sm"
+          className="min-w-40"
+          aria-label={label}
+          title={title}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -134,6 +153,8 @@ export function SettingSlider({
   max,
   step = 1,
   suffix = "",
+  disabled = false,
+  valueLabel,
   onValueChange,
 }: {
   label: string;
@@ -143,24 +164,33 @@ export function SettingSlider({
   max: number;
   step?: number;
   suffix?: string;
+  disabled?: boolean;
+  valueLabel?: string;
   onValueChange: (value: number) => void;
 }) {
   return (
-    <Field orientation="responsive" className="settings-row settings-row--slider">
+    <Field
+      orientation="responsive"
+      className="settings-row settings-row--slider"
+    >
       <FieldContent>
         <FieldLabel>{label}</FieldLabel>
-        {description ? <FieldDescription>{description}</FieldDescription> : null}
+        {description ? (
+          <FieldDescription>{description}</FieldDescription>
+        ) : null}
       </FieldContent>
       <div className="settings-slider">
         <Slider
           aria-label={label}
+          aria-disabled={disabled}
           value={[value]}
           min={min}
           max={max}
           step={step}
+          disabled={disabled}
           onValueChange={(values) => onValueChange(values[0] ?? value)}
         />
-        <output>{value}{suffix}</output>
+        <output>{valueLabel ?? `${value}${suffix}`}</output>
       </div>
     </Field>
   );

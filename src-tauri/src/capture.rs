@@ -246,11 +246,7 @@ impl CaptureProcessor {
             return Ok(());
         }
 
-        let adjusted_samples = input_samples_for_source(
-            samples,
-            self.config.settings.mic_input_volume_percent,
-            self.config.source,
-        );
+        let adjusted_samples = input_samples_for_source(samples, self.config.source);
         let frame = BufferedFrame {
             samples: adjusted_samples,
             duration_ms,
@@ -496,26 +492,8 @@ fn sample_count_for_duration_ms(duration_ms: u64, sample_rate: u32) -> usize {
     ((duration_ms as u128 * sample_rate as u128) / 1_000) as usize
 }
 
-fn input_samples_for_source(
-    samples: &[f32],
-    mic_input_volume_percent: u32,
-    source: ChunkSource,
-) -> Vec<f32> {
-    if source != ChunkSource::Microphone || mic_input_volume_percent == 100 {
-        return samples.to_vec();
-    }
-
-    let gain = mic_input_volume_percent as f32 / 100.0;
-    samples
-        .iter()
-        .map(|sample| {
-            if sample.is_finite() {
-                (*sample * gain).clamp(-1.0, 1.0)
-            } else {
-                *sample
-            }
-        })
-        .collect()
+fn input_samples_for_source(samples: &[f32], _source: ChunkSource) -> Vec<f32> {
+    samples.to_vec()
 }
 
 fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> u64 {
@@ -664,107 +642,17 @@ mod tests {
     }
 
     #[test]
-    fn microphone_input_volume_scales_live_samples_and_clips_peaks() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
-        let mut controller = CaptureController::new(CaptureControllerConfig {
-            save_root: tmp.path().to_path_buf(),
-            settings: AppSettings {
-                mic_input_volume_percent: 200,
-                attack_ms: 0,
-                release_ms: 600_000,
-                pre_roll_ms: 0,
-                post_roll_ms: 0,
-                min_chunk_ms: 0,
-                max_chunk_ms: 600_000,
-                ..settings()
-            },
-            sample_rate: 10,
-            device_id: "mic".to_string(),
-            device_name: "Mic".to_string(),
-            used_fallback_device: false,
-            base_time,
-            app_version: "0.1.0".to_string(),
-            source: ChunkSource::Microphone,
-            source_label: None,
-        });
-
-        let events = controller
-            .process_samples(&[0.4; 10], 1_000)
-            .expect("microphone frame");
-        let live_samples = events
-            .iter()
-            .find_map(|event| match event {
-                CaptureControllerEvent::LiveSamplesReady { samples, .. } => Some(samples),
-                _ => None,
-            })
-            .expect("live samples");
-
-        assert!(
-            live_samples
-                .iter()
-                .all(|sample| (*sample - 0.8).abs() < f32::EPSILON)
-        );
-
-        let events = controller
-            .process_samples(&[0.8; 10], 1_000)
-            .expect("clipped microphone frame");
-        let live_samples = events
-            .iter()
-            .find_map(|event| match event {
-                CaptureControllerEvent::LiveSamplesReady { samples, .. } => Some(samples),
-                _ => None,
-            })
-            .expect("second live samples");
-
-        assert!(
-            live_samples
-                .iter()
-                .any(|sample| (*sample - 1.0).abs() < f32::EPSILON)
+    fn microphone_samples_reach_capture_without_a_second_gain_stage() {
+        let input = [-0.75, -0.25, 0.25, 0.75];
+        assert_eq!(
+            input_samples_for_source(&input, ChunkSource::Microphone),
+            input
         );
     }
 
     #[test]
-    fn mic_input_volume_does_not_scale_system_audio_samples() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
-        let mut controller = CaptureController::new(CaptureControllerConfig {
-            save_root: tmp.path().to_path_buf(),
-            settings: AppSettings {
-                mic_input_volume_percent: 200,
-                attack_ms: 0,
-                release_ms: 600_000,
-                pre_roll_ms: 0,
-                post_roll_ms: 0,
-                min_chunk_ms: 0,
-                max_chunk_ms: 600_000,
-                ..settings()
-            },
-            sample_rate: 10,
-            device_id: "meet".to_string(),
-            device_name: "Meet".to_string(),
-            used_fallback_device: false,
-            base_time,
-            app_version: "0.1.0".to_string(),
-            source: ChunkSource::System,
-            source_label: Some("meet".to_string()),
-        });
-
-        let events = controller
-            .process_samples(&[0.4; 10], 1_000)
-            .expect("system frame");
-        let live_samples = events
-            .iter()
-            .find_map(|event| match event {
-                CaptureControllerEvent::LiveSamplesReady { samples, .. } => Some(samples),
-                _ => None,
-            })
-            .expect("live samples");
-
-        assert!(
-            live_samples
-                .iter()
-                .all(|sample| (*sample - 0.4).abs() < f32::EPSILON)
-        );
+    fn system_audio_samples_remain_unchanged() {
+        let input = [-0.75, 0.75];
+        assert_eq!(input_samples_for_source(&input, ChunkSource::System), input);
     }
 }

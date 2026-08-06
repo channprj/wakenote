@@ -443,6 +443,8 @@ fn ensure_audio_file_readable(path: &Path) -> Result<(), String> {
 pub struct MicrophoneDevice {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_audio_uid: Option<String>,
     pub available: bool,
     pub fallback: bool,
 }
@@ -3604,6 +3606,7 @@ pub fn microphone_devices_from_input_devices(
             fallback: device.id == "default" && selected_microphone != "default",
             id: device.id,
             label: device.label,
+            core_audio_uid: None,
             available: device.available,
         })
         .collect()

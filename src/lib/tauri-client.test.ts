@@ -31,6 +31,7 @@ import {
   saveOpenAiApiKey,
   saveSonioxApiKey,
   saveSettingsPatch,
+  setMicrophoneInputVolume,
   skipJob,
   startLiveCapture,
   startLlmReport,
@@ -79,6 +80,31 @@ describe("audio merge browser fallback", () => {
       destination_path: "/tmp/WakeNote-merged-20260804-090000-to-100000.m4a",
       input_count: 2,
     });
+  });
+});
+
+describe("microphone input volume browser fallback", () => {
+  it("clamps and updates only the requested system input", async () => {
+    const before = await loadSnapshot();
+    const unchanged = before.microphone_input_levels.filter(
+      (level) => level.device_id !== "default",
+    );
+
+    const updated = await setMicrophoneInputVolume("default", 129.6);
+
+    expect(updated.microphone_input_levels).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          device_id: "default",
+          volume_percent: 100,
+        }),
+      ]),
+    );
+    expect(
+      updated.microphone_input_levels.filter(
+        (level) => level.device_id !== "default",
+      ),
+    ).toEqual(unchanged);
   });
 });
 

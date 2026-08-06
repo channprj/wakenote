@@ -47,6 +47,7 @@ fn config(device_id: &str) -> AudioInputConfig {
         device_id: device_id.to_string(),
         sample_rate: None,
         label_hint: None,
+        core_audio_uid: None,
     }
 }
 

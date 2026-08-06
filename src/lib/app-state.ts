@@ -138,7 +138,8 @@ export function shouldRefreshSnapshotForTauriEvent(eventName: string) {
     eventName === "source-capture-stopped" ||
     eventName === "source-capture-error" ||
     eventName === "dictionary-changed" ||
-    eventName === "dictionary-file-error"
+    eventName === "dictionary-file-error" ||
+    eventName === "microphone-input-levels-changed"
   );
 }
 
@@ -678,6 +679,16 @@ export function mockSnapshot(): AppSnapshot {
         label: "Built-in Microphone",
         available: true,
         fallback: false,
+      },
+    ],
+    microphone_input_levels: [
+      {
+        device_id: "default",
+        label: "System Default",
+        volume_percent: 100,
+        writable: true,
+        available: true,
+        error: null,
       },
     ],
     models: mockModels(),

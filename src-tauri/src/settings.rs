@@ -22,8 +22,6 @@ pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 18;
 pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
-pub const MIC_INPUT_VOLUME_MIN_PERCENT: u32 = 0;
-pub const MIC_INPUT_VOLUME_MAX_PERCENT: u32 = 200;
 pub const LLM_MAX_ITERATIONS_MIN: u8 = 1;
 pub const LLM_MAX_ITERATIONS_MAX: u8 = 30;
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-5.2";
@@ -62,10 +60,6 @@ fn normalize_solid_background_color(value: &str) -> String {
     } else {
         "#000000".to_string()
     }
-}
-
-pub fn default_mic_input_volume_percent() -> u32 {
-    100
 }
 
 pub fn default_openrouter_model() -> String {
@@ -269,6 +263,8 @@ impl MicrophoneSlot {
 pub struct CaptureMicrophoneEntry {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core_audio_uid: Option<String>,
 }
 
 /// Per-source override for "auto-prompt on detection". Only recognized source
@@ -326,8 +322,6 @@ pub struct AppSettings {
     pub audio_format: AudioFormat,
     #[serde(default = "default_audio_bitrate_kbps")]
     pub audio_bitrate_kbps: u32,
-    #[serde(default = "default_mic_input_volume_percent")]
-    pub mic_input_volume_percent: u32,
     pub threshold_dbfs: f32,
     pub calibration_completed: bool,
     pub attack_ms: u64,
@@ -440,7 +434,6 @@ pub struct SettingsPatch {
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
-    pub mic_input_volume_percent: Option<u32>,
     pub threshold_dbfs: Option<f32>,
     pub calibration_completed: Option<bool>,
     pub attack_ms: Option<u64>,
@@ -522,6 +515,7 @@ pub fn default_capture_microphones() -> Vec<CaptureMicrophoneEntry> {
     vec![CaptureMicrophoneEntry {
         id: "default".to_string(),
         label: "System Default".to_string(),
+        core_audio_uid: None,
     }]
 }
 
@@ -561,7 +555,15 @@ pub fn normalize_capture_microphones(
             } else {
                 entry.label.trim().to_string()
             };
-            Some(CaptureMicrophoneEntry { id, label })
+            let core_audio_uid = entry
+                .core_audio_uid
+                .map(|uid| uid.trim().to_string())
+                .filter(|uid| !uid.is_empty());
+            Some(CaptureMicrophoneEntry {
+                id,
+                label,
+                core_audio_uid,
+            })
         })
         .take(MAX_CAPTURE_MICROPHONES)
         .collect::<Vec<_>>();
@@ -593,10 +595,6 @@ pub fn clamp_audio_bitrate_kbps(value: u32) -> u32 {
         81..=112 => 96,
         _ => 128,
     }
-}
-
-pub fn clamp_mic_input_volume_percent(value: u32) -> u32 {
-    value.clamp(MIC_INPUT_VOLUME_MIN_PERCENT, MIC_INPUT_VOLUME_MAX_PERCENT)
 }
 
 pub fn clamp_llm_max_iterations(value: u8) -> u8 {
@@ -895,6 +893,7 @@ impl AppSettings {
                 } else {
                     self.selected_microphone_label.clone()
                 },
+                core_audio_uid: None,
             }];
         }
         self.capture_microphones =
@@ -1011,6 +1010,7 @@ impl AppSettings {
             self.capture_microphones = vec![CaptureMicrophoneEntry {
                 id: self.selected_microphone.clone(),
                 label: self.selected_microphone_label.clone(),
+                core_audio_uid: None,
             }];
         }
         self.normalize_capture_microphones();
@@ -1026,9 +1026,6 @@ impl AppSettings {
         }
         if let Some(value) = patch.audio_bitrate_kbps {
             self.audio_bitrate_kbps = clamp_audio_bitrate_kbps(value);
-        }
-        if let Some(value) = patch.mic_input_volume_percent {
-            self.mic_input_volume_percent = clamp_mic_input_volume_percent(value);
         }
         if let Some(value) = patch.threshold_dbfs {
             self.threshold_dbfs = clamp_threshold_dbfs(value);
@@ -1240,7 +1237,6 @@ impl Default for AppSettings {
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
-            mic_input_volume_percent: default_mic_input_volume_percent(),
             threshold_dbfs: -40.0,
             calibration_completed: false,
             attack_ms: 200,
@@ -1648,31 +1644,40 @@ mod tests {
     }
 
     #[test]
-    fn default_mic_input_volume_is_neutral() {
-        assert_eq!(AppSettings::default().mic_input_volume_percent, 100);
+    fn capture_microphone_uid_is_optional_and_round_trips() {
+        let legacy: CaptureMicrophoneEntry = serde_json::from_value(serde_json::json!({
+            "id": "input-0-usb-mic",
+            "label": "USB Mic"
+        }))
+        .unwrap();
+        assert_eq!(legacy.core_audio_uid, None);
+
+        let enriched = CaptureMicrophoneEntry {
+            id: legacy.id,
+            label: legacy.label,
+            core_audio_uid: Some("AppleUSBAudioEngine:USB Mic:1".to_string()),
+        };
+        let restored: CaptureMicrophoneEntry =
+            serde_json::from_value(serde_json::to_value(&enriched).unwrap()).unwrap();
+        assert_eq!(restored, enriched);
     }
 
     #[test]
-    fn patch_clamps_mic_input_volume() {
-        let mut settings = AppSettings::default();
-        settings.apply_patch(SettingsPatch {
-            mic_input_volume_percent: Some(250),
-            ..Default::default()
-        });
-        assert_eq!(settings.mic_input_volume_percent, 200);
-
-        settings.apply_patch(SettingsPatch {
-            mic_input_volume_percent: Some(0),
-            ..Default::default()
-        });
-        assert_eq!(settings.mic_input_volume_percent, 0);
+    fn legacy_software_gain_is_ignored_on_load() {
+        let mut json = serde_json::to_value(AppSettings::default()).unwrap();
+        json.as_object_mut().unwrap().insert(
+            "mic_input_volume_percent".to_string(),
+            serde_json::json!(175),
+        );
+        let settings: AppSettings = serde_json::from_value(json).unwrap();
+        let saved = serde_json::to_value(settings).unwrap();
+        assert!(saved.get("mic_input_volume_percent").is_none());
     }
 
     #[test]
     fn default_vad_timing_uses_tuned_capture_profile() {
         let settings = AppSettings::default();
         assert_eq!(settings.threshold_dbfs, -40.0);
-        assert_eq!(settings.mic_input_volume_percent, 100);
         assert_eq!(settings.attack_ms, 200);
         assert_eq!(settings.release_ms, 1_000);
         assert_eq!(settings.pre_roll_ms, 400);
@@ -1847,7 +1852,6 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
         assert_eq!(settings.audio_bitrate_kbps, 96);
-        assert_eq!(settings.mic_input_volume_percent, 100);
         assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
         assert!(!settings.auto_transcript_input_trailing_space);

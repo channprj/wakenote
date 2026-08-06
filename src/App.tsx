@@ -50,6 +50,7 @@ import {
   retryJob,
   saveOpenRouterApiKey,
   saveSettingsPatch,
+  setMicrophoneInputVolume,
   skipJob,
   startLiveCapture,
   stopLiveCapture,
@@ -306,6 +307,7 @@ export default function App() {
         ["source-capture-error", () => null],
         ["dictionary-changed", () => null],
         ["dictionary-file-error", () => null],
+        ["microphone-input-levels-changed", () => null],
       ];
 
       for (const [eventName, parse] of subscriptions) {
@@ -562,6 +564,10 @@ export default function App() {
         snapshot={snapshot}
         actions={{
           onPatch: patchSettings,
+          onSetMicrophoneInputVolume: (deviceId, volumePercent) =>
+            void runAction(() =>
+              setMicrophoneInputVolume(deviceId, volumePercent),
+            ),
           onSuspendDictationShortcut: suspendDictationShortcut,
           onResumeDictationShortcut: resumeDictationShortcut,
           onPressedModifierShortcut: pressedModifierShortcut,

@@ -200,7 +200,6 @@ fn default_settings_match_prd_mvp_defaults() {
     assert_eq!(settings.selected_microphone, "default");
     assert_eq!(settings.audio_format, AudioFormat::M4a);
     assert_eq!(settings.threshold_dbfs, -40.0);
-    assert_eq!(settings.mic_input_volume_percent, 100);
     assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
     assert!(settings.suppress_low_confidence_transcripts);
     assert_eq!(settings.attack_ms, 200);
@@ -381,6 +380,7 @@ fn default_settings_seed_one_system_default_capture_microphone() {
         vec![CaptureMicrophoneEntry {
             id: "default".to_string(),
             label: "System Default".to_string(),
+            core_audio_uid: None,
         }],
     );
 }
@@ -429,6 +429,7 @@ fn legacy_single_microphone_migrates_without_enabling_priority_fallback() {
         vec![CaptureMicrophoneEntry {
             id: "input-3-boya".to_string(),
             label: "BOYA".to_string(),
+            core_audio_uid: None,
         }],
     );
 }
@@ -438,6 +439,7 @@ fn capture_microphones_keep_first_two_unique_explicit_devices() {
     let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
         id: id.to_string(),
         label: label.to_string(),
+        core_audio_uid: None,
     };
 
     assert_eq!(
@@ -459,6 +461,7 @@ fn system_default_cannot_be_combined_with_an_explicit_capture_microphone() {
     let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
         id: id.to_string(),
         label: label.to_string(),
+        core_audio_uid: None,
     };
 
     assert_eq!(
@@ -648,10 +651,12 @@ fn capture_microphone_patch_reconciles_live_capture_slots() {
                     CaptureMicrophoneEntry {
                         id: "input-1-wired".to_string(),
                         label: "Wired".to_string(),
+                        core_audio_uid: None,
                     },
                     CaptureMicrophoneEntry {
                         id: "input-2-wireless".to_string(),
                         label: "Wireless".to_string(),
+                        core_audio_uid: None,
                     },
                 ]),
                 ..SettingsPatch::default()
@@ -668,10 +673,12 @@ fn merge_microphone_input_patch_reconciles_live_capture_slots() {
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ],
         ..AppSettings::default()
@@ -697,10 +704,12 @@ fn backend_dual_microphone_slots_process_and_stop_independently() {
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ]),
         ..SettingsPatch::default()

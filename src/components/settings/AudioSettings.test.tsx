@@ -6,6 +6,7 @@ import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
   onPatch: vi.fn(),
+  onSetMicrophoneInputVolume: vi.fn(),
   onSuspendDictationShortcut: vi.fn(),
   onResumeDictationShortcut: vi.fn(),
   onPressedModifierShortcut: vi.fn().mockResolvedValue(null),

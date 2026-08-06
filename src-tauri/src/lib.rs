@@ -16,6 +16,7 @@ pub mod llm;
 pub mod llm_runs;
 pub mod manual_meeting_capture;
 pub mod meeting;
+pub mod microphone_level;
 pub mod models;
 pub mod multi_capture;
 pub mod openai_realtime;

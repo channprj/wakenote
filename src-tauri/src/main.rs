@@ -67,6 +67,10 @@ use wakenote::meeting::{
     MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary, MeetingTranscriptionRequest,
     start_manual_recorded_meeting_capture, start_recorded_meeting_transcription,
 };
+use wakenote::microphone_level::macos::PlatformVolumeBackend;
+use wakenote::microphone_level::{
+    MicrophoneInputLevel, MicrophoneLevelService, MicrophoneVolumeBackend,
+};
 use wakenote::models::{
     ModelDescriptor, ModelStatus, ModelStore, StreamingCapability, TranscriptionContext,
     model_supports_context, validate_model_options,
@@ -83,10 +87,10 @@ use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
 use wakenote::settings::{
-    AppSettings, DictationCueSound, DictationCueVolume, FloatingOverlayPosition,
-    LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot, SettingsPatch,
-    TranscriptionLanguage, TrayClickAction, clamp_llm_max_iterations, expand_user_path,
-    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    AppSettings, CaptureMicrophoneEntry, DictationCueSound, DictationCueVolume,
+    FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot,
+    SettingsPatch, TranscriptionLanguage, TrayClickAction, clamp_llm_max_iterations,
+    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
     live_capture_should_start_on_launch, resolve_auto_prompt,
 };
 use wakenote::soniox_realtime::SonioxRealtimeManager;
@@ -134,10 +138,12 @@ type MeetingState = Arc<Mutex<MeetingRuntime>>;
 type ManualMeetingRecordingState = Arc<Mutex<ManualMeetingRecordingRuntime>>;
 type TranscriptionCostState = Arc<Mutex<TranscriptionCostLedger>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
+type MicrophoneLevelState = Arc<MicrophoneLevelService<PlatformVolumeBackend>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 
 const EVENT_DICTIONARY_CHANGED: &str = "dictionary-changed";
 const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
+const MICROPHONE_INPUT_LEVELS_CHANGED_EVENT: &str = "microphone-input-levels-changed";
 
 #[derive(Debug, Clone, PartialEq)]
 enum DictionaryApplyOutcome {
@@ -490,6 +496,7 @@ impl SourceCaptureStreamStarter for SystemAudioStreamStarter {
                 device_id: source.source_id.clone(),
                 sample_rate: Some(sample_rate),
                 label_hint: None,
+                core_audio_uid: None,
             },
             move |frame| on_frame(frame),
         )?;
@@ -1597,6 +1604,7 @@ fn process_dictation_recording(
         .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
             id: settings.selected_microphone.clone(),
             label: settings.selected_microphone_label.clone(),
+            core_audio_uid: None,
         });
     let (credentials, models) = match app.try_state::<BackendState>() {
         Some(state) => match state.lock() {
@@ -1993,11 +2001,15 @@ fn handle_dictation_shortcut_event(
                 .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
                     id: settings.selected_microphone.clone(),
                     label: settings.selected_microphone_label.clone(),
+                    core_audio_uid: None,
                 });
             let label_hint = (!microphone.label.is_empty()).then_some(microphone.label.clone());
-            let resolved =
-                resolve_capture_device_with_timeout(microphone.id.clone(), label_hint.clone())
-                    .map_err(|error| error.to_string())?;
+            let resolved = resolve_capture_device_with_timeout(
+                microphone.id.clone(),
+                label_hint.clone(),
+                microphone.core_audio_uid.clone(),
+            )
+            .map_err(|error| error.to_string())?;
             if microphone.id != "default" && resolved.used_fallback_device {
                 return Err(format!(
                     "{} is disconnected; dictation is waiting for the same device",
@@ -2015,6 +2027,7 @@ fn handle_dictation_shortcut_event(
                         device_id: resolved.device_id,
                         sample_rate: Some(resolved.sample_rate),
                         label_hint,
+                        core_audio_uid: resolved.core_audio_uid,
                     },
                     move |frame| {
                         if !overlay_level_emit_due(&callback_throttle) {
@@ -2528,8 +2541,24 @@ async fn resolve_microphones_for_ui(settings: AppSettings) -> Vec<MicrophoneDevi
         let (sender, receiver) = mpsc::channel();
         let selected_for_worker = settings.selected_microphone.clone();
         thread::spawn(move || {
-            let devices =
+            let mut devices =
                 microphone_devices_from_input_devices(&selected_for_worker, list_input_devices());
+            let volume_backend = PlatformVolumeBackend::new();
+            let system_devices = volume_backend.input_devices().unwrap_or_default();
+            let default_uid = volume_backend.default_input_uid().ok().flatten();
+            for device in &mut devices {
+                device.core_audio_uid = if device.id == "default" {
+                    default_uid.clone()
+                } else {
+                    system_devices
+                        .iter()
+                        .find(|candidate| {
+                            candidate.legacy_cpal_id.as_deref() == Some(device.id.as_str())
+                                && candidate.label == device.label
+                        })
+                        .map(|candidate| candidate.uid.clone())
+                };
+            }
             let _ = sender.send(devices);
         });
 
@@ -2553,6 +2582,7 @@ fn stable_microphone_options(
         devices.push(MicrophoneDevice {
             id: configured.id.clone(),
             label: configured.label.clone(),
+            core_audio_uid: configured.core_audio_uid.clone(),
             available: false,
             fallback: false,
         });
@@ -2566,6 +2596,7 @@ fn fallback_microphones(settings: &AppSettings) -> Vec<MicrophoneDevice> {
         vec![MicrophoneDevice {
             id: "default".to_string(),
             label: "System Default".to_string(),
+            core_audio_uid: None,
             available: true,
             fallback: settings.selected_microphone != "default",
         }],
@@ -2575,12 +2606,14 @@ fn fallback_microphones(settings: &AppSettings) -> Vec<MicrophoneDevice> {
 fn resolve_capture_device_with_timeout(
     device_id: String,
     label_hint: Option<String>,
+    core_audio_uid: Option<String>,
 ) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let _ = sender.send(CpalAudioInput::resolve_device(
+        let _ = sender.send(CpalAudioInput::resolve_device_with_uid(
             &device_id,
             label_hint.as_deref(),
+            core_audio_uid.as_deref(),
         ));
     });
 
@@ -2629,6 +2662,88 @@ async fn list_microphones(state: State<'_, BackendState>) -> Result<Vec<Micropho
         backend.settings()
     };
     Ok(resolve_microphones_for_ui(settings).await)
+}
+
+fn input_levels_for_entries(
+    levels: &MicrophoneLevelService<PlatformVolumeBackend>,
+    entries: &[CaptureMicrophoneEntry],
+) -> Vec<MicrophoneInputLevel> {
+    entries
+        .iter()
+        .map(|entry| {
+            levels
+                .level_for(entry)
+                .unwrap_or_else(|error| MicrophoneInputLevel {
+                    device_id: entry.id.clone(),
+                    label: entry.label.clone(),
+                    volume_percent: None,
+                    writable: false,
+                    available: false,
+                    error: Some(error.user_message()),
+                })
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn microphone_input_levels(
+    backend: State<'_, BackendState>,
+    levels: State<'_, MicrophoneLevelState>,
+) -> Result<Vec<MicrophoneInputLevel>, String> {
+    let entries = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings()
+        .capture_microphones;
+    Ok(input_levels_for_entries(levels.as_ref(), &entries))
+}
+
+#[tauri::command]
+fn set_microphone_input_volume(
+    device_id: String,
+    volume_percent: u8,
+    backend: State<'_, BackendState>,
+    levels: State<'_, MicrophoneLevelState>,
+) -> Result<Vec<MicrophoneInputLevel>, String> {
+    let entries = backend
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings()
+        .capture_microphones;
+    let configured = entries
+        .iter()
+        .find(|entry| entry.id == device_id)
+        .ok_or_else(|| format!("Unknown configured microphone: {device_id}"))?;
+    levels
+        .set_volume(configured, volume_percent.min(100))
+        .map_err(|error| error.user_message())?;
+    Ok(input_levels_for_entries(levels.as_ref(), &entries))
+}
+
+fn spawn_microphone_input_level_observer(
+    app: AppHandle,
+    backend: BackendState,
+    levels: MicrophoneLevelState,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut previous = Vec::new();
+        let mut interval = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            interval.tick().await;
+            let entries = match backend.lock() {
+                Ok(backend) => backend.settings().capture_microphones,
+                Err(error) => {
+                    eprintln!("[microphone-level] settings lock failed: {error}");
+                    continue;
+                }
+            };
+            let next = input_levels_for_entries(levels.as_ref(), &entries);
+            if wakenote::microphone_level::levels_changed(&previous, &next) {
+                previous = next.clone();
+                let _ = app.emit(MICROPHONE_INPUT_LEVELS_CHANGED_EVENT, next);
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -3518,9 +3633,19 @@ fn start_manual_meeting_recording(
         runtime.last_stop_reason = None;
         runtime.generation
     };
-    let resolved = CpalAudioInput::resolve_device(
-        &settings.selected_microphone,
-        Some(&settings.selected_microphone_label),
+    let configured = settings
+        .capture_microphones
+        .first()
+        .cloned()
+        .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
+            id: settings.selected_microphone.clone(),
+            label: settings.selected_microphone_label.clone(),
+            core_audio_uid: None,
+        });
+    let resolved = CpalAudioInput::resolve_device_with_uid(
+        &configured.id,
+        Some(&configured.label),
+        configured.core_audio_uid.as_deref(),
     )
     .map_err(|error| error.to_string())?;
     let microphone_rate = resolved.sample_rate;
@@ -3550,6 +3675,7 @@ fn start_manual_meeting_recording(
             device_id: resolved.device_id,
             sample_rate: Some(microphone_rate),
             label_hint: Some(resolved.device_name),
+            core_audio_uid: resolved.core_audio_uid,
         },
         move |frame| microphone_sender.try_send(frame, microphone_rate),
     ) {
@@ -3562,6 +3688,7 @@ fn start_manual_meeting_recording(
             device_id: "system".to_string(),
             sample_rate: Some(MANUAL_MEETING_SAMPLE_RATE),
             label_hint: None,
+            core_audio_uid: None,
         },
         move |frame| system_sender.try_send(frame, MANUAL_MEETING_SAMPLE_RATE),
     ) {
@@ -3978,8 +4105,7 @@ fn start_live_capture_runtime(
             live_state,
             transcription_state.clone(),
             slot,
-            entry.id.clone(),
-            entry.label.clone(),
+            entry.clone(),
         ) {
             let mut backend = backend_state.lock().map_err(|lock| lock.to_string())?;
             backend.capture_slot_start_failed(
@@ -4035,13 +4161,18 @@ fn start_live_capture_slot_runtime(
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
     slot: MicrophoneSlot,
-    requested_device_id: String,
-    requested_label: String,
+    requested_device: CaptureMicrophoneEntry,
 ) -> Result<(), String> {
+    let CaptureMicrophoneEntry {
+        id: requested_device_id,
+        label: requested_label,
+        core_audio_uid: requested_core_audio_uid,
+    } = requested_device;
     let requested_label_hint = Some(requested_label.clone()).filter(|label| !label.is_empty());
     let resolved = resolve_capture_device_with_timeout(
         requested_device_id.clone(),
         requested_label_hint.clone(),
+        requested_core_audio_uid.clone(),
     )
     .map_err(|error| error.to_string())?;
     if requested_device_id != "default" && resolved.used_fallback_device {
@@ -4096,6 +4227,7 @@ fn start_live_capture_slot_runtime(
                 device_id,
                 sample_rate: Some(sample_rate),
                 label_hint: requested_label_hint,
+                core_audio_uid: requested_core_audio_uid,
             },
             move |frame| {
                 if let Some(input_monitor) = callback_input_monitor.as_ref()
@@ -6084,8 +6216,7 @@ fn spawn_mic_recovery_watchdog(
                         state.inner(),
                         transcription_state.clone(),
                         MicrophoneSlot::Secondary,
-                        configured.id,
-                        configured.label,
+                        configured,
                     ) && let Ok(mut backend) = backend_state.lock()
                     {
                         backend.set_microphone_slot_warning(
@@ -6186,8 +6317,7 @@ fn apply_mic_recovery_action(
                         live_state.inner(),
                         transcription_state.clone(),
                         MicrophoneSlot::Primary,
-                        entry.id,
-                        entry.label,
+                        entry,
                     )
                 });
             if let Err(error) = restart {
@@ -6675,6 +6805,9 @@ fn main() {
             ));
             let llm_run_state: LlmRunState =
                 Arc::new(Mutex::new(LlmRunRuntime::default()));
+            let microphone_level_state: MicrophoneLevelState = Arc::new(
+                MicrophoneLevelService::new(PlatformVolumeBackend::new()),
+            );
             let input_monitor_state: InputMonitorState =
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
             let dictation_state: DictationState =
@@ -6704,6 +6837,12 @@ fn main() {
             app.manage(manual_meeting_recording_state);
             app.manage(transcription_cost_state);
             app.manage(llm_run_state);
+            app.manage(microphone_level_state.clone());
+            spawn_microphone_input_level_observer(
+                app.handle().clone(),
+                backend_state.clone(),
+                microphone_level_state,
+            );
 
             if let Ok(store) = dictionary_state.lock() {
                 emit_dictionary_outcome(
@@ -6883,6 +7022,8 @@ fn main() {
             update_settings,
             app_status,
             list_microphones,
+            microphone_input_levels,
+            set_microphone_input_volume,
             merge_transcript_audio,
             list_models,
             verify_model,
@@ -8871,10 +9012,12 @@ mod tests {
                 wakenote::settings::CaptureMicrophoneEntry {
                     id: "input-primary".to_string(),
                     label: "Studio Mic".to_string(),
+                    core_audio_uid: None,
                 },
                 wakenote::settings::CaptureMicrophoneEntry {
                     id: "input-secondary".to_string(),
                     label: "Desk Mic".to_string(),
+                    core_audio_uid: None,
                 },
             ],
             ..AppSettings::default()

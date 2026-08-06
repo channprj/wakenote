@@ -559,10 +559,12 @@ fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() 
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ]),
         threshold_dbfs: Some(-45.0),
@@ -703,10 +705,12 @@ fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() 
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ]
     );
@@ -723,10 +727,12 @@ fn backend_merged_capture_continues_when_secondary_stops() {
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ]),
         threshold_dbfs: Some(-45.0),
@@ -815,10 +821,12 @@ fn backend_keeps_independent_dual_microphone_artifacts_when_merge_is_off() {
             CaptureMicrophoneEntry {
                 id: "input-1-wired".to_string(),
                 label: "Wired".to_string(),
+                core_audio_uid: None,
             },
             CaptureMicrophoneEntry {
                 id: "input-2-wireless".to_string(),
                 label: "Wireless".to_string(),
+                core_audio_uid: None,
             },
         ]),
         merge_microphone_inputs: Some(false),

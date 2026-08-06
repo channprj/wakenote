@@ -351,6 +351,9 @@ describe("app state derivation", () => {
     expect(shouldRefreshSnapshotForTauriEvent("live-transcript-partial")).toBe(
       false,
     );
+    expect(
+      shouldRefreshSnapshotForTauriEvent("microphone-input-levels-changed"),
+    ).toBe(true);
   });
 
   it("changes the polling dependency key when polling inputs change", () => {
@@ -439,7 +442,6 @@ describe("app state derivation", () => {
       "~/Library/Application Support/WakeNote/models",
     );
     expect(snapshot.settings.threshold_dbfs).toBe(-40);
-    expect(snapshot.settings.mic_input_volume_percent).toBe(100);
     expect(snapshot.settings.attack_ms).toBe(200);
     expect(snapshot.settings.release_ms).toBe(1_000);
     expect(snapshot.settings.pre_roll_ms).toBe(400);

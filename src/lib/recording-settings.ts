@@ -3,7 +3,6 @@ import type { AppSettings, SettingsPatch } from "./types";
 export type RecordingProfile = Pick<
   AppSettings,
   | "threshold_dbfs"
-  | "mic_input_volume_percent"
   | "attack_ms"
   | "release_ms"
   | "pre_roll_ms"
@@ -15,7 +14,6 @@ export type RecordingProfile = Pick<
 
 export const RECORDING_DEFAULTS: RecordingProfile = {
   threshold_dbfs: -40,
-  mic_input_volume_percent: 100,
   attack_ms: 200,
   release_ms: 1_000,
   pre_roll_ms: 400,
@@ -28,10 +26,10 @@ export const RECORDING_DEFAULTS: RecordingProfile = {
 export const RECORDING_FIELD_HELP: Record<keyof RecordingProfile, string> = {
   threshold_dbfs:
     "Minimum input level treated as active sound. More negative values are more sensitive and may capture more background noise.",
-  mic_input_volume_percent:
-    "Software gain applied to microphone audio before level detection and recording. 100% is neutral; higher values amplify and may clip.",
-  attack_ms: "Time the input must remain above Threshold before a chunk starts.",
-  release_ms: "Time the input must remain below Threshold before chunk ending begins.",
+  attack_ms:
+    "Time the input must remain above Threshold before a chunk starts.",
+  release_ms:
+    "Time the input must remain below Threshold before chunk ending begins.",
   pre_roll_ms:
     "Real audio retained from immediately before activation and included at the start of the chunk.",
   lead_in_padding_ms:

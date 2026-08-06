@@ -32,6 +32,7 @@ import type {
   AppSnapshot,
   AppStatus,
   MicrophoneDevice,
+  MicrophoneInputLevel,
   ModelDescriptor,
   QueueJob,
   QueueSnapshot,
@@ -395,6 +396,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     settings,
     status,
     microphones,
+    microphoneInputLevels,
     models,
     queue,
     permissions,
@@ -406,6 +408,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     invoke<AppSettings>("get_settings"),
     invoke<AppStatus>("app_status"),
     invoke<MicrophoneDevice[]>("list_microphones"),
+    invoke<MicrophoneInputLevel[]>("microphone_input_levels"),
     invoke<ModelDescriptor[]>("list_models"),
     invoke<QueueSnapshot>("queue_snapshot"),
     invoke<AppPermissions>("permission_snapshot"),
@@ -419,6 +422,7 @@ export async function loadSnapshot(): Promise<AppSnapshot> {
     settings,
     status,
     microphones,
+    microphone_input_levels: microphoneInputLevels,
     models,
     queue,
     permissions,
@@ -587,6 +591,31 @@ export async function saveSettingsPatch(
   }
 
   await invoke<AppSettings>("update_settings", { patch });
+  return loadSnapshot();
+}
+
+export async function setMicrophoneInputVolume(
+  deviceId: string,
+  volumePercent: number,
+): Promise<AppSnapshot> {
+  const normalized = Math.max(0, Math.min(100, Math.round(volumePercent)));
+  if (!isTauriRuntime()) {
+    browserSnapshot = {
+      ...browserSnapshot,
+      microphone_input_levels: browserSnapshot.microphone_input_levels.map(
+        (level) =>
+          level.device_id === deviceId
+            ? { ...level, volume_percent: normalized }
+            : level,
+      ),
+    };
+    return loadSnapshot();
+  }
+
+  await invoke<MicrophoneInputLevel[]>("set_microphone_input_volume", {
+    deviceId,
+    volumePercent: normalized,
+  });
   return loadSnapshot();
 }
 

@@ -116,6 +116,7 @@ export interface MicrophonePriorityEntry {
 export interface CaptureMicrophoneEntry {
   id: string;
   label: string;
+  core_audio_uid?: string | null;
 }
 
 export type MicrophoneSlot = "primary" | "secondary";
@@ -150,7 +151,6 @@ export interface AppSettings {
   save_root_confirmed: boolean;
   audio_format: AudioFormat;
   audio_bitrate_kbps: number;
-  mic_input_volume_percent: number;
   threshold_dbfs: number;
   calibration_completed: boolean;
   attack_ms: number;
@@ -250,8 +250,18 @@ export interface SourceCaptureStatus {
 export interface MicrophoneDevice {
   id: string;
   label: string;
+  core_audio_uid?: string | null;
   available: boolean;
   fallback: boolean;
+}
+
+export interface MicrophoneInputLevel {
+  device_id: string;
+  label: string;
+  volume_percent: number | null;
+  writable: boolean;
+  available: boolean;
+  error: string | null;
 }
 
 export interface ModelDescriptor {
@@ -712,6 +722,7 @@ export interface AppSnapshot {
   settings: AppSettings;
   status: AppStatus;
   microphones: MicrophoneDevice[];
+  microphone_input_levels: MicrophoneInputLevel[];
   models: ModelDescriptor[];
   queue: QueueSnapshot;
   recent_transcripts: RecentTranscript[];

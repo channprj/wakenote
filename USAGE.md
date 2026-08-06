@@ -225,7 +225,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Secondary microphone | none | one distinct physical input |
 | Merge microphone inputs | `on` | `on` / `off` |
 | Threshold | `-40 dBFS` | `-90 … -10` |
-| Mic input volume | `100%` | `0 … 200%` |
+| Mic input volume | Current macOS value | `0 … 100%`; system-authoritative and not reset with recording defaults |
 | Attack | `200 ms` | `50 … 2,000 ms` |
 | Release | `1,000 ms` | `250 … 5,000 ms` |
 | Pre-roll | `400 ms` | `0 … 1,500 ms` |
@@ -393,6 +393,8 @@ Use the actual generated filename for `<version>`.
 - Verify that the pinned device is present. WakeNote reconnects to the same device rather than silently replacing it with another physical input.
 - In a two-microphone setup, choose two explicit, distinct devices; do not combine `System Default` with a Secondary input.
 - Watch each microphone status row for Active, Waiting, or Reconnecting state.
+- The input-volume row mirrors macOS. `Digital auto level only` means the device exposes no writable hardware volume; capture remains available and the row is intentionally read-only.
+- Some USB interfaces manage gain with a physical knob and do not expose a macOS input-volume property.
 
 ### The level moves but no chunk starts
 

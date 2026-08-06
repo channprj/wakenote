@@ -399,6 +399,7 @@ fn dedicated_capture_collects_frames_until_stopped() {
             device_id: "fake".to_string(),
             sample_rate: Some(16_000),
             label_hint: Some("Fake microphone".to_string()),
+            core_audio_uid: None,
         })
         .expect("capture starts");
     assert!(recording_id > 0);
@@ -430,6 +431,7 @@ fn dictation_capture_forwards_each_frame_for_global_feedback() {
                 device_id: "fake".to_string(),
                 sample_rate: Some(16_000),
                 label_hint: None,
+                core_audio_uid: None,
             },
             move |frame| {
                 observed_for_callback
@@ -503,6 +505,7 @@ fn automatic_stop_only_finishes_the_matching_recording() {
             device_id: "fake".to_string(),
             sample_rate: Some(16_000),
             label_hint: None,
+            core_audio_uid: None,
         })
         .expect("capture starts");
 

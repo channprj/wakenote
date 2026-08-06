@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { RECORDING_DEFAULTS, resetRecordingSettingsPatch } from "./recording-settings";
+import {
+  RECORDING_DEFAULTS,
+  resetRecordingSettingsPatch,
+} from "./recording-settings";
 
 const expectedDefaults = {
   threshold_dbfs: -40,
-  mic_input_volume_percent: 100,
   attack_ms: 200,
   release_ms: 1_000,
   pre_roll_ms: 400,

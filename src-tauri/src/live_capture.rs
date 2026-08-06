@@ -26,6 +26,7 @@ pub struct AudioInputConfig {
     /// Persisted label for the requested device, used as a fallback when the
     /// cpal enumeration index has changed and `device_id` no longer matches.
     pub label_hint: Option<String>,
+    pub core_audio_uid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub struct CandidateInputDevice {
     pub id: String,
     pub label: String,
     pub is_default: bool,
+    pub core_audio_uid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +42,7 @@ pub struct ResolvedInputDevice {
     pub device_id: String,
     pub device_name: String,
     pub used_fallback_device: bool,
+    pub core_audio_uid: Option<String>,
 }
 
 impl Default for AudioInputConfig {
@@ -48,6 +51,7 @@ impl Default for AudioInputConfig {
             device_id: "default".to_string(),
             sample_rate: None,
             label_hint: None,
+            core_audio_uid: None,
         }
     }
 }
@@ -351,8 +355,17 @@ impl CpalAudioInput {
         device_id: &str,
         label_hint: Option<&str>,
     ) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
+        Self::resolve_device_with_uid(device_id, label_hint, None)
+    }
+
+    pub fn resolve_device_with_uid(
+        device_id: &str,
+        label_hint: Option<&str>,
+        core_audio_uid: Option<&str>,
+    ) -> Result<ResolvedCpalInputDevice, LiveCaptureError> {
         let host = cpal::default_host();
-        let (device, resolved) = select_device_with_resolution(&host, device_id, label_hint)?;
+        let (device, resolved) =
+            select_device_with_resolution(&host, device_id, label_hint, core_audio_uid)?;
         let config = device
             .default_input_config()
             .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
@@ -360,6 +373,7 @@ impl CpalAudioInput {
             device_id: resolved.device_id,
             device_name: resolved.device_name,
             used_fallback_device: resolved.used_fallback_device,
+            core_audio_uid: resolved.core_audio_uid,
             sample_rate: config.sample_rate().0,
         })
     }
@@ -370,6 +384,7 @@ pub struct ResolvedCpalInputDevice {
     pub device_id: String,
     pub device_name: String,
     pub used_fallback_device: bool,
+    pub core_audio_uid: Option<String>,
     pub sample_rate: u32,
 }
 
@@ -379,8 +394,12 @@ fn build_cpal_stream(
     runtime_error: Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, LiveCaptureError> {
     let host = cpal::default_host();
-    let (device, _) =
-        select_device_with_resolution(&host, &config.device_id, config.label_hint.as_deref())?;
+    let (device, _) = select_device_with_resolution(
+        &host,
+        &config.device_id,
+        config.label_hint.as_deref(),
+        config.core_audio_uid.as_deref(),
+    )?;
     let supported_config = device
         .default_input_config()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
@@ -451,13 +470,22 @@ fn select_device_with_resolution(
     host: &cpal::Host,
     device_id: &str,
     label_hint: Option<&str>,
+    core_audio_uid: Option<&str>,
 ) -> Result<(cpal::Device, ResolvedInputDevice), LiveCaptureError> {
+    use crate::microphone_level::MicrophoneVolumeBackend;
+    use crate::microphone_level::macos::PlatformVolumeBackend;
+
+    let volume_backend = PlatformVolumeBackend::new();
+    let system_devices = volume_backend.input_devices().unwrap_or_default();
     let default_device = host.default_input_device();
     if device_id == "default" {
         let Some(default_device) = default_device else {
             return Err(LiveCaptureError::NoInputDevice);
         };
-        return Ok((default_device, default_input_resolution(false)));
+        return Ok((
+            default_device,
+            default_input_resolution(false, volume_backend.default_input_uid().ok().flatten()),
+        ));
     }
 
     let devices = host
@@ -467,9 +495,28 @@ fn select_device_with_resolution(
     let mut label_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
     let mut legacy_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
     let label_hint = label_hint.filter(|label| !label.is_empty());
+    let core_audio_uid = core_audio_uid.filter(|uid| !uid.is_empty());
     for (index, device) in devices.enumerate() {
         let label = device.name().unwrap_or_default();
         let stable_id = stable_input_device_id(index, &label);
+        let candidate_uid = system_devices
+            .iter()
+            .find(|candidate| candidate.legacy_cpal_id.as_deref() == Some(stable_id.as_str()))
+            .map(|candidate| candidate.uid.clone());
+        if let Some(requested_uid) = core_audio_uid {
+            if candidate_uid.as_deref() == Some(requested_uid) {
+                return Ok((
+                    device,
+                    ResolvedInputDevice {
+                        device_id: stable_id,
+                        device_name: label,
+                        used_fallback_device: false,
+                        core_audio_uid: candidate_uid,
+                    },
+                ));
+            }
+            continue;
+        }
         if stable_id == device_id {
             return Ok((
                 device,
@@ -477,6 +524,7 @@ fn select_device_with_resolution(
                     device_id: stable_id,
                     device_name: label,
                     used_fallback_device: false,
+                    core_audio_uid: candidate_uid,
                 },
             ));
         }
@@ -490,6 +538,7 @@ fn select_device_with_resolution(
                     device_id: stable_id.clone(),
                     device_name: label.clone(),
                     used_fallback_device: false,
+                    core_audio_uid: candidate_uid.clone(),
                 },
             ));
             continue;
@@ -501,9 +550,14 @@ fn select_device_with_resolution(
                     device_id: stable_id,
                     device_name: label,
                     used_fallback_device: false,
+                    core_audio_uid: candidate_uid,
                 },
             ));
         }
+    }
+
+    if core_audio_uid.is_some() {
+        return Err(LiveCaptureError::NoInputDevice);
     }
 
     if let Some(matched) = label_match.or(legacy_match) {
@@ -513,14 +567,21 @@ fn select_device_with_resolution(
     let Some(default_device) = default_device else {
         return Err(LiveCaptureError::NoInputDevice);
     };
-    Ok((default_device, default_input_resolution(true)))
+    Ok((
+        default_device,
+        default_input_resolution(true, volume_backend.default_input_uid().ok().flatten()),
+    ))
 }
 
-fn default_input_resolution(used_fallback_device: bool) -> ResolvedInputDevice {
+fn default_input_resolution(
+    used_fallback_device: bool,
+    core_audio_uid: Option<String>,
+) -> ResolvedInputDevice {
     ResolvedInputDevice {
         device_id: "default".to_string(),
         device_name: "System Default".to_string(),
         used_fallback_device,
+        core_audio_uid,
     }
 }
 
@@ -529,21 +590,33 @@ pub fn resolve_input_device_from_candidates(
     label_hint: Option<&str>,
     candidates: &[CandidateInputDevice],
 ) -> Option<ResolvedInputDevice> {
+    resolve_input_device_from_candidates_with_uid(requested_device_id, label_hint, None, candidates)
+}
+
+pub fn resolve_input_device_from_candidates_with_uid(
+    requested_device_id: &str,
+    label_hint: Option<&str>,
+    core_audio_uid: Option<&str>,
+    candidates: &[CandidateInputDevice],
+) -> Option<ResolvedInputDevice> {
     if requested_device_id == "default" {
         return candidates
             .iter()
-            .any(|candidate| candidate.is_default)
-            .then(|| default_input_resolution(false));
+            .find(|candidate| candidate.is_default)
+            .map(|candidate| default_input_resolution(false, candidate.core_audio_uid.clone()));
+    }
+
+    if let Some(uid) = core_audio_uid.filter(|uid| !uid.is_empty()) {
+        return candidates
+            .iter()
+            .find(|candidate| candidate.core_audio_uid.as_deref() == Some(uid))
+            .map(resolved_candidate);
     }
 
     // Exact id match wins: the stable id is the precise pin and a different
     // device that happens to share a label must not be selected.
     if let Some(candidate) = candidates.iter().find(|c| c.id == requested_device_id) {
-        return Some(ResolvedInputDevice {
-            device_id: candidate.id.clone(),
-            device_name: candidate.label.clone(),
-            used_fallback_device: false,
-        });
+        return Some(resolved_candidate(candidate));
     }
 
     // Label-based fallback. The stable id embeds the cpal enumeration index,
@@ -551,33 +624,34 @@ pub fn resolve_input_device_from_candidates(
     // the device label usually is. Match by the persisted label so the same
     // physical mic is re-acquired after its index moves.
     let label_hint = label_hint.filter(|label| !label.is_empty());
-    if let Some(label) = label_hint
-        && let Some(candidate) = candidates.iter().find(|c| c.label == label)
-    {
-        return Some(ResolvedInputDevice {
-            device_id: candidate.id.clone(),
-            device_name: candidate.label.clone(),
-            used_fallback_device: false,
-        });
+    if let Some(label) = label_hint {
+        let matches = candidates
+            .iter()
+            .filter(|candidate| candidate.label == label)
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            return Some(resolved_candidate(matches[0]));
+        }
     }
 
     // Legacy: callers used to pass a label string as `requested_device_id`.
     if let Some(candidate) = candidates.iter().find(|c| c.label == requested_device_id) {
-        return Some(ResolvedInputDevice {
-            device_id: candidate.id.clone(),
-            device_name: candidate.label.clone(),
-            used_fallback_device: false,
-        });
+        return Some(resolved_candidate(candidate));
     }
 
     candidates
         .iter()
         .find(|candidate| candidate.is_default)
-        .map(|_| ResolvedInputDevice {
-            device_id: "default".to_string(),
-            device_name: "System Default".to_string(),
-            used_fallback_device: true,
-        })
+        .map(|candidate| default_input_resolution(true, candidate.core_audio_uid.clone()))
+}
+
+fn resolved_candidate(candidate: &CandidateInputDevice) -> ResolvedInputDevice {
+    ResolvedInputDevice {
+        device_id: candidate.id.clone(),
+        device_name: candidate.label.clone(),
+        used_fallback_device: false,
+        core_audio_uid: candidate.core_audio_uid.clone(),
+    }
 }
 
 pub fn stable_input_device_id(index: usize, label: &str) -> String {

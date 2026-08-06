@@ -4,6 +4,7 @@ use std::time::Duration;
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CandidateInputDevice,
     LiveCaptureError, LiveCaptureRuntime, resolve_input_device_from_candidates,
+    resolve_input_device_from_candidates_with_uid,
 };
 
 type FrameCallback = Arc<dyn Fn(AudioFrame) + Send + Sync>;
@@ -253,11 +254,13 @@ fn input_device_resolution_marks_fallback_when_pinned_device_is_missing() {
                 id: "input-0-built-in".to_string(),
                 label: "Built-in Microphone".to_string(),
                 is_default: true,
+                core_audio_uid: None,
             },
             CandidateInputDevice {
                 id: "input-1-usb".to_string(),
                 label: "USB Mic".to_string(),
                 is_default: false,
+                core_audio_uid: None,
             },
         ],
     )
@@ -277,6 +280,7 @@ fn input_device_resolution_rejects_missing_system_default() {
             id: "input-0-usb".to_string(),
             label: "USB Mic".to_string(),
             is_default: false,
+            core_audio_uid: None,
         }],
     );
 
@@ -292,6 +296,7 @@ fn input_device_resolution_uses_pinned_device_without_system_default() {
             id: "input-0-usb".to_string(),
             label: "USB Mic".to_string(),
             is_default: false,
+            core_audio_uid: None,
         }],
     )
     .expect("pinned device");
@@ -315,11 +320,13 @@ fn input_device_resolution_falls_back_to_label_when_index_changed() {
                 id: "input-0-built-in".to_string(),
                 label: "Built-in Microphone".to_string(),
                 is_default: true,
+                core_audio_uid: None,
             },
             CandidateInputDevice {
                 id: "input-1-usb-mic".to_string(),
                 label: "USB Mic".to_string(),
                 is_default: false,
+                core_audio_uid: None,
             },
         ],
     )
@@ -342,17 +349,61 @@ fn input_device_resolution_prefers_exact_id_over_label_hint() {
                 id: "input-0-usb-mic".to_string(),
                 label: "USB Mic".to_string(),
                 is_default: false,
+                core_audio_uid: None,
             },
             CandidateInputDevice {
                 id: "input-1-usb-mic".to_string(),
                 label: "USB Mic".to_string(),
                 is_default: true,
+                core_audio_uid: None,
             },
         ],
     )
     .expect("id-matched device");
 
     assert_eq!(resolved.device_id, "input-1-usb-mic");
+}
+
+#[test]
+fn input_device_resolution_prefers_uid_after_enumeration_indices_swap() {
+    let resolved = resolve_input_device_from_candidates_with_uid(
+        "input-0-usb-mic",
+        Some("USB Mic"),
+        Some("uid-requested"),
+        &[
+            CandidateInputDevice {
+                id: "input-0-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: false,
+                core_audio_uid: Some("uid-other".to_string()),
+            },
+            CandidateInputDevice {
+                id: "input-1-usb-mic".to_string(),
+                label: "USB Mic".to_string(),
+                is_default: false,
+                core_audio_uid: Some("uid-requested".to_string()),
+            },
+        ],
+    )
+    .expect("UID-matched device");
+
+    assert_eq!(resolved.device_id, "input-1-usb-mic");
+    assert_eq!(resolved.core_audio_uid.as_deref(), Some("uid-requested"));
+
+    assert_eq!(
+        resolve_input_device_from_candidates_with_uid(
+            "input-0-usb-mic",
+            Some("USB Mic"),
+            Some("uid-missing"),
+            &[CandidateInputDevice {
+                id: "default".to_string(),
+                label: "System Default".to_string(),
+                is_default: true,
+                core_audio_uid: Some("uid-default".to_string()),
+            }],
+        ),
+        None
+    );
 }
 
 #[test]
@@ -366,6 +417,7 @@ fn input_device_resolution_ignores_empty_label_hint() {
             id: "input-0-blank".to_string(),
             label: String::new(),
             is_default: true,
+            core_audio_uid: None,
         }],
     )
     .expect("fallback to default");

@@ -93,6 +93,28 @@ function mockInvoke(command: string) {
       return Promise.resolve(status);
     case "list_microphones":
       return Promise.resolve([]);
+    case "microphone_input_levels":
+      return Promise.resolve([
+        {
+          device_id: "default",
+          label: "System Default",
+          volume_percent: 63,
+          writable: true,
+          available: true,
+          error: null,
+        },
+      ]);
+    case "set_microphone_input_volume":
+      return Promise.resolve([
+        {
+          device_id: "default",
+          label: "System Default",
+          volume_percent: 64,
+          writable: true,
+          available: true,
+          error: null,
+        },
+      ]);
     case "list_models":
       return Promise.resolve(mockModels());
     case "queue_snapshot":
@@ -252,12 +274,28 @@ describe("tauri runtime client snapshots", () => {
     expect(snapshot.openrouter_key_configured).toBe(false);
     expect(snapshot.openai_key_configured).toBe(false);
     expect(snapshot.soniox_key_configured).toBe(false);
+    expect(snapshot.microphone_input_levels[0]?.volume_percent).toBe(63);
     expect(mocks.invoke).toHaveBeenCalledWith("openai_key_status");
     expect(mocks.invoke).toHaveBeenCalledWith("soniox_key_status");
     expect(mocks.invoke).toHaveBeenCalledWith("dictionary_file_status");
+    expect(mocks.invoke).toHaveBeenCalledWith("microphone_input_levels");
     expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
       "recent_transcripts",
     );
+  });
+
+  it("sets system input volume through the dedicated command", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { setMicrophoneInputVolume } = await import("./tauri-client");
+
+    const snapshot = await setMicrophoneInputVolume("default", 63.6);
+
+    expect(mocks.invoke).toHaveBeenCalledWith("set_microphone_input_volume", {
+      deviceId: "default",
+      volumePercent: 64,
+    });
+    expect(snapshot.microphone_input_levels[0]?.volume_percent).toBe(63);
   });
 
   it("opens and reloads the stable dictionary file through exact commands", async () => {

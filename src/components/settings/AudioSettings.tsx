@@ -148,6 +148,7 @@ export function AudioSettings({
             actions.onPatch({ capture_microphones })
           }
         />
+        <MicrophoneInputVolumeRows snapshot={snapshot} actions={actions} />
         <SettingSwitch
           label="Merge microphone inputs"
           description="Combine Primary and Secondary into one recording and transcription."
@@ -227,18 +228,6 @@ export function AudioSettings({
             actions.onPatch({ threshold_dbfs })
           }
         />
-        <SettingSlider
-          label="Mic Input Volume"
-          description={RECORDING_FIELD_HELP.mic_input_volume_percent}
-          value={settings.mic_input_volume_percent}
-          min={0}
-          max={200}
-          step={5}
-          suffix="%"
-          onValueChange={(mic_input_volume_percent) =>
-            actions.onPatch({ mic_input_volume_percent })
-          }
-        />
       </SettingsCard>
 
       <SettingsCard
@@ -271,6 +260,64 @@ export function AudioSettings({
       </SettingsCard>
     </SettingsGrid>
   );
+}
+
+function MicrophoneInputVolumeRows({
+  snapshot,
+  actions,
+}: {
+  snapshot: AppSnapshot;
+  actions: SettingsActions;
+}) {
+  const configured = normalizeCaptureMicrophones(
+    snapshot.settings.capture_microphones,
+  );
+
+  return configured.map((microphone, index) => {
+    const level = snapshot.microphone_input_levels.find(
+      (candidate) => candidate.device_id === microphone.id,
+    );
+    const available = level?.available === true;
+    const writable = available && level.writable;
+    const value = level?.volume_percent ?? 0;
+    const label =
+      configured.length === 1
+        ? "Mic Input Volume"
+        : `${index === 0 ? "Primary" : "Secondary"} Input Volume`;
+    const valueLabel = !available
+      ? "Unavailable"
+      : !writable
+        ? "Digital auto level only"
+        : undefined;
+    const description = !available
+      ? (level?.error ?? "This microphone is not currently available.")
+      : !writable
+        ? "This microphone does not expose writable macOS input volume."
+        : "Current macOS input volume. It may also change outside WakeNote.";
+
+    return (
+      <SettingSlider
+        key={microphone.id}
+        label={label}
+        description={description}
+        value={value}
+        min={0}
+        max={100}
+        step={1}
+        suffix="%"
+        disabled={!writable}
+        valueLabel={valueLabel}
+        onValueChange={(volumePercent) => {
+          if (writable) {
+            void actions.onSetMicrophoneInputVolume(
+              microphone.id,
+              volumePercent,
+            );
+          }
+        }}
+      />
+    );
+  });
 }
 
 function MicrophoneStatusRows({
@@ -395,6 +442,7 @@ function MicrophoneSelectors({
     stableMicrophones.push({
       id: configured.id,
       label: configured.label,
+      core_audio_uid: configured.core_audio_uid,
       available: false,
       fallback: false,
     });
@@ -410,7 +458,13 @@ function MicrophoneSelectors({
   };
   const deviceEntry = (id: string) => {
     const device = stableMicrophones.find((microphone) => microphone.id === id);
-    return device ? { id: device.id, label: device.label } : null;
+    return device
+      ? {
+          id: device.id,
+          label: device.label,
+          core_audio_uid: device.core_audio_uid,
+        }
+      : null;
   };
 
   return (

@@ -115,6 +115,7 @@ function directSettingsCards(grid: HTMLElement): HTMLElement[] {
 function makeActions(): SettingsActions {
   return {
     onPatch: vi.fn(),
+    onSetMicrophoneInputVolume: vi.fn(),
     onSuspendDictationShortcut: vi.fn(),
     onResumeDictationShortcut: vi.fn(),
     onPressedModifierShortcut: vi.fn().mockResolvedValue(null),
@@ -830,6 +831,80 @@ describe("SettingsPage interactions", () => {
       name: "Floating overlay position",
     });
     expect((position as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("routes the authoritative macOS microphone volume through its dedicated action", async () => {
+    const user = userEvent.setup();
+    const snapshot = mockSnapshot();
+    snapshot.microphone_input_levels[0].volume_percent = 63;
+    const actions = makeActions();
+
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const slider = screen.getByRole("slider", { name: "Mic Input Volume" });
+    expect(slider.getAttribute("aria-valuenow")).toBe("63");
+    slider.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(actions.onSetMicrophoneInputVolume).toHaveBeenCalledWith(
+      "default",
+      64,
+    );
+    expect(actions.onPatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mic_input_volume_percent: expect.anything() }),
+    );
+  });
+
+  it("labels independent microphone rows and disables unsupported hardware volume", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "primary", label: "Studio Mic" },
+      { id: "secondary", label: "Desk Mic" },
+    ];
+    snapshot.microphone_input_levels = [
+      {
+        device_id: "primary",
+        label: "Studio Mic",
+        volume_percent: 48,
+        writable: false,
+        available: true,
+        error: null,
+      },
+      {
+        device_id: "secondary",
+        label: "Desk Mic",
+        volume_percent: null,
+        writable: false,
+        available: false,
+        error: "microphone device is unavailable: Desk Mic",
+      },
+    ];
+
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={makeActions()}
+      />,
+    );
+
+    const primary = screen.getByRole("slider", {
+      name: "Primary Input Volume",
+    });
+    const secondary = screen.getByRole("slider", {
+      name: "Secondary Input Volume",
+    });
+    expect(primary.getAttribute("aria-disabled")).toBe("true");
+    expect(secondary.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.queryByText("Digital auto level only")).not.toBeNull();
+    expect(screen.queryByText("Unavailable")).not.toBeNull();
   });
 
   it("keeps later Audio controls mounted when system sources are removed", () => {
