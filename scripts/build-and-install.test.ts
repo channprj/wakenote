@@ -15,6 +15,27 @@ describe("build-and-install wrapper", () => {
 });
 
 describe("scripts/build.mjs CLI", () => {
+  it("refreshes dependencies from the frozen lockfile before Tauri builds", () => {
+    expect(buildScript).toMatch(
+      /function ensureDependencies\(\)[\s\S]*run\('pnpm', \['install', '--frozen-lockfile'\]\);/,
+    );
+    expect(buildScript).not.toContain(
+      "if (!fs.existsSync(path.join(projectRoot, 'node_modules')))",
+    );
+  });
+
+  it("cleans Cargo metadata that was created in another checkout", () => {
+    expect(buildScript).toContain("function cleanRelocatedCargoArtifacts(mode)");
+    expect(buildScript).toContain("'root-output'");
+    expect(buildScript).toContain("path.relative(cargoTargetDir, cachedRoot)");
+    expect(buildScript).toMatch(
+      /run\('cargo', \['clean', '--manifest-path', cargoManifest, '--profile', cargoProfile\]\)/,
+    );
+    expect(buildScript).toMatch(
+      /cleanRelocatedCargoArtifacts\(mode\);[\s\S]*pnpm[\s\S]*tauri/,
+    );
+  });
+
   it("treats open, --open, and --launch as launch flags that imply install", () => {
     expect(buildScript).toMatch(/arg === 'open' \|\| arg === '--open' \|\| arg === '--launch'/);
   });

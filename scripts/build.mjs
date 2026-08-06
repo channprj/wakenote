@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
 const tauriDir = path.join(projectRoot, 'src-tauri');
+const cargoManifest = path.join(tauriDir, 'Cargo.toml');
+const cargoTargetDir = path.join(tauriDir, 'target');
 const APP_BUNDLE_NAME = 'WakeNote.app';
 const LEGACY_BUNDLE_NAME = 'Sagwan.app';
 const BUNDLE_IDS = ['com.chann.wakenote', 'com.chann.sagwan'];
@@ -157,11 +159,47 @@ function parseArgs(argv) {
 
 function ensureDependencies() {
   requireCommands(['pnpm', 'cargo']);
+  console.log('==> Syncing JS dependencies (pnpm install --frozen-lockfile)');
+  run('pnpm', ['install', '--frozen-lockfile']);
+}
 
-  if (!fs.existsSync(path.join(projectRoot, 'node_modules'))) {
-    console.log('==> Installing JS dependencies (pnpm install)');
-    run('pnpm', ['install']);
+function cleanRelocatedCargoArtifacts(mode) {
+  const profileDir = path.join(cargoTargetDir, bundleDirForMode(mode));
+  const buildDir = path.join(profileDir, 'build');
+  if (!fs.existsSync(buildDir)) {
+    return;
   }
+
+  const hasRelocatedOutput = fs.readdirSync(buildDir, { withFileTypes: true }).some((entry) => {
+    if (!entry.isDirectory()) {
+      return false;
+    }
+
+    const rootOutput = path.join(buildDir, entry.name, 'root-output');
+    if (!fs.existsSync(rootOutput)) {
+      return false;
+    }
+
+    const cachedRoot = fs.readFileSync(rootOutput, 'utf8').trim();
+    if (!path.isAbsolute(cachedRoot)) {
+      return false;
+    }
+
+    const relativeRoot = path.relative(cargoTargetDir, cachedRoot);
+    return (
+      relativeRoot === '..' ||
+      relativeRoot.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeRoot)
+    );
+  });
+
+  if (!hasRelocatedOutput) {
+    return;
+  }
+
+  const cargoProfile = mode === 'debug' ? 'dev' : 'release';
+  console.log(`==> Cleaning relocated Cargo artifacts (${cargoProfile} profile)`);
+  run('cargo', ['clean', '--manifest-path', cargoManifest, '--profile', cargoProfile]);
 }
 
 function buildFrontend() {
@@ -171,6 +209,7 @@ function buildFrontend() {
 
 function buildTauri(mode, bundle, env = process.env) {
   ensureDependencies();
+  cleanRelocatedCargoArtifacts(mode);
 
   const bundleArgs = bundle ? ['--bundles', bundle] : [];
   // Bundle the in-process sherpa-onnx engine (Parakeet / SenseVoice) in shipped
