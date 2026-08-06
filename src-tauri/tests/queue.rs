@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use wakenote::queue::{
-    BacklogScan, QueueIssueCode, QueueIssueSeverity, QueueJobIssue, QueueJobStatus,
-    TranscriptionQueue,
+    BacklogScan, QueueActivityKind, QueueIssueCode, QueueIssueSeverity, QueueJobIssue,
+    QueueJobStatus, TranscriptionQueue,
 };
 use wakenote::settings::TranscriptionOptions;
 
@@ -34,6 +34,47 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
     queue.skip(second).expect("skip job");
     assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Skipped);
     assert_eq!(queue.job(second).unwrap().error, None);
+}
+
+#[test]
+fn queue_classifies_dictation_live_capture_and_imported_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let live_path = tmp.path().join("live.wav");
+    let dictation_path = tmp.path().join("dictation.wav");
+    let uploaded_dir = tmp.path().join("uploaded").join("20260807");
+    std::fs::create_dir_all(&uploaded_dir).expect("uploaded dir");
+    let uploaded_path = uploaded_dir.join("import.wav");
+    for path in [&live_path, &dictation_path, &uploaded_path] {
+        std::fs::write(path, b"audio").expect("audio fixture");
+    }
+    std::fs::write(
+        live_path.with_extension("json"),
+        br#"{"source":"microphone","source_label":"Primary"}"#,
+    )
+    .expect("live metadata");
+    std::fs::write(
+        dictation_path.with_extension("json"),
+        br#"{"source":"microphone","source_label":"dictation"}"#,
+    )
+    .expect("dictation metadata");
+
+    let mut queue = TranscriptionQueue::new();
+    let live = queue.enqueue_file(&live_path, "whisper-medium");
+    let dictation = queue.enqueue_file(&dictation_path, "whisper-medium");
+    let uploaded = queue.enqueue_file(&uploaded_path, "whisper-medium");
+
+    assert_eq!(
+        queue.job(live).expect("live job").activity_kind,
+        QueueActivityKind::LiveTranscription
+    );
+    assert_eq!(
+        queue.job(dictation).expect("dictation job").activity_kind,
+        QueueActivityKind::Dictation
+    );
+    assert_eq!(
+        queue.job(uploaded).expect("uploaded job").activity_kind,
+        QueueActivityKind::ImportedAudio
+    );
 }
 
 #[test]

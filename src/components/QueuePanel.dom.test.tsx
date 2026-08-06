@@ -69,6 +69,11 @@ function paginatedJobs(): QueueJob[] {
   ];
 }
 
+async function showAllStatuses(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("combobox", { name: "Filter by status" }));
+  await user.click(screen.getByRole("option", { name: "All statuses" }));
+}
+
 describe("QueuePanel pagination", () => {
   it("renders content warnings separately from processing errors", () => {
     const nowMs = Date.parse("2026-08-04T12:00:00.000Z");
@@ -133,13 +138,15 @@ describe("QueuePanel pagination", () => {
     );
 
     const emptyRow = screen.getAllByTitle("/empty.wav")[0].closest("tr")!;
-    const artifactRow = screen
-      .getAllByTitle("/artifact.wav")[0]
-      .closest("tr")!;
+    const artifactRow = screen.getAllByTitle("/artifact.wav")[0].closest("tr")!;
     const authRow = screen.getAllByTitle("/auth.wav")[0].closest("tr")!;
     expect(within(emptyRow).getByText("Warning").dataset.tone).toBe("warning");
-    expect(within(artifactRow).getByText("Completed").dataset.tone).toBe("success");
-    expect(within(artifactRow).getByText("Warning").dataset.tone).toBe("warning");
+    expect(within(artifactRow).getByText("Completed").dataset.tone).toBe(
+      "success",
+    );
+    expect(within(artifactRow).getByText("Warning").dataset.tone).toBe(
+      "warning",
+    );
     expect(within(authRow).getByText("Failed").dataset.tone).toBe("danger");
     expect(screen.getByText("Warnings").parentElement?.dataset.tone).toBe(
       "warning",
@@ -175,14 +182,28 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
-    expect(screen.getByText("1–50 of 51")).toBeTruthy();
-    expect(document.querySelectorAll('[data-slot="queue-table"] tbody > tr:not(.table-group-row)')).toHaveLength(50);
+    await showAllStatuses(user);
 
-    await user.click(screen.getByRole("button", { name: "Next Activity page" }));
+    expect(screen.getByText("1–50 of 51")).toBeTruthy();
+    expect(
+      document.querySelectorAll(
+        '[data-slot="queue-table"] tbody > tr:not(.table-group-row)',
+      ),
+    ).toHaveLength(50);
+
+    await user.click(
+      screen.getByRole("button", { name: "Next Activity page" }),
+    );
 
     expect(screen.getByText("51–51 of 51")).toBeTruthy();
-    expect(document.querySelectorAll('[data-slot="queue-table"] tbody > tr:not(.table-group-row)')).toHaveLength(1);
-    expect(document.querySelector('a[title="/recordings/20260802/000050.wav"]')).toBeTruthy();
+    expect(
+      document.querySelectorAll(
+        '[data-slot="queue-table"] tbody > tr:not(.table-group-row)',
+      ),
+    ).toHaveLength(1);
+    expect(
+      document.querySelector('a[title="/recordings/20260802/000050.wav"]'),
+    ).toBeTruthy();
   });
 
   it("requires confirmation before scanning the full backlog", async () => {
@@ -211,18 +232,24 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
-    const backlogButton = screen.getAllByRole("button", { name: "Process Backlog" }).at(-1)!;
+    const backlogButton = screen
+      .getAllByRole("button", { name: "Process Backlog" })
+      .at(-1)!;
     await user.click(backlogButton);
 
     expect(onEnqueueBacklog).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog", { name: "Process the entire backlog?" })).toBeTruthy();
+    expect(
+      screen.getByRole("alertdialog", { name: "Process the entire backlog?" }),
+    ).toBeTruthy();
     expect(screen.getByText(/scan the full save folder/i)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onEnqueueBacklog).not.toHaveBeenCalled();
 
     await user.click(backlogButton);
-    await user.click(screen.getByRole("button", { name: "Process entire backlog" }));
+    await user.click(
+      screen.getByRole("button", { name: "Process entire backlog" }),
+    );
 
     expect(onEnqueueBacklog).toHaveBeenCalledTimes(1);
   });
@@ -234,10 +261,32 @@ describe("QueuePanel pagination", () => {
         nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
-            { id: 1, audio_path: "/unread.wav", model_id: "m", status: "failed" },
-            { id: 2, audio_path: "/resolved-failed.wav", model_id: "m", status: "failed", is_read: true },
-            { id: 3, audio_path: "/resolved-cancelled.wav", model_id: "m", status: "cancelled", is_read: true },
-            { id: 4, audio_path: "/completed.wav", model_id: "m", status: "completed" },
+            {
+              id: 1,
+              audio_path: "/unread.wav",
+              model_id: "m",
+              status: "failed",
+            },
+            {
+              id: 2,
+              audio_path: "/resolved-failed.wav",
+              model_id: "m",
+              status: "failed",
+              is_read: true,
+            },
+            {
+              id: 3,
+              audio_path: "/resolved-cancelled.wav",
+              model_id: "m",
+              status: "cancelled",
+              is_read: true,
+            },
+            {
+              id: 4,
+              audio_path: "/completed.wav",
+              model_id: "m",
+              status: "completed",
+            },
           ],
           pending_count: 0,
           running_count: 0,
@@ -260,69 +309,145 @@ describe("QueuePanel pagination", () => {
 
     await user.click(panel.getByRole("button", { name: "Resolved 2" }));
 
-    expect(container.querySelector('a[title="/resolved-failed.wav"]')).toBeTruthy();
-    expect(container.querySelector('a[title="/resolved-cancelled.wav"]')).toBeTruthy();
+    expect(
+      container.querySelector('a[title="/resolved-failed.wav"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('a[title="/resolved-cancelled.wav"]'),
+    ).toBeTruthy();
     expect(container.querySelector('a[title="/unread.wav"]')).toBeNull();
     expect(container.querySelector('a[title="/completed.wav"]')).toBeNull();
 
     await user.click(panel.getByRole("button", { name: "Needs attention 1" }));
 
     expect(container.querySelector('a[title="/unread.wav"]')).toBeTruthy();
-    expect(container.querySelector('a[title="/resolved-failed.wav"]')).toBeNull();
+    expect(
+      container.querySelector('a[title="/resolved-failed.wav"]'),
+    ).toBeNull();
   });
 
-  it(
-    "selects every matching issue across pages and reprocesses with the chosen model",
-    async () => {
-      const user = userEvent.setup();
-      const onReprocess = vi.fn().mockResolvedValue(true);
-      const jobs: QueueJob[] = Array.from({ length: 51 }, (_, index) => ({
-        id: index + 1,
-        audio_path: `/recordings/20260803/${String(index + 1).padStart(6, "0")}.wav`,
-        model_id: "whisper-medium",
-        status: index % 2 === 0 ? "failed" : "skipped",
-        is_read: index > 24,
-      }));
-      const { container } = render(
-        <QueuePanel
-          nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
-          queue={{ jobs, pending_count: 0, running_count: 0, failed_count: 26 }}
-          models={[
-            readyFileModel("whisper-medium", "Whisper Medium"),
-            readyFileModel("whisper-small", "Whisper Small"),
-          ]}
-          selectedModelId="whisper-medium"
-          canProcessTranscription
-          onImportAudioFiles={() => {}}
-          onEnqueueBacklog={() => {}}
-          onMarkAllRead={() => {}}
-          onCancelCurrent={() => {}}
-          onProcessNext={() => {}}
-          onRetry={() => {}}
-          onSkip={() => {}}
-          onReprocess={onReprocess}
-        />,
-      );
+  it("hides clean completions by default and combines Activity filters", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        queue={{
+          jobs: [
+            {
+              id: 1,
+              audio_path: "/dictation-openai.wav",
+              model_id: "openai",
+              status: "failed",
+              activity_kind: "dictation",
+            },
+            {
+              id: 2,
+              audio_path: "/live-openai.wav",
+              model_id: "openai",
+              status: "running",
+              activity_kind: "live_transcription",
+            },
+            {
+              id: 3,
+              audio_path: "/live-local.wav",
+              model_id: "local",
+              status: "completed",
+              activity_kind: "live_transcription",
+            },
+          ],
+          pending_count: 0,
+          running_count: 1,
+          failed_count: 1,
+        }}
+        models={[]}
+        selectedModelId="local"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onReprocess={async () => true}
+      />,
+    );
 
-      const panel = within(container);
-      await user.click(
-        panel.getByRole("checkbox", { name: "Select all 51 matching items" }),
-      );
-      expect(panel.getByText("51 selected")).toBeTruthy();
-      expect(panel.getByRole("button", { name: "Reprocess 51" })).toBeTruthy();
+    expect(container.querySelector('a[title="/live-local.wav"]')).toBeNull();
+    expect(
+      container.querySelector('a[title="/dictation-openai.wav"]'),
+    ).toBeTruthy();
 
-      await user.click(panel.getByRole("combobox", { name: "Reprocessing model" }));
-      await user.click(screen.getByRole("option", { name: "Whisper Small" }));
-      await user.click(panel.getByRole("button", { name: "Reprocess 51" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by AI model" }),
+    );
+    await user.click(screen.getByRole("option", { name: "openai" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by transcription type" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Dictation" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Failed" }));
 
-      expect(onReprocess).toHaveBeenCalledTimes(1);
-      expect(onReprocess).toHaveBeenCalledWith(
-        Array.from({ length: 51 }, (_, index) => index + 1),
-        "whisper-small",
-      );
-    },
-    15_000,
-  );
+    expect(
+      container.querySelector('a[title="/dictation-openai.wav"]'),
+    ).toBeTruthy();
+    expect(container.querySelector('a[title="/live-openai.wav"]')).toBeNull();
+    expect(screen.getByText("1 of 3 shown")).toBeTruthy();
+  });
+
+  it("selects every matching issue across pages and reprocesses with the chosen model", async () => {
+    const user = userEvent.setup();
+    const onReprocess = vi.fn().mockResolvedValue(true);
+    const jobs: QueueJob[] = Array.from({ length: 51 }, (_, index) => ({
+      id: index + 1,
+      audio_path: `/recordings/20260803/${String(index + 1).padStart(6, "0")}.wav`,
+      model_id: "whisper-medium",
+      status: index % 2 === 0 ? "failed" : "skipped",
+      is_read: index > 24,
+    }));
+    const { container } = render(
+      <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        queue={{ jobs, pending_count: 0, running_count: 0, failed_count: 26 }}
+        models={[
+          readyFileModel("whisper-medium", "Whisper Medium"),
+          readyFileModel("whisper-small", "Whisper Small"),
+        ]}
+        selectedModelId="whisper-medium"
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onReprocess={onReprocess}
+      />,
+    );
+
+    const panel = within(container);
+    await user.click(
+      panel.getByRole("checkbox", { name: "Select all 51 matching items" }),
+    );
+    expect(panel.getByText("51 selected")).toBeTruthy();
+    expect(panel.getByRole("button", { name: "Reprocess 51" })).toBeTruthy();
+
+    await user.click(
+      panel.getByRole("combobox", { name: "Reprocessing model" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Whisper Small" }));
+    await user.click(panel.getByRole("button", { name: "Reprocess 51" }));
+
+    expect(onReprocess).toHaveBeenCalledTimes(1);
+    expect(onReprocess).toHaveBeenCalledWith(
+      Array.from({ length: 51 }, (_, index) => index + 1),
+      "whisper-small",
+    );
+  }, 15_000);
 
   it("supports selecting only one issue", async () => {
     const user = userEvent.setup();
@@ -332,9 +457,24 @@ describe("QueuePanel pagination", () => {
         nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
-            { id: 1, audio_path: "/one.wav", model_id: "old", status: "failed" },
-            { id: 2, audio_path: "/two.wav", model_id: "old", status: "cancelled" },
-            { id: 3, audio_path: "/done.wav", model_id: "old", status: "completed" },
+            {
+              id: 1,
+              audio_path: "/one.wav",
+              model_id: "old",
+              status: "failed",
+            },
+            {
+              id: 2,
+              audio_path: "/two.wav",
+              model_id: "old",
+              status: "cancelled",
+            },
+            {
+              id: 3,
+              audio_path: "/done.wav",
+              model_id: "old",
+              status: "completed",
+            },
           ],
           pending_count: 0,
           running_count: 0,
@@ -354,9 +494,7 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("checkbox", { name: "Select one.wav" }),
-    );
+    await user.click(screen.getByRole("checkbox", { name: "Select one.wav" }));
     await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
 
     expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
@@ -370,9 +508,24 @@ describe("QueuePanel pagination", () => {
         nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
         queue={{
           jobs: [
-            { id: 1, audio_path: "/done.wav", model_id: "old", status: "completed" },
-            { id: 2, audio_path: "/failed.wav", model_id: "old", status: "failed" },
-            { id: 3, audio_path: "/active.wav", model_id: "old", status: "running" },
+            {
+              id: 1,
+              audio_path: "/done.wav",
+              model_id: "old",
+              status: "completed",
+            },
+            {
+              id: 2,
+              audio_path: "/failed.wav",
+              model_id: "old",
+              status: "failed",
+            },
+            {
+              id: 3,
+              audio_path: "/active.wav",
+              model_id: "old",
+              status: "running",
+            },
           ],
           pending_count: 0,
           running_count: 1,
@@ -393,10 +546,14 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
+    await showAllStatuses(user);
+
     await user.click(
       screen.getByRole("checkbox", { name: "Select all 2 matching items" }),
     );
-    expect(screen.queryByRole("checkbox", { name: "Select active.wav" })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "Select active.wav" }),
+    ).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Move 2 to Trash" }));
 
@@ -448,6 +605,8 @@ describe("QueuePanel pagination", () => {
         onReprocess={async () => true}
       />,
     );
+
+    await showAllStatuses(user);
 
     await user.click(
       screen.getByRole("button", { name: "Play audio: 010203.m4a" }),

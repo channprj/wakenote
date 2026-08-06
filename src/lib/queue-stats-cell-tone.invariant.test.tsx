@@ -30,6 +30,14 @@ function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
     model_id: "whisper-medium",
     status,
     error: null,
+    issue:
+      status === "completed"
+        ? {
+            severity: "warning",
+            code: "transcript_artifact",
+            message: "Review transcript",
+          }
+        : null,
   };
   return {
     jobs: [job],
@@ -63,7 +71,10 @@ function extractStatsCellTone(markup: string, label: string): string {
   const match = markup.match(
     new RegExp(`<div[^>]*data-tone="([a-z]+)"[^>]*><span>${label}<\\/span>`),
   );
-  expect(match, `expected queue-stats banner cell labeled "${label}"`).not.toBeNull();
+  expect(
+    match,
+    `expected queue-stats banner cell labeled "${label}"`,
+  ).not.toBeNull();
   return match?.[1] ?? "";
 }
 
@@ -72,7 +83,10 @@ function extractGroupChipTone(markup: string, status: QueueJobStatus): string {
   const match = markup.match(
     new RegExp(`<span data-tone="([a-z]+)">\\d+ ${bucket}<\\/span>`),
   );
-  expect(match, `expected per-day group-row chip for "${status}"`).not.toBeNull();
+  expect(
+    match,
+    `expected per-day group-row chip for "${status}"`,
+  ).not.toBeNull();
   return match?.[1] ?? "";
 }
 

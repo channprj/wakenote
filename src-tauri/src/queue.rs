@@ -49,6 +49,16 @@ pub enum QueueIssueCode {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueActivityKind {
+    Dictation,
+    LiveTranscription,
+    ImportedAudio,
+    #[default]
+    Other,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueJobIssue {
     pub severity: QueueIssueSeverity,
@@ -97,6 +107,8 @@ pub struct QueueJob {
     pub is_read: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcription_options: Option<TranscriptionOptions>,
+    #[serde(default)]
+    pub activity_kind: QueueActivityKind,
 }
 
 impl QueueJob {
@@ -165,6 +177,7 @@ impl TranscriptionQueue {
 
         self.next_id += 1;
         let id = self.next_id;
+        let activity_kind = activity_kind_for_audio_path(&audio_path);
         self.jobs.push(QueueJob {
             id,
             audio_path,
@@ -174,6 +187,7 @@ impl TranscriptionQueue {
             issue: None,
             is_read: false,
             transcription_options: None,
+            activity_kind,
         });
         (id, true)
     }
@@ -487,6 +501,21 @@ impl TranscriptionQueue {
         changed
     }
 
+    pub fn hydrate_activity_kinds(&mut self) -> bool {
+        let mut changed = false;
+        for job in &mut self.jobs {
+            if job.activity_kind != QueueActivityKind::Other {
+                continue;
+            }
+            let inferred = activity_kind_for_audio_path(&job.audio_path);
+            if inferred != QueueActivityKind::Other {
+                job.activity_kind = inferred;
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn remove_jobs(&mut self, ids: &[u64]) -> usize {
         let ids = ids.iter().copied().collect::<HashSet<_>>();
         let before = self.jobs.len();
@@ -524,6 +553,38 @@ impl TranscriptionQueue {
             .iter()
             .filter(|job| job.status == QueueJobStatus::Running)
             .count()
+    }
+}
+
+fn activity_kind_for_audio_path(audio_path: &Path) -> QueueActivityKind {
+    if audio_path
+        .components()
+        .any(|component| component.as_os_str() == "uploaded")
+    {
+        return QueueActivityKind::ImportedAudio;
+    }
+
+    let metadata_path = audio_path.with_extension("json");
+    let Ok(bytes) = std::fs::read(metadata_path) else {
+        return QueueActivityKind::Other;
+    };
+    let Ok(metadata) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return QueueActivityKind::Other;
+    };
+    if metadata
+        .get("source_label")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|label| label.eq_ignore_ascii_case("dictation"))
+    {
+        QueueActivityKind::Dictation
+    } else if metadata
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|source| matches!(source, "microphone" | "system"))
+    {
+        QueueActivityKind::LiveTranscription
+    } else {
+        QueueActivityKind::Other
     }
 }
 

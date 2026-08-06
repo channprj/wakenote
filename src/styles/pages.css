@@ -907,7 +907,14 @@
 
 [data-slot="queue-table"] {
   width: 100%;
+  min-width: 760px;
   table-layout: fixed;
+}
+
+[data-slot="queue-table"] thead {
+  position: sticky;
+  z-index: 1;
+  top: 0;
 }
 
 [data-slot="queue-table"] th,
@@ -944,9 +951,9 @@
 
 .queue-job__audio,
 .queue-job__status {
-  display: grid;
-  gap: 2px;
+  display: table-cell;
   white-space: normal;
+  vertical-align: top;
 }
 
 .queue-job__audio > a,
@@ -963,6 +970,28 @@
   font-size: var(--text-micro);
   line-height: var(--leading-micro);
   white-space: nowrap;
+}
+
+.queue-job__kind {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  line-height: var(--leading-micro);
+  white-space: nowrap;
+}
+
+.queue-job__model {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.queue-job__status > [data-slot="status-badge"] + [data-slot="status-badge"] {
+  margin-left: 4px;
 }
 
 .queue-job__error {
@@ -1208,6 +1237,7 @@
   [data-slot="queue-table"],
   [data-slot="queue-table"] tbody {
     display: block;
+    min-width: 0;
   }
 
   [data-slot="queue-table"] thead {

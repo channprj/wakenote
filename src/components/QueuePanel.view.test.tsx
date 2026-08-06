@@ -66,9 +66,20 @@ describe("QueuePanel compact layout", () => {
     const markup = renderQueue({
       jobs: [
         { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed" },
-        { id: 2, audio_path: "/cancelled.wav", model_id: "m", status: "cancelled" },
+        {
+          id: 2,
+          audio_path: "/cancelled.wav",
+          model_id: "m",
+          status: "cancelled",
+        },
         { id: 3, audio_path: "/skipped.wav", model_id: "m", status: "skipped" },
-        { id: 4, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
+        {
+          id: 4,
+          audio_path: "/read.wav",
+          model_id: "m",
+          status: "failed",
+          is_read: true,
+        },
       ],
       pending_count: 0,
       running_count: 0,
@@ -77,24 +88,34 @@ describe("QueuePanel compact layout", () => {
 
     expect(markup).toContain("Mark all resolved");
     expect(markup).toContain("Mark 3 outcomes as resolved");
-    expect(markup).toMatch(/<button[^>]*title="Mark 3 outcomes as resolved"(?![^>]*disabled)/);
+    expect(markup).toMatch(
+      /<button[^>]*title="Mark 3 outcomes as resolved"(?![^>]*disabled)/,
+    );
     expect(markup).toContain('data-read="true"');
   });
 
   it("disables mark all resolved when every attention outcome is resolved", () => {
     const markup = renderQueue({
       jobs: [
-        { id: 1, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
+        {
+          id: 1,
+          audio_path: "/read.wav",
+          model_id: "m",
+          status: "failed",
+          is_read: true,
+        },
       ],
       pending_count: 0,
       running_count: 0,
       failed_count: 1,
     });
 
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*title="No unresolved outcomes"/);
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*title="No unresolved outcomes"/,
+    );
   });
 
-  it("offers playback and Finder access for every Activity item", () => {
+  it("hides clean completions by default and keeps actions on visible items", () => {
     const markup = renderQueue({
       jobs: [
         {
@@ -115,8 +136,8 @@ describe("QueuePanel compact layout", () => {
       failed_count: 1,
     });
 
-    expect(markup).toContain('aria-label="Play audio: 010203.m4a"');
-    expect(markup).toContain('aria-label="Show in Finder: 010203.m4a"');
+    expect(markup).not.toContain('aria-label="Play audio: 010203.m4a"');
+    expect(markup).not.toContain('aria-label="Show in Finder: 010203.m4a"');
     expect(markup).toContain('aria-label="Play audio: 010204.wav"');
     expect(markup).toContain('aria-label="Show in Finder: 010204.wav"');
     expect(markup).toContain("<th>Actions</th>");

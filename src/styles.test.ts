@@ -3,10 +3,22 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 const entryCss = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-const tokensCss = readFileSync(new URL("./styles/tokens.css", import.meta.url), "utf8");
-const shellCss = readFileSync(new URL("./styles/shell.css", import.meta.url), "utf8");
-const componentsCss = readFileSync(new URL("./styles/components.css", import.meta.url), "utf8");
-const pagesCss = readFileSync(new URL("./styles/pages.css", import.meta.url), "utf8");
+const tokensCss = readFileSync(
+  new URL("./styles/tokens.css", import.meta.url),
+  "utf8",
+);
+const shellCss = readFileSync(
+  new URL("./styles/shell.css", import.meta.url),
+  "utf8",
+);
+const componentsCss = readFileSync(
+  new URL("./styles/components.css", import.meta.url),
+  "utf8",
+);
+const pagesCss = readFileSync(
+  new URL("./styles/pages.css", import.meta.url),
+  "utf8",
+);
 const splitCss = [tokensCss, shellCss, componentsCss, pagesCss].join("\n");
 const css = splitCss;
 
@@ -16,7 +28,9 @@ describe("model row styling", () => {
     // (no `}` between the selector and the forbidden declaration) so unrelated
     // downstream rules that legitimately use `inset 3px 0 0` (e.g. the queue
     // row tone accents) don't trip this assertion.
-    expect(css).not.toMatch(/\.model-row\[data-selected="true"\][^}]*?inset\s+3px\s+0\s+0/);
+    expect(css).not.toMatch(
+      /\.model-row\[data-selected="true"\][^}]*?inset\s+3px\s+0\s+0/,
+    );
   });
 });
 
@@ -61,7 +75,9 @@ describe("refined compact density tokens", () => {
     expect(tokensCss.match(/--sidebar-width:/g)).toHaveLength(1);
     expect(tokensCss.match(/--transition:/g)).toHaveLength(1);
     expect(tokensCss.match(/--radius:/g)).toHaveLength(1);
-    expect(componentsCss).not.toMatch(/--sidebar-width:|--transition:|--radius:/);
+    expect(componentsCss).not.toMatch(
+      /--sidebar-width:|--transition:|--radius:/,
+    );
   });
 });
 
@@ -79,11 +95,9 @@ describe("active interface density contract", () => {
       const declarations = cssDeclarations(body)
         .filter(
           ({ property, value }) =>
-            (property === "font-size" ||
-              property === "line-height") &&
-            !value.includes("var(") ||
-            property === "font" &&
-              /\d+(?:px|rem)/.test(value),
+            ((property === "font-size" || property === "line-height") &&
+              !value.includes("var(")) ||
+            (property === "font" && /\d+(?:px|rem)/.test(value)),
         )
         .map(({ property, value }) => `${property}: ${value};`);
       return declarations.map(
@@ -96,15 +110,12 @@ describe("active interface density contract", () => {
 
   it("uses shared height tokens for active rows and controls", () => {
     const violations = activeRules
-      .filter(({ selector }) =>
-        densityControlSelector.test(selector),
-      )
+      .filter(({ selector }) => densityControlSelector.test(selector))
       .flatMap(({ selector, body }) =>
         cssDeclarations(body)
           .filter(
             ({ property, value }) =>
-              (property === "height" ||
-                property === "min-height") &&
+              (property === "height" || property === "min-height") &&
               /\d+(?:\.\d+)?px/.test(value) &&
               !value.includes("var("),
           )
@@ -118,10 +129,7 @@ describe("active interface density contract", () => {
   });
 
   it("does not reset token-backed control typography with a font shorthand", () => {
-    const nativeControlRule = cssRule(
-      "button,\ninput,\nselect",
-      componentsCss,
-    );
+    const nativeControlRule = cssRule("button,\ninput,\nselect", componentsCss);
 
     expect(nativeControlRule).toContain("font-family: inherit;");
     expect(nativeControlRule).not.toContain("font: inherit;");
@@ -131,7 +139,9 @@ describe("active interface density contract", () => {
 describe("shadcn semantic theme compatibility", () => {
   it("keeps the default dark recorder palette and an explicit light palette", () => {
     const rootRule = cssRule(":root");
-    const lightRule = cssRule(":root[data-theme=\"light\"],\n[data-theme=\"light\"]");
+    const lightRule = cssRule(
+      ':root[data-theme="light"],\n[data-theme="light"]',
+    );
 
     expect(rootRule).toContain("--background: #0b0d10;");
     expect(rootRule).toContain("--card: #15191f;");
@@ -153,7 +163,9 @@ describe("fixed desktop shell styling", () => {
     expect(cssRule("body")).toContain("overflow: hidden;");
 
     const shellRule = cssRule(".app-shell");
-    expect(shellRule).toContain("grid-template-columns: var(--sidebar-width) minmax(0, 1fr);");
+    expect(shellRule).toContain(
+      "grid-template-columns: var(--sidebar-width) minmax(0, 1fr);",
+    );
     expect(shellRule).toContain("height: 100vh;");
     expect(shellRule).toContain("overflow: hidden;");
 
@@ -167,7 +179,6 @@ describe("fixed desktop shell styling", () => {
     expect(workspaceRule).toContain("overflow-x: hidden;");
     expect(workspaceRule).toContain("scrollbar-gutter: stable;");
   });
-
 });
 
 describe("compact application shell styling", () => {
@@ -176,7 +187,9 @@ describe("compact application shell styling", () => {
     const viewportRule = cssRule(".app-viewport", shellCss);
     const pageRule = cssRule(".app-page", shellCss);
 
-    expect(frameRule).toContain("grid-template-columns: var(--sidebar-width) minmax(0, 1fr);");
+    expect(frameRule).toContain(
+      "grid-template-columns: var(--sidebar-width) minmax(0, 1fr);",
+    );
     expect(frameRule).toContain("height: 100vh;");
     expect(frameRule).toContain("overflow: hidden;");
     expect(viewportRule).toContain("grid-template-rows: minmax(0, 1fr) auto;");
@@ -207,9 +220,7 @@ describe("balanced Settings masonry", () => {
     const gridRule = cssRule(".settings-grid", pagesCss);
 
     expect(gridRule).toContain("--masonry-row-size: 1px;");
-    expect(gridRule).toContain(
-      "--masonry-card-gap: var(--page-gap);",
-    );
+    expect(gridRule).toContain("--masonry-card-gap: var(--page-gap);");
     expect(gridRule).toContain("gap: var(--masonry-card-gap);");
     expect(gridRule).toContain("grid-template-columns: minmax(0, 1fr);");
   });
@@ -221,13 +232,9 @@ describe("balanced Settings masonry", () => {
     );
 
     expect(measuredRule).toContain("grid-auto-flow: dense;");
-    expect(measuredRule).toContain(
-      "grid-auto-rows: var(--masonry-row-size);",
-    );
+    expect(measuredRule).toContain("grid-auto-rows: var(--masonry-row-size);");
     expect(measuredRule).toContain("row-gap: 0;");
-    expect(measuredRule).toContain(
-      "column-gap: var(--masonry-card-gap);",
-    );
+    expect(measuredRule).toContain("column-gap: var(--masonry-card-gap);");
   });
 
   it("only expands measured Settings grids from their section container", () => {
@@ -257,8 +264,8 @@ describe("balanced Settings masonry", () => {
     expect(threeColumn).toContain(
       "grid-template-columns: repeat(3, minmax(0, 1fr));",
     );
-    expect(twoColumn).not.toContain('.settings-grid[data-max-columns=');
-    expect(threeColumn).not.toContain('.settings-grid[data-max-columns=');
+    expect(twoColumn).not.toContain(".settings-grid[data-max-columns=");
+    expect(threeColumn).not.toContain(".settings-grid[data-max-columns=");
   });
 
   it("keeps system-audio content globally shrinkable", () => {
@@ -297,9 +304,7 @@ describe("balanced Settings masonry", () => {
     const bannerRule = cssRule(".system-audio-banner", narrowCard);
 
     expect(cardRule).toContain("container: settings-card / inline-size;");
-    expect(inlineRule).toContain(
-      "grid-template-columns: minmax(0, 1fr) auto;",
-    );
+    expect(inlineRule).toContain("grid-template-columns: minmax(0, 1fr) auto;");
     expect(firstChildRule).toContain("grid-column: 1 / -1;");
     expect(bannerRule).toContain("align-items: flex-start;");
     expect(bannerRule).toContain("flex-wrap: wrap;");
@@ -317,9 +322,7 @@ describe("balanced Settings masonry", () => {
     );
 
     expect(stackRule).toContain("display: grid;");
-    expect(stackRule).toContain(
-      "grid-template-columns: minmax(0, 1fr);",
-    );
+    expect(stackRule).toContain("grid-template-columns: minmax(0, 1fr);");
     expect(stackRule).toContain("min-width: 0;");
     expect(stackRule).toContain("gap: var(--page-gap);");
     expect(childRule).toContain("min-width: 0;");
@@ -334,25 +337,17 @@ describe("balanced Settings masonry", () => {
     );
 
     expect(listRule).toContain("--masonry-row-size: 1px;");
-    expect(listRule).toContain(
-      "--masonry-card-gap: var(--page-gap);",
-    );
+    expect(listRule).toContain("--masonry-card-gap: var(--page-gap);");
     expect(listRule).toContain("gap: var(--masonry-card-gap);");
     expect(listRule).toContain("display: grid;");
-    expect(listRule).toContain(
-      "grid-template-columns: minmax(0, 1fr);",
-    );
+    expect(listRule).toContain("grid-template-columns: minmax(0, 1fr);");
     expect(listRule).toContain("align-items: start;");
     expect(childRule).toContain("min-width: 0;");
     expect(childRule).toContain("align-self: start;");
     expect(measuredRule).toContain("grid-auto-flow: dense;");
-    expect(measuredRule).toContain(
-      "grid-auto-rows: var(--masonry-row-size);",
-    );
+    expect(measuredRule).toContain("grid-auto-rows: var(--masonry-row-size);");
     expect(measuredRule).toContain("row-gap: 0;");
-    expect(measuredRule).toContain(
-      "column-gap: var(--masonry-card-gap);",
-    );
+    expect(measuredRule).toContain("column-gap: var(--masonry-card-gap);");
   });
 
   it("only upgrades measured model collections to two or three columns", () => {
@@ -383,8 +378,8 @@ describe("balanced Settings masonry", () => {
     expect(threeColumn).toContain(
       "grid-template-columns: repeat(3, minmax(0, 1fr));",
     );
-    expect(twoColumn).not.toContain('.model-list[data-max-columns=');
-    expect(threeColumn).not.toContain('.model-list[data-max-columns=');
+    expect(twoColumn).not.toContain(".model-list[data-max-columns=");
+    expect(threeColumn).not.toContain(".model-list[data-max-columns=");
 
     for (const { selector, body } of modelRules) {
       if (
@@ -409,12 +404,14 @@ describe("balanced Settings masonry", () => {
       ".model-row__main header > div,\n.model-row__scores span",
       componentsCss,
     );
-    const scoresRule = flatCssRules(componentsCss).find(
-      ({ selector }) => selector.trim() === ".model-row__scores",
-    )?.body ?? "";
-    const actionsRule = flatCssRules(componentsCss).find(
-      ({ selector }) => selector.trim() === ".model-row__actions",
-    )?.body ?? "";
+    const scoresRule =
+      flatCssRules(componentsCss).find(
+        ({ selector }) => selector.trim() === ".model-row__scores",
+      )?.body ?? "";
+    const actionsRule =
+      flatCssRules(componentsCss).find(
+        ({ selector }) => selector.trim() === ".model-row__actions",
+      )?.body ?? "";
     const sharedActionsRule = cssRule(
       ".status-strip,\n.toolbar,\n.row-actions,\n.section__actions,\n.model-row__actions",
       componentsCss,
@@ -424,9 +421,7 @@ describe("balanced Settings masonry", () => {
       componentsCss,
     );
 
-    expect(cardRule).toContain(
-      "grid-template-columns: minmax(0, 1fr);",
-    );
+    expect(cardRule).toContain("grid-template-columns: minmax(0, 1fr);");
     expect(mainRule).toContain("min-width: 0;");
     expect(wrappingRule).toContain("min-width: 0;");
     expect(wrappingRule).toContain("overflow-wrap: anywhere;");
@@ -549,9 +544,11 @@ describe("compact overflow safety contract", () => {
 
     // Only the job table absorbs slack; stats, toolbar, and pagination keep their own height.
     expect(queuePanel).toContain(
-      "grid-template-rows: auto auto auto minmax(0, 1fr) auto;",
+      "grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;",
     );
-    expect(cssRule(".queue-view-bar", componentsCss)).toContain("display: flex;");
+    expect(cssRule(".queue-view-bar", componentsCss)).toContain(
+      "display: flex;",
+    );
 
     // Naturally short panels stay top-aligned rather than stretching rows.
     expect(cssRule(".meeting-panel", componentsCss)).toContain(
@@ -597,9 +594,7 @@ describe("compact overflow safety contract", () => {
   it("keeps seven transcript day cells shrinkable", () => {
     const week = cssRule(".transcript-pagination__week");
 
-    expect(week).toContain(
-      "grid-template-columns: repeat(7, minmax(0, 1fr));",
-    );
+    expect(week).toContain("grid-template-columns: repeat(7, minmax(0, 1fr));");
     expect(cssRule(".transcript-pagination__day", pagesCss)).toContain(
       "min-width: 0;",
     );
@@ -613,9 +608,7 @@ describe("compact overflow safety contract", () => {
     expect(compact).toContain("content: attr(data-label);");
     expect(compact).not.toContain(".settings-grid");
     expect(compact).toContain(".settings-inline-control");
-    expect(compact).toContain(
-      "grid-template-columns: minmax(0, 1fr) auto;",
-    );
+    expect(compact).toContain("grid-template-columns: minmax(0, 1fr) auto;");
     expect(compact).toContain(".settings-inline-control > :first-child");
     expect(compact).toContain("scroll-padding-inline: var(--space-2);");
     expect(narrow).toContain('[data-slot="field-row"]');
@@ -636,7 +629,9 @@ describe("capture recorder styling", () => {
     expect(svgRule).toContain("height: 132px;");
     expect(svgRule).toContain("overflow: hidden;");
     expect(barRule).toContain("fill: currentColor;");
-    expect(barRule).toContain("transition: y 80ms linear, height 80ms linear, opacity 80ms linear;");
+    expect(barRule).toContain(
+      "transition: y 80ms linear, height 80ms linear, opacity 80ms linear;",
+    );
     expect(transcriptRule).toContain("overflow-wrap: anywhere;");
     expect(pagesCss).toContain("@media (prefers-reduced-motion: reduce)");
   });
@@ -662,9 +657,7 @@ describe("record rendering performance", () => {
     );
 
     expect(rowRule).toContain("content-visibility: auto;");
-    expect(rowRule).toContain(
-      "contain-intrinsic-size: auto var(--row-dense);",
-    );
+    expect(rowRule).toContain("contain-intrinsic-size: auto var(--row-dense);");
   });
 });
 
@@ -691,16 +684,24 @@ describe("recording field help styling", () => {
 describe("storage path pattern styling", () => {
   it("uses theme-aware high-contrast code tokens", () => {
     const rootRule = cssRule(":root");
-    const lightRule = cssRule(":root[data-theme=\"light\"],\n[data-theme=\"light\"]");
+    const lightRule = cssRule(
+      ':root[data-theme="light"],\n[data-theme="light"]',
+    );
     const pathPatternCodeRule = cssRule(".path-pattern code");
-    const pathPatternLabelRule = cssRule(".path-pattern span,\n.offline-note span");
+    const pathPatternLabelRule = cssRule(
+      ".path-pattern span,\n.offline-note span",
+    );
 
     expect(rootRule).toContain("--code-text: #e7edf5;");
     expect(rootRule).toContain("--code-bg: rgba(231, 237, 245, 0.08);");
     expect(lightRule).toContain("--code-text: #0f172a;");
-    expect(css).toContain("code {\n  overflow-wrap: anywhere;\n  color: var(--code-text);");
+    expect(css).toContain(
+      "code {\n  overflow-wrap: anywhere;\n  color: var(--code-text);",
+    );
     expect(pathPatternCodeRule).toContain("background: var(--code-bg);");
-    expect(pathPatternCodeRule).toContain("border: 1px solid var(--code-border);");
+    expect(pathPatternCodeRule).toContain(
+      "border: 1px solid var(--code-border);",
+    );
     expect(pathPatternLabelRule).toContain("color: var(--text);");
   });
 });
@@ -714,11 +715,9 @@ describe("transcript archive density", () => {
       ".transcript-entry__play,\n.transcript-entry__folder",
     );
     const textRule = cssRule(".transcript-entry__text");
-    const checkboxRule = cssRule(
-      '.transcript-entry > [data-slot="checkbox"]',
-    );
+    const checkboxRule = cssRule('.transcript-entry > [data-slot="checkbox"]');
     const sourceBadgeRule = cssRule(".transcript-source-badge");
-    const selectedRule = cssRule(".transcript-entry[data-selected=\"true\"]");
+    const selectedRule = cssRule('.transcript-entry[data-selected="true"]');
 
     expect(entryRule).toContain("display: grid;");
     expect(entryRule).toContain(
@@ -815,9 +814,11 @@ function cssDeclarations(body: string) {
     .flatMap((declaration) => {
       const separator = declaration.indexOf(":");
       if (separator < 0) return [];
-      return [{
-        property: declaration.slice(0, separator).trim(),
-        value: declaration.slice(separator + 1).trim(),
-      }];
+      return [
+        {
+          property: declaration.slice(0, separator).trim(),
+          value: declaration.slice(separator + 1).trim(),
+        },
+      ];
     });
 }

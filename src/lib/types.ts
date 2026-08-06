@@ -86,6 +86,12 @@ export type QueueJobStatus =
   | "cancelled"
   | "skipped";
 
+export type QueueActivityKind =
+  | "dictation"
+  | "live_transcription"
+  | "imported_audio"
+  | "other";
+
 export type QueueIssueSeverity = "warning" | "error";
 
 export type QueueIssueCode =
@@ -296,6 +302,7 @@ export interface QueueJob {
   issue?: QueueJobIssue | null;
   is_read?: boolean;
   transcription_options?: TranscriptionOptions | null;
+  activity_kind?: QueueActivityKind;
 }
 
 export interface QueueSnapshot {

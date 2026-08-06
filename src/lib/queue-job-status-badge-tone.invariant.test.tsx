@@ -28,6 +28,14 @@ function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
     model_id: "whisper-medium",
     status,
     error: null,
+    issue:
+      status === "completed"
+        ? {
+            severity: "warning",
+            code: "transcript_artifact",
+            message: "Review transcript",
+          }
+        : null,
   };
   return {
     jobs: [job],
@@ -57,7 +65,10 @@ function renderQueuePanelMarkup(status: QueueJobStatus): string {
   );
 }
 
-function extractJobRowBadgeTone(markup: string, status: QueueJobStatus): string {
+function extractJobRowBadgeTone(
+  markup: string,
+  status: QueueJobStatus,
+): string {
   const humanized = humanizeQueueJobStatus(status);
   const match = markup.match(
     new RegExp(`<span[^>]*data-tone="([a-z]+)"[^>]*>${humanized}<\\/span>`),
@@ -78,10 +89,16 @@ function extractJobRowDataTone(markup: string, status: QueueJobStatus): string {
     `<span[^>]*data-tone="[a-z]+"[^>]*>${humanized}<\\/span>`,
   );
   const badgeMatch = badgePattern.exec(markup);
-  expect(badgeMatch, `expected per-row Badge for status "${status}" in markup`).not.toBeNull();
+  expect(
+    badgeMatch,
+    `expected per-row Badge for status "${status}" in markup`,
+  ).not.toBeNull();
   const badgeIdx = badgeMatch?.index ?? -1;
   const trOpenIdx = markup.lastIndexOf("<tr", badgeIdx);
-  expect(trOpenIdx, `expected enclosing <tr for status "${status}"`).toBeGreaterThan(-1);
+  expect(
+    trOpenIdx,
+    `expected enclosing <tr for status "${status}"`,
+  ).toBeGreaterThan(-1);
   const trEndIdx = markup.indexOf(">", trOpenIdx);
   const trAttrs = markup.slice(trOpenIdx, trEndIdx + 1);
   const match = trAttrs.match(/data-tone="([a-z]+)"/);
@@ -95,16 +112,19 @@ describe.each<QueueJobStatus>([
   "failed",
   "cancelled",
   "skipped",
-])("queue_job_status Badge/row-data-tone cross-surface invariant for %s", (status) => {
-  it("renders the same effective tone for row and StatusBadge data-tone", () => {
-    const markup = renderQueuePanelMarkup(status);
-    const expectedTone = queueJobStatusBadgeTone(status);
+])(
+  "queue_job_status Badge/row-data-tone cross-surface invariant for %s",
+  (status) => {
+    it("renders the same effective tone for row and StatusBadge data-tone", () => {
+      const markup = renderQueuePanelMarkup(status);
+      const expectedTone = queueJobStatusBadgeTone(status);
 
-    const badgeTone = extractJobRowBadgeTone(markup, status);
-    const rowTone = extractJobRowDataTone(markup, status);
+      const badgeTone = extractJobRowBadgeTone(markup, status);
+      const rowTone = extractJobRowDataTone(markup, status);
 
-    expect(badgeTone).toBe(expectedTone);
-    expect(rowTone).toBe(expectedTone);
-    expect(badgeTone).toBe(rowTone);
-  });
-});
+      expect(badgeTone).toBe(expectedTone);
+      expect(rowTone).toBe(expectedTone);
+      expect(badgeTone).toBe(rowTone);
+    });
+  },
+);

@@ -60,10 +60,22 @@ describe("Activity pagination", () => {
     const first = activityPage([...olderJobs, newestJob], 1);
     const second = activityPage([...olderJobs, newestJob], 2);
 
-    expect(first).toMatchObject({ page: 1, pageCount: 2, rangeStart: 1, rangeEnd: 50, total: 51 });
+    expect(first).toMatchObject({
+      page: 1,
+      pageCount: 2,
+      rangeStart: 1,
+      rangeEnd: 50,
+      total: 51,
+    });
     expect(first.jobs).toHaveLength(50);
     expect(first.jobs[0]?.id).toBe(51);
-    expect(second).toMatchObject({ page: 2, pageCount: 2, rangeStart: 51, rangeEnd: 51, total: 51 });
+    expect(second).toMatchObject({
+      page: 2,
+      pageCount: 2,
+      rangeStart: 51,
+      rangeEnd: 51,
+      total: 51,
+    });
     expect(second.jobs.map((job) => job.id)).toEqual([50]);
   });
 
@@ -82,15 +94,74 @@ describe("Activity pagination", () => {
 describe("Activity issue views", () => {
   const jobs: QueueJob[] = [
     { id: 1, audio_path: "/unread.wav", model_id: "m", status: "failed" },
-    { id: 2, audio_path: "/resolved-failed.wav", model_id: "m", status: "failed", is_read: true },
-    { id: 3, audio_path: "/resolved-skipped.wav", model_id: "m", status: "skipped", is_read: true },
+    {
+      id: 2,
+      audio_path: "/resolved-failed.wav",
+      model_id: "m",
+      status: "failed",
+      is_read: true,
+    },
+    {
+      id: 3,
+      audio_path: "/resolved-skipped.wav",
+      model_id: "m",
+      status: "skipped",
+      is_read: true,
+    },
     { id: 4, audio_path: "/completed.wav", model_id: "m", status: "completed" },
   ];
 
   it("keeps resolved outcomes discoverable after they stop requiring attention", () => {
-    expect(filterActivityJobs(jobs, "resolved").map((job) => job.id)).toEqual([2, 3]);
-    expect(filterActivityJobs(jobs, "attention").map((job) => job.id)).toEqual([1]);
-    expect(filterActivityJobs(jobs, "all").map((job) => job.id)).toEqual([1, 2, 3, 4]);
+    expect(filterActivityJobs(jobs, "resolved").map((job) => job.id)).toEqual([
+      2, 3,
+    ]);
+    expect(filterActivityJobs(jobs, "attention").map((job) => job.id)).toEqual([
+      1,
+    ]);
+    expect(filterActivityJobs(jobs, "all").map((job) => job.id)).toEqual([
+      1, 2, 3,
+    ]);
+    expect(
+      filterActivityJobs(jobs, "all", {
+        modelId: "all",
+        kind: "all",
+        status: "all",
+      }).map((job) => job.id),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
+  it("combines model, Dictation/live type, and status filters", () => {
+    const candidates: QueueJob[] = [
+      {
+        id: 1,
+        audio_path: "/dictation.wav",
+        model_id: "openai",
+        status: "failed",
+        activity_kind: "dictation",
+      },
+      {
+        id: 2,
+        audio_path: "/live.wav",
+        model_id: "openai",
+        status: "failed",
+        activity_kind: "live_transcription",
+      },
+      {
+        id: 3,
+        audio_path: "/done.wav",
+        model_id: "local",
+        status: "completed",
+        activity_kind: "live_transcription",
+      },
+    ];
+
+    expect(
+      filterActivityJobs(candidates, "all", {
+        modelId: "openai",
+        kind: "dictation",
+        status: "failed",
+      }).map((job) => job.id),
+    ).toEqual([1]);
   });
 });
 
@@ -102,7 +173,7 @@ describe("Activity issue reprocessing", () => {
     ["pending", false],
     ["running", false],
     ["completed", false],
-  ] satisfies Array<[QueueJobStatus, boolean]>) (
+  ] satisfies Array<[QueueJobStatus, boolean]>)(
     "allows %s jobs to be selected for reprocessing",
     (status, expected) => {
       expect(
@@ -151,11 +222,9 @@ describe("Activity issue reprocessing", () => {
       model("ready-realtime", "ready", ["realtime"]),
     ];
 
-    expect(reprocessingModels(models).map((candidate) => candidate.id)).toEqual([
-      "ready-file",
-      "installed-file",
-      "unloaded-file",
-    ]);
+    expect(reprocessingModels(models).map((candidate) => candidate.id)).toEqual(
+      ["ready-file", "installed-file", "unloaded-file"],
+    );
     expect(preferredReprocessingModelId(models, "installed-file")).toBe(
       "installed-file",
     );

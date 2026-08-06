@@ -6,6 +6,7 @@ import {
   FileAudio,
   FolderOpen,
   FolderInput,
+  ListFilter,
   ListChecksIcon,
   Play,
   RotateCw,
@@ -57,6 +58,7 @@ import {
 import type {
   ModelDescriptor,
   QueueJob,
+  QueueActivityKind,
   QueueJobStatus,
   QueueSnapshot,
 } from "../lib/types";
@@ -64,29 +66,87 @@ import { ActivityAudioPlayer } from "./activity/ActivityAudioPlayer";
 
 export const ACTIVITY_PAGE_SIZE = 50;
 export type ActivityView = "all" | "attention" | "resolved";
+export type ActivityKindFilter = "all" | QueueActivityKind;
+export type ActivityStatusFilter = "hide_successful" | "all" | QueueJobStatus;
+
+export interface ActivityFilters {
+  modelId: string;
+  kind: ActivityKindFilter;
+  status: ActivityStatusFilter;
+}
+
+export const DEFAULT_ACTIVITY_FILTERS: ActivityFilters = {
+  modelId: "all",
+  kind: "all",
+  status: "hide_successful",
+};
+
+export function activityKindForJob(job: QueueJob): QueueActivityKind {
+  if (job.activity_kind) {
+    return job.activity_kind;
+  }
+  if (/(?:^|[\\/])uploaded(?:[\\/]|$)/i.test(job.audio_path)) {
+    return "imported_audio";
+  }
+  if (/(?:^|[-_])dictation(?:[-_.]|$)/i.test(job.audio_path)) {
+    return "dictation";
+  }
+  return "other";
+}
+
+export function activityKindLabel(kind: QueueActivityKind): string {
+  switch (kind) {
+    case "dictation":
+      return "Dictation";
+    case "live_transcription":
+      return "Live transcription";
+    case "imported_audio":
+      return "Imported audio";
+    case "other":
+      return "Other";
+  }
+}
 
 export function filterActivityJobs(
   jobs: QueueJob[],
   view: ActivityView,
+  filters: ActivityFilters = DEFAULT_ACTIVITY_FILTERS,
 ): QueueJob[] {
-  if (view === "attention") {
-    return jobs.filter(
-      (job) => isActivityAttentionOutcome(job) && job.is_read !== true,
-    );
-  }
-  if (view === "resolved") {
-    return jobs.filter(
-      (job) => isActivityAttentionOutcome(job) && job.is_read === true,
-    );
-  }
-  return jobs;
+  const viewedJobs =
+    view === "attention"
+      ? jobs.filter(
+          (job) => isActivityAttentionOutcome(job) && job.is_read !== true,
+        )
+      : view === "resolved"
+        ? jobs.filter(
+            (job) => isActivityAttentionOutcome(job) && job.is_read === true,
+          )
+        : jobs;
+
+  return viewedJobs.filter((job) => {
+    if (filters.modelId !== "all" && job.model_id !== filters.modelId) {
+      return false;
+    }
+    if (filters.kind !== "all" && activityKindForJob(job) !== filters.kind) {
+      return false;
+    }
+    if (filters.status === "all") {
+      return true;
+    }
+    if (filters.status === "hide_successful") {
+      return job.status !== "completed" || isActivityAttentionOutcome(job);
+    }
+    return job.status === filters.status;
+  });
 }
 
 export function isReprocessableJob(job: QueueJob): boolean {
   return isReprocessableActivityJob(job);
 }
 
-export function reprocessingModels(models: ModelDescriptor[]): ModelDescriptor[] {
+export function reprocessingModels(
+  models: ModelDescriptor[],
+): ModelDescriptor[] {
   return models.filter(
     (model) =>
       ["ready", "installed", "unloaded"].includes(model.status) &&
@@ -109,7 +169,9 @@ export function activityPage(
   requestedPage: number,
   pageSize = ACTIVITY_PAGE_SIZE,
 ) {
-  const orderedJobs = groupQueueJobsByDay(jobs).flatMap((group) => group.entries);
+  const orderedJobs = groupQueueJobsByDay(jobs).flatMap(
+    (group) => group.entries,
+  );
   const total = orderedJobs.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(1, Math.floor(requestedPage)), pageCount);
@@ -129,7 +191,8 @@ export function activityPage(
 export function queueJobActionState(status: QueueJobStatus) {
   return {
     canRetry: status === "failed" || status === "cancelled",
-    canSkip: status === "pending" || status === "failed" || status === "cancelled",
+    canSkip:
+      status === "pending" || status === "failed" || status === "cancelled",
   };
 }
 
@@ -139,7 +202,9 @@ export function queueToolbarActionState(
 ) {
   return {
     canProcessNext:
-      canProcessTranscription && queue.pending_count > 0 && queue.running_count === 0,
+      canProcessTranscription &&
+      queue.pending_count > 0 &&
+      queue.running_count === 0,
     canCancelCurrent: queue.running_count > 0,
   };
 }
@@ -148,7 +213,11 @@ export function processNextDisabledReason(
   queue: Pick<QueueSnapshot, "pending_count" | "running_count">,
   canProcessTranscription: boolean,
 ): string | null {
-  if (canProcessTranscription && queue.pending_count > 0 && queue.running_count === 0) {
+  if (
+    canProcessTranscription &&
+    queue.pending_count > 0 &&
+    queue.running_count === 0
+  ) {
     return null;
   }
   if (queue.running_count > 0) {
@@ -169,7 +238,9 @@ export function cancelCurrentDisabledReason(
   return "No running job to cancel";
 }
 
-export function queueJobRetryDisabledReason(status: QueueJobStatus): string | null {
+export function queueJobRetryDisabledReason(
+  status: QueueJobStatus,
+): string | null {
   if (queueJobActionState(status).canRetry) {
     return null;
   }
@@ -185,7 +256,9 @@ export function queueJobRetryDisabledReason(status: QueueJobStatus): string | nu
   return "Job has not run yet";
 }
 
-export function queueJobSkipDisabledReason(status: QueueJobStatus): string | null {
+export function queueJobSkipDisabledReason(
+  status: QueueJobStatus,
+): string | null {
   if (queueJobActionState(status).canSkip) {
     return null;
   }
@@ -233,6 +306,9 @@ export function QueuePanel({
 }) {
   const [requestedPage, setRequestedPage] = useState(1);
   const [activityView, setActivityView] = useState<ActivityView>("all");
+  const [activityFilters, setActivityFilters] = useState<ActivityFilters>(
+    DEFAULT_ACTIVITY_FILTERS,
+  );
   const [selectedJobIds, setSelectedJobIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -241,25 +317,55 @@ export function QueuePanel({
   const [reprocessing, setReprocessing] = useState(false);
   const [trashing, setTrashing] = useState(false);
   const [playingJob, setPlayingJob] = useState<QueueJob | null>(null);
-  const toolbarActions = queueToolbarActionState(queue, canProcessTranscription);
-  const processNextReason = processNextDisabledReason(queue, canProcessTranscription);
+  const toolbarActions = queueToolbarActionState(
+    queue,
+    canProcessTranscription,
+  );
+  const processNextReason = processNextDisabledReason(
+    queue,
+    canProcessTranscription,
+  );
   const cancelCurrentReason = cancelCurrentDisabledReason(queue);
-  const filteredJobs = filterActivityJobs(queue.jobs, activityView);
+  const filteredJobs = filterActivityJobs(
+    queue.jobs,
+    activityView,
+    activityFilters,
+  );
   const pagination = activityPage(filteredJobs, requestedPage);
   const groupedJobs = groupQueueJobsByDay(pagination.jobs);
   const statsBanner = queueStatsBanner(queue);
   const activeAttention = activityAttentionAt(queue.jobs, nowMs);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
-  const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved").length;
+  const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved", {
+    ...DEFAULT_ACTIVITY_FILTERS,
+    status: "all",
+  }).length;
+  const visibleAllCount = filterActivityJobs(queue.jobs, "all").length;
+  const modelFilterOptions = Array.from(
+    new Set(queue.jobs.map((job) => job.model_id)),
+  ).sort((left, right) =>
+    formatModelLabel(left, models).localeCompare(
+      formatModelLabel(right, models),
+    ),
+  );
+  const filtersAreDefault =
+    activityFilters.modelId === DEFAULT_ACTIVITY_FILTERS.modelId &&
+    activityFilters.kind === DEFAULT_ACTIVITY_FILTERS.kind &&
+    activityFilters.status === DEFAULT_ACTIVITY_FILTERS.status;
   const availableReprocessingModels = reprocessingModels(models);
-  const preferredModelId = preferredReprocessingModelId(models, selectedModelId);
+  const preferredModelId = preferredReprocessingModelId(
+    models,
+    selectedModelId,
+  );
   const reprocessingModelId = availableReprocessingModels.some(
     (model) => model.id === requestedReprocessingModelId,
   )
     ? requestedReprocessingModelId
     : preferredModelId;
   const filteredReprocessableJobs = filteredJobs.filter(isReprocessableJob);
-  const filteredReprocessableIds = filteredReprocessableJobs.map((job) => job.id);
+  const filteredReprocessableIds = filteredReprocessableJobs.map(
+    (job) => job.id,
+  );
   const filteredSelectableIds = filteredJobs
     .filter((job) => job.status !== "running")
     .map((job) => job.id);
@@ -277,8 +383,12 @@ export function QueuePanel({
   const someMatchingSelected = filteredSelectableIds.some((id) =>
     selectedJobIds.has(id),
   );
-  const activityViews: Array<{ id: ActivityView; label: string; count: number }> = [
-    { id: "all", label: "All", count: queue.jobs.length },
+  const activityViews: Array<{
+    id: ActivityView;
+    label: string;
+    count: number;
+  }> = [
+    { id: "all", label: "Visible", count: visibleAllCount },
     { id: "attention", label: "Needs attention", count: unreadOutcomeCount },
     { id: "resolved", label: "Resolved", count: resolvedOutcomeCount },
   ];
@@ -292,13 +402,26 @@ export function QueuePanel({
       : activityView === "resolved"
         ? {
             title: "No resolved issues",
-            description: "Outcomes marked as resolved remain available here for review.",
-          }
-        : {
-            title: "No queued transcription jobs",
             description:
-              "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
-          };
+              "Outcomes marked as resolved remain available here for review.",
+          }
+        : filteredJobs.length === 0 && queue.jobs.length > 0
+          ? {
+              title: "No Activity matches these filters",
+              description:
+                "Change a model, type, or status filter to show more transcription jobs.",
+            }
+          : {
+              title: "No queued transcription jobs",
+              description:
+                "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
+            };
+
+  function updateActivityFilters(patch: Partial<ActivityFilters>) {
+    setActivityFilters((current) => ({ ...current, ...patch }));
+    setRequestedPage(1);
+    setSelectedJobIds(new Set());
+  }
 
   function setJobSelected(id: number, checked: boolean) {
     setSelectedJobIds((current) => {
@@ -418,8 +541,9 @@ export function QueuePanel({
             <AlertDialogHeader>
               <AlertDialogTitle>Process the entire backlog?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will scan the full save folder and queue every supported audio file
-                without a transcript. A large backlog may add many jobs at once.
+                This will scan the full save folder and queue every supported
+                audio file without a transcript. A large backlog may add many
+                jobs at once.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -466,7 +590,11 @@ export function QueuePanel({
       </div>
       <div className="queue-view-bar">
         <div className="queue-view-bar__history">
-          <div className="queue-view-tabs" role="group" aria-label="Activity history views">
+          <div
+            className="queue-view-tabs"
+            role="group"
+            aria-label="Activity history views"
+          >
             {activityViews.map((view) => (
               <Button
                 key={view.id}
@@ -485,11 +613,15 @@ export function QueuePanel({
             ))}
           </div>
           <span className="queue-view-bar__hint">
-            Resolved outcomes stay in history until reprocessed or moved to Trash.
+            Resolved outcomes stay in history until reprocessed or moved to
+            Trash.
           </span>
         </div>
         {hasSelectableJobs ? (
-          <div className="queue-reprocess-controls" aria-label="Selected Activity items">
+          <div
+            className="queue-reprocess-controls"
+            aria-label="Selected Activity items"
+          >
             <div className="queue-reprocess-controls__select-all">
               <Checkbox
                 aria-label={`Select all ${filteredSelectableIds.length} matching items`}
@@ -507,7 +639,10 @@ export function QueuePanel({
               />
               <span aria-hidden="true">Select all</span>
             </div>
-            <span className="queue-reprocess-controls__count" aria-live="polite">
+            <span
+              className="queue-reprocess-controls__count"
+              aria-live="polite"
+            >
               {selectedIds.length} selected
             </span>
             {hasReprocessableJobs ? (
@@ -515,7 +650,9 @@ export function QueuePanel({
                 <Select
                   value={reprocessingModelId || undefined}
                   onValueChange={setRequestedReprocessingModelId}
-                  disabled={availableReprocessingModels.length === 0 || reprocessing}
+                  disabled={
+                    availableReprocessingModels.length === 0 || reprocessing
+                  }
                 >
                   <SelectTrigger size="sm" aria-label="Reprocessing model">
                     <SelectValue placeholder="No model ready" />
@@ -571,12 +708,15 @@ export function QueuePanel({
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Move {selectedIds.length} {selectedIds.length === 1 ? "recording" : "recordings"} to Trash?
+                    Move {selectedIds.length}{" "}
+                    {selectedIds.length === 1 ? "recording" : "recordings"} to
+                    Trash?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Activity records will be removed and the selected audio files will
-                    move to the macOS Trash. Transcript text files stay in place, and
-                    recordings remain recoverable until you empty the Trash.
+                    Activity records will be removed and the selected audio
+                    files will move to the macOS Trash. Transcript text files
+                    stay in place, and recordings remain recoverable until you
+                    empty the Trash.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -593,11 +733,91 @@ export function QueuePanel({
           </div>
         ) : null}
       </div>
+      <div className="queue-filters" role="group" aria-label="Activity filters">
+        <span className="queue-filters__label">
+          <ListFilter aria-hidden="true" />
+          Filters
+        </span>
+        <Select
+          value={activityFilters.modelId}
+          onValueChange={(modelId) => updateActivityFilters({ modelId })}
+        >
+          <SelectTrigger size="sm" aria-label="Filter by AI model">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All models</SelectItem>
+            {modelFilterOptions.map((modelId) => (
+              <SelectItem key={modelId} value={modelId}>
+                {formatModelLabel(modelId, models)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={activityFilters.kind}
+          onValueChange={(kind) =>
+            updateActivityFilters({ kind: kind as ActivityKindFilter })
+          }
+        >
+          <SelectTrigger size="sm" aria-label="Filter by transcription type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            <SelectItem value="dictation">Dictation</SelectItem>
+            <SelectItem value="live_transcription">
+              Live transcription
+            </SelectItem>
+            <SelectItem value="imported_audio">Imported audio</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={activityFilters.status}
+          onValueChange={(status) =>
+            updateActivityFilters({ status: status as ActivityStatusFilter })
+          }
+        >
+          <SelectTrigger size="sm" aria-label="Filter by status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="hide_successful">Successful hidden</SelectItem>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="pending">Pending</SelectItem>
+            <SelectItem value="running">Running</SelectItem>
+            <SelectItem value="failed">Failed</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
+            <SelectItem value="skipped">Skipped</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="queue-filters__result" aria-live="polite">
+          {filteredJobs.length} of {queue.jobs.length} shown
+        </span>
+        {!filtersAreDefault ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setActivityFilters(DEFAULT_ACTIVITY_FILTERS);
+              setRequestedPage(1);
+              setSelectedJobIds(new Set());
+            }}
+          >
+            Reset filters
+          </Button>
+        ) : null}
+      </div>
       <div className="table-wrap queue-table-wrap">
         <table data-slot="queue-table">
           <thead>
             <tr>
-              <th className="queue-job__selection-heading" aria-label="Select" />
+              <th className="queue-job__selection-heading">
+                <span className="sr-only">Select</span>
+              </th>
               <th>Audio</th>
               <th>Model</th>
               <th>Status</th>
@@ -612,6 +832,24 @@ export function QueuePanel({
                     icon={ListChecksIcon}
                     title={emptyCopy.title}
                     description={emptyCopy.description}
+                    action={
+                      queue.jobs.length > 0 ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setActivityView("all");
+                            setActivityFilters({
+                              ...DEFAULT_ACTIVITY_FILTERS,
+                              status: "all",
+                            });
+                          }}
+                        >
+                          Show all Activity
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 </td>
               </tr>
@@ -619,133 +857,174 @@ export function QueuePanel({
               groupedJobs.map((group) => {
                 const breakdown = queueDayBreakdown(group.entries);
                 return (
-                <Fragment key={group.day}>
-                  <tr className="table-group-row">
-                    <td colSpan={5}>
-                      {group.day} · {group.entries.length} job{group.entries.length === 1 ? "" : "s"}
-                      {breakdown.map(({ status, count }) => (
-                        <Fragment key={status}>
-                          {" · "}
-                          <span data-tone={queueStatsCellTone(status)}>{count} {status}</span>
-                        </Fragment>
-                      ))}
-                    </td>
-                  </tr>
-                  {group.entries.map((job) => {
-                    const actions = queueJobActionState(job.status);
-                    const retryReason = queueJobRetryDisabledReason(job.status);
-                    const skipReason = queueJobSkipDisabledReason(job.status);
-                    const presentation = activityJobPresentation(job);
-                    const rowTone = presentation.primaryTone;
-                    const sidecarPath = queueJobSidecarPath(job.audio_path, job.status);
-                    const statusBadge = (
-                      <StatusBadge tone={presentation.primaryTone}>
-                        {presentation.primaryLabel}
-                      </StatusBadge>
-                    );
-                    return (
-                      <tr
-                        key={job.id}
-                        data-tone={rowTone === "neutral" ? undefined : rowTone}
-                        data-read={job.is_read === true ? true : undefined}
-                      >
-                        <td className="queue-job__selection" data-label="Select">
-                          {job.status !== "running" ? (
-                            <Checkbox
-                              aria-label={`Select ${formatAudioPathLabel(job.audio_path)}`}
-                              checked={selectedJobIds.has(job.id)}
-                              onCheckedChange={(checked) =>
-                                setJobSelected(job.id, checked === true)
-                              }
-                            />
-                          ) : null}
-                        </td>
-                        <td className="queue-job__audio" data-label="Audio">
-                          <a className="truncate" href={fileUrlFromPath(job.audio_path)} title={job.audio_path}>
-                            {formatAudioPathLabel(job.audio_path)}
-                          </a>
-                          <small className="queue-job__path" title={job.audio_path}>{job.audio_path}</small>
-                        </td>
-                        <td
-                          className="queue-job__model"
-                          data-label="Model"
-                          title={job.model_id}
+                  <Fragment key={group.day}>
+                    <tr className="table-group-row">
+                      <td colSpan={5}>
+                        {group.day} · {group.entries.length} job
+                        {group.entries.length === 1 ? "" : "s"}
+                        {breakdown.map(({ status, count }) => (
+                          <Fragment key={status}>
+                            {" · "}
+                            <span data-tone={queueStatsCellTone(status)}>
+                              {count} {status}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </td>
+                    </tr>
+                    {group.entries.map((job) => {
+                      const actions = queueJobActionState(job.status);
+                      const retryReason = queueJobRetryDisabledReason(
+                        job.status,
+                      );
+                      const skipReason = queueJobSkipDisabledReason(job.status);
+                      const presentation = activityJobPresentation(job);
+                      const rowTone = presentation.primaryTone;
+                      const sidecarPath = queueJobSidecarPath(
+                        job.audio_path,
+                        job.status,
+                      );
+                      const statusBadge = (
+                        <StatusBadge tone={presentation.primaryTone}>
+                          {presentation.primaryLabel}
+                        </StatusBadge>
+                      );
+                      return (
+                        <tr
+                          key={job.id}
+                          data-tone={
+                            rowTone === "neutral" ? undefined : rowTone
+                          }
+                          data-read={job.is_read === true ? true : undefined}
                         >
-                          {formatModelLabel(job.model_id, models)}
-                        </td>
-                        <td className="queue-job__status" data-label="Status">
-                          {sidecarPath ? (
-                            <a href={fileUrlFromPath(sidecarPath)} title={sidecarPath}>
-                              {statusBadge}
+                          <td
+                            className="queue-job__selection"
+                            data-label="Select"
+                          >
+                            {job.status !== "running" ? (
+                              <Checkbox
+                                aria-label={`Select ${formatAudioPathLabel(job.audio_path)}`}
+                                checked={selectedJobIds.has(job.id)}
+                                onCheckedChange={(checked) =>
+                                  setJobSelected(job.id, checked === true)
+                                }
+                              />
+                            ) : null}
+                          </td>
+                          <td className="queue-job__audio" data-label="Audio">
+                            <a
+                              className="truncate"
+                              href={fileUrlFromPath(job.audio_path)}
+                              title={job.audio_path}
+                            >
+                              {formatAudioPathLabel(job.audio_path)}
                             </a>
-                          ) : (
-                            statusBadge
-                          )}
-                          {presentation.issueLabel && presentation.issueTone ? (
-                            <StatusBadge tone={presentation.issueTone}>
-                              {presentation.issueLabel}
-                            </StatusBadge>
-                          ) : null}
-                          {presentation.message ? (
-                            <span className="queue-job__error overflow-wrap-anywhere" title={presentation.message}>
-                              {presentation.message}
+                            <small
+                              className="queue-job__path"
+                              title={job.audio_path}
+                            >
+                              {job.audio_path}
+                            </small>
+                            <span
+                              className="queue-job__kind"
+                              data-kind={activityKindForJob(job)}
+                            >
+                              {activityKindLabel(activityKindForJob(job))}
                             </span>
-                          ) : null}
-                          {job.is_read === true && isActivityAttentionOutcome(job) ? (
-                            <span className="queue-job__resolution">
-                              <CheckCheck aria-hidden="true" /> Resolved
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="queue-job__actions-cell" data-label="Actions">
-                          <div className="row-actions">
-                            <Button
-                              aria-label={`Play audio: ${audioPathBasename(job.audio_path)}`}
-                              data-active={playingJob?.id === job.id || undefined}
-                              onClick={() => setPlayingJob(job)}
-                              size="icon"
-                              title="Play audio"
-                              type="button"
-                              variant="secondary"
-                            >
-                              <Play data-icon="solo" />
-                            </Button>
-                            <Button
-                              aria-label={`Show in Finder: ${audioPathBasename(job.audio_path)}`}
-                              onClick={() => onOpenFolder(job.audio_path)}
-                              size="icon"
-                              title="Show in Finder"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <FolderOpen data-icon="solo" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="icon"
-                              title={retryReason ?? "Retry"}
-                              onClick={() => onRetry(job.id)}
-                              disabled={!actions.canRetry}
-                            >
-                              <RotateCw data-icon="solo" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              title={skipReason ?? "Skip"}
-                              onClick={() => onSkip(job.id)}
-                              disabled={!actions.canSkip}
-                            >
-                              <SkipForward data-icon="solo" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </Fragment>
+                          </td>
+                          <td
+                            className="queue-job__model"
+                            data-label="Model"
+                            title={job.model_id}
+                          >
+                            {formatModelLabel(job.model_id, models)}
+                          </td>
+                          <td className="queue-job__status" data-label="Status">
+                            {sidecarPath ? (
+                              <a
+                                href={fileUrlFromPath(sidecarPath)}
+                                title={sidecarPath}
+                              >
+                                {statusBadge}
+                              </a>
+                            ) : (
+                              statusBadge
+                            )}
+                            {presentation.issueLabel &&
+                            presentation.issueTone ? (
+                              <StatusBadge tone={presentation.issueTone}>
+                                {presentation.issueLabel}
+                              </StatusBadge>
+                            ) : null}
+                            {presentation.message ? (
+                              <span
+                                className="queue-job__error overflow-wrap-anywhere"
+                                title={presentation.message}
+                              >
+                                {presentation.message}
+                              </span>
+                            ) : null}
+                            {job.is_read === true &&
+                            isActivityAttentionOutcome(job) ? (
+                              <span className="queue-job__resolution">
+                                <CheckCheck aria-hidden="true" /> Resolved
+                              </span>
+                            ) : null}
+                          </td>
+                          <td
+                            className="queue-job__actions-cell"
+                            data-label="Actions"
+                          >
+                            <div className="row-actions">
+                              <Button
+                                aria-label={`Play audio: ${audioPathBasename(job.audio_path)}`}
+                                data-active={
+                                  playingJob?.id === job.id || undefined
+                                }
+                                onClick={() => setPlayingJob(job)}
+                                size="icon"
+                                title="Play audio"
+                                type="button"
+                                variant="secondary"
+                              >
+                                <Play data-icon="solo" />
+                              </Button>
+                              <Button
+                                aria-label={`Show in Finder: ${audioPathBasename(job.audio_path)}`}
+                                onClick={() => onOpenFolder(job.audio_path)}
+                                size="icon"
+                                title="Show in Finder"
+                                type="button"
+                                variant="ghost"
+                              >
+                                <FolderOpen data-icon="solo" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="icon"
+                                title={retryReason ?? "Retry"}
+                                onClick={() => onRetry(job.id)}
+                                disabled={!actions.canRetry}
+                              >
+                                <RotateCw data-icon="solo" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                title={skipReason ?? "Skip"}
+                                onClick={() => onSkip(job.id)}
+                                disabled={!actions.canSkip}
+                              >
+                                <SkipForward data-icon="solo" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
                 );
               })
             )}
@@ -792,5 +1071,4 @@ export function QueuePanel({
       ) : null}
     </div>
   );
-
 }
