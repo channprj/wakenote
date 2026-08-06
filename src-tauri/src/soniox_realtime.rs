@@ -237,7 +237,7 @@ async fn connection_loop(
                     committed_path = Some(audio_path);
                     committed_audio_duration_ms = audio_duration_ms;
                     completion_deadline = Some(Instant::now() + COMMIT_COMPLETION_WAIT);
-                    if writer.send(Message::Binary(Vec::new().into())).await.is_err() {
+                    if writer.send(end_of_audio_message()).await.is_err() {
                         finish_with_failure(&shared_failure, &mut committed_path, transport_failure());
                         return;
                     }
@@ -313,6 +313,10 @@ async fn connection_loop(
     }
 }
 
+fn end_of_audio_message() -> Message {
+    Message::Text(String::new().into())
+}
+
 fn configuration_message(
     api_key: &str,
     sample_rate: u32,
@@ -322,7 +326,7 @@ fn configuration_message(
     let mut configuration = json!({
         "api_key": api_key,
         "model": SONIOX_REALTIME_MODEL,
-        "audio_format": "s16le",
+        "audio_format": "pcm_s16le",
         "num_channels": 1,
         "sample_rate": sample_rate,
         "client_reference_id": format!("WakeNote/{}", env!("CARGO_PKG_VERSION")),
@@ -572,12 +576,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn soniox_realtime_uses_documented_empty_text_end_frame() {
+        match end_of_audio_message() {
+            Message::Text(text) => assert!(text.is_empty()),
+            message => panic!("expected an empty text frame, got {message:?}"),
+        }
+    }
+
+    #[test]
     fn soniox_realtime_builds_documented_configuration_and_pcm_frames() {
         let configuration =
             configuration_message("secret", 16_000, Some("ko"), vec!["WakeNote".into()]);
         assert_eq!(configuration["api_key"], "secret");
         assert_eq!(configuration["model"], "stt-rt-v5");
-        assert_eq!(configuration["audio_format"], "s16le");
+        assert_eq!(configuration["audio_format"], "pcm_s16le");
         assert_eq!(configuration["num_channels"], 1);
         assert_eq!(configuration["sample_rate"], 16_000);
         assert_eq!(configuration["language_hints"], json!(["ko"]));

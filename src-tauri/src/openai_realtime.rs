@@ -205,7 +205,7 @@ async fn connection_loop(
         );
         return;
     };
-    let url = format!("{REALTIME_URL}?model={OPENAI_GPT_LIVE_TRANSCRIBE_MODEL}");
+    let url = realtime_url();
     let Ok(mut websocket_request) = url.into_client_request() else {
         store_shared_failure(&shared_failure, transport_failure());
         return;
@@ -222,28 +222,8 @@ async fn connection_loop(
         return;
     };
     let (mut writer, mut reader) = socket.split();
-    let language = request.language.whisper_code();
-    let prompt = request.dictionary.prompt();
-    let mut transcription = json!({ "model": OPENAI_GPT_LIVE_TRANSCRIBE_MODEL });
-    if let Some(language) = language {
-        transcription["language"] = Value::String(language.to_string());
-    }
-    if let Some(prompt) = prompt {
-        transcription["prompt"] = Value::String(prompt.to_string());
-    }
-    let configuration = json!({
-        "type": "session.update",
-        "session": {
-            "type": "transcription",
-            "audio": {
-                "input": {
-                    "format": { "type": "audio/pcm", "rate": REALTIME_SAMPLE_RATE },
-                    "transcription": transcription,
-                    "turn_detection": { "type": "server_vad", "create_response": false }
-                }
-            }
-        }
-    });
+    let configuration =
+        configuration_message(request.language.whisper_code(), request.dictionary.prompt());
     if writer
         .send(Message::Text(configuration.to_string().into()))
         .await
@@ -351,6 +331,33 @@ async fn connection_loop(
             }
         }
     }
+}
+
+fn realtime_url() -> String {
+    format!("{REALTIME_URL}?intent=transcription")
+}
+
+fn configuration_message(language: Option<&str>, prompt: Option<&str>) -> Value {
+    let mut transcription = json!({ "model": OPENAI_GPT_LIVE_TRANSCRIBE_MODEL });
+    if let Some(language) = language {
+        transcription["languages"] = json!([language]);
+    }
+    if let Some(prompt) = prompt {
+        transcription["prompt"] = Value::String(prompt.to_string());
+    }
+    json!({
+        "type": "session.update",
+        "session": {
+            "type": "transcription",
+            "audio": {
+                "input": {
+                    "format": { "type": "audio/pcm", "rate": REALTIME_SAMPLE_RATE },
+                    "transcription": transcription,
+                    "turn_detection": null
+                }
+            }
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -603,6 +610,52 @@ fn store_shared_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openai_realtime_uses_the_transcription_transport() {
+        assert_eq!(
+            realtime_url(),
+            "wss://api.openai.com/v1/realtime?intent=transcription"
+        );
+    }
+
+    #[test]
+    fn openai_realtime_builds_documented_explicit_commit_configuration() {
+        let configuration = configuration_message(Some("ko"), Some("WakeNote"));
+
+        assert_eq!(configuration["type"], "session.update");
+        assert_eq!(configuration["session"]["type"], "transcription");
+        assert_eq!(
+            configuration["session"]["audio"]["input"]["format"],
+            json!({ "type": "audio/pcm", "rate": 24_000 })
+        );
+        assert_eq!(
+            configuration["session"]["audio"]["input"]["transcription"]["languages"],
+            json!(["ko"])
+        );
+        assert!(
+            configuration["session"]["audio"]["input"]["transcription"]
+                .get("language")
+                .is_none()
+        );
+        assert_eq!(
+            configuration["session"]["audio"]["input"]["transcription"]["prompt"],
+            "WakeNote"
+        );
+        assert!(configuration["session"]["audio"]["input"]["turn_detection"].is_null());
+
+        let automatic = configuration_message(None, None);
+        assert!(
+            automatic["session"]["audio"]["input"]["transcription"]
+                .get("languages")
+                .is_none()
+        );
+        assert!(
+            automatic["session"]["audio"]["input"]["transcription"]
+                .get("prompt")
+                .is_none()
+        );
+    }
 
     #[test]
     fn openai_realtime_encodes_resampled_pcm_without_reencoding_prior_samples() {
