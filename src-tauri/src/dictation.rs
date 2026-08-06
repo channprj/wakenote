@@ -40,6 +40,7 @@ pub struct DictationStatePayload {
 pub enum DictationAction {
     StartRecording,
     StopAndTranscribe,
+    Cancel,
     PlayStopCue,
     Ignore,
 }
@@ -269,7 +270,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 self.stage = DictationStage::Transcribing;
                 DictationAction::StopAndTranscribe
             }
-            DictationStage::Transcribing => DictationAction::Ignore,
+            DictationStage::Transcribing => DictationAction::Cancel,
             DictationStage::Error => DictationAction::Ignore,
         }
     }
@@ -289,6 +290,9 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 } else {
                     DictationAction::PlayStopCue
                 }
+            }
+            DictationShortcutEvent::Pressed if self.stage == DictationStage::Transcribing => {
+                DictationAction::Cancel
             }
             _ => DictationAction::Ignore,
         }
@@ -351,7 +355,6 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             return Err("dictation is not ready to transcribe".to_string());
         }
         self.capture.stop();
-        self.active_recording_id = None;
         let sample_rate = self
             .sample_rate
             .take()
@@ -400,6 +403,46 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         if let Ok(mut samples) = self.samples.lock() {
             samples.clear();
         }
+    }
+
+    pub fn current_operation_id(&self) -> Option<u64> {
+        self.active_recording_id
+    }
+
+    pub fn is_operation_active(&self, operation_id: u64) -> bool {
+        self.active_recording_id == Some(operation_id)
+            && matches!(
+                self.stage,
+                DictationStage::Recording | DictationStage::Transcribing
+            )
+    }
+
+    pub fn finish_if_active(&mut self, operation_id: u64) -> bool {
+        if !self.is_operation_active(operation_id) {
+            return false;
+        }
+        self.finish();
+        true
+    }
+
+    pub fn fail_if_active(&mut self, operation_id: u64) -> bool {
+        if !self.is_operation_active(operation_id) {
+            return false;
+        }
+        self.fail();
+        true
+    }
+
+    pub fn cancel_active(&mut self) -> bool {
+        if !matches!(
+            self.stage,
+            DictationStage::Recording | DictationStage::Transcribing
+        ) {
+            return false;
+        }
+        self.stop_cue_armed = false;
+        self.finish();
+        true
     }
 
     pub fn fail(&mut self) {

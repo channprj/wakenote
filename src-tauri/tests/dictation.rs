@@ -350,10 +350,69 @@ fn hold_to_talk_stops_only_on_release() {
     );
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
-        DictationAction::Ignore
+        DictationAction::Cancel
     );
 
     runtime.finish();
+    assert_eq!(runtime.stage(), DictationStage::Idle);
+}
+
+#[test]
+fn cancelling_recording_releases_capture_and_allows_the_next_dictation() {
+    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+        DictationAction::StartRecording
+    );
+    let first_id = runtime
+        .start_recording(AudioInputConfig {
+            device_id: "fake".to_string(),
+            sample_rate: Some(16_000),
+            label_hint: None,
+            core_audio_uid: None,
+        })
+        .expect("first capture starts");
+
+    assert!(runtime.cancel_active());
+    assert_eq!(runtime.stage(), DictationStage::Idle);
+    assert!(!runtime.is_operation_active(first_id));
+
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+        DictationAction::StartRecording
+    );
+    let second_id = runtime
+        .start_recording(AudioInputConfig {
+            device_id: "fake".to_string(),
+            sample_rate: Some(16_000),
+            label_hint: None,
+            core_audio_uid: None,
+        })
+        .expect("second capture starts");
+    assert!(second_id > first_id);
+}
+
+#[test]
+fn cancelling_transcription_invalidates_late_completion() {
+    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
+    let operation_id = runtime
+        .start_recording(AudioInputConfig {
+            device_id: "fake".to_string(),
+            sample_rate: Some(16_000),
+            label_hint: None,
+            core_audio_uid: None,
+        })
+        .expect("capture starts");
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::StopAndTranscribe
+    );
+    runtime.stop_recording().expect("capture stops");
+
+    assert!(runtime.is_operation_active(operation_id));
+    assert!(runtime.cancel_active());
+    assert!(!runtime.finish_if_active(operation_id));
     assert_eq!(runtime.stage(), DictationStage::Idle);
 }
 

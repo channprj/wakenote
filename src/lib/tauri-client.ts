@@ -64,6 +64,7 @@ import type {
   MergeAudioRequest,
   TrashActivityJobsOutcome,
   TrashActivityJobsResult,
+  DictationStatePayload,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
 
@@ -88,6 +89,10 @@ let browserManualMeetingId: string | null = null;
 let browserOpenRouterApiKey: string | null = null;
 let browserOpenAiApiKey: string | null = null;
 let browserSonioxApiKey: string | null = null;
+let browserDictationState: DictationStatePayload = {
+  state: "idle",
+  error: null,
+};
 let browserListVisibility = emptyListVisibilityState();
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
@@ -132,6 +137,21 @@ export async function pressedModifierShortcut(): Promise<string | null> {
     return null;
   }
   return invoke<string | null>("pressed_modifier_shortcut");
+}
+
+export async function loadDictationState(): Promise<DictationStatePayload> {
+  if (!isTauriRuntime()) {
+    return browserDictationState;
+  }
+  return invoke<DictationStatePayload>("dictation_state");
+}
+
+export async function cancelDictation(): Promise<DictationStatePayload> {
+  if (!isTauriRuntime()) {
+    browserDictationState = { state: "idle", error: null };
+    return browserDictationState;
+  }
+  return invoke<DictationStatePayload>("cancel_dictation");
 }
 
 /**

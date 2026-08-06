@@ -6,6 +6,7 @@ import {
   cancelCurrentOperation,
   cancelModelDownload,
   cancelCurrentTranscription,
+  cancelDictation,
   cancelLlmReport,
   deleteModel,
   deleteOpenRouterApiKey,
@@ -17,6 +18,7 @@ import {
   listLlmReportHistory,
   listLlmReportRuns,
   loadLlmReportHistoryDetail,
+  loadDictationState,
   loadSnapshot,
   loadTranscriptDays,
   loadTranscriptsForDay,
@@ -105,6 +107,19 @@ describe("microphone input volume browser fallback", () => {
         (level) => level.device_id !== "default",
       ),
     ).toEqual(unchanged);
+  });
+});
+
+describe("dictation cancellation browser fallback", () => {
+  it("is safe and idempotent outside Tauri", async () => {
+    await expect(cancelDictation()).resolves.toEqual({
+      state: "idle",
+      error: null,
+    });
+    await expect(loadDictationState()).resolves.toEqual({
+      state: "idle",
+      error: null,
+    });
   });
 });
 

@@ -115,6 +115,10 @@ function mockInvoke(command: string) {
           error: null,
         },
       ]);
+    case "dictation_state":
+      return Promise.resolve({ state: "transcribing", error: null });
+    case "cancel_dictation":
+      return Promise.resolve({ state: "idle", error: null });
     case "list_models":
       return Promise.resolve(mockModels());
     case "queue_snapshot":
@@ -296,6 +300,25 @@ describe("tauri runtime client snapshots", () => {
       volumePercent: 64,
     });
     expect(snapshot.microphone_input_levels[0]?.volume_percent).toBe(63);
+  });
+
+  it("loads and cancels Dictation through dedicated commands", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { cancelDictation, loadDictationState } = await import(
+      "./tauri-client"
+    );
+
+    await expect(loadDictationState()).resolves.toEqual({
+      state: "transcribing",
+      error: null,
+    });
+    await expect(cancelDictation()).resolves.toEqual({
+      state: "idle",
+      error: null,
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("dictation_state");
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_dictation");
   });
 
   it("opens and reloads the stable dictionary file through exact commands", async () => {

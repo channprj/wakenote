@@ -23,6 +23,7 @@ import {
 import {
   cancelModelDownload,
   cancelCurrentTranscription,
+  cancelDictation,
   chooseModelDirectory,
   chooseSaveRoot,
   revealSaveFolder,
@@ -31,6 +32,7 @@ import {
   downloadModel,
   enqueueBacklog,
   loadRecentTranscripts,
+  loadDictationState,
   loadSnapshot,
   markAllActivityRead,
   openTranscriptFolder,
@@ -68,7 +70,11 @@ import {
   shouldRefreshSnapshotForTauriEvent,
   shouldPollSnapshot,
 } from "./lib/app-state";
-import type { AppSnapshot, AppSettings } from "./lib/types";
+import type {
+  AppSnapshot,
+  AppSettings,
+  DictationStatePayload,
+} from "./lib/types";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
 const launchAutoStartPollWindowMs = 130_000;
@@ -130,6 +136,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
+  const [dictationState, setDictationState] = useState<DictationStatePayload>({
+    state: "idle",
+    error: null,
+  });
   const activityAttention = useActivityAttention(snapshot.queue.jobs);
   const launchAutoStartPollUntilMs = useRef(
     Date.now() + launchAutoStartPollWindowMs,
@@ -168,6 +178,9 @@ export default function App() {
   useEffect(() => {
     void refresh();
     void refreshTranscripts();
+    void loadDictationState()
+      .then(setDictationState)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -331,6 +344,14 @@ export default function App() {
           unlisteners.push(unlisten);
         }
       }
+      const unlistenDictation = await listen("dictation-state", (rawEvent) => {
+        setDictationState(rawEvent.payload as DictationStatePayload);
+      });
+      if (cancelled) {
+        unlistenDictation();
+      } else {
+        unlisteners.push(unlistenDictation);
+      }
       // eslint-disable-next-line no-console
       console.log("[wakenote FE] live transcription listeners registered");
     })();
@@ -351,6 +372,33 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
+
+  async function cancelActiveDictation() {
+    setError(null);
+    try {
+      setDictationState(await cancelDictation());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  useEffect(() => {
+    if (
+      dictationState.state !== "recording" &&
+      dictationState.state !== "transcribing"
+    ) {
+      return;
+    }
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat) {
+        return;
+      }
+      event.preventDefault();
+      void cancelActiveDictation();
+    };
+    window.addEventListener("keydown", cancelOnEscape);
+    return () => window.removeEventListener("keydown", cancelOnEscape);
+  }, [dictationState.state]);
 
   const launchAutoStartPending =
     snapshot.settings.start_live_input_on_launch &&
@@ -625,10 +673,13 @@ export default function App() {
       onNavigate={setActiveRoute}
       theme={themeMode}
       statusRail={
-        activeRoute === "capture" ? undefined : (
+        activeRoute === "capture" &&
+        dictationState.state === "idle" ? undefined : (
           <RecordingStatusRail
             liveActive={snapshot.status.live_input_active}
             latestText={latestTranscriptText}
+            dictationState={dictationState.state}
+            onCancelDictation={() => void cancelActiveDictation()}
             onReturnToCapture={() => setActiveRoute("capture")}
           />
         )

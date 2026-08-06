@@ -794,6 +794,7 @@ struct TrayMenuItems {
     active_mic: MenuItem<Wry>,
     threshold: MenuItem<Wry>,
     pause_all: CheckMenuItem<Wry>,
+    cancel: MenuItem<Wry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1431,14 +1432,29 @@ fn show_dictation_overlay(
     }
 }
 
+fn dictation_operation_is_active(app: &AppHandle, operation_id: u64) -> bool {
+    app.try_state::<DictationState>()
+        .and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .map(|runtime| runtime.is_operation_active(operation_id))
+        })
+        .unwrap_or(false)
+}
+
 fn type_dictation_text_on_main_thread(
     app: &AppHandle,
+    operation_id: u64,
     text: String,
     settings: AppSettings,
     started: Instant,
 ) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
+        if !dictation_operation_is_active(&app_for_task, operation_id) {
+            return;
+        }
         let clipboard_after_input = wakenote::text_input::dictation_clipboard_after_input(
             settings.dictation_copy_to_clipboard,
         );
@@ -1446,7 +1462,7 @@ fn type_dictation_text_on_main_thread(
             &text,
             clipboard_after_input,
         ) {
-            show_dictation_error(&app_for_task, error);
+            show_dictation_operation_error(&app_for_task, operation_id, error);
             return;
         }
         log_dictation_runtime(
@@ -1457,10 +1473,11 @@ fn type_dictation_text_on_main_thread(
             ),
         );
         play_dictation_cue_nonblocking_on_failure(&app_for_task, DictationCue::End, &settings);
-        complete_dictation(&app_for_task);
+        complete_dictation_operation(&app_for_task, operation_id);
     }) {
-        show_dictation_error(
+        show_dictation_operation_error(
             app,
+            operation_id,
             format!("Could not schedule Dictation text input: {error}"),
         );
     }
@@ -1542,6 +1559,23 @@ fn complete_dictation(app: &AppHandle) {
     restore_overlay_after_dictation(app);
 }
 
+fn complete_dictation_operation(app: &AppHandle, operation_id: u64) -> bool {
+    let payload = app.try_state::<DictationState>().and_then(|state| {
+        state.lock().ok().and_then(|mut runtime| {
+            runtime
+                .finish_if_active(operation_id)
+                .then(|| runtime.payload(None))
+        })
+    });
+    let Some(payload) = payload else {
+        return false;
+    };
+    emit_dictation_state(app, payload);
+    refresh_tray_from_backend(app);
+    restore_overlay_after_dictation(app);
+    true
+}
+
 fn show_dictation_error(app: &AppHandle, error: String) {
     eprintln!("[dictation] {error}");
     log_dictation_runtime(app, format!("[dictation] error={error}"));
@@ -1583,6 +1617,72 @@ fn show_dictation_error(app: &AppHandle, error: String) {
     });
 }
 
+fn show_dictation_operation_error(app: &AppHandle, operation_id: u64, error: String) -> bool {
+    let transitioned = app.try_state::<DictationState>().and_then(|state| {
+        state.lock().ok().and_then(|mut runtime| {
+            runtime
+                .fail_if_active(operation_id)
+                .then(|| runtime.payload(Some(error.clone())))
+        })
+    });
+    let Some(payload) = transitioned else {
+        return false;
+    };
+
+    eprintln!("[dictation] {error}");
+    log_dictation_runtime(app, format!("[dictation] error={error}"));
+    emit_dictation_state(app, payload);
+    let message = if error == "No speech detected" {
+        error
+    } else {
+        "Dictation failed".to_string()
+    };
+    show_dictation_overlay(app, overlay::DictationOverlayState::Error, Some(message));
+    refresh_tray_from_backend(app);
+
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1_500));
+        let reset = app.try_state::<DictationState>().and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .and_then(|mut runtime| runtime.reset_error().then(|| runtime.payload(None)))
+        });
+        if let Some(payload) = reset {
+            emit_dictation_state(&app, payload);
+            refresh_tray_from_backend(&app);
+            restore_overlay_after_dictation(&app);
+        }
+    });
+    true
+}
+
+fn cancel_dictation_runtime(app: &AppHandle) -> Result<bool, String> {
+    let Some(state) = app.try_state::<DictationState>() else {
+        return Ok(false);
+    };
+    let payload = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        runtime.cancel_active().then(|| runtime.payload(None))
+    };
+    let Some(payload) = payload else {
+        return Ok(false);
+    };
+
+    if let Some(manager) = app.try_state::<OpenAiRealtimeManager>() {
+        manager.close_source("dictation".to_string());
+    }
+    if let Some(manager) = app.try_state::<SonioxRealtimeManager>() {
+        manager.close_source("dictation".to_string());
+    }
+    log_dictation_runtime(app, "[dictation] cancelled by user");
+    emit_dictation_state(app, payload);
+    refresh_tray_from_backend(app);
+    restore_overlay_after_dictation(app);
+    Ok(true)
+}
+
 fn finish_dictation(app: &AppHandle, error: Option<String>) {
     match error {
         Some(error) => show_dictation_error(app, error),
@@ -1592,6 +1692,7 @@ fn finish_dictation(app: &AppHandle, error: Option<String>) {
 
 fn process_dictation_recording(
     app: &AppHandle,
+    operation_id: u64,
     settings: AppSettings,
     recording: DictationRecording,
 ) {
@@ -1611,12 +1712,12 @@ fn process_dictation_recording(
             Ok(backend) => match backend.transcription_credentials() {
                 Ok(credentials) => (credentials, backend.model_registry()),
                 Err(error) => {
-                    show_dictation_error(app, error);
+                    show_dictation_operation_error(app, operation_id, error);
                     return;
                 }
             },
             Err(error) => {
-                show_dictation_error(app, error.to_string());
+                show_dictation_operation_error(app, operation_id, error.to_string());
                 return;
             }
         },
@@ -1628,7 +1729,7 @@ fn process_dictation_recording(
     ) {
         Ok(transcriber) => transcriber,
         Err(error) => {
-            show_dictation_error(app, error.to_string());
+            show_dictation_operation_error(app, operation_id, error.to_string());
             return;
         }
     };
@@ -1760,7 +1861,11 @@ fn process_dictation_recording(
     let archive = match archive_result {
         Ok(chunk) => chunk,
         Err(error) => {
-            show_dictation_error(app, format!("Could not save dictation: {error}"));
+            show_dictation_operation_error(
+                app,
+                operation_id,
+                format!("Could not save dictation: {error}"),
+            );
             return;
         }
     };
@@ -1772,6 +1877,14 @@ fn process_dictation_recording(
             archive.audio_path.display(),
         ),
     );
+
+    if !dictation_operation_is_active(app, operation_id) {
+        log_dictation_runtime(
+            app,
+            format!("[dictation] stale result ignored operation_id={operation_id}"),
+        );
+        return;
+    }
 
     match result {
         Ok(Some(mut execution)) => {
@@ -1811,7 +1924,11 @@ fn process_dictation_recording(
             }
             let text = execution.text;
             if let Err(error) = TranscriptionSidecar::write_success(&archive, &text) {
-                show_dictation_error(app, format!("Could not save dictation transcript: {error}"));
+                show_dictation_operation_error(
+                    app,
+                    operation_id,
+                    format!("Could not save dictation transcript: {error}"),
+                );
                 return;
             }
             let Some(input_text) = wakenote::text_input::dictation_input_text(
@@ -1820,7 +1937,7 @@ fn process_dictation_recording(
             ) else {
                 let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
                 refresh_transcript_day_index(&archive.audio_path);
-                show_dictation_error(app, "No speech detected".to_string());
+                show_dictation_operation_error(app, operation_id, "No speech detected".to_string());
                 return;
             };
             refresh_transcript_day_index(&archive.audio_path);
@@ -1832,19 +1949,32 @@ fn process_dictation_recording(
                     started.elapsed().as_millis(),
                 ),
             );
-            type_dictation_text_on_main_thread(app, input_text, settings, started);
+            type_dictation_text_on_main_thread(app, operation_id, input_text, settings, started);
         }
         Ok(None) => {
             let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
             refresh_transcript_day_index(&archive.audio_path);
-            show_dictation_error(app, "No speech detected".to_string())
+            show_dictation_operation_error(app, operation_id, "No speech detected".to_string());
         }
         Err(error) => {
             let _ = TranscriptionSidecar::write_error(&archive, &error);
             refresh_transcript_day_index(&archive.audio_path);
-            show_dictation_error(app, error);
+            show_dictation_operation_error(app, operation_id, error);
         }
     }
+}
+
+fn spawn_dictation_processing_task(
+    app: AppHandle,
+    operation_id: u64,
+    settings: AppSettings,
+    recording: DictationRecording,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name(format!("dictation-transcription-{operation_id}"))
+        .spawn(move || process_dictation_recording(&app, operation_id, settings, recording))
+        .map(|_| ())
+        .map_err(|error| format!("Could not start Dictation transcription: {error}"))
 }
 
 fn refresh_transcript_day_index(recording_path: &Path) {
@@ -1945,7 +2075,11 @@ async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings:
     );
     refresh_tray_from_backend(&app);
     play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop, &settings);
-    process_dictation_recording(&app, settings, recording);
+    if let Err(error) =
+        spawn_dictation_processing_task(app.clone(), recording_id, settings, recording)
+    {
+        show_dictation_operation_error(&app, recording_id, error);
+    }
 }
 
 fn handle_dictation_shortcut_event(
@@ -1975,6 +2109,10 @@ fn handle_dictation_shortcut_event(
     };
     match action {
         DictationAction::Ignore => Ok(()),
+        DictationAction::Cancel => {
+            cancel_dictation_runtime(app)?;
+            Ok(())
+        }
         DictationAction::PlayStopCue => {
             play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &settings);
             Ok(())
@@ -2051,11 +2189,14 @@ fn handle_dictation_shortcut_event(
             Ok(())
         }
         DictationAction::StopAndTranscribe => {
-            let (recording, payload) = {
+            let (operation_id, recording, payload) = {
                 let mut runtime = state.lock().map_err(|error| error.to_string())?;
+                let operation_id = runtime
+                    .current_operation_id()
+                    .ok_or_else(|| "dictation operation is unavailable".to_string())?;
                 let recording = runtime.stop_recording()?;
                 let payload = runtime.payload(None);
-                (recording, payload)
+                (operation_id, recording, payload)
             };
             log_dictation_runtime(
                 app,
@@ -2072,7 +2213,7 @@ fn handle_dictation_shortcut_event(
             );
             refresh_tray_from_backend(app);
             play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &settings);
-            process_dictation_recording(app, settings, recording);
+            spawn_dictation_processing_task(app.clone(), operation_id, settings, recording)?;
             Ok(())
         }
     }
@@ -2138,7 +2279,7 @@ fn update_settings(
         }
     }
     if previous_settings.dictation_enabled && !settings.dictation_enabled {
-        finish_dictation(&app, None);
+        let _ = cancel_dictation_runtime(&app);
     }
     if settings.model_directory != previous_model_directory
         && let Ok(slot) = live_transcriber_state.lock()
@@ -3415,7 +3556,28 @@ fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueS
 }
 
 #[tauri::command]
+fn dictation_state(state: State<'_, DictationState>) -> Result<DictationStatePayload, String> {
+    state
+        .lock()
+        .map(|runtime| runtime.payload(None))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn cancel_dictation(app: AppHandle) -> Result<DictationStatePayload, String> {
+    let _ = cancel_dictation_runtime(&app)?;
+    app.try_state::<DictationState>()
+        .ok_or_else(|| "dictation runtime is unavailable".to_string())?
+        .lock()
+        .map(|runtime| runtime.payload(None))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn cancel_current_operation(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
+    if cancel_dictation_runtime(&app)? {
+        return Ok(());
+    }
     let (settings, status) = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
         backend.cancel_current_operation()?;
@@ -7062,6 +7224,8 @@ fn main() {
             skip_job,
             mark_all_activity_read,
             cancel_current_transcription,
+            dictation_state,
+            cancel_dictation,
             cancel_current_operation,
             reveal_save_folder,
             process_next_transcription,
@@ -7300,6 +7464,7 @@ fn setup_tray(
         active_mic,
         threshold,
         pause_all,
+        cancel,
     })
 }
 
@@ -7420,6 +7585,16 @@ fn apply_tray_presentation(
         let _ = items.active_model.set_text(menu.active_model_text);
         let _ = items.active_mic.set_text(menu.active_microphone_text);
         let _ = items.threshold.set_text(menu.threshold_text);
+        let _ = items.cancel.set_text(
+            if matches!(
+                dictation_stage,
+                DictationStage::Recording | DictationStage::Transcribing
+            ) {
+                "Cancel Dictation"
+            } else {
+                "Cancel Current Operation"
+            },
+        );
     }
 }
 
@@ -7499,6 +7674,9 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             }
         }
         "cancel-current-operation" => {
+            if cancel_dictation_runtime(app).unwrap_or(false) {
+                return;
+            }
             let state = app.state::<BackendState>();
             let presentation = if let Ok(mut backend) = state.lock() {
                 let _ = backend.cancel_current_operation();

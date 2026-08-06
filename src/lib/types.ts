@@ -3,6 +3,11 @@ export type AudioFormat = "m4a" | "mp3" | "wav";
 export type FloatingOverlayPosition = "off" | "top" | "bottom";
 export type DictationCueSound = "original" | "alternative";
 export type DictationCueVolume = "muted" | "small" | "medium" | "large";
+export type DictationStage = "idle" | "recording" | "transcribing" | "error";
+export interface DictationStatePayload {
+  state: DictationStage;
+  error: string | null;
+}
 export type DictationBubblePosition =
   | "top_left"
   | "top_center"

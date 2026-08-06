@@ -5,14 +5,18 @@ import { RecordingStatusRail } from "./RecordingStatusRail";
 function renderRail({
   liveActive,
   latestText,
+  dictationState = "idle",
 }: {
   liveActive: boolean;
   latestText: string;
+  dictationState?: "idle" | "recording" | "transcribing";
 }) {
   return renderToStaticMarkup(
     <RecordingStatusRail
       liveActive={liveActive}
       latestText={latestText}
+      dictationState={dictationState}
+      onCancelDictation={() => {}}
       onReturnToCapture={() => {}}
     />,
   );
@@ -31,5 +35,22 @@ describe("RecordingStatusRail", () => {
     expect(markup).toContain(`title="${longText}"`);
     expect(markup).toContain("min-w-0 truncate");
     expect(markup).toContain("shrink-0");
+  });
+
+  it("offers cancellation while Dictation records or transcribes", () => {
+    expect(
+      renderRail({
+        liveActive: false,
+        latestText: "",
+        dictationState: "recording",
+      }),
+    ).toContain("Cancel Dictation");
+    expect(
+      renderRail({
+        liveActive: false,
+        latestText: "",
+        dictationState: "transcribing",
+      }),
+    ).toContain("Dictation transcribing");
   });
 });
