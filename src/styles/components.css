@@ -1283,6 +1283,57 @@ svg {
   background: var(--warning);
 }
 
+.model-groups,
+.model-group {
+  display: grid;
+}
+
+.model-groups {
+  gap: 28px;
+}
+
+.model-group {
+  gap: 12px;
+}
+
+.model-group__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.model-group__header h3,
+.model-group__header p {
+  margin: 0;
+}
+
+.model-group__header h3 {
+  font-size: var(--text-body);
+  line-height: 1.4;
+}
+
+.model-group__header p,
+.model-group__header > span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.model-group__header p {
+  margin-top: 3px;
+}
+
+.model-group__header > span {
+  min-width: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-alt);
+  padding: 2px 7px;
+  text-align: center;
+}
+
 .model-list {
   --masonry-row-size: 1px;
   --masonry-card-gap: var(--page-gap);

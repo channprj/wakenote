@@ -415,6 +415,11 @@ describe("QueuePanel pagination", () => {
         models={[
           readyFileModel("whisper-medium", "Whisper Medium"),
           readyFileModel("whisper-small", "Whisper Small"),
+          {
+            ...readyFileModel("openai", "OpenAI Transcribe"),
+            offline: false,
+            provider_runtime: "openai-stt",
+          },
         ]}
         selectedModelId="whisper-medium"
         canProcessTranscription
@@ -439,6 +444,8 @@ describe("QueuePanel pagination", () => {
     await user.click(
       panel.getByRole("combobox", { name: "Reprocessing model" }),
     );
+    expect(screen.getByText("Local models")).toBeTruthy();
+    expect(screen.getByText("API models")).toBeTruthy();
     await user.click(screen.getByRole("option", { name: "Whisper Small" }));
     await user.click(panel.getByRole("button", { name: "Reprocess 51" }));
 

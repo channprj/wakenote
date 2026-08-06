@@ -3,6 +3,7 @@ import { mockModels } from "./app-state";
 import {
   availableFallbackModels,
   formatModelLabel,
+  groupModelsByLocation,
   normalizeTranscriptionOptions,
 } from "./models";
 import type { ModelDescriptor } from "./types";
@@ -39,6 +40,33 @@ describe("formatModelLabel", () => {
 
   it("handles an empty model list", () => {
     expect(formatModelLabel("whisper-medium", [])).toBe("whisper-medium");
+  });
+});
+
+describe("groupModelsByLocation", () => {
+  it("keeps local models before API models without changing group order", () => {
+    const models = mockModels();
+    const groups = groupModelsByLocation(models);
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Local models",
+      "API models",
+    ]);
+    expect(groups[0]?.models.every((candidate) => candidate.offline)).toBe(
+      true,
+    );
+    expect(groups[1]?.models.every((candidate) => !candidate.offline)).toBe(
+      true,
+    );
+    expect(groups.flatMap((group) => group.models)).toHaveLength(models.length);
+  });
+
+  it("omits empty groups", () => {
+    const localModels = mockModels().filter((candidate) => candidate.offline);
+
+    expect(
+      groupModelsByLocation(localModels).map((group) => group.label),
+    ).toEqual(["Local models"]);
   });
 });
 

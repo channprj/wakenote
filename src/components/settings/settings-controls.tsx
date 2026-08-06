@@ -19,6 +19,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -91,6 +92,7 @@ export function SettingSwitch({
 export interface SelectOption<T extends string = string> {
   value: T;
   label: string;
+  group?: string;
 }
 
 export function SettingSelect<T extends string>({
@@ -110,6 +112,18 @@ export function SettingSelect<T extends string>({
   title?: string;
   onValueChange: (value: T) => void;
 }) {
+  const optionGroups = options.reduce<
+    Array<{ label: string | undefined; options: SelectOption<T>[] }>
+  >((groups, option) => {
+    const existing = groups.find((group) => group.label === option.group);
+    if (existing) {
+      existing.options.push(option);
+    } else {
+      groups.push({ label: option.group, options: [option] });
+    }
+    return groups;
+  }, []);
+
   return (
     <Field
       orientation="responsive"
@@ -132,13 +146,16 @@ export function SettingSelect<T extends string>({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectGroup>
-            {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
+          {optionGroups.map((group) => (
+            <SelectGroup key={group.label ?? "ungrouped"}>
+              {group.label ? <SelectLabel>{group.label}</SelectLabel> : null}
+              {group.options.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          ))}
         </SelectContent>
       </Select>
     </Field>

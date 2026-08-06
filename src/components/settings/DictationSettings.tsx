@@ -10,7 +10,7 @@ import {
   dictationShortcutFromKeyboardEvent,
   formatDictationShortcut,
 } from "@/lib/dictation-shortcut";
-import { modelSupportsContext } from "@/lib/models";
+import { groupModelsByLocation, modelSupportsContext } from "@/lib/models";
 import type {
   AppSnapshot,
   DictationBubblePosition,
@@ -233,21 +233,23 @@ export function DictationSettings({
     await commitShortcut(shortcut);
   }
 
+  const dictationModels = snapshot.models.filter(
+    (model) =>
+      USABLE_MODEL_STATUSES.has(model.status) &&
+      modelSupportsContext(model, "dictation"),
+  );
   const dictationModelOptions: SelectOption<string>[] = [
     {
       value: DEFAULT_DICTATION_MODEL,
       label: "Default transcription model",
     },
-    ...snapshot.models
-      .filter(
-        (model) =>
-          USABLE_MODEL_STATUSES.has(model.status) &&
-          modelSupportsContext(model, "dictation"),
-      )
-      .map((model) => ({
+    ...groupModelsByLocation(dictationModels).flatMap((group) =>
+      group.models.map((model) => ({
         value: model.id,
         label: model.display_name,
+        group: group.label,
       })),
+    ),
   ];
 
   return (
@@ -311,7 +313,7 @@ export function DictationSettings({
         />
         <SettingSelect
           label="Dictation model"
-          description="Use the default transcription model or choose an installed model only for Dictation."
+          description="Use the default transcription model or choose another compatible model only for Dictation."
           value={settings.dictation_model || DEFAULT_DICTATION_MODEL}
           options={dictationModelOptions}
           disabled={!settings.dictation_enabled}

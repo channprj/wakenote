@@ -262,7 +262,12 @@ describe("SettingsPage interactions", () => {
       dictation_bubble_position: "bottom_right",
     });
 
-    await choose("Dictation model", "Whisper Small");
+    await user.click(screen.getByRole("combobox", { name: "Dictation model" }));
+    expect(screen.getByText("Local models")).toBeTruthy();
+    expect(screen.getByText("API models")).toBeTruthy();
+    await user.click(
+      await screen.findByRole("option", { name: "Whisper Small" }),
+    );
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_model: "whisper-small",
     });

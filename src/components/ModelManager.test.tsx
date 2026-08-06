@@ -76,6 +76,42 @@ function titleOf(button: string): string | null {
 }
 
 describe("model card grid", () => {
+  it("separates on-device and API models into labeled groups", () => {
+    const models = mockModels();
+    const markup = renderToStaticMarkup(
+      <ModelManager
+        models={models}
+        settings={defaultSettings()}
+        onPatch={() => {}}
+        onVerify={() => {}}
+        onDownload={() => {}}
+        onCancelDownload={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+
+    const localGroup = markup.match(
+      /<section[^>]*data-model-kind="local"[\s\S]*?<\/section>/,
+    )?.[0];
+    const apiGroup = markup.match(
+      /<section[^>]*data-model-kind="api"[\s\S]*?<\/section>/,
+    )?.[0];
+
+    expect(localGroup).toContain("Local models");
+    expect(apiGroup).toContain("API models");
+    for (const model of models.filter((candidate) => candidate.offline)) {
+      expect(localGroup).toContain(model.display_name);
+      expect(apiGroup).not.toContain(model.display_name);
+    }
+    for (const model of models.filter((candidate) => !candidate.offline)) {
+      expect(apiGroup).toContain(model.display_name);
+      expect(localGroup).not.toContain(model.display_name);
+    }
+    expect(markup.indexOf('data-model-kind="local"')).toBeLessThan(
+      markup.indexOf('data-model-kind="api"'),
+    );
+  });
+
   it("renders every model as a card in one capped responsive collection", () => {
     const models = mockModels();
     const markup = renderToStaticMarkup(

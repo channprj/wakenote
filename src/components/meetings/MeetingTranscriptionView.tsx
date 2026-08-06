@@ -24,11 +24,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-} from "@/components/ui/card";
+import { ModelSelectGroups } from "@/components/ModelSelectGroups";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import {
   ListVisibilityToolbar,
   type ListVisibilityMode,
@@ -124,20 +121,32 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
           <div className="meeting-mode__title-row">
             <h2 id="meeting-mode-title">Meeting Mode</h2>
             <StatusBadge
-              tone={props.manualRecording.state === "recording" ? "danger" : "neutral"}
+              tone={
+                props.manualRecording.state === "recording"
+                  ? "danger"
+                  : "neutral"
+              }
             >
-              {props.manualRecording.state === "recording" ? "Recording" : "Off"}
+              {props.manualRecording.state === "recording"
+                ? "Recording"
+                : "Off"}
             </StatusBadge>
           </div>
           <p>Microphone + System Audio</p>
           <div className="meeting-mode__metrics" aria-live="polite">
             {props.manualRecording.state === "recording" ? (
               <>
-                <span>{formatClock(props.manualRecording.elapsed_ms)} elapsed</span>
-                <span>{formatClock(props.manualRecording.remaining_ms)} remaining</span>
+                <span>
+                  {formatClock(props.manualRecording.elapsed_ms)} elapsed
+                </span>
+                <span>
+                  {formatClock(props.manualRecording.remaining_ms)} remaining
+                </span>
               </>
             ) : (
-              <span>{formatClock(props.manualRecording.remaining_ms)} maximum</span>
+              <span>
+                {formatClock(props.manualRecording.remaining_ms)} maximum
+              </span>
             )}
           </div>
         </div>
@@ -176,7 +185,12 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
       </section>
 
       <div className="meeting-panel__toolbar">
-        <Button type="button" size="sm" disabled={props.busy} onClick={props.onImport}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={props.busy}
+          onClick={props.onImport}
+        >
           {props.busy ? (
             <Loader2Icon data-icon="inline-start" className="meeting-spin" />
           ) : (
@@ -212,7 +226,10 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
       ) : null}
 
       {props.active.length > 0 ? (
-        <section className="meeting-active-list" aria-labelledby="active-meetings-title">
+        <section
+          className="meeting-active-list"
+          aria-labelledby="active-meetings-title"
+        >
           <h2 id="active-meetings-title">Active</h2>
           {props.active.map((meeting) => (
             <MeetingProgressRow
@@ -245,7 +262,9 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
         {props.past.length === 0 ? (
           <EmptyState
             className="meeting-empty"
-            icon={props.visibilityMode === "hidden" ? EyeOffIcon : FileAudioIcon}
+            icon={
+              props.visibilityMode === "hidden" ? EyeOffIcon : FileAudioIcon
+            }
             title={
               props.visibilityMode === "hidden"
                 ? "No hidden meetings."
@@ -266,10 +285,7 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
                   disabled={props.visibilityMutating}
                   aria-label={`Select ${meeting.title}`}
                   onCheckedChange={(checked) =>
-                    props.onMeetingSelectionChange(
-                      meeting.id,
-                      checked === true,
-                    )
+                    props.onMeetingSelectionChange(meeting.id, checked === true)
                   }
                 />
                 <button
@@ -282,7 +298,8 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
                       {meeting.title}
                     </span>
                     <span className="meeting-row__meta">
-                      {formatClock(meeting.duration_ms)} · {formatDate(meeting.created_at)} · {meeting.model_id}
+                      {formatClock(meeting.duration_ms)} ·{" "}
+                      {formatDate(meeting.created_at)} · {meeting.model_id}
                     </span>
                   </span>
                 </button>
@@ -356,9 +373,7 @@ function MeetingProgressRow({
           checked={selected}
           disabled={visibilityMutating}
           aria-label={`Select ${meeting.title}`}
-          onCheckedChange={(checked) =>
-            onSelectionChange(checked === true)
-          }
+          onCheckedChange={(checked) => onSelectionChange(checked === true)}
         />
         <button
           type="button"
@@ -384,19 +399,26 @@ function MeetingProgressRow({
           )}
           {visibilityMode === "visible" ? "Hide" : "Restore"}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
       </div>
       <CardContent>
         <Progress value={percent} aria-label={`${percent}% complete`} />
         <div className="meeting-progress-row__meta">
           <span>{percent}%</span>
-          <span>Segment {segmentsDone}/{segmentsTotal || "?"}</span>
+          <span>
+            Segment {segmentsDone}/{segmentsTotal || "?"}
+          </span>
           <span>Elapsed {formatClock(elapsed)}</span>
           <span>Remaining {formatEta(remaining)}</span>
         </div>
       </CardContent>
       <CardFooter>
-        <span className="meeting-progress-row__preview" title={previewText || undefined}>
+        <span
+          className="meeting-progress-row__preview"
+          title={previewText || undefined}
+        >
           {previewText || "Transcribing the first segment…"}
         </span>
       </CardFooter>
@@ -437,13 +459,15 @@ function MeetingDetailView({
     : (meetingModels[0]?.id ?? "");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [modelId, setModelId] = useState(initialModelId);
-  const [language, setLanguage] =
-    useState<TranscriptionLanguage>(record.language);
+  const [language, setLanguage] = useState<TranscriptionLanguage>(
+    record.language,
+  );
   const [streamingEnabled, setStreamingEnabled] = useState(false);
   const [speakerSeparationEnabled, setSpeakerSeparationEnabled] =
     useState(false);
   const selectedModel = meetingModels.find((model) => model.id === modelId);
-  const streamingRequired = selectedModel?.capabilities.streaming === "required";
+  const streamingRequired =
+    selectedModel?.capabilities.streaming === "required";
   const streamingAvailable =
     selectedModel?.capabilities.streaming === "optional" || streamingRequired;
   const speakerSeparationAvailable =
@@ -483,7 +507,9 @@ function MeetingDetailView({
           <ChevronLeftIcon data-icon="inline-start" />
           Meetings
         </Button>
-        <span className="meeting-detail__title" title={record.title}>{record.title}</span>
+        <span className="meeting-detail__title" title={record.title}>
+          {record.title}
+        </span>
         <StatusBadge tone={meetingStatusTone(record.status)}>
           {meetingStatusLabel(record.status)}
         </StatusBadge>
@@ -493,7 +519,10 @@ function MeetingDetailView({
         <span>{formatClock(record.duration_ms)}</span>
         <span title={record.model_id}>{record.model_id}</span>
         <span>{formatDate(record.created_at)}</span>
-        <span>Segment {record.progress.segments_done}/{record.progress.segments_total}</span>
+        <span>
+          Segment {record.progress.segments_done}/
+          {record.progress.segments_total}
+        </span>
       </div>
 
       {error || record.error ? (
@@ -506,16 +535,17 @@ function MeetingDetailView({
 
       <div className="meeting-detail__actions">
         {record.status === "recorded" ? (
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setDialogOpen(true)}
-          >
+          <Button type="button" size="sm" onClick={() => setDialogOpen(true)}>
             Configure transcription
           </Button>
         ) : null}
         {canResumeMeeting(record.status) ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => onResume(record.id)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => onResume(record.id)}
+          >
             <RotateCcwIcon data-icon="inline-start" />
             Resume
           </Button>
@@ -530,7 +560,12 @@ function MeetingDetailView({
           <CopyIcon data-icon="inline-start" />
           Copy
         </Button>
-        <Button type="button" size="sm" variant="outline" onClick={() => onOpenFolder(audioPath)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => onOpenFolder(audioPath)}
+        >
           <FolderOpenIcon data-icon="inline-start" />
           Open Folder
         </Button>
@@ -540,10 +575,7 @@ function MeetingDetailView({
           variant="ghost"
           disabled={visibilityMutating}
           onClick={() =>
-            onSetMeetingHidden(
-              record.id,
-              visibilityMode === "visible",
-            )
+            onSetMeetingHidden(record.id, visibilityMode === "visible")
           }
         >
           {visibilityMode === "visible" ? (
@@ -551,9 +583,7 @@ function MeetingDetailView({
           ) : (
             <EyeIcon data-icon="inline-start" />
           )}
-          {visibilityMode === "visible"
-            ? "Hide from list"
-            : "Restore to list"}
+          {visibilityMode === "visible" ? "Hide from list" : "Restore to list"}
         </Button>
       </div>
 
@@ -578,11 +608,7 @@ function MeetingDetailView({
                   <SelectValue placeholder="Choose a model" />
                 </SelectTrigger>
                 <SelectContent>
-                  {meetingModels.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      {model.display_name}
-                    </SelectItem>
-                  ))}
+                  <ModelSelectGroups models={meetingModels} />
                 </SelectContent>
               </Select>
             </label>
@@ -666,7 +692,10 @@ function MeetingDetailView({
               onClick={submitTranscription}
             >
               {transcriptionBusy ? (
-                <Loader2Icon data-icon="inline-start" className="meeting-spin" />
+                <Loader2Icon
+                  data-icon="inline-start"
+                  className="meeting-spin"
+                />
               ) : null}
               Start transcription
             </Button>

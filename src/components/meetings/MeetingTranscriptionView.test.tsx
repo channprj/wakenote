@@ -4,7 +4,11 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { MeetingDetail, MeetingProgressPayload, MeetingSummary } from "@/lib/types";
+import type {
+  MeetingDetail,
+  MeetingProgressPayload,
+  MeetingSummary,
+} from "@/lib/types";
 import { LONG_CONTENT } from "@/test-fixtures/long-content";
 import { mockModels } from "@/lib/app-state";
 import {
@@ -87,7 +91,9 @@ const liveProgress: MeetingProgressPayload = {
   eta_ms: 900_000,
 };
 
-function props(overrides: Partial<MeetingTranscriptionViewProps> = {}): MeetingTranscriptionViewProps {
+function props(
+  overrides: Partial<MeetingTranscriptionViewProps> = {},
+): MeetingTranscriptionViewProps {
   return {
     active: [],
     past: [],
@@ -214,9 +220,12 @@ describe("MeetingTranscriptionView", () => {
   });
 
   it("truncates long past titles while exposing the complete title", () => {
-    const longTitle = "아주 긴 회의 제목이 목록 너비를 넘어가더라도 전체 제목을 확인할 수 있어야 합니다";
+    const longTitle =
+      "아주 긴 회의 제목이 목록 너비를 넘어가더라도 전체 제목을 확인할 수 있어야 합니다";
     const markup = renderToStaticMarkup(
-      <MeetingTranscriptionView {...props({ past: [meeting({ title: longTitle })] })} />,
+      <MeetingTranscriptionView
+        {...props({ past: [meeting({ title: longTitle })] })}
+      />,
     );
 
     expect(markup).toContain(`title="${longTitle}"`);
@@ -253,7 +262,9 @@ describe("MeetingTranscriptionView", () => {
     );
     const interrupted = renderToStaticMarkup(
       <MeetingTranscriptionView
-        {...props({ selected: detail({ status: "failed", error: "Model stopped" }) })}
+        {...props({
+          selected: detail({ status: "failed", error: "Model stopped" }),
+        })}
       />,
     );
 
@@ -265,10 +276,16 @@ describe("MeetingTranscriptionView", () => {
 
   it("configures a recorded meeting with model-aware streaming and speaker separation", async () => {
     const onStartTranscription = vi.fn();
+    const models = mockModels().map((model) =>
+      model.id === "whisper-medium"
+        ? { ...model, status: "ready" as const }
+        : model,
+    );
     render(
       <MeetingTranscriptionView
         {...props({
           selected: detail({ status: "recorded" }),
+          models,
           onStartTranscription,
         })}
       />,
@@ -282,7 +299,9 @@ describe("MeetingTranscriptionView", () => {
       screen.getByRole("combobox", { name: "Meeting transcription model" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("switch", { name: "Streaming" }).hasAttribute("disabled"),
+      screen
+        .getByRole("switch", { name: "Streaming" })
+        .hasAttribute("disabled"),
     ).toBe(true);
     expect(
       screen
@@ -293,6 +312,8 @@ describe("MeetingTranscriptionView", () => {
     await userEvent.click(
       screen.getByRole("combobox", { name: "Meeting transcription model" }),
     );
+    expect(screen.getByText("Local models")).toBeTruthy();
+    expect(screen.getByText("API models")).toBeTruthy();
     await userEvent.click(
       screen.getByRole("option", {
         name: "OpenAI · GPT-4o Transcribe Diarize",
@@ -319,10 +340,7 @@ describe("MeetingTranscriptionView", () => {
     render(
       <MeetingTranscriptionView
         {...props({
-          past: [
-            meeting({ id: "meeting-1" }),
-            meeting({ id: "meeting-2" }),
-          ],
+          past: [meeting({ id: "meeting-1" }), meeting({ id: "meeting-2" })],
           visibleCount: 2,
           hiddenCount: 1,
           selectedMeetingIds: ["meeting-1", "meeting-2"],
@@ -332,9 +350,9 @@ describe("MeetingTranscriptionView", () => {
     );
 
     expect(
-      screen.getByRole("radio", { name: /Visible2/ }).getAttribute(
-        "aria-checked",
-      ),
+      screen
+        .getByRole("radio", { name: /Visible2/ })
+        .getAttribute("aria-checked"),
     ).toBe("true");
     await userEvent.click(
       screen.getByRole("button", { name: "Hide selected" }),
@@ -387,10 +405,7 @@ describe("MeetingTranscriptionView", () => {
         name: "Hide Weekly product review",
       }),
     );
-    expect(onSetMeetingHidden).toHaveBeenCalledWith(
-      "meeting-active",
-      true,
-    );
+    expect(onSetMeetingHidden).toHaveBeenCalledWith("meeting-active", true);
     expect(onCancel).not.toHaveBeenCalled();
   });
 
@@ -402,22 +417,16 @@ describe("MeetingTranscriptionView", () => {
           selected: detail(),
           visibleCount: 1,
           onSetMeetingHidden,
-          visibilityStatus:
-            "Hidden from list · Files remain on disk",
+          visibilityStatus: "Hidden from list · Files remain on disk",
         })}
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: /Delete/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete/ })).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Hide from list" }),
     );
-    expect(onSetMeetingHidden).toHaveBeenCalledWith(
-      "meeting-1",
-      true,
-    );
+    expect(onSetMeetingHidden).toHaveBeenCalledWith("meeting-1", true);
     expect(screen.getByRole("status").textContent).toContain(
       "Files remain on disk",
     );

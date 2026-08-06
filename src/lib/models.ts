@@ -6,7 +6,27 @@ import type {
 
 type ModelLabelSource = Pick<ModelDescriptor, "id" | "display_name">;
 
-export function formatModelLabel(modelId: string, models: ModelLabelSource[]): string {
+export interface ModelLocationGroup<T> {
+  kind: "local" | "api";
+  label: "Local models" | "API models";
+  models: T[];
+}
+
+export function groupModelsByLocation<
+  T extends Pick<ModelDescriptor, "offline">,
+>(models: readonly T[]): ModelLocationGroup<T>[] {
+  const local = models.filter((model) => model.offline);
+  const api = models.filter((model) => !model.offline);
+  return [
+    { kind: "local", label: "Local models", models: local },
+    { kind: "api", label: "API models", models: api },
+  ].filter((group) => group.models.length > 0) as ModelLocationGroup<T>[];
+}
+
+export function formatModelLabel(
+  modelId: string,
+  models: ModelLabelSource[],
+): string {
   const match = models.find((model) => model.id === modelId);
   const displayName = match?.display_name?.trim();
   if (displayName) {

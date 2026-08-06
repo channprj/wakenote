@@ -242,6 +242,74 @@ export function ModelManager({
   onCancelDownload: (modelId: string) => void;
   onDelete: (modelId: string) => void;
 }) {
+  const maxColumns = Math.max(1, Math.min(models.length, 3));
+  const localModels = models.filter((model) => model.offline);
+  const apiModels = models.filter((model) => !model.offline);
+
+  return (
+    <div
+      className="model-groups"
+      data-slot="model-card-grid"
+      data-max-columns={maxColumns}
+    >
+      {localModels.length > 0 ? (
+        <ModelGroup
+          kind="local"
+          title="Local models"
+          description="Run on this Mac and keep audio processing on-device."
+          models={localModels}
+          settings={settings}
+          onPatch={onPatch}
+          onVerify={onVerify}
+          onDownload={onDownload}
+          onCancelDownload={onCancelDownload}
+          onDelete={onDelete}
+        />
+      ) : null}
+      {apiModels.length > 0 ? (
+        <ModelGroup
+          kind="api"
+          title="API models"
+          description="Use a cloud provider and require its configured API key."
+          models={apiModels}
+          settings={settings}
+          onPatch={onPatch}
+          onVerify={onVerify}
+          onDownload={onDownload}
+          onCancelDownload={onCancelDownload}
+          onDelete={onDelete}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+type ModelGroupProps = {
+  kind: "local" | "api";
+  title: string;
+  description: string;
+  models: ModelDescriptor[];
+  settings: AppSettings;
+  onPatch: (patch: Partial<AppSettings>) => void;
+  onVerify: (modelId: string) => void;
+  onDownload: (modelId: string) => void;
+  onCancelDownload: (modelId: string) => void;
+  onDelete: (modelId: string) => void;
+};
+
+function ModelGroup({
+  kind,
+  title,
+  description,
+  models,
+  settings,
+  onPatch,
+  onVerify,
+  onDownload,
+  onCancelDownload,
+  onDelete,
+}: ModelGroupProps) {
+  const headingId = `model-group-${kind}`;
   const modelIdentity = JSON.stringify(models.map((model) => model.id));
   const masonryRef = useMasonryGrid<HTMLDivElement>(
     models.length,
@@ -250,144 +318,156 @@ export function ModelManager({
   const maxColumns = Math.max(1, Math.min(models.length, 3));
 
   return (
-    <div
-      ref={masonryRef}
-      className="model-list"
-      data-slot="model-card-grid"
-      data-max-columns={maxColumns}
+    <section
+      className="model-group"
+      data-model-kind={kind}
+      aria-labelledby={headingId}
     >
-      {models.map((model) => {
-        const selected = settings.selected_model === model.id;
-        const usedByDictation = settings.dictation_model.trim() === model.id;
-        const inUse = selected || usedByDictation;
-        const progress = statusProgress(model);
-        const actions = modelActionState(model);
-        const switchReason = modelSwitchDisabledReason(model, selected);
-        const acquire = modelAcquireAction(model);
-        const verifyReason = modelVerifyDisabledReason(model);
-        const retryReason = modelRetryDisabledReason(model);
-        const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
-        const deleteReason = modelDeleteDisabledReason(model, inUse);
-        const credentialLabel = cloudCredentialLabel(model.provider_runtime);
-        const capabilityLabels = modelCapabilityLabels(model);
-        return (
-          <article
-            className="model-row"
-            key={model.id}
-            data-selected={selected}
-          >
-            <div className="model-row__main">
-              <header>
-                <div>
-                  <strong>{model.display_name}</strong>
-                  <span>
-                    {model.engine} · {model.provider_runtime} ·{" "}
-                    {model.offline ? formatModelSize(model.size_mb) : "API"}
-                  </span>
+      <header className="model-group__header">
+        <div>
+          <h3 id={headingId}>{title}</h3>
+          <p>{description}</p>
+        </div>
+        <span>{models.length}</span>
+      </header>
+      <div
+        ref={masonryRef}
+        className="model-list"
+        data-max-columns={maxColumns}
+      >
+        {models.map((model) => {
+          const selected = settings.selected_model === model.id;
+          const usedByDictation = settings.dictation_model.trim() === model.id;
+          const inUse = selected || usedByDictation;
+          const progress = statusProgress(model);
+          const actions = modelActionState(model);
+          const switchReason = modelSwitchDisabledReason(model, selected);
+          const acquire = modelAcquireAction(model);
+          const verifyReason = modelVerifyDisabledReason(model);
+          const retryReason = modelRetryDisabledReason(model);
+          const cancelDownloadReason = modelCancelDownloadDisabledReason(model);
+          const deleteReason = modelDeleteDisabledReason(model, inUse);
+          const credentialLabel = cloudCredentialLabel(model.provider_runtime);
+          const capabilityLabels = modelCapabilityLabels(model);
+          return (
+            <article
+              className="model-row"
+              key={model.id}
+              data-selected={selected}
+            >
+              <div className="model-row__main">
+                <header>
+                  <div>
+                    <strong>{model.display_name}</strong>
+                    <span>
+                      {model.engine} · {model.provider_runtime} ·{" "}
+                      {model.offline ? formatModelSize(model.size_mb) : "API"}
+                    </span>
+                  </div>
+                  <StatusBadge tone={modelStatusBadgeTone(model.status)}>
+                    {humanizeModelStatus(model.status)}
+                  </StatusBadge>
+                </header>
+                <Progress
+                  value={progress}
+                  aria-label={`${model.display_name} installation progress`}
+                />
+                <div
+                  className="model-row__capabilities"
+                  aria-label="Model capabilities"
+                  role="list"
+                >
+                  {capabilityLabels.map((label) => (
+                    <span key={label} role="listitem">
+                      {label}
+                    </span>
+                  ))}
                 </div>
-                <StatusBadge tone={modelStatusBadgeTone(model.status)}>
-                  {humanizeModelStatus(model.status)}
-                </StatusBadge>
-              </header>
-              <Progress
-                value={progress}
-                aria-label={`${model.display_name} installation progress`}
-              />
-              <div
-                className="model-row__capabilities"
-                aria-label="Model capabilities"
-                role="list"
-              >
-                {capabilityLabels.map((label) => (
-                  <span key={label} role="listitem">
-                    {label}
-                  </span>
-                ))}
+                <div className="model-row__scores">
+                  <span>Speed {model.speed_score}/10</span>
+                  <span>Accuracy {model.accuracy_score}/10</span>
+                  <span>{formatLanguageList(model.languages)}</span>
+                  {credentialLabel ? <span>{credentialLabel}</span> : null}
+                  {model.download_error ? (
+                    <span data-tone="danger">{model.download_error}</span>
+                  ) : null}
+                </div>
               </div>
-              <div className="model-row__scores">
-                <span>Speed {model.speed_score}/10</span>
-                <span>Accuracy {model.accuracy_score}/10</span>
-                <span>{formatLanguageList(model.languages)}</span>
-                {credentialLabel ? <span>{credentialLabel}</span> : null}
-                {model.download_error ? (
-                  <span data-tone="danger">{model.download_error}</span>
+              <div className="model-row__actions">
+                <Button
+                  type="button"
+                  variant={selected ? "secondary" : "default"}
+                  size="sm"
+                  onClick={() => onPatch({ selected_model: model.id })}
+                  disabled={selected ? false : !actions.canSwitch}
+                  title={switchReason ?? undefined}
+                >
+                  <CheckCircle2 data-icon="inline-start" />
+                  {selected ? "Active" : "Switch"}
+                </Button>
+                {model.offline ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      title={acquire.reason ?? acquire.label}
+                      onClick={() => {
+                        if (acquire.kind === "download") {
+                          onDownload(model.id);
+                        }
+                      }}
+                      disabled={!acquire.enabled}
+                    >
+                      <Download data-icon="solo" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      title={verifyReason ?? "Verify"}
+                      onClick={() => onVerify(model.id)}
+                      disabled={!actions.canVerify}
+                    >
+                      <ShieldCheck data-icon="solo" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="icon"
+                      title={retryReason ?? "Retry"}
+                      onClick={() => onDownload(model.id)}
+                      disabled={!actions.canRetry}
+                    >
+                      <RotateCw data-icon="solo" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title={cancelDownloadReason ?? "Cancel Download"}
+                      onClick={() => onCancelDownload(model.id)}
+                      disabled={!actions.canCancelDownload}
+                    >
+                      <CircleX data-icon="solo" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title={deleteReason ?? "Delete"}
+                      onClick={() => onDelete(model.id)}
+                      disabled={inUse || !actions.canDelete}
+                    >
+                      <Trash2 data-icon="solo" />
+                    </Button>
+                  </>
                 ) : null}
               </div>
-            </div>
-            <div className="model-row__actions">
-              <Button
-                type="button"
-                variant={selected ? "secondary" : "default"}
-                size="sm"
-                onClick={() => onPatch({ selected_model: model.id })}
-                disabled={selected ? false : !actions.canSwitch}
-                title={switchReason ?? undefined}
-              >
-                <CheckCircle2 data-icon="inline-start" />
-                {selected ? "Active" : "Switch"}
-              </Button>
-              {model.offline ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="icon"
-                    title={acquire.reason ?? acquire.label}
-                    onClick={() => {
-                      if (acquire.kind === "download") {
-                        onDownload(model.id);
-                      }
-                    }}
-                    disabled={!acquire.enabled}
-                  >
-                    <Download data-icon="solo" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="icon"
-                    title={verifyReason ?? "Verify"}
-                    onClick={() => onVerify(model.id)}
-                    disabled={!actions.canVerify}
-                  >
-                    <ShieldCheck data-icon="solo" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="icon"
-                    title={retryReason ?? "Retry"}
-                    onClick={() => onDownload(model.id)}
-                    disabled={!actions.canRetry}
-                  >
-                    <RotateCw data-icon="solo" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    title={cancelDownloadReason ?? "Cancel Download"}
-                    onClick={() => onCancelDownload(model.id)}
-                    disabled={!actions.canCancelDownload}
-                  >
-                    <CircleX data-icon="solo" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    title={deleteReason ?? "Delete"}
-                    onClick={() => onDelete(model.id)}
-                    disabled={inUse || !actions.canDelete}
-                  >
-                    <Trash2 data-icon="solo" />
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          </article>
-        );
-      })}
-    </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }

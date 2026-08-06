@@ -63,6 +63,7 @@ import type {
   QueueSnapshot,
 } from "../lib/types";
 import { ActivityAudioPlayer } from "./activity/ActivityAudioPlayer";
+import { ModelSelectGroups } from "./ModelSelectGroups";
 
 export const ACTIVITY_PAGE_SIZE = 50;
 export type ActivityView = "all" | "attention" | "resolved";
@@ -658,11 +659,7 @@ export function QueuePanel({
                     <SelectValue placeholder="No model ready" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableReprocessingModels.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.display_name}
-                      </SelectItem>
-                    ))}
+                    <ModelSelectGroups models={availableReprocessingModels} />
                   </SelectContent>
                 </Select>
                 <Button
