@@ -1544,16 +1544,6 @@ svg {
   margin-left: auto;
 }
 
-.queue-reprocess-controls__select-all {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--muted-foreground);
-  font-size: var(--text-caption);
-  line-height: var(--leading-caption);
-  white-space: nowrap;
-}
-
 .queue-reprocess-controls__count {
   min-width: 64px;
   color: var(--muted-foreground);

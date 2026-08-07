@@ -435,9 +435,12 @@ describe("QueuePanel pagination", () => {
     );
 
     const panel = within(container);
-    await user.click(
-      panel.getByRole("checkbox", { name: "Select all 51 matching items" }),
-    );
+    const selectAll = panel.getByRole("checkbox", {
+      name: "Select all 51 matching items",
+    });
+    expect(selectAll.closest("th")).toBeTruthy();
+    expect(panel.queryByText("Select all")).toBeNull();
+    await user.click(selectAll);
     expect(panel.getByText("51 selected")).toBeTruthy();
     expect(panel.getByRole("button", { name: "Reprocess 51" })).toBeTruthy();
 

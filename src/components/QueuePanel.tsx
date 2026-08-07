@@ -618,23 +618,6 @@ export function QueuePanel({
             className="queue-reprocess-controls"
             aria-label="Selected Activity items"
           >
-            <div className="queue-reprocess-controls__select-all">
-              <Checkbox
-                aria-label={`Select all ${filteredSelectableIds.length} matching items`}
-                checked={
-                  allMatchingSelected
-                    ? true
-                    : someMatchingSelected
-                      ? "indeterminate"
-                      : false
-                }
-                disabled={filteredSelectableIds.length === 0}
-                onCheckedChange={(checked) =>
-                  setAllMatchingSelected(checked === true)
-                }
-              />
-              <span aria-hidden="true">Select all</span>
-            </div>
             <span
               className="queue-reprocess-controls__count"
               aria-live="polite"
@@ -808,7 +791,20 @@ export function QueuePanel({
           <thead>
             <tr>
               <th className="queue-job__selection-heading">
-                <span className="sr-only">Select</span>
+                <Checkbox
+                  aria-label={`Select all ${filteredSelectableIds.length} matching items`}
+                  checked={
+                    allMatchingSelected
+                      ? true
+                      : someMatchingSelected
+                        ? "indeterminate"
+                        : false
+                  }
+                  disabled={filteredSelectableIds.length === 0}
+                  onCheckedChange={(checked) =>
+                    setAllMatchingSelected(checked === true)
+                  }
+                />
               </th>
               <th>Audio</th>
               <th>Model</th>

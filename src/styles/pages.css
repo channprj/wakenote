@@ -954,6 +954,7 @@
   text-align: center;
 }
 
+.queue-job__selection-heading [data-slot="checkbox"],
 .queue-job__selection [data-slot="checkbox"] {
   margin-inline: auto;
 }
