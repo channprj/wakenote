@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cloud_transcription::TranscriptionCredentials;
 use crate::dictionary::DictionaryContext;
+use crate::recorder::encode_wav_to_m4a;
 use crate::settings::TranscriptionLanguage;
 use crate::transcription::{
     DecodedWindow, RuntimeTranscriber, SpeakerTurn, Transcriber, TranscriptionRequest,
@@ -312,6 +313,14 @@ fn work_wav_path(dir: &Path) -> PathBuf {
     dir.join(".audio16k.wav")
 }
 
+fn capture_wav_path(dir: &Path) -> PathBuf {
+    dir.join(".audio-capture.wav")
+}
+
+fn partial_m4a_path(dir: &Path) -> PathBuf {
+    dir.join(".audio-encoding.m4a")
+}
+
 /// Meeting ids only ever contain `[A-Za-z0-9-]`; reject anything else so a
 /// caller-supplied id can never escape the meetings directory.
 fn is_valid_meeting_id(id: &str) -> bool {
@@ -590,6 +599,7 @@ pub struct MeetingCaptureRecorder {
     record: MeetingRecord,
     writer: Option<WavWriter<BufWriter<fs::File>>>,
     sample_rate: u32,
+    audio_bitrate_kbps: u32,
     samples_written: u64,
 }
 
@@ -599,6 +609,7 @@ impl std::fmt::Debug for MeetingCaptureRecorder {
             .field("id", &self.record.id)
             .field("dir", &self.dir)
             .field("sample_rate", &self.sample_rate)
+            .field("audio_bitrate_kbps", &self.audio_bitrate_kbps)
             .field("samples_written", &self.samples_written)
             .finish()
     }
@@ -613,6 +624,7 @@ pub fn start_recorded_meeting_capture(
     language: TranscriptionLanguage,
     app_version: &str,
     sample_rate: u32,
+    audio_bitrate_kbps: u32,
     timestamp: DateTime<Local>,
 ) -> Result<MeetingCaptureRecorder, String> {
     if sample_rate == 0 {
@@ -623,9 +635,9 @@ pub fn start_recorded_meeting_capture(
         allocate_meeting_id(save_root, timestamp, slug.as_deref()).map_err(|e| e.to_string())?;
     let dir = meeting_dir(save_root, &id);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let audio_file = "audio.wav".to_string();
+    let audio_file = "audio.m4a".to_string();
     let writer = WavWriter::create(
-        dir.join(&audio_file),
+        capture_wav_path(&dir),
         WavSpec {
             channels: 1,
             sample_rate,
@@ -641,7 +653,7 @@ pub fn start_recorded_meeting_capture(
         title: title.to_string(),
         source_filename: source_filename.to_string(),
         audio_file,
-        audio_format: "wav".to_string(),
+        audio_format: "m4a".to_string(),
         model_id: model_id.to_string(),
         language,
         app_version: app_version.to_string(),
@@ -665,6 +677,7 @@ pub fn start_recorded_meeting_capture(
         record,
         writer: Some(writer),
         sample_rate,
+        audio_bitrate_kbps,
         samples_written: 0,
     })
 }
@@ -678,6 +691,7 @@ pub fn start_manual_recorded_meeting_capture(
     language: TranscriptionLanguage,
     app_version: &str,
     sample_rate: u32,
+    audio_bitrate_kbps: u32,
     timestamp: DateTime<Local>,
 ) -> Result<MeetingCaptureRecorder, String> {
     let mut recorder = start_recorded_meeting_capture(
@@ -688,6 +702,7 @@ pub fn start_manual_recorded_meeting_capture(
         language,
         app_version,
         sample_rate,
+        audio_bitrate_kbps,
         timestamp,
     )?;
     recorder.record.status = MeetingStatus::Recorded;
@@ -728,6 +743,19 @@ impl MeetingCaptureRecorder {
         if let Some(writer) = self.writer.take() {
             writer.finalize().map_err(|e| e.to_string())?;
         }
+        let capture_path = capture_wav_path(&self.dir);
+        let partial_path = partial_m4a_path(&self.dir);
+        let final_path = self.dir.join(&self.record.audio_file);
+        if let Err(error) = encode_wav_to_m4a(&capture_path, &partial_path, self.audio_bitrate_kbps)
+        {
+            let _ = fs::remove_file(&partial_path);
+            return Err(error.to_string());
+        }
+        if let Err(error) = fs::rename(&partial_path, &final_path) {
+            let _ = fs::remove_file(&partial_path);
+            return Err(error.to_string());
+        }
+        let _ = fs::remove_file(&capture_path);
         self.record.duration_ms =
             (self.samples_written as u128 * 1_000 / self.sample_rate as u128) as u64;
         self.record.updated_at = Utc::now();
@@ -1385,6 +1413,7 @@ mod tests {
             TranscriptionLanguage::Auto,
             "test",
             16_000,
+            96,
             timestamp,
         )
         .expect("manual recorder");
@@ -1394,12 +1423,57 @@ mod tests {
 
         assert_eq!(record.status, MeetingStatus::Recorded);
         assert_eq!(record.duration_ms, 1_000);
+        assert_eq!(record.audio_file, "audio.m4a");
+        assert_eq!(record.audio_format, "m4a");
+        let dir = meeting_dir(temp.path(), &record.id);
+        assert!(dir.join("audio.m4a").is_file());
+        assert!(!dir.join("audio.wav").exists());
+        assert!(!capture_wav_path(&dir).exists());
+        assert!(!partial_m4a_path(&dir).exists());
+        let afinfo = Command::new("/usr/bin/afinfo")
+            .arg(dir.join("audio.m4a"))
+            .output()
+            .expect("inspect finalized m4a");
+        assert!(
+            afinfo.status.success(),
+            "afinfo rejected finalized m4a: {}",
+            String::from_utf8_lossy(&afinfo.stderr)
+        );
         assert_eq!(
-            MeetingRecord::load(&record_path(&meeting_dir(temp.path(), &record.id)))
+            MeetingRecord::load(&record_path(&dir))
                 .expect("saved record")
                 .status,
             MeetingStatus::Recorded
         );
+    }
+
+    #[test]
+    fn meeting_m4a_failure_preserves_capture_wav_for_recovery() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let timestamp = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+        let mut recorder = start_manual_recorded_meeting_capture(
+            temp.path(),
+            "Recovery meeting",
+            "Microphone + System Audio",
+            "whisper-medium",
+            TranscriptionLanguage::Auto,
+            "test",
+            10,
+            96,
+            timestamp,
+        )
+        .expect("manual recorder");
+        let id = recorder.id().to_string();
+        recorder.write_samples(&[0.25]).expect("audio");
+
+        let error = recorder.finish().expect_err("invalid rate must not encode");
+
+        let dir = meeting_dir(temp.path(), &id);
+        assert!(error.contains("m4a encoder"), "unexpected error: {error}");
+        assert!(capture_wav_path(&dir).is_file());
+        assert!(!partial_m4a_path(&dir).exists());
+        assert!(!dir.join("audio.m4a").exists());
+        assert!(!record_path(&dir).exists());
     }
 
     #[test]

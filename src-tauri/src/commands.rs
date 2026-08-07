@@ -1825,11 +1825,12 @@ impl AppBackend {
                 let recorder = start_recorded_meeting_capture(
                     &save_root,
                     title,
-                    &format!("{title} system audio.wav"),
+                    &format!("{title} system audio.m4a"),
                     &self.settings.selected_model,
                     self.settings.transcription_language,
                     env!("CARGO_PKG_VERSION"),
                     sample_rate,
+                    self.settings.audio_bitrate_kbps,
                     base_time.with_timezone(&Local),
                 )?;
                 Ok(SystemMeetingCapture {

@@ -350,6 +350,20 @@ fn write_m4a(
 ) -> Result<(), RecorderError> {
     let temp_wav_path = path.with_extension("encoding.wav");
     write_wav(&temp_wav_path, samples, sample_rate)?;
+    let result = encode_wav_to_m4a(&temp_wav_path, path, bitrate_kbps);
+    let _ = fs::remove_file(&temp_wav_path);
+    result
+}
+
+/// Encode a finalized PCM WAV file with the same native AAC/M4A settings used
+/// by ordinary transcript recordings.
+pub fn encode_wav_to_m4a(
+    source_path: &Path,
+    destination_path: &Path,
+    bitrate_kbps: u32,
+) -> Result<(), RecorderError> {
+    // Never let a previous partial output masquerade as this attempt's result.
+    let _ = fs::remove_file(destination_path);
     let bitrate_bps = (clamp_audio_bitrate_kbps(bitrate_kbps) * 1_000).to_string();
     let output = Command::new("/usr/bin/afconvert")
         .arg("-f")
@@ -358,12 +372,20 @@ fn write_m4a(
         .arg("aac@44100")
         .arg("-b")
         .arg(&bitrate_bps)
-        .arg(&temp_wav_path)
-        .arg(path)
-        .output()?;
+        .arg(source_path)
+        .arg(destination_path)
+        .output();
 
-    let _ = fs::remove_file(&temp_wav_path);
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = fs::remove_file(destination_path);
+            return Err(error.into());
+        }
+    };
+
     if !output.status.success() {
+        let _ = fs::remove_file(destination_path);
         let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(RecorderError::M4aEncoder(if message.is_empty() {
             format!("afconvert exited with status {}", output.status)

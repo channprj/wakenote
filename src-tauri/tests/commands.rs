@@ -3416,7 +3416,7 @@ fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
 
     backend
         .start_system_capture_session(
-            10,
+            16_000,
             base_time,
             "Google Chrome".into(),
             "meet".into(),
@@ -3426,7 +3426,7 @@ fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
     for end_ms in [100, 200, 300] {
         backend
             .process_system_audio_frame(AudioFrame {
-                samples: vec![0.5],
+                samples: vec![0.5; 1_600],
                 duration_ms: 100,
                 captured_at: base_time + chrono::Duration::milliseconds(end_ms),
             })
@@ -3442,15 +3442,15 @@ fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
     assert_eq!(meetings.len(), 1);
     assert_eq!(meetings[0].status, MeetingStatus::Pending);
     assert_eq!(meetings[0].duration_ms, 300);
-    assert_eq!(meetings[0].source_filename, "Google Meet system audio.wav");
+    assert_eq!(meetings[0].source_filename, "Google Meet system audio.m4a");
     let finished_jobs = backend.take_finished_system_meeting_jobs();
     assert_eq!(finished_jobs.len(), 1);
     assert_eq!(finished_jobs[0].id, meetings[0].id);
     assert!(backend.take_finished_system_meeting_jobs().is_empty());
 
     let detail = meeting_detail(tmp.path(), &meetings[0].id).expect("meeting detail");
-    assert_eq!(detail.record.audio_file, "audio.wav");
-    assert_eq!(detail.record.audio_format, "wav");
+    assert_eq!(detail.record.audio_file, "audio.m4a");
+    assert_eq!(detail.record.audio_format, "m4a");
     assert_eq!(detail.record.model_id, "whisper-medium");
     assert_eq!(detail.record.duration_ms, 300);
     assert!(std::path::Path::new(&detail.audio_path).is_file());

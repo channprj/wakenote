@@ -3985,6 +3985,7 @@ fn start_manual_meeting_recording(
         settings.transcription_language,
         env!("CARGO_PKG_VERSION"),
         MANUAL_MEETING_SAMPLE_RATE,
+        settings.audio_bitrate_kbps,
         started_at.with_timezone(&Local),
     )?;
     let meeting_id = recorder.id().to_string();
@@ -8678,7 +8679,7 @@ mod tests {
 
         backend
             .start_system_capture_session(
-                10,
+                16_000,
                 base_time,
                 "Google Chrome".into(),
                 "meet".into(),
@@ -8687,7 +8688,7 @@ mod tests {
             .expect("start meet system capture");
         backend
             .process_system_audio_frame(AudioFrame {
-                samples: vec![0.5],
+                samples: vec![0.5; 1_600],
                 duration_ms: 100,
                 captured_at: base_time + chrono::Duration::milliseconds(100),
             })
@@ -8724,7 +8725,7 @@ mod tests {
 
         backend
             .start_system_capture_session(
-                10,
+                16_000,
                 base_time,
                 "Google Chrome".into(),
                 "meet".into(),
@@ -8733,7 +8734,7 @@ mod tests {
             .expect("start meet system capture");
         backend
             .process_system_audio_frame(AudioFrame {
-                samples: vec![0.5],
+                samples: vec![0.5; 1_600],
                 duration_ms: 100,
                 captured_at: base_time + chrono::Duration::milliseconds(100),
             })
