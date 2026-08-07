@@ -724,7 +724,7 @@ fn schedule_subtitle_window_hide(
         let dictation_idle = app
             .try_state::<DictationState>()
             .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
-            .is_none_or(|stage| dictation_allows_caption_window_mutation(stage));
+            .is_none_or(dictation_allows_caption_window_mutation);
         if !should_hide || !dictation_idle {
             return;
         }
