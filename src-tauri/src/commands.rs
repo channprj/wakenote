@@ -628,6 +628,7 @@ pub struct AppBackend {
     pending_live_events: Vec<LiveTranscriptEvent>,
     chunk_id_history: VecDeque<(PathBuf, u64)>,
     chunk_id_index: HashMap<PathBuf, u64>,
+    active_transcription_jobs: BTreeSet<u64>,
     mic_health: MicHealthMonitor,
     /// One-shot device override used by the recovery watchdog to force a
     /// restart onto a specific device (e.g. system default) on the next
@@ -685,6 +686,7 @@ impl std::fmt::Debug for AppBackend {
             )
             .field("pending_live_events_len", &self.pending_live_events.len())
             .field("chunk_id_history_len", &self.chunk_id_history.len())
+            .field("active_transcription_jobs", &self.active_transcription_jobs)
             .field("mic_health", &self.mic_health)
             .field("mic_recovery_override", &self.mic_recovery_override)
             .finish()
@@ -719,6 +721,7 @@ impl Default for AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            active_transcription_jobs: BTreeSet::new(),
             mic_health: MicHealthMonitor::default(),
             mic_recovery_override: None,
         }
@@ -761,6 +764,7 @@ impl AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            active_transcription_jobs: BTreeSet::new(),
             mic_health: MicHealthMonitor::default(),
             mic_recovery_override: None,
         })
@@ -2327,7 +2331,8 @@ impl AppBackend {
             validate_transcript_trash_path(&save_root, transcript_path)?;
             let bundle_paths = recording_bundle_paths(transcript_path)?;
             if let Some(job) = self.queue.snapshot().jobs.into_iter().find(|job| {
-                job.status == QueueJobStatus::Running && bundle_paths.contains(&job.audio_path)
+                self.active_transcription_jobs.contains(&job.id)
+                    && bundle_paths.contains(&job.audio_path)
             }) {
                 return Err(format!(
                     "Transcript {} belongs to running job {}",
@@ -2440,6 +2445,60 @@ impl AppBackend {
         Ok(self.queue.snapshot())
     }
 
+    pub fn cancel_transcription_job(&mut self, id: u64) -> Result<QueueSnapshot, String> {
+        self.queue.cancel(id, "cancelled by user")?;
+        self.persist_queue();
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn prepare_activity_jobs_for_deletion(
+        &mut self,
+        ids: &[u64],
+    ) -> Result<QueueSnapshot, String> {
+        let ids = ids.iter().copied().collect::<BTreeSet<_>>();
+        if ids.is_empty() {
+            return Err("select at least one Activity item to move to Trash".to_string());
+        }
+        for id in &ids {
+            if self.queue.job(*id).is_none() {
+                return Err(format!("job {id} not found"));
+            }
+        }
+        let mut cancelled = false;
+        for id in ids {
+            if self
+                .queue
+                .job(id)
+                .is_some_and(|job| job.status == QueueJobStatus::Running)
+            {
+                self.queue.cancel(id, "cancelled for deletion by user")?;
+                cancelled = true;
+            }
+        }
+        if cancelled {
+            self.persist_queue();
+        }
+        Ok(self.queue.snapshot())
+    }
+
+    pub fn transcription_job_is_active(&self, id: u64) -> bool {
+        self.active_transcription_jobs.contains(&id)
+    }
+
+    pub fn transcription_job_was_cancelled(&self, id: u64) -> bool {
+        self.queue
+            .job(id)
+            .is_some_and(|job| job.status == QueueJobStatus::Cancelled)
+    }
+
+    pub fn transcription_output_allowed(&self, audio_path: &Path) -> bool {
+        self.queue.has_running_audio_path(audio_path)
+    }
+
+    pub fn acknowledge_cancelled_transcription(&mut self, id: u64) {
+        self.active_transcription_jobs.remove(&id);
+    }
+
     pub fn cancel_current_operation(&mut self) -> Result<(), String> {
         let store = self.model_store();
         if store
@@ -2464,12 +2523,20 @@ impl AppBackend {
         let Some(started) = self.start_next_transcription_job() else {
             return Ok(self.queue.snapshot());
         };
-        let runtime = RuntimeTranscriber::for_archival_with_credentials(
-            &started.model_directory,
-            started.credentials.map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?
-        .with_file_streaming(started.transcription_options.streaming_enabled, None);
+        let runtime = match started.credentials.and_then(|credentials| {
+            RuntimeTranscriber::for_archival_with_credentials(&started.model_directory, credentials)
+                .map_err(|error| error.to_string())
+        }) {
+            Ok(runtime) => {
+                runtime.with_file_streaming(started.transcription_options.streaming_enabled, None)
+            }
+            Err(error) => {
+                return self.finish_transcription_job(TranscriptionJobOutcome::failed(
+                    started.job.id,
+                    error,
+                ));
+            }
+        };
         let fallback = FallbackTranscriber::configured(
             runtime.clone(),
             runtime,
@@ -2512,6 +2579,7 @@ impl AppBackend {
         let Some(job) = self.queue.start_next_for_model_ids(&selectable_model_ids) else {
             return Ok(self.queue.snapshot());
         };
+        self.active_transcription_jobs.insert(job.id);
         let worker = TranscriptionWorker::with_options_and_dictionary(
             transcriber,
             TranscriptionWorkerOptions {
@@ -2586,6 +2654,7 @@ impl AppBackend {
             .queue
             .start_next_for_model_ids_up_to(&selectable_model_ids, max_running)
         {
+            self.active_transcription_jobs.insert(job.id);
             let requested_options = job
                 .transcription_options
                 .clone()
@@ -2624,7 +2693,10 @@ impl AppBackend {
         &mut self,
         outcome: TranscriptionJobOutcome,
     ) -> Result<QueueSnapshot, String> {
-        apply_outcome(&mut self.queue, outcome).map_err(|error| error.to_string())?;
+        let id = outcome.id;
+        let result = apply_outcome(&mut self.queue, outcome).map_err(|error| error.to_string());
+        self.active_transcription_jobs.remove(&id);
+        result?;
         self.persist_queue();
         Ok(self.queue.snapshot())
     }

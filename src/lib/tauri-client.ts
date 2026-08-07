@@ -1739,6 +1739,49 @@ export async function cancelCurrentTranscription(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
+export async function cancelActivityJob(id: number): Promise<AppSnapshot> {
+  if (!Number.isSafeInteger(id)) {
+    throw new Error("A valid Activity job id is required.");
+  }
+  if (!isTauriRuntime()) {
+    const target = browserSnapshot.queue.jobs.find((job) => job.id === id);
+    if (!target) {
+      throw new Error(`Job ${id} not found.`);
+    }
+    if (target.status !== "running") {
+      throw new Error(`Job ${id} is not running.`);
+    }
+    const occurredAt = new Date().toISOString();
+    const jobs = browserSnapshot.queue.jobs.map((job) =>
+      job.id === id
+        ? {
+            ...job,
+            status: "cancelled" as const,
+            error: "cancelled by user",
+            issue: {
+              severity: "warning" as const,
+              code: "cancelled" as const,
+              message: "cancelled by user",
+              occurred_at: occurredAt,
+            },
+            is_read: false,
+          }
+        : job,
+    );
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(jobs);
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+    };
+    return browserSnapshot;
+  }
+
+  await invoke<QueueSnapshot>("cancel_activity_job", { id });
+  return loadSnapshot();
+}
+
 export async function markAllActivityRead(): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     let marked = false;

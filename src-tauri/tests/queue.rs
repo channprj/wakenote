@@ -37,6 +37,30 @@ fn queue_can_start_cancel_fail_retry_and_skip_jobs() {
 }
 
 #[test]
+fn queue_cancels_only_the_requested_running_job() {
+    let mut queue = TranscriptionQueue::new();
+    let first = queue.enqueue_file("/recordings/first.m4a", "whisper-medium");
+    let second = queue.enqueue_file("/recordings/second.m4a", "whisper-medium");
+
+    let running = queue.start_next().expect("first running job");
+    assert_eq!(running.id, first);
+    assert!(queue.has_running_audio_path(&running.audio_path));
+
+    assert_eq!(
+        queue.cancel(second, "cancelled by user").unwrap_err(),
+        format!("job {second} is not running")
+    );
+    assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Running);
+    assert_eq!(queue.job(second).unwrap().status, QueueJobStatus::Pending);
+
+    queue
+        .cancel(first, "cancelled by user")
+        .expect("cancel first");
+    assert_eq!(queue.job(first).unwrap().status, QueueJobStatus::Cancelled);
+    assert!(!queue.has_running_audio_path(&running.audio_path));
+}
+
+#[test]
 fn queue_classifies_dictation_live_capture_and_imported_audio() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let live_path = tmp.path().join("live.wav");

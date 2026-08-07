@@ -1683,6 +1683,96 @@ fn backend_rejects_a_running_job_before_moving_any_audio_to_trash() {
 }
 
 #[test]
+fn backend_cancels_an_exact_active_job_and_ignores_its_late_outcome() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let audio_path = tmp.path().join("running.m4a");
+    std::fs::write(&audio_path, b"audio").expect("audio fixture");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let job_id = backend
+        .enqueue_audio_file(&audio_path, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == audio_path)
+        .expect("queued job")
+        .id;
+    backend
+        .start_next_transcription_job()
+        .expect("start transcription job");
+
+    assert!(backend.transcription_job_is_active(job_id));
+    assert!(backend.transcription_output_allowed(&audio_path));
+    backend
+        .cancel_transcription_job(job_id)
+        .expect("cancel exact job");
+    assert!(backend.transcription_job_is_active(job_id));
+    assert!(backend.transcription_job_was_cancelled(job_id));
+    assert!(!backend.transcription_output_allowed(&audio_path));
+
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed(job_id))
+        .expect("late outcome is ignored");
+    assert!(!backend.transcription_job_is_active(job_id));
+    assert_eq!(
+        backend
+            .queue_snapshot()
+            .jobs
+            .into_iter()
+            .find(|job| job.id == job_id)
+            .expect("cancelled job")
+            .status,
+        QueueJobStatus::Cancelled
+    );
+}
+
+#[test]
+fn backend_prepares_running_activity_for_deletion_and_waits_for_worker_acknowledgement() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_dir = tmp.path().join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let audio_path = tmp.path().join("delete-running.m4a");
+    std::fs::write(&audio_path, b"audio").expect("audio fixture");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        ..SettingsPatch::default()
+    });
+    let job_id = backend
+        .enqueue_audio_file(&audio_path, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == audio_path)
+        .expect("queued job")
+        .id;
+    backend
+        .start_next_transcription_job()
+        .expect("start transcription job");
+
+    let snapshot = backend
+        .prepare_activity_jobs_for_deletion(&[job_id])
+        .expect("prepare deletion");
+    assert_eq!(snapshot.jobs[0].status, QueueJobStatus::Cancelled);
+    assert!(backend.transcription_job_is_active(job_id));
+
+    backend.acknowledge_cancelled_transcription(job_id);
+    assert!(!backend.transcription_job_is_active(job_id));
+    let result = backend
+        .trash_activity_jobs_with(vec![job_id], |path| {
+            std::fs::remove_file(path).map_err(|error| error.to_string())
+        })
+        .expect("trash acknowledged job");
+    assert_eq!(result.removed_ids, vec![job_id]);
+    assert!(!audio_path.exists());
+}
+
+#[test]
 fn backend_trashes_selected_transcript_bundles_and_refreshes_the_day_index() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let save_root = tmp.path().join("WakeNote");

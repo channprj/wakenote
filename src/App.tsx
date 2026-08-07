@@ -23,6 +23,7 @@ import {
 import {
   cancelModelDownload,
   cancelCurrentTranscription,
+  cancelActivityJob,
   cancelDictation,
   chooseModelDirectory,
   chooseSaveRoot,
@@ -593,6 +594,7 @@ export default function App() {
           }
           onMarkAllRead={() => void runAction(markAllActivityRead)}
           onCancelCurrent={() => void runAction(cancelCurrentTranscription)}
+          onCancelJob={(id) => void runAction(() => cancelActivityJob(id))}
           onProcessNext={() => void runAction(processNextTranscription)}
           onRetry={(id) => void runAction(() => retryJob(id))}
           onSkip={(id) => void runAction(() => skipJob(id))}

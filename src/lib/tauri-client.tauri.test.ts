@@ -144,6 +144,7 @@ function mockInvoke(command: string) {
     case "preview_subtitle":
       return Promise.resolve(null);
     case "regenerate_transcript":
+    case "cancel_activity_job":
       return Promise.resolve(queue satisfies QueueSnapshot);
     case "trash_activity_jobs":
       return Promise.resolve({
@@ -509,6 +510,19 @@ describe("tauri runtime client snapshots", () => {
     expect(outcome.removed_ids).toEqual([7]);
     expect(mocks.invoke).toHaveBeenCalledWith("trash_activity_jobs", {
       ids: [7],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
+  });
+
+  it("cancels an exact running Activity job", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { cancelActivityJob } = await import("./tauri-client");
+
+    await cancelActivityJob(17);
+
+    expect(mocks.invoke).toHaveBeenCalledWith("cancel_activity_job", {
+      id: 17,
     });
     expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
   });

@@ -517,6 +517,7 @@ const EVENT_TRANSCRIPTION_MODEL_FALLBACK: &str = "transcription-model-fallback";
 const EVENT_TRANSCRIPTION_COST_UPDATED: &str = "transcription-cost-updated";
 const EVENT_MANUAL_MEETING_RECORDING_STATE: &str = "manual-meeting-recording-state";
 const MAX_MANUAL_MEETING_DURATION: Duration = Duration::from_secs(5 * 60 * 60);
+const ACTIVITY_DELETE_WORKER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const EVENT_SOURCE_DETECTED: &str = "source-detected";
 const EVENT_SOURCE_ENDED: &str = "source-ended";
 const EVENT_SOURCE_CAPTURE_STARTED: &str = "source-capture-started";
@@ -3724,6 +3725,36 @@ fn trash_activity_jobs(
     state: State<'_, BackendState>,
     ids: Vec<u64>,
 ) -> Result<TrashActivityJobsResult, String> {
+    {
+        let mut backend = state.lock().map_err(|error| error.to_string())?;
+        backend.prepare_activity_jobs_for_deletion(&ids)?;
+    }
+
+    let deadline = Instant::now() + ACTIVITY_DELETE_WORKER_TIMEOUT;
+    loop {
+        let active = {
+            let backend = state.lock().map_err(|error| error.to_string())?;
+            ids.iter()
+                .copied()
+                .filter(|id| backend.transcription_job_is_active(*id))
+                .collect::<Vec<_>>()
+        };
+        if active.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for cancelled transcription workers: {}",
+                active
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.trash_activity_jobs_with(ids, move_recording_bundle_to_trash_and_refresh)
 }
@@ -3787,6 +3818,12 @@ fn mark_all_activity_read(state: State<'_, BackendState>) -> Result<QueueSnapsho
 fn cancel_current_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.cancel_current_transcription()
+}
+
+#[tauri::command]
+fn cancel_activity_job(state: State<'_, BackendState>, id: u64) -> Result<QueueSnapshot, String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    backend.cancel_transcription_job(id)
 }
 
 #[tauri::command]
@@ -6218,15 +6255,37 @@ fn kick_transcription_worker(
                 outcome.id, outcome.status
             );
 
-            refresh_transcript_day_index(&audio_path);
-            emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
-            record_job_transcription_cost(&app, &outcome);
-
-            match backend_state.lock() {
+            let cancelled = match backend_state.lock() {
+                Ok(backend) if backend.transcription_job_was_cancelled(outcome.id) => true,
                 Ok(mut backend) => {
-                    let _ = backend.finish_transcription_job(outcome);
+                    if let Err(error) = backend.finish_transcription_job(outcome.clone()) {
+                        eprintln!(
+                            "[wakenote] queue worker: failed to commit job {} outcome: {error}",
+                            outcome.id
+                        );
+                        active_jobs = active_jobs.saturating_sub(1);
+                        continue;
+                    }
+                    false
                 }
                 Err(_) => break,
+            };
+            if cancelled {
+                let chunk = wakenote::recorder::RecordedChunk::from_audio_path(audio_path.clone());
+                if let Err(error) = TranscriptionSidecar::discard_cancelled_output(&chunk) {
+                    eprintln!(
+                        "[wakenote] queue worker: failed to discard cancelled job {} output: {error}",
+                        outcome.id
+                    );
+                }
+                refresh_transcript_day_index(&audio_path);
+                if let Ok(mut backend) = backend_state.lock() {
+                    backend.acknowledge_cancelled_transcription(outcome.id);
+                }
+            } else {
+                refresh_transcript_day_index(&audio_path);
+                emit_outcome_to_frontend(&app, &backend_state, &audio_path, &outcome);
+                record_job_transcription_cost(&app, &outcome);
             }
             active_jobs = active_jobs.saturating_sub(1);
         }
@@ -6314,6 +6373,13 @@ fn emit_file_stream_partial(
     audio_path: &Path,
     text: String,
 ) {
+    if !backend_state
+        .lock()
+        .map(|backend| backend.transcription_output_allowed(audio_path))
+        .unwrap_or(false)
+    {
+        return;
+    }
     let chunk_id = backend_state
         .lock()
         .ok()
@@ -7493,6 +7559,7 @@ fn main() {
             skip_job,
             mark_all_activity_read,
             cancel_current_transcription,
+            cancel_activity_job,
             dictation_state,
             cancel_dictation,
             cancel_current_operation,

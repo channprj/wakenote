@@ -314,11 +314,22 @@ impl TranscriptionQueue {
     }
 
     pub fn cancel_current(&mut self, reason: impl Into<String>) -> Result<(), String> {
-        let job = self
+        let id = self
             .jobs
-            .iter_mut()
+            .iter()
             .find(|job| job.status == QueueJobStatus::Running)
+            .map(|job| job.id)
             .ok_or_else(|| "no running job".to_string())?;
+        self.cancel(id, reason)
+    }
+
+    pub fn cancel(&mut self, id: u64, reason: impl Into<String>) -> Result<(), String> {
+        let job = self
+            .job_mut(id)
+            .ok_or_else(|| format!("job {id} not found"))?;
+        if job.status != QueueJobStatus::Running {
+            return Err(format!("job {id} is not running"));
+        }
         let reason = reason.into();
         let mut issue = QueueJobIssue::warning(QueueIssueCode::Cancelled, reason.clone());
         issue.stamp_if_missing();
@@ -415,6 +426,12 @@ impl TranscriptionQueue {
 
     pub fn job(&self, id: u64) -> Option<&QueueJob> {
         self.jobs.iter().find(|job| job.id == id)
+    }
+
+    pub fn has_running_audio_path(&self, audio_path: &Path) -> bool {
+        self.jobs
+            .iter()
+            .any(|job| job.audio_path == audio_path && job.status == QueueJobStatus::Running)
     }
 
     pub fn snapshot(&self) -> QueueSnapshot {

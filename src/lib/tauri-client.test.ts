@@ -4,6 +4,7 @@ import {
   chooseSaveRoot,
   revealSaveFolder,
   cancelCurrentOperation,
+  cancelActivityJob,
   cancelModelDownload,
   cancelCurrentTranscription,
   cancelDictation,
@@ -915,6 +916,28 @@ describe("tauri live capture client", () => {
       status: "cancelled",
       error: "cancelled by user",
     });
+  });
+
+  it("cancels the exact running browser Activity job", async () => {
+    const before = await enqueueAudioFiles([
+      "/tmp/imported/cancel-exact-running.wav",
+    ]);
+    const job = before.queue.jobs.find(
+      (candidate) =>
+        candidate.audio_path === "/tmp/imported/cancel-exact-running.wav",
+    );
+    expect(job?.id).toBeTypeOf("number");
+    if (job) {
+      job.status = "running";
+      before.queue.pending_count -= 1;
+      before.queue.running_count += 1;
+    }
+
+    const cancelled = await cancelActivityJob(job?.id ?? -1);
+
+    expect(
+      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
+    ).toMatchObject({ status: "cancelled", error: "cancelled by user" });
   });
 
   it("cancels running browser fallback transcription jobs from the generic cancel action", async () => {

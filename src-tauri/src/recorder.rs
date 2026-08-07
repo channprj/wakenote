@@ -19,6 +19,7 @@ pub enum TranscriptionStatus {
     Queued,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// Which audio source a chunk came from. `Microphone` is the default so chunk
@@ -296,6 +297,16 @@ impl TranscriptionSidecar {
         remove_file_if_present(&chunk.error_path)?;
         update_metadata_status_if_present(&chunk.metadata_path, TranscriptionStatus::Queued, None)
     }
+
+    pub fn discard_cancelled_output(chunk: &RecordedChunk) -> Result<(), RecorderError> {
+        remove_file_if_present(&chunk.transcript_path)?;
+        remove_file_if_present(&chunk.error_path)?;
+        update_metadata_status_if_present(
+            &chunk.metadata_path,
+            TranscriptionStatus::Cancelled,
+            None,
+        )
+    }
 }
 
 fn recorded_chunk(target: OutputTarget) -> RecordedChunk {
@@ -473,13 +484,17 @@ fn update_metadata_status(
     // chunk is requeued so a regenerated transcript gets a fresh timestamp.
     metadata.transcribed_at = match status {
         TranscriptionStatus::Completed | TranscriptionStatus::Failed => Some(Utc::now()),
-        TranscriptionStatus::Queued | TranscriptionStatus::NotRequested => None,
+        TranscriptionStatus::Queued
+        | TranscriptionStatus::NotRequested
+        | TranscriptionStatus::Cancelled => None,
     };
     metadata.transcription_status = status;
     metadata.transcript_text = transcript.map(str::to_string);
     if matches!(
         metadata.transcription_status,
-        TranscriptionStatus::Queued | TranscriptionStatus::NotRequested
+        TranscriptionStatus::Queued
+            | TranscriptionStatus::NotRequested
+            | TranscriptionStatus::Cancelled
     ) {
         metadata.requested_model_id = None;
         metadata.effective_model_id = None;

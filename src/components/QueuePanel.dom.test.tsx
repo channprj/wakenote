@@ -510,9 +510,10 @@ describe("QueuePanel pagination", () => {
     expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
   });
 
-  it("confirms before moving every selected non-running Activity item to Trash", async () => {
+  it("cancels and moves running Activity items to Trash", async () => {
     const user = userEvent.setup();
-    const onTrash = vi.fn().mockResolvedValue([1, 2]);
+    const onCancelJob = vi.fn();
+    const onTrash = vi.fn().mockResolvedValue([1, 2, 3]);
     render(
       <QueuePanel
         nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
@@ -548,6 +549,7 @@ describe("QueuePanel pagination", () => {
         onEnqueueBacklog={() => {}}
         onMarkAllRead={() => {}}
         onCancelCurrent={() => {}}
+        onCancelJob={onCancelJob}
         onProcessNext={() => {}}
         onRetry={() => {}}
         onSkip={() => {}}
@@ -558,19 +560,35 @@ describe("QueuePanel pagination", () => {
 
     await showAllStatuses(user);
 
+    expect(
+      screen.getByRole("checkbox", { name: "Select active.wav" }),
+    ).toBeTruthy();
     await user.click(
-      screen.getByRole("checkbox", { name: "Select all 2 matching items" }),
+      screen.getByRole("button", { name: "Cancel task: active.wav" }),
+    );
+    expect(onCancelJob).toHaveBeenCalledWith(3);
+    await user.click(
+      screen.getByRole("button", {
+        name: "Move task to Trash: active.wav",
+      }),
     );
     expect(
-      screen.queryByRole("checkbox", { name: "Select active.wav" }),
-    ).toBeNull();
+      screen.getByText(
+        /recording bundle moves to Trash after the worker exits/i,
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-    await user.click(screen.getByRole("button", { name: "Move 2 to Trash" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select all 3 matching items" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Move 3 to Trash" }));
 
     expect(onTrash).not.toHaveBeenCalled();
     expect(
       screen.getByRole("alertdialog", {
-        name: "Move 2 recordings to Trash?",
+        name: "Move 3 recordings to Trash?",
       }),
     ).toBeTruthy();
     expect(screen.getByText(/Activity records will be removed/i)).toBeTruthy();
@@ -579,7 +597,7 @@ describe("QueuePanel pagination", () => {
       screen.getByRole("button", { name: "Move bundles to Trash" }),
     );
 
-    expect(onTrash).toHaveBeenCalledWith([1, 2]);
+    expect(onTrash).toHaveBeenCalledWith([1, 2, 3]);
   });
 
   it("plays an Activity item in one shared dock and opens its containing folder", async () => {

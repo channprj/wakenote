@@ -277,6 +277,7 @@ export function QueuePanel({
   onEnqueueBacklog,
   onMarkAllRead,
   onCancelCurrent,
+  onCancelJob = () => {},
   onProcessNext,
   onRetry,
   onSkip,
@@ -293,6 +294,7 @@ export function QueuePanel({
   onEnqueueBacklog: () => void;
   onMarkAllRead: () => void;
   onCancelCurrent: () => void;
+  onCancelJob?: (id: number) => void;
   onProcessNext: () => void;
   onRetry: (id: number) => void;
   onSkip: (id: number) => void;
@@ -362,16 +364,14 @@ export function QueuePanel({
   const filteredReprocessableIds = filteredReprocessableJobs.map(
     (job) => job.id,
   );
-  const filteredSelectableIds = filteredJobs
-    .filter((job) => job.status !== "running")
-    .map((job) => job.id);
+  const filteredSelectableIds = filteredJobs.map((job) => job.id);
   const selectedIds = filteredSelectableIds.filter((id) =>
     selectedJobIds.has(id),
   );
   const selectedReprocessableIds = filteredReprocessableIds.filter((id) =>
     selectedJobIds.has(id),
   );
-  const hasSelectableJobs = queue.jobs.some((job) => job.status !== "running");
+  const hasSelectableJobs = queue.jobs.length > 0;
   const hasReprocessableJobs = queue.jobs.some(isReprocessableJob);
   const allMatchingSelected =
     filteredSelectableIds.length > 0 &&
@@ -469,13 +469,13 @@ export function QueuePanel({
     }
   }
 
-  async function handleTrash() {
-    if (selectedIds.length === 0 || trashing) {
+  async function handleTrashIds(ids: number[]) {
+    if (ids.length === 0 || trashing) {
       return;
     }
     setTrashing(true);
     try {
-      const removedIds = await onTrash(selectedIds);
+      const removedIds = await onTrash(ids);
       const removed = new Set(removedIds);
       setSelectedJobIds((current) => {
         const next = new Set(current);
@@ -490,6 +490,10 @@ export function QueuePanel({
     } finally {
       setTrashing(false);
     }
+  }
+
+  async function handleTrash() {
+    await handleTrashIds(selectedIds);
   }
 
   function queueSummaryCellTone(status: string, count: number) {
@@ -691,7 +695,9 @@ export function QueuePanel({
                     Activity records will be removed and each selected recording
                     will move to the macOS Trash as one bundle with its audio,
                     transcript text, metadata JSON, and error text when present.
-                    Bundles remain recoverable until you empty the Trash.
+                    Running tasks are cancelled first and move only after their
+                    worker exits. Bundles remain recoverable until you empty the
+                    Trash.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -889,15 +895,13 @@ export function QueuePanel({
                             className="queue-job__selection"
                             data-label="Select"
                           >
-                            {job.status !== "running" ? (
-                              <Checkbox
-                                aria-label={`Select ${formatAudioPathLabel(job.audio_path)}`}
-                                checked={selectedJobIds.has(job.id)}
-                                onCheckedChange={(checked) =>
-                                  setJobSelected(job.id, checked === true)
-                                }
-                              />
-                            ) : null}
+                            <Checkbox
+                              aria-label={`Select ${formatAudioPathLabel(job.audio_path)}`}
+                              checked={selectedJobIds.has(job.id)}
+                              onCheckedChange={(checked) =>
+                                setJobSelected(job.id, checked === true)
+                              }
+                            />
                           </td>
                           <td className="queue-job__audio" data-label="Audio">
                             <a
@@ -1007,6 +1011,57 @@ export function QueuePanel({
                               >
                                 <SkipForward data-icon="solo" />
                               </Button>
+                              {job.status === "running" ? (
+                                <Button
+                                  aria-label={`Cancel task: ${audioPathBasename(job.audio_path)}`}
+                                  onClick={() => onCancelJob(job.id)}
+                                  size="icon"
+                                  title="Cancel running task"
+                                  type="button"
+                                  variant="secondary"
+                                >
+                                  <Ban data-icon="solo" />
+                                </Button>
+                              ) : null}
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    aria-label={`Move task to Trash: ${audioPathBasename(job.audio_path)}`}
+                                    disabled={trashing}
+                                    size="icon"
+                                    title="Move recording bundle to Trash"
+                                    type="button"
+                                    variant="ghost"
+                                  >
+                                    <Trash2 data-icon="solo" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      Move this Activity task to Trash?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {job.status === "running"
+                                        ? "The task will be cancelled now. Its recording bundle moves to Trash after the worker exits."
+                                        : "Its audio, transcript text, metadata JSON, and error text move together as one recoverable bundle."}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>
+                                      Cancel
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      variant="destructive"
+                                      onClick={() =>
+                                        void handleTrashIds([job.id])
+                                      }
+                                    >
+                                      Move task to Trash
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
                             </div>
                           </td>
                         </tr>

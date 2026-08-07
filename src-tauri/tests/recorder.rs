@@ -234,6 +234,57 @@ fn transcription_sidecar_writes_error_without_removing_audio() {
     assert!(metadata.used_fallback_device);
 }
 
+#[test]
+fn transcription_sidecar_discards_late_cancelled_output_and_preserves_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let settings = wav_settings();
+    let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.1, -0.1, 0.0],
+        sample_rate: 16_000,
+        started_at: timestamp,
+        ended_at: timestamp + chrono::Duration::milliseconds(500),
+        device_id: "default",
+        device_name: "System Default",
+        used_fallback_device: false,
+        transcription_enabled: true,
+        app_version: "0.1.0",
+        live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
+    })
+    .expect("record chunk");
+    TranscriptionSidecar::write_success_with_provenance(
+        &chunk,
+        "late transcript",
+        "openai-gpt-transcribe",
+        "whisper-medium",
+        Some("openai-gpt-transcribe"),
+    )
+    .expect("late worker output");
+    std::fs::write(&chunk.error_path, "stale error\n").expect("stale error");
+
+    TranscriptionSidecar::discard_cancelled_output(&chunk).expect("discard output");
+
+    assert!(chunk.audio_path.exists());
+    assert!(!chunk.transcript_path.exists());
+    assert!(!chunk.error_path.exists());
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(
+        metadata.transcription_status,
+        TranscriptionStatus::Cancelled
+    );
+    assert_eq!(metadata.transcript_text, None);
+    assert_eq!(metadata.transcribed_at, None);
+    assert_eq!(metadata.requested_model_id, None);
+    assert_eq!(metadata.effective_model_id, None);
+    assert_eq!(metadata.fallback_from_model_id, None);
+}
+
 fn mp3_bit_rate(path: &std::path::Path) -> u64 {
     let output = std::process::Command::new("ffprobe")
         .args([
