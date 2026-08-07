@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -9,11 +9,103 @@ use crate::settings::MicrophoneSlot;
 use crate::voice_leveling::AudioFrameProcessor;
 
 pub const MICROPHONE_MIX_REORDER_MS: u64 = 100;
+const DUPLICATE_ANALYSIS_RATE_HZ: u32 = 2_000;
+const DUPLICATE_ANALYSIS_INTERVAL_MS: u64 = 50;
+const DUPLICATE_ANALYSIS_MIN_HISTORY_MS: u64 = 80;
+const DUPLICATE_ANALYSIS_MAX_HISTORY_MS: u64 = 500;
+const DUPLICATE_ANALYSIS_MAX_DELAY_MS: u64 = 200;
+const DUPLICATE_ANALYSIS_MIN_OVERLAP_MS: u64 = 60;
+const DUPLICATE_MIN_DELAY_MS: u64 = 2;
+const DUPLICATE_MIN_RMS: f32 = 0.004;
+const DUPLICATE_CORRELATION_THRESHOLD: f64 = 0.78;
+const DUPLICATE_RELEASE_THRESHOLD: f64 = 0.55;
+const DUPLICATE_RELEASE_WINDOWS: u8 = 2;
+const DUPLICATE_CROSSFADE_MS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PendingMixSample {
     primary: Option<f32>,
     secondary: Option<f32>,
+}
+
+#[derive(Debug, Default)]
+struct DuplicateSignalTracker {
+    primary: VecDeque<f32>,
+    secondary: VecDeque<f32>,
+    samples_since_analysis: usize,
+    preferred_slot: Option<MicrophoneSlot>,
+    uncorrelated_windows: u8,
+}
+
+impl DuplicateSignalTracker {
+    fn observe(
+        &mut self,
+        pending: &[PendingMixSample],
+        sample_rate: u32,
+    ) -> Option<MicrophoneSlot> {
+        if pending
+            .iter()
+            .any(|sample| sample.primary.is_none() || sample.secondary.is_none())
+        {
+            self.reset();
+            return None;
+        }
+
+        for sample in pending {
+            self.primary
+                .push_back(sample.primary.expect("paired primary sample"));
+            self.secondary
+                .push_back(sample.secondary.expect("paired secondary sample"));
+        }
+        let max_history_samples = duration_samples(sample_rate, DUPLICATE_ANALYSIS_MAX_HISTORY_MS);
+        while self.primary.len() > max_history_samples {
+            self.primary.pop_front();
+            self.secondary.pop_front();
+        }
+        self.samples_since_analysis = self.samples_since_analysis.saturating_add(pending.len());
+
+        let analysis_interval = duration_samples(sample_rate, DUPLICATE_ANALYSIS_INTERVAL_MS);
+        let minimum_history = duration_samples(sample_rate, DUPLICATE_ANALYSIS_MIN_HISTORY_MS);
+        if self.primary.len() < minimum_history || self.samples_since_analysis < analysis_interval {
+            return self.preferred_slot;
+        }
+        self.samples_since_analysis = 0;
+
+        match estimate_duplicate_delay(&self.primary, &self.secondary, sample_rate) {
+            DuplicateAnalysis::Correlated { lag_samples } => {
+                self.preferred_slot = Some(if lag_samples > 0 {
+                    MicrophoneSlot::Primary
+                } else {
+                    MicrophoneSlot::Secondary
+                });
+                self.uncorrelated_windows = 0;
+            }
+            DuplicateAnalysis::Uncorrelated => {
+                self.uncorrelated_windows = self.uncorrelated_windows.saturating_add(1);
+                if self.uncorrelated_windows >= DUPLICATE_RELEASE_WINDOWS {
+                    self.preferred_slot = None;
+                    self.uncorrelated_windows = 0;
+                }
+            }
+            DuplicateAnalysis::Silent => {}
+        }
+        self.preferred_slot
+    }
+
+    fn reset(&mut self) {
+        self.primary.clear();
+        self.secondary.clear();
+        self.samples_since_analysis = 0;
+        self.preferred_slot = None;
+        self.uncorrelated_windows = 0;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuplicateAnalysis {
+    Correlated { lag_samples: i64 },
+    Uncorrelated,
+    Silent,
 }
 
 #[derive(Debug)]
@@ -24,6 +116,8 @@ pub struct MicrophoneMixer {
     pending: BTreeMap<i64, PendingMixSample>,
     latest_end_by_slot: BTreeMap<MicrophoneSlot, i64>,
     next_output_sample: Option<i64>,
+    duplicate_signal: DuplicateSignalTracker,
+    primary_mix_weight: Option<f32>,
 }
 
 impl MicrophoneMixer {
@@ -38,6 +132,8 @@ impl MicrophoneMixer {
             pending: BTreeMap::new(),
             latest_end_by_slot: BTreeMap::new(),
             next_output_sample: None,
+            duplicate_signal: DuplicateSignalTracker::default(),
+            primary_mix_weight: None,
         }
     }
 
@@ -161,7 +257,7 @@ impl MicrophoneMixer {
     }
 
     fn mixed_frame(
-        &self,
+        &mut self,
         _start_sample: i64,
         end_sample: i64,
         pending: &[PendingMixSample],
@@ -169,22 +265,36 @@ impl MicrophoneMixer {
         let primary_rms = slot_rms(pending.iter().filter_map(|sample| sample.primary));
         let secondary_rms = slot_rms(pending.iter().filter_map(|sample| sample.secondary));
         let total_rms = primary_rms + secondary_rms;
-        let (primary_weight, secondary_weight) = if total_rms > f32::EPSILON {
-            (primary_rms / total_rms, secondary_rms / total_rms)
+        let energy_weight = if total_rms > f32::EPSILON {
+            primary_rms / total_rms
         } else {
-            (0.5, 0.5)
+            0.5
         };
+        let preferred_slot = self
+            .duplicate_signal
+            .observe(pending, self.target_sample_rate);
+        let target_primary_weight = match preferred_slot {
+            Some(MicrophoneSlot::Primary) => 1.0,
+            Some(MicrophoneSlot::Secondary) => 0.0,
+            None => energy_weight,
+        };
+        let mut primary_weight = self.primary_mix_weight.unwrap_or(target_primary_weight);
+        let maximum_weight_step =
+            1.0 / duration_samples(self.target_sample_rate, DUPLICATE_CROSSFADE_MS).max(1) as f32;
         let samples = pending
             .iter()
             .map(|sample| match (sample.primary, sample.secondary) {
                 (Some(primary), Some(secondary)) => {
-                    (primary * primary_weight + secondary * secondary_weight).clamp(-1.0, 1.0)
+                    primary_weight =
+                        move_toward(primary_weight, target_primary_weight, maximum_weight_step);
+                    (primary * primary_weight + secondary * (1.0 - primary_weight)).clamp(-1.0, 1.0)
                 }
                 (Some(primary), None) => primary.clamp(-1.0, 1.0),
                 (None, Some(secondary)) => secondary.clamp(-1.0, 1.0),
                 (None, None) => 0.0,
             })
             .collect::<Vec<_>>();
+        self.primary_mix_weight = Some(primary_weight);
         let duration_ms =
             ((samples.len() as f64 / self.target_sample_rate as f64) * 1_000.0).round() as u64;
         let captured_at = self.base_time
@@ -197,6 +307,116 @@ impl MicrophoneMixer {
             duration_ms: duration_ms.max(1),
             captured_at,
         }
+    }
+}
+
+fn duration_samples(sample_rate: u32, duration_ms: u64) -> usize {
+    ((u64::from(sample_rate) * duration_ms).div_ceil(1_000))
+        .max(1)
+        .min(usize::MAX as u64) as usize
+}
+
+fn move_toward(current: f32, target: f32, maximum_step: f32) -> f32 {
+    if current < target {
+        (current + maximum_step).min(target)
+    } else {
+        (current - maximum_step).max(target)
+    }
+}
+
+fn estimate_duplicate_delay(
+    primary: &VecDeque<f32>,
+    secondary: &VecDeque<f32>,
+    sample_rate: u32,
+) -> DuplicateAnalysis {
+    let stride = sample_rate.div_ceil(DUPLICATE_ANALYSIS_RATE_HZ).max(1) as usize;
+    let primary = primary.iter().step_by(stride).copied().collect::<Vec<_>>();
+    let secondary = secondary
+        .iter()
+        .step_by(stride)
+        .copied()
+        .collect::<Vec<_>>();
+    let len = primary.len().min(secondary.len());
+    let analysis_rate = sample_rate.div_ceil(stride as u32).max(1);
+    let minimum_overlap = duration_samples(analysis_rate, DUPLICATE_ANALYSIS_MIN_OVERLAP_MS);
+    if len <= minimum_overlap {
+        return DuplicateAnalysis::Silent;
+    }
+
+    let primary_mean = primary
+        .iter()
+        .take(len)
+        .map(|sample| f64::from(*sample))
+        .sum::<f64>()
+        / len as f64;
+    let secondary_mean = secondary
+        .iter()
+        .take(len)
+        .map(|sample| f64::from(*sample))
+        .sum::<f64>()
+        / len as f64;
+    let primary_rms = (primary
+        .iter()
+        .take(len)
+        .map(|sample| (f64::from(*sample) - primary_mean).powi(2))
+        .sum::<f64>()
+        / len as f64)
+        .sqrt();
+    let secondary_rms = (secondary
+        .iter()
+        .take(len)
+        .map(|sample| (f64::from(*sample) - secondary_mean).powi(2))
+        .sum::<f64>()
+        / len as f64)
+        .sqrt();
+    if primary_rms < f64::from(DUPLICATE_MIN_RMS) || secondary_rms < f64::from(DUPLICATE_MIN_RMS) {
+        return DuplicateAnalysis::Silent;
+    }
+
+    let maximum_delay = duration_samples(analysis_rate, DUPLICATE_ANALYSIS_MAX_DELAY_MS)
+        .min(len.saturating_sub(minimum_overlap));
+    let mut best_lag = 0_i64;
+    let mut best_correlation = 0.0_f64;
+    for lag in -(maximum_delay as i64)..=(maximum_delay as i64) {
+        let (primary_start, secondary_start) = if lag >= 0 {
+            (0, lag as usize)
+        } else {
+            ((-lag) as usize, 0)
+        };
+        let overlap = len - primary_start.max(secondary_start);
+        if overlap < minimum_overlap {
+            continue;
+        }
+        let mut cross = 0.0_f64;
+        let mut primary_energy = 0.0_f64;
+        let mut secondary_energy = 0.0_f64;
+        for offset in 0..overlap {
+            let primary_sample = f64::from(primary[primary_start + offset]) - primary_mean;
+            let secondary_sample = f64::from(secondary[secondary_start + offset]) - secondary_mean;
+            cross += primary_sample * secondary_sample;
+            primary_energy += primary_sample * primary_sample;
+            secondary_energy += secondary_sample * secondary_sample;
+        }
+        let denominator = (primary_energy * secondary_energy).sqrt();
+        if denominator <= f64::EPSILON {
+            continue;
+        }
+        let correlation = (cross / denominator).abs();
+        if correlation > best_correlation {
+            best_correlation = correlation;
+            best_lag = lag;
+        }
+    }
+
+    let minimum_delay = duration_samples(analysis_rate, DUPLICATE_MIN_DELAY_MS) as i64;
+    if best_correlation >= DUPLICATE_CORRELATION_THRESHOLD && best_lag.abs() >= minimum_delay {
+        DuplicateAnalysis::Correlated {
+            lag_samples: best_lag.saturating_mul(stride as i64),
+        }
+    } else if best_correlation < DUPLICATE_RELEASE_THRESHOLD || best_lag.abs() < minimum_delay {
+        DuplicateAnalysis::Uncorrelated
+    } else {
+        DuplicateAnalysis::Silent
     }
 }
 

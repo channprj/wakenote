@@ -164,3 +164,81 @@ fn mixer_discards_frames_older_than_the_emitted_timeline() {
         .collect::<Vec<_>>();
     assert_eq!(tail_samples, vec![0.9]);
 }
+
+#[test]
+fn mixer_suppresses_a_delayed_duplicate_instead_of_combining_it() {
+    const SAMPLE_RATE: u32 = 1_000;
+    const CHUNK_SAMPLES: usize = 10;
+    const TOTAL_SAMPLES: usize = 600;
+    const DUPLICATE_DELAY_SAMPLES: usize = 30;
+    const ANALYSIS_WARMUP_SAMPLES: usize = 250;
+
+    let source = (0..TOTAL_SAMPLES)
+        .map(|index| {
+            let time = index as f32 / SAMPLE_RATE as f32;
+            0.32 * (std::f32::consts::TAU * 37.0 * time).sin()
+                + 0.21 * (std::f32::consts::TAU * 73.0 * time).sin()
+                + 0.13 * (std::f32::consts::TAU * 131.0 * time).sin()
+        })
+        .collect::<Vec<_>>();
+    let delayed_duplicate = (0..TOTAL_SAMPLES)
+        .map(|index| {
+            index
+                .checked_sub(DUPLICATE_DELAY_SAMPLES)
+                .map(|source_index| source[source_index] * 0.8)
+                .unwrap_or(0.0)
+        })
+        .collect::<Vec<_>>();
+
+    let base_time = Utc.timestamp_millis_opt(0).single().unwrap();
+    let mut mixer = MicrophoneMixer::new(SAMPLE_RATE, base_time);
+    let active = [MicrophoneSlot::Primary, MicrophoneSlot::Secondary];
+    let mut mixed_samples = Vec::new();
+
+    for start in (0..TOTAL_SAMPLES).step_by(CHUNK_SAMPLES) {
+        let end = start + CHUNK_SAMPLES;
+        let captured_at_ms = end as i64;
+        assert!(
+            mixer
+                .push_frame(
+                    MicrophoneSlot::Primary,
+                    SAMPLE_RATE,
+                    frame(
+                        source[start..end].to_vec(),
+                        CHUNK_SAMPLES as u64,
+                        captured_at_ms,
+                    ),
+                    &active,
+                )
+                .is_empty(),
+            "the mixer must wait for the matching secondary frame",
+        );
+        mixed_samples.extend(
+            mixer
+                .push_frame(
+                    MicrophoneSlot::Secondary,
+                    SAMPLE_RATE,
+                    frame(
+                        delayed_duplicate[start..end].to_vec(),
+                        CHUNK_SAMPLES as u64,
+                        captured_at_ms,
+                    ),
+                    &active,
+                )
+                .into_iter()
+                .flat_map(|frame| frame.samples),
+        );
+    }
+
+    assert_eq!(mixed_samples.len(), TOTAL_SAMPLES);
+    let mean_squared_error = mixed_samples[ANALYSIS_WARMUP_SAMPLES..]
+        .iter()
+        .zip(&source[ANALYSIS_WARMUP_SAMPLES..])
+        .map(|(actual, expected)| f64::from(actual - expected).powi(2))
+        .sum::<f64>()
+        / (TOTAL_SAMPLES - ANALYSIS_WARMUP_SAMPLES) as f64;
+    assert!(
+        mean_squared_error < 0.002,
+        "a delayed copy remained audible in the merged signal (MSE {mean_squared_error:.6})",
+    );
+}
