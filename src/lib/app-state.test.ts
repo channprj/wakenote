@@ -13,6 +13,7 @@ import {
 describe("app state derivation", () => {
   it("merges two microphone inputs by default", () => {
     expect(defaultSettings().merge_microphone_inputs).toBe(true);
+    expect(defaultSettings().priority_microphone_inputs).toBe(false);
   });
 
   it("enables local voice-aware auto level by default", () => {

@@ -1097,6 +1097,25 @@ describe("formatTranscriptForCopy", () => {
     expect(merged.device_name).toBe("BOYA CM40 + BY-V");
   });
 
+  it("labels Priority Audio captures separately from merged captures", () => {
+    const priority: RecentTranscript = {
+      transcript_path: "/tmp/WakeNote/20260729/162909-mic-priority.txt",
+      audio_path: "/tmp/WakeNote/20260729/162909-mic-priority.m4a",
+      recorded_at: "2026-07-29T16:29:09+09:00",
+      text: "priority transcript",
+      source: "microphone",
+      source_label: "mic-priority",
+      device_id: "input-1-boya-cm40+input-2-by-v",
+      device_name: "BOYA CM40 + BY-V",
+      microphone_slot: null,
+    };
+
+    expect(transcriptSourceLabel(priority)).toBe("Priority Mic");
+    expect(formatTranscriptForCopy(priority)).toBe(
+      "2026-07-29 16:29:09 [Priority Mic] - priority transcript",
+    );
+  });
+
   it("labels Dictation captures from their persisted source label", () => {
     const dictation: RecentTranscript = {
       transcript_path: "/tmp/WakeNote/20260731/031500-dictation.txt",

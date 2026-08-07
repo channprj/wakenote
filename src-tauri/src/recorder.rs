@@ -213,7 +213,7 @@ impl Recorder {
                 request.source_label,
             ),
             microphone_inputs: if request.source == ChunkSource::Microphone
-                && request.source_label == Some("mic-merged")
+                && matches!(request.source_label, Some("mic-merged" | "mic-priority"))
             {
                 request.settings.capture_microphones.clone()
             } else {

@@ -77,7 +77,7 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain('aria-label="Primary microphone"');
     expect(markup).toContain('aria-label="Secondary microphone"');
     expect(markup).toContain("1 / 2 selected");
-    expect(markup).toContain("Merge microphone inputs");
+    expect(markup).toContain("Microphone processing");
     expect(markup).toContain("Input monitoring uses Primary only.");
     expect(markup).toContain("Threshold");
     expect(markup).not.toContain("OpenRouter");

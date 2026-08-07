@@ -65,6 +65,9 @@ export function transcriptSourceLabel(
     if (entry.source_label === "mic-merged") {
       return "Merged Mic";
     }
+    if (entry.source_label === "mic-priority") {
+      return "Priority Mic";
+    }
     return entry.device_name?.trim() || "Mic";
   }
   if (entry.source_label && sourceLabels[entry.source_label]) {

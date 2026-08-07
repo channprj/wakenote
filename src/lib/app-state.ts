@@ -155,6 +155,7 @@ export function defaultSettings(): AppSettings {
     microphone_priority: [{ id: "default", label: "System Default" }],
     capture_microphones: [{ id: "default", label: "System Default" }],
     merge_microphone_inputs: true,
+    priority_microphone_inputs: false,
     save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     audio_format: "m4a",

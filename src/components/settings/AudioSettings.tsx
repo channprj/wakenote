@@ -157,12 +157,26 @@ export function AudioSettings({
           }
         />
         <MicrophoneInputVolumeRows snapshot={snapshot} actions={actions} />
-        <SettingSwitch
-          label="Merge microphone inputs"
-          description="Combine Primary and Secondary into one recording and transcription."
-          checked={settings.merge_microphone_inputs}
-          onCheckedChange={(merge_microphone_inputs) =>
-            actions.onPatch({ merge_microphone_inputs })
+        <SettingSelect
+          label="Microphone processing"
+          description="Keep separate recordings, synchronize and blend both microphones, or use the cleanest sufficiently loud microphone."
+          value={
+            settings.priority_microphone_inputs
+              ? "priority"
+              : settings.merge_microphone_inputs
+                ? "merge"
+                : "separate"
+          }
+          options={[
+            { value: "separate", label: "Separate recordings" },
+            { value: "merge", label: "Merge Audio" },
+            { value: "priority", label: "Priority Audio" },
+          ]}
+          onValueChange={(mode) =>
+            actions.onPatch({
+              merge_microphone_inputs: mode === "merge",
+              priority_microphone_inputs: mode === "priority",
+            })
           }
         />
         <MicrophoneStatusRows settings={settings} status={status} />

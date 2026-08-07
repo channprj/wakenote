@@ -517,7 +517,7 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({ launch_at_login: true });
   });
 
-  it("keeps merged microphone input on by default and patches the exact key", async () => {
+  it("offers separate Merge Audio and Priority Audio modes", async () => {
     const actions = makeActions();
     const snapshot = mockSnapshot();
     snapshot.settings.capture_microphones = [
@@ -533,14 +533,18 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const mergeSwitch = screen.getByRole("switch", {
-      name: "Merge microphone inputs",
+    const processing = screen.getByRole("combobox", {
+      name: "Microphone processing",
     });
-    expect(mergeSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(processing.textContent).toContain("Merge Audio");
 
-    await userEvent.click(mergeSwitch);
+    await userEvent.click(processing);
+    await userEvent.click(
+      screen.getByRole("option", { name: "Priority Audio" }),
+    );
     expect(actions.onPatch).toHaveBeenCalledWith({
       merge_microphone_inputs: false,
+      priority_microphone_inputs: true,
     });
   });
 

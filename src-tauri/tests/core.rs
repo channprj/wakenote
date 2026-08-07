@@ -375,6 +375,7 @@ fn default_settings_seed_one_system_default_capture_microphone() {
     let settings = AppSettings::default();
 
     assert!(settings.merge_microphone_inputs);
+    assert!(!settings.priority_microphone_inputs);
     assert_eq!(
         settings.capture_microphones,
         vec![CaptureMicrophoneEntry {
@@ -386,16 +387,49 @@ fn default_settings_seed_one_system_default_capture_microphone() {
 }
 
 #[test]
-fn legacy_settings_without_merge_microphone_inputs_default_on() {
+fn priority_microphone_input_patch_is_mutually_exclusive_and_reconciles_capture() {
+    let active = AppSettings {
+        capture_microphones: vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+                core_audio_uid: None,
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+                core_audio_uid: None,
+            },
+        ],
+        ..AppSettings::default()
+    };
+    let patch = SettingsPatch {
+        merge_microphone_inputs: Some(false),
+        priority_microphone_inputs: Some(true),
+        ..SettingsPatch::default()
+    };
+
+    assert_eq!(
+        live_capture_runtime_action_for_patch(&active, &patch),
+        LiveCaptureRuntimeAction::Reconcile,
+    );
+    let mut updated = active;
+    updated.apply_patch(patch);
+    assert!(!updated.merge_microphone_inputs);
+    assert!(updated.priority_microphone_inputs);
+}
+
+#[test]
+fn legacy_settings_without_microphone_processing_fields_use_merge_mode() {
     let mut value = serde_json::to_value(AppSettings::default()).expect("settings json");
-    value
-        .as_object_mut()
-        .expect("settings object")
-        .remove("merge_microphone_inputs");
+    let object = value.as_object_mut().expect("settings object");
+    object.remove("merge_microphone_inputs");
+    object.remove("priority_microphone_inputs");
 
     let settings: AppSettings = serde_json::from_value(value).expect("legacy settings");
 
     assert!(settings.merge_microphone_inputs);
+    assert!(!settings.priority_microphone_inputs);
 }
 
 #[test]

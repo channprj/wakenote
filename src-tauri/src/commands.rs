@@ -25,7 +25,7 @@ use crate::models::{
     ModelDescriptor, ModelStatus, ModelStore, TranscriptionContext, default_model_registry,
     model_supports_context, validate_model_options,
 };
-use crate::multi_capture::MicrophoneMixer;
+use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer};
 use crate::persistence::{
     AppPersistence, ListVisibilityState, PersistenceError, SetListVisibilityRequest,
 };
@@ -1158,7 +1158,7 @@ impl AppBackend {
     ) -> Result<AppStatus, String> {
         let device_id = device_id.into();
         let device_name = device_name.into();
-        if self.should_merge_microphone_inputs() {
+        if self.should_combine_microphone_inputs() {
             return self.start_merged_capture_slot(
                 slot,
                 sample_rate,
@@ -1248,8 +1248,9 @@ impl AppBackend {
         Ok(self.app_status())
     }
 
-    fn should_merge_microphone_inputs(&self) -> bool {
-        self.settings.merge_microphone_inputs && self.settings.capture_microphones.len() == 2
+    fn should_combine_microphone_inputs(&self) -> bool {
+        (self.settings.merge_microphone_inputs || self.settings.priority_microphone_inputs)
+            && self.settings.capture_microphones.len() == 2
     }
 
     fn start_merged_capture_slot(
@@ -1291,7 +1292,12 @@ impl AppBackend {
         if self.microphone_mixer.is_none() {
             let merged_device_id = self.merged_microphone_device_id();
             let merged_device_name = self.merged_microphone_device_name();
-            self.microphone_mixer = Some(MicrophoneMixer::new(sample_rate, base_time));
+            let mode = if self.settings.priority_microphone_inputs {
+                MicrophoneMixMode::Priority
+            } else {
+                MicrophoneMixMode::Merge
+            };
+            self.microphone_mixer = Some(MicrophoneMixer::with_mode(sample_rate, base_time, mode));
             self.capture = Some(CaptureController::new(CaptureControllerConfig {
                 save_root: self.save_root_path(),
                 settings: self.settings.clone(),
@@ -1302,7 +1308,14 @@ impl AppBackend {
                 base_time,
                 app_version: env!("CARGO_PKG_VERSION").to_string(),
                 source: ChunkSource::Microphone,
-                source_label: Some("mic-merged".to_string()),
+                source_label: Some(
+                    if self.settings.priority_microphone_inputs {
+                        "mic-priority"
+                    } else {
+                        "mic-merged"
+                    }
+                    .to_string(),
+                ),
             }));
             self.secondary_capture = None;
         }

@@ -629,7 +629,7 @@ fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() 
             )
             .expect("secondary speech");
     }
-    for step in 6..=10 {
+    for step in 6..=13 {
         let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
         for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
             backend
@@ -714,6 +714,95 @@ fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() 
             },
         ]
     );
+}
+
+#[test]
+fn backend_priority_audio_records_one_cleanest_microphone_artifact() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        capture_microphones: Some(vec![
+            CaptureMicrophoneEntry {
+                id: "input-1-wired".to_string(),
+                label: "Wired".to_string(),
+                core_audio_uid: None,
+            },
+            CaptureMicrophoneEntry {
+                id: "input-2-wireless".to_string(),
+                label: "Wireless".to_string(),
+                core_audio_uid: None,
+            },
+        ]),
+        merge_microphone_inputs: Some(false),
+        priority_microphone_inputs: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        lead_in_padding_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    for (slot, id, label) in [
+        (MicrophoneSlot::Primary, "input-1-wired", "Wired"),
+        (MicrophoneSlot::Secondary, "input-2-wireless", "Wireless"),
+    ] {
+        backend
+            .start_capture_session_for_slot(slot, 10, base_time, id, label, false)
+            .expect("start priority microphone");
+    }
+
+    for step in 1..=10 {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        let (primary, secondary) = if step <= 5 {
+            (vec![0.8], vec![0.2])
+        } else {
+            (vec![0.0], vec![0.0])
+        };
+        backend
+            .process_audio_frame_for_slot(
+                MicrophoneSlot::Primary,
+                AudioFrame {
+                    samples: primary,
+                    duration_ms: 100,
+                    captured_at,
+                },
+            )
+            .expect("primary priority frame");
+        backend
+            .process_audio_frame_for_slot(
+                MicrophoneSlot::Secondary,
+                AudioFrame {
+                    samples: secondary,
+                    duration_ms: 100,
+                    captured_at,
+                },
+            )
+            .expect("secondary priority frame");
+    }
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 1);
+    assert_eq!(snapshot.jobs.len(), 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .to_string_lossy()
+            .contains("mic-priority")
+    );
+    let metadata: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(snapshot.jobs[0].audio_path.with_extension("json"))
+            .expect("priority metadata"),
+    )
+    .expect("parse priority metadata");
+    assert_eq!(metadata.source_label.as_deref(), Some("mic-priority"));
+    assert_eq!(metadata.microphone_slot, None);
+    assert_eq!(metadata.microphone_inputs.len(), 2);
 }
 
 #[test]
@@ -3473,7 +3562,7 @@ fn finished_meet_job_keeps_capture_time_paths_after_settings_change() {
     let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
     backend
         .start_system_capture_session(
-            10,
+            16_000,
             base_time,
             "Google Chrome".into(),
             "meet".into(),
@@ -3482,7 +3571,7 @@ fn finished_meet_job_keeps_capture_time_paths_after_settings_change() {
         .expect("start meet system capture");
     backend
         .process_system_audio_frame(AudioFrame {
-            samples: vec![0.5],
+            samples: vec![0.5; 1_600],
             duration_ms: 100,
             captured_at: base_time + chrono::Duration::milliseconds(100),
         })

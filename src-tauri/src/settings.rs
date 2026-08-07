@@ -400,6 +400,8 @@ pub struct AppSettings {
     pub capture_microphones: Vec<CaptureMicrophoneEntry>,
     #[serde(default = "default_merge_microphone_inputs")]
     pub merge_microphone_inputs: bool,
+    #[serde(default)]
+    pub priority_microphone_inputs: bool,
     pub save_root: String,
     pub save_root_confirmed: bool,
     pub audio_format: AudioFormat,
@@ -538,6 +540,7 @@ pub struct SettingsPatch {
     pub microphone_priority: Option<Vec<MicrophonePriorityEntry>>,
     pub capture_microphones: Option<Vec<CaptureMicrophoneEntry>>,
     pub merge_microphone_inputs: Option<bool>,
+    pub priority_microphone_inputs: Option<bool>,
     pub save_root: Option<String>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
@@ -744,9 +747,12 @@ pub fn live_capture_runtime_action_for_patch(
     let capture_microphones_changed = patch.capture_microphones.as_ref().is_some_and(|entries| {
         normalize_capture_microphones(entries.clone()) != settings.capture_microphones
     });
-    let merge_microphone_inputs_changed = patch
+    let microphone_processing_changed = patch
         .merge_microphone_inputs
-        .is_some_and(|value| value != settings.merge_microphone_inputs);
+        .is_some_and(|value| value != settings.merge_microphone_inputs)
+        || patch
+            .priority_microphone_inputs
+            .is_some_and(|value| value != settings.priority_microphone_inputs);
     let microphone_changed = patch
         .selected_microphone
         .as_ref()
@@ -761,7 +767,7 @@ pub fn live_capture_runtime_action_for_patch(
         should_run,
         microphone_changed,
         capture_microphones_changed,
-        merge_microphone_inputs_changed,
+        microphone_processing_changed,
     ) {
         (false, true, _, _, _) => LiveCaptureRuntimeAction::Start,
         (true, false, _, _, _) => LiveCaptureRuntimeAction::Stop,
@@ -1135,6 +1141,15 @@ impl AppSettings {
         self.normalize_capture_microphones();
         if let Some(value) = patch.merge_microphone_inputs {
             self.merge_microphone_inputs = value;
+            if value && patch.priority_microphone_inputs != Some(true) {
+                self.priority_microphone_inputs = false;
+            }
+        }
+        if let Some(value) = patch.priority_microphone_inputs {
+            self.priority_microphone_inputs = value;
+            if value {
+                self.merge_microphone_inputs = false;
+            }
         }
         if let Some(value) = patch.save_root {
             self.save_root_confirmed = !value.trim().is_empty();
@@ -1421,6 +1436,7 @@ impl Default for AppSettings {
             microphone_priority: default_microphone_priority(),
             capture_microphones: default_capture_microphones(),
             merge_microphone_inputs: default_merge_microphone_inputs(),
+            priority_microphone_inputs: false,
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
             audio_format: AudioFormat::M4a,
