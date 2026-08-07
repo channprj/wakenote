@@ -1,8 +1,16 @@
 import type { CSSProperties } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type OverlayCaptionPhase = "idle" | "partial" | "refining" | "final";
-export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type FloatingOverlayPosition =
+  | "off"
+  | "top_left"
+  | "top"
+  | "top_right"
+  | "bottom_left"
+  | "bottom"
+  | "bottom_right";
+export type SubtitleAnimation = "instant" | "fade" | "dissolve";
 export type DictationOverlayState =
   | "hidden"
   | "recording"
@@ -37,6 +45,8 @@ export interface OverlayCaptionStyle {
   text_color: string;
   background_color: string;
   background_opacity: number;
+  animation: SubtitleAnimation;
+  duration_seconds: number;
 }
 
 export function emptyCaptionSnapshot(): OverlayCaptionSnapshot {
@@ -59,6 +69,8 @@ function defaultCaptionStyle(): OverlayCaptionStyle {
     text_color: "#ffffff",
     background_color: "#000000",
     background_opacity: 82,
+    animation: "fade",
+    duration_seconds: 5,
   };
 }
 
@@ -100,8 +112,9 @@ function rgbaColor(hex: string, opacity: number): string {
 }
 
 function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
-  const fontSize = Math.max(18, Math.min(48, Math.round(style.font_size_px)));
-  const opacity = Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
+  const fontSize = Math.max(10, Math.min(48, Math.round(style.font_size_px)));
+  const opacity =
+    Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
   return {
     "--overlay-caption-font-size": `${fontSize}px`,
     "--overlay-caption-text-color": style.text_color,
@@ -126,9 +139,7 @@ function dictationSnapshotFromPayload(
   const state = data?.state;
   return {
     state:
-      state === "recording" ||
-      state === "transcribing" ||
-      state === "error"
+      state === "recording" || state === "transcribing" || state === "error"
         ? state
         : "hidden",
     message: typeof data?.message === "string" ? data.message : null,
@@ -140,8 +151,10 @@ function dictationSnapshotFromPayload(
 }
 
 function dictationStyleVariables(style: DictationOverlayStyle): CSSProperties {
-  const backgroundColor = style.background_color === "#ffffff" ? "#ffffff" : "#000000";
-  const opacity = Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
+  const backgroundColor =
+    style.background_color === "#ffffff" ? "#ffffff" : "#000000";
+  const opacity =
+    Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
   return {
     "--dictation-background-rgb": hexToRgbTriplet(backgroundColor),
     "--dictation-background-opacity": `${opacity}`,
@@ -168,16 +181,29 @@ function formatElapsed(elapsedSeconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function subtitleExitDurationMs(animation: SubtitleAnimation): number {
+  switch (animation) {
+    case "instant":
+      return 0;
+    case "fade":
+      return 180;
+    case "dissolve":
+      return 240;
+  }
+}
+
 export function OverlayContent({
   caption,
   dictation,
   levels,
   elapsedSeconds,
+  captionExiting = false,
 }: {
   caption: OverlayCaptionSnapshot;
   dictation: DictationOverlaySnapshot;
   levels: number[];
   elapsedSeconds: number;
+  captionExiting?: boolean;
 }) {
   if (dictation.state === "recording") {
     return (
@@ -191,10 +217,7 @@ export function OverlayContent({
         <span className="overlay-dictation__dot" aria-hidden="true" />
         <span className="overlay-dictation__waveform" aria-hidden="true">
           {levels.map((level, index) => (
-            <i
-              key={index}
-              style={{ "--level": level } as CSSProperties}
-            />
+            <i key={index} style={{ "--level": level } as CSSProperties} />
           ))}
         </span>
         <span className="overlay-dictation__elapsed">
@@ -246,6 +269,8 @@ export function OverlayContent({
     <div
       className="overlay-caption"
       data-status={caption.phase}
+      data-animation={caption.style.animation}
+      data-visibility={captionExiting ? "exiting" : "visible"}
       role="status"
       aria-live="polite"
       style={captionStyleVariables(caption.style)}
@@ -256,7 +281,12 @@ export function OverlayContent({
 }
 
 export function RecordingOverlay() {
-  const [caption, setCaption] = useState<OverlayCaptionSnapshot>(() => emptyCaptionSnapshot());
+  const [caption, setCaption] = useState<OverlayCaptionSnapshot>(() =>
+    emptyCaptionSnapshot(),
+  );
+  const [captionExiting, setCaptionExiting] = useState(false);
+  const captionRef = useRef(caption);
+  const captionExitTimerRef = useRef<number | null>(null);
   const [dictation, setDictation] = useState<DictationOverlaySnapshot>(() =>
     emptyDictationSnapshot(),
   );
@@ -289,9 +319,38 @@ export function RecordingOverlay() {
       const { invoke } = await import("@tauri-apps/api/core");
       const { listen } = await import("@tauri-apps/api/event");
 
-      for (const eventName of ["overlay-caption-updated", "overlay-caption-hidden"]) {
+      const applyCaptionSnapshot = (payload: unknown, hidden: boolean) => {
+        const next = snapshotFromPayload(payload);
+        if (captionExitTimerRef.current !== null) {
+          window.clearTimeout(captionExitTimerRef.current);
+          captionExitTimerRef.current = null;
+        }
+        const current = captionRef.current;
+        const exitDuration = subtitleExitDurationMs(current.style.animation);
+        if (hidden && current.visible && current.text && exitDuration > 0) {
+          setCaptionExiting(true);
+          captionExitTimerRef.current = window.setTimeout(() => {
+            captionRef.current = next;
+            setCaption(next);
+            setCaptionExiting(false);
+            captionExitTimerRef.current = null;
+          }, exitDuration);
+          return;
+        }
+        captionRef.current = next;
+        setCaption(next);
+        setCaptionExiting(false);
+      };
+
+      for (const eventName of [
+        "overlay-caption-updated",
+        "overlay-caption-hidden",
+      ]) {
         const unlisten = await listen(eventName, (event) => {
-          setCaption(snapshotFromPayload(event.payload));
+          applyCaptionSnapshot(
+            event.payload,
+            eventName === "overlay-caption-hidden",
+          );
         });
         if (cancelled) {
           unlisten();
@@ -335,9 +394,11 @@ export function RecordingOverlay() {
       }
 
       try {
-        const snapshot = await invoke<OverlayCaptionSnapshot>("overlay_caption_snapshot");
+        const snapshot = await invoke<OverlayCaptionSnapshot>(
+          "overlay_caption_snapshot",
+        );
         if (!cancelled) {
-          setCaption(snapshotFromPayload(snapshot));
+          applyCaptionSnapshot(snapshot, false);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -347,6 +408,9 @@ export function RecordingOverlay() {
 
     return () => {
       cancelled = true;
+      if (captionExitTimerRef.current !== null) {
+        window.clearTimeout(captionExitTimerRef.current);
+      }
       for (const unlisten of unlisteners) {
         unlisten();
       }
@@ -359,6 +423,7 @@ export function RecordingOverlay() {
       dictation={dictation}
       levels={levels}
       elapsedSeconds={elapsedSeconds}
+      captionExiting={captionExiting}
     />
   );
 }

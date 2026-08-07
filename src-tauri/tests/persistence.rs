@@ -4,7 +4,8 @@ use wakenote::persistence::{
 };
 use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
 use wakenote::settings::{
-    AppSettings, DictionaryEntry, FloatingOverlayPosition, SettingsPatch, ThemeMode,
+    AppSettings, DictionaryEntry, FloatingOverlayPosition, SettingsPatch, SubtitleAnimation,
+    ThemeMode,
 };
 
 #[test]
@@ -225,12 +226,14 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
 }
 
 #[test]
-fn persistence_round_trips_floating_overlay_position() {
+fn persistence_round_trips_subtitle_presentation() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = AppPersistence::new(tmp.path());
     let mut settings = AppSettings::default();
     settings.apply_patch(SettingsPatch {
-        floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
+        floating_overlay_position: Some(FloatingOverlayPosition::BottomRight),
+        subtitle_duration_seconds: Some(9),
+        subtitle_animation: Some(SubtitleAnimation::Dissolve),
         ..SettingsPatch::default()
     });
 
@@ -242,8 +245,10 @@ fn persistence_round_trips_floating_overlay_position() {
         .expect("settings");
     assert_eq!(
         loaded.floating_overlay_position,
-        FloatingOverlayPosition::Bottom
+        FloatingOverlayPosition::BottomRight
     );
+    assert_eq!(loaded.subtitle_duration_seconds, 9);
+    assert_eq!(loaded.subtitle_animation, SubtitleAnimation::Dissolve);
 }
 
 #[test]

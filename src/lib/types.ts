@@ -1,6 +1,14 @@
 export type AudioFormat = "m4a" | "mp3" | "wav";
 
-export type FloatingOverlayPosition = "off" | "top" | "bottom";
+export type FloatingOverlayPosition =
+  | "off"
+  | "top_left"
+  | "top"
+  | "top_right"
+  | "bottom_left"
+  | "bottom"
+  | "bottom_right";
+export type SubtitleAnimation = "instant" | "fade" | "dissolve";
 export type DictationCueSound = "original" | "alternative";
 export type DictationCueVolume = "muted" | "small" | "medium" | "large";
 export type DictationStage = "idle" | "recording" | "transcribing" | "error";
@@ -205,6 +213,8 @@ export interface AppSettings {
   floating_overlay_text_color: string;
   floating_overlay_background_color: string;
   floating_overlay_background_opacity: number;
+  subtitle_duration_seconds: number;
+  subtitle_animation: SubtitleAnimation;
   theme_mode: ThemeMode;
   theme_primary_color: string;
   system_audio_enabled: boolean;

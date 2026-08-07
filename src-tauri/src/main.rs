@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -79,8 +79,8 @@ use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::openai_realtime::OpenAiRealtimeManager;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
-    OVERLAY_CAPTION_FINAL_HOLD, OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT,
-    OverlayCaptionRuntime, OverlayCaptionSnapshot,
+    OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT, OverlayCaptionRuntime,
+    OverlayCaptionSnapshot,
 };
 use wakenote::permissions::{self, AppPermissions};
 use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
@@ -89,9 +89,10 @@ use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
 use wakenote::settings::{
     AppSettings, CaptureMicrophoneEntry, DictationCueSound, DictationCueVolume,
     FloatingOverlayPosition, LaunchAtLoginAction, LiveCaptureRuntimeAction, MicrophoneSlot,
-    SettingsPatch, TranscriptionLanguage, TrayClickAction, clamp_llm_max_iterations,
-    expand_user_path, launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
-    live_capture_should_start_on_launch, resolve_auto_prompt,
+    SettingsPatch, SubtitleAnimation, TranscriptionLanguage, TrayClickAction,
+    clamp_llm_max_iterations, expand_user_path, launch_at_login_action_for_patch,
+    live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
+    resolve_auto_prompt,
 };
 use wakenote::soniox_realtime::SonioxRealtimeManager;
 use wakenote::source_watcher::{
@@ -124,6 +125,7 @@ type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
 type OverlayCaptionState = Arc<Mutex<OverlayCaptionRuntime>>;
+type SubtitlePreviewState = Arc<AtomicU64>;
 type IntentionalQuitState = Arc<AtomicBool>;
 /// Open system-audio stream handle (dropping it stops capture). Held alongside
 /// the mic runtime so the two capture paths are independent. Managed as an
@@ -147,6 +149,7 @@ type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 const EVENT_DICTIONARY_CHANGED: &str = "dictionary-changed";
 const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
 const MICROPHONE_INPUT_LEVELS_CHANGED_EVENT: &str = "microphone-input-levels-changed";
+const SUBTITLE_PREVIEW_HOLD: Duration = Duration::from_millis(1_500);
 
 #[derive(Debug, Clone, PartialEq)]
 enum DictionaryApplyOutcome {
@@ -679,13 +682,61 @@ fn publish_overlay_caption_snapshot(
                 eprintln!("[overlay-caption] {context} show failed: {error}");
             }
         } else {
-            if let Err(error) = overlay::hide_overlay(&app_for_task) {
-                eprintln!("[overlay-caption] {context} hide failed: {error}");
+            let exit_duration = subtitle_exit_duration(snapshot.style.animation);
+            if exit_duration.is_zero() {
+                if let Err(error) = overlay::hide_overlay(&app_for_task) {
+                    eprintln!("[overlay-caption] {context} hide failed: {error}");
+                }
+            } else {
+                schedule_subtitle_window_hide(
+                    app_for_task.clone(),
+                    snapshot.generation,
+                    exit_duration,
+                    context,
+                );
             }
         }
     }) {
         eprintln!("[overlay-caption] {context} schedule failed: {error}");
     }
+}
+
+fn subtitle_exit_duration(animation: SubtitleAnimation) -> Duration {
+    match animation {
+        SubtitleAnimation::Instant => Duration::ZERO,
+        SubtitleAnimation::Fade => Duration::from_millis(180),
+        SubtitleAnimation::Dissolve => Duration::from_millis(240),
+    }
+}
+
+fn schedule_subtitle_window_hide(
+    app: AppHandle,
+    generation: u64,
+    delay: Duration,
+    context: &'static str,
+) {
+    thread::spawn(move || {
+        thread::sleep(delay);
+        let should_hide = app
+            .try_state::<OverlayCaptionState>()
+            .and_then(|state| state.lock().ok().map(|runtime| runtime.snapshot()))
+            .is_some_and(|snapshot| snapshot.generation == generation && !snapshot.visible);
+        let dictation_idle = app
+            .try_state::<DictationState>()
+            .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
+            .is_none_or(|stage| dictation_allows_caption_window_mutation(stage));
+        if !should_hide || !dictation_idle {
+            return;
+        }
+        let app_for_task = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            if let Err(error) = overlay::hide_overlay(&app_for_task) {
+                eprintln!("[overlay-caption] {context} delayed hide failed: {error}");
+            }
+        }) {
+            eprintln!("[overlay-caption] {context} delayed hide schedule failed: {error}");
+        }
+    });
 }
 
 fn schedule_overlay_caption_hide(
@@ -694,13 +745,24 @@ fn schedule_overlay_caption_hide(
     generation: u64,
 ) {
     thread::spawn(move || {
-        thread::sleep(OVERLAY_CAPTION_FINAL_HOLD);
-        let snapshot = overlay_caption_state.lock().ok().and_then(|mut runtime| {
-            if runtime.hide_if_generation(generation) {
-                Some(runtime.snapshot())
-            } else {
-                None
+        loop {
+            let delay = overlay_caption_state
+                .lock()
+                .ok()
+                .and_then(|runtime| runtime.hide_delay_for_generation(generation, Instant::now()));
+            let Some(delay) = delay else {
+                return;
+            };
+            if !delay.is_zero() {
+                thread::sleep(delay);
+                continue;
             }
+            break;
+        }
+        let snapshot = overlay_caption_state.lock().ok().and_then(|mut runtime| {
+            runtime
+                .hide_if_generation(generation)
+                .then(|| runtime.snapshot())
         });
         if let Some(snapshot) = snapshot {
             publish_overlay_caption_snapshot(&app, snapshot, "final hold elapsed");
@@ -967,6 +1029,68 @@ fn overlay_caption_snapshot(state: State<'_, OverlayCaptionState>) -> OverlayCap
         .lock()
         .map(|runtime| runtime.snapshot())
         .unwrap_or_else(|_| OverlayCaptionRuntime::default().snapshot())
+}
+
+#[tauri::command]
+fn preview_subtitle(
+    app: AppHandle,
+    state: State<'_, OverlayCaptionState>,
+    backend_state: State<'_, BackendState>,
+    preview_state: State<'_, SubtitlePreviewState>,
+    patch: SettingsPatch,
+) -> Result<OverlayCaptionSnapshot, String> {
+    let mut settings = backend_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings();
+    settings.apply_patch(patch);
+    let position = match settings.floating_overlay_position {
+        FloatingOverlayPosition::Off => FloatingOverlayPosition::Top,
+        position => position,
+    };
+    let generation = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .snapshot()
+        .generation;
+    let preview = OverlayCaptionSnapshot {
+        generation,
+        visible: true,
+        phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
+        chunk_id: None,
+        audio_path: None,
+        text: "Subtitle preview · 자막 미리보기".to_string(),
+        position,
+        final_hold_ms: Some(SUBTITLE_PREVIEW_HOLD.as_millis() as u64),
+        style: settings.floating_overlay_caption_style(),
+    };
+    let preview_token = preview_state
+        .fetch_add(1, Ordering::SeqCst)
+        .saturating_add(1);
+    publish_overlay_caption_snapshot(&app, preview.clone(), "subtitle preview");
+
+    let app_for_restore = app.clone();
+    let state_for_restore = state.inner().clone();
+    let preview_state_for_restore = preview_state.inner().clone();
+    thread::spawn(move || {
+        thread::sleep(SUBTITLE_PREVIEW_HOLD);
+        if preview_state_for_restore.load(Ordering::SeqCst) != preview_token {
+            return;
+        }
+        let snapshot = state_for_restore
+            .lock()
+            .ok()
+            .map(|runtime| runtime.snapshot());
+        if let Some(snapshot) = snapshot {
+            publish_overlay_caption_snapshot(
+                &app_for_restore,
+                snapshot,
+                "subtitle preview elapsed",
+            );
+        }
+    });
+
+    Ok(preview)
 }
 
 #[tauri::command]
@@ -5936,10 +6060,7 @@ fn wire_live_transcription(
                     let generation = snapshot.generation;
                     let should_schedule_hide = snapshot.final_hold_ms.is_some()
                         && snapshot.visible
-                        && matches!(
-                            snapshot.position,
-                            FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
-                        );
+                        && !matches!(snapshot.position, FloatingOverlayPosition::Off);
                     publish_overlay_caption_snapshot(
                         &app_for_handler,
                         snapshot,
@@ -6259,10 +6380,7 @@ fn emit_outcome_to_frontend(
                 if let Some(snapshot) = snapshot {
                     let generation = snapshot.generation;
                     let should_schedule_hide = snapshot.visible
-                        && matches!(
-                            snapshot.position,
-                            FloatingOverlayPosition::Top | FloatingOverlayPosition::Bottom
-                        );
+                        && !matches!(snapshot.position, FloatingOverlayPosition::Off);
                     publish_overlay_caption_snapshot(app, snapshot, "live final caption");
                     if should_schedule_hide {
                         schedule_overlay_caption_hide(
@@ -7037,6 +7155,7 @@ fn main() {
             let live_transcriber_state: LiveTranscriberState = Arc::new(Mutex::new(None));
             let overlay_caption_state: OverlayCaptionState =
                 Arc::new(Mutex::new(OverlayCaptionRuntime::default()));
+            let subtitle_preview_state: SubtitlePreviewState = Arc::new(AtomicU64::new(0));
             let intentional_quit_state: IntentionalQuitState = Arc::new(AtomicBool::new(false));
             let system_capture_state: SystemCaptureState = Arc::new(Mutex::new(None));
             let source_capture_lifecycle_state: SourceCaptureLifecycleState =
@@ -7078,6 +7197,7 @@ fn main() {
             app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
             app.manage(overlay_caption_state);
+            app.manage(subtitle_preview_state);
             app.manage(intentional_quit_state);
             app.manage(system_capture_state.clone());
             app.manage(source_capture_lifecycle_state.clone());
@@ -7265,6 +7385,7 @@ fn main() {
             save_soniox_api_key,
             delete_soniox_api_key,
             overlay_caption_snapshot,
+            preview_subtitle,
             debug_show_overlay_caption,
             debug_hide_overlay_caption,
             suspend_dictation_shortcut,

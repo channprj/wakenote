@@ -32,6 +32,17 @@ export function IntegrationsSettings({
   const [openAiApiKey, setOpenAiApiKey] = useState("");
   const [sonioxApiKey, setSonioxApiKey] = useState("");
 
+  function updateSubtitle(
+    patch: Parameters<SettingsActions["onPatch"]>[0],
+    preview = true,
+  ) {
+    void Promise.resolve(actions.onPatch(patch)).then(() => {
+      if (preview) {
+        return actions.onPreviewSubtitle(patch);
+      }
+    });
+  }
+
   return (
     <SettingsGrid maxColumns={3}>
       <SettingsCard
@@ -62,60 +73,65 @@ export function IntegrationsSettings({
       </SettingsCard>
 
       <SettingsCard
-        title="Floating overlay"
-        description="Live transcript surface above other windows."
+        title="Subtitles"
+        description="Show live speech as configurable subtitles above other windows."
       >
         <SettingSwitch
-          label="Show floating overlay"
+          label="Show subtitles"
           checked={settings.show_floating_overlay}
           onCheckedChange={(show_floating_overlay) =>
-            actions.onPatch({ show_floating_overlay })
+            updateSubtitle({ show_floating_overlay }, false)
           }
         />
         <SettingSelect
-          label="Floating overlay position"
+          label="Subtitle position"
           value={settings.floating_overlay_position}
           disabled={!settings.show_floating_overlay}
           title={
             settings.show_floating_overlay
-              ? "Choose where the floating overlay appears."
-              : "Enable the floating overlay before choosing its position."
+              ? "Choose where subtitles appear."
+              : "Enable subtitles before choosing their position."
           }
           options={[
             { value: "off", label: "Off" },
-            { value: "top", label: "Top" },
-            { value: "bottom", label: "Bottom" },
+            { value: "top_left", label: "Top left" },
+            { value: "top", label: "Top center" },
+            { value: "top_right", label: "Top right" },
+            { value: "bottom_left", label: "Bottom left" },
+            { value: "bottom", label: "Bottom center" },
+            { value: "bottom_right", label: "Bottom right" },
           ]}
           onValueChange={(floating_overlay_position) =>
-            actions.onPatch({ floating_overlay_position })
+            updateSubtitle({ floating_overlay_position })
           }
         />
         <SettingSlider
-          label="Overlay font size"
+          label="Subtitle font size"
+          description="A short example appears on screen while you adjust the size."
           value={settings.floating_overlay_font_size_px}
-          min={18}
+          min={10}
           max={48}
           suffix=" px"
           onValueChange={(floating_overlay_font_size_px) =>
-            actions.onPatch({ floating_overlay_font_size_px })
+            updateSubtitle({ floating_overlay_font_size_px })
           }
         />
         <ColorSetting
-          label="Overlay text color"
+          label="Subtitle text color"
           value={settings.floating_overlay_text_color}
           onChange={(floating_overlay_text_color) =>
-            actions.onPatch({ floating_overlay_text_color })
+            updateSubtitle({ floating_overlay_text_color })
           }
         />
         <SettingSelect
-          label="Overlay background"
+          label="Subtitle background"
           value={settings.floating_overlay_background_color}
           options={[
             { value: "#000000", label: "Black" },
             { value: "#ffffff", label: "White" },
           ]}
           onValueChange={(floating_overlay_background_color) =>
-            actions.onPatch({
+            updateSubtitle({
               floating_overlay_background_color,
               floating_overlay_text_color:
                 floating_overlay_background_color === "#ffffff"
@@ -125,13 +141,36 @@ export function IntegrationsSettings({
           }
         />
         <SettingSlider
-          label="Overlay background opacity"
+          label="Subtitle background opacity"
           value={settings.floating_overlay_background_opacity}
           min={0}
           max={100}
           suffix="%"
           onValueChange={(floating_overlay_background_opacity) =>
-            actions.onPatch({ floating_overlay_background_opacity })
+            updateSubtitle({ floating_overlay_background_opacity })
+          }
+        />
+        <SettingSlider
+          label="Subtitle duration"
+          description="Keep each final subtitle visible from 1 to 10 seconds."
+          value={settings.subtitle_duration_seconds}
+          min={1}
+          max={10}
+          suffix=" sec"
+          onValueChange={(subtitle_duration_seconds) =>
+            updateSubtitle({ subtitle_duration_seconds }, false)
+          }
+        />
+        <SettingSelect
+          label="Subtitle animation"
+          value={settings.subtitle_animation}
+          options={[
+            { value: "instant", label: "Instant" },
+            { value: "fade", label: "Fade" },
+            { value: "dissolve", label: "Dissolve" },
+          ]}
+          onValueChange={(subtitle_animation) =>
+            updateSubtitle({ subtitle_animation })
           }
         />
       </SettingsCard>

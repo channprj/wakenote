@@ -115,6 +115,7 @@ function directSettingsCards(grid: HTMLElement): HTMLElement[] {
 function makeActions(): SettingsActions {
   return {
     onPatch: vi.fn(),
+    onPreviewSubtitle: vi.fn(),
     onSetMicrophoneInputVolume: vi.fn(),
     onSuspendDictationShortcut: vi.fn(),
     onResumeDictationShortcut: vi.fn(),
@@ -761,7 +762,7 @@ describe("SettingsPage interactions", () => {
     );
 
     await user.click(
-      screen.getByRole("combobox", { name: "Overlay background" }),
+      screen.getByRole("combobox", { name: "Subtitle background" }),
     );
     await user.click(await screen.findByRole("option", { name: "White" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
@@ -779,7 +780,7 @@ describe("SettingsPage interactions", () => {
       />,
     );
     await user.click(
-      screen.getByRole("combobox", { name: "Overlay background" }),
+      screen.getByRole("combobox", { name: "Subtitle background" }),
     );
     await user.click(await screen.findByRole("option", { name: "Black" }));
     expect(actions.onPatch).toHaveBeenCalledWith({
@@ -788,7 +789,7 @@ describe("SettingsPage interactions", () => {
     });
 
     const opacity = screen.getByRole("slider", {
-      name: "Overlay background opacity",
+      name: "Subtitle background opacity",
     });
     fireEvent.keyDown(opacity, { key: "Home" });
     expect(actions.onPatch).toHaveBeenCalledWith({
@@ -798,6 +799,80 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({
       floating_overlay_background_opacity: 100,
     });
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        floating_overlay_background_opacity: 100,
+      }),
+    );
+  });
+
+  it("configures all subtitle positions, 10px type, duration, animation, and live preview", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.show_floating_overlay = true;
+
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const fontSize = screen.getByRole("slider", {
+      name: "Subtitle font size",
+    });
+    fireEvent.keyDown(fontSize, { key: "Home" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      floating_overlay_font_size_px: 10,
+    });
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        floating_overlay_font_size_px: 10,
+      }),
+    );
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Subtitle position" }),
+    );
+    for (const option of [
+      "Top left",
+      "Top center",
+      "Top right",
+      "Bottom left",
+      "Bottom center",
+      "Bottom right",
+    ]) {
+      expect(await screen.findByRole("option", { name: option })).toBeTruthy();
+    }
+    await user.click(screen.getByRole("option", { name: "Bottom right" }));
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        floating_overlay_position: "bottom_right",
+      }),
+    );
+
+    const duration = screen.getByRole("slider", { name: "Subtitle duration" });
+    fireEvent.keyDown(duration, { key: "Home" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_duration_seconds: 1,
+    });
+    fireEvent.keyDown(duration, { key: "End" });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_duration_seconds: 10,
+    });
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Subtitle animation" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Dissolve" }));
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        subtitle_animation: "dissolve",
+      }),
+    );
   });
 
   it("only emits solid Dictation colors and both opacity boundaries", async () => {
@@ -852,7 +927,7 @@ describe("SettingsPage interactions", () => {
     });
   });
 
-  it("disables the floating overlay position when the overlay is hidden", () => {
+  it("disables the subtitle position when subtitles are hidden", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.show_floating_overlay = false;
 
@@ -866,7 +941,7 @@ describe("SettingsPage interactions", () => {
     );
 
     const position = screen.getByRole("combobox", {
-      name: "Floating overlay position",
+      name: "Subtitle position",
     });
     expect((position as HTMLButtonElement).disabled).toBe(true);
   });

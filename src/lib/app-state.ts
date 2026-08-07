@@ -199,6 +199,8 @@ export function defaultSettings(): AppSettings {
     floating_overlay_text_color: "#ffffff",
     floating_overlay_background_color: "#000000",
     floating_overlay_background_opacity: 82,
+    subtitle_duration_seconds: 5,
+    subtitle_animation: "fade",
     theme_mode: "dark",
     theme_primary_color: "#000",
     system_audio_enabled: false,

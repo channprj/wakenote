@@ -33,7 +33,9 @@ function dictation(
   };
 }
 
-function caption(patch: Partial<OverlayCaptionSnapshot>): OverlayCaptionSnapshot {
+function caption(
+  patch: Partial<OverlayCaptionSnapshot>,
+): OverlayCaptionSnapshot {
   return {
     ...emptyCaptionSnapshot(),
     ...patch,
@@ -102,6 +104,8 @@ describe("caption overlay content", () => {
           text_color: "#f8fafc",
           background_color: "#ffffff",
           background_opacity: 68,
+          animation: "dissolve",
+          duration_seconds: 7,
         },
       } as Partial<OverlayCaptionSnapshot>),
     );
@@ -111,6 +115,33 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-background-rgb:255 255 255");
     expect(markup).toContain("--overlay-caption-background-alpha:0.68");
     expect(markup).toContain("background-color:rgba(255, 255, 255, 0.68)");
+    expect(markup).toContain('data-animation="dissolve"');
+  });
+
+  it("allows 10px subtitles and marks animated exit state", () => {
+    const markup = renderToStaticMarkup(
+      <OverlayContent
+        caption={caption({
+          chunk_id: 1,
+          phase: "final",
+          text: "작은 자막",
+          visible: true,
+          style: {
+            ...emptyCaptionSnapshot().style,
+            font_size_px: 4,
+            animation: "fade",
+          },
+        })}
+        dictation={hiddenDictation}
+        levels={[]}
+        elapsedSeconds={0}
+        captionExiting
+      />,
+    );
+
+    expect(markup).toContain("--overlay-caption-font-size:10px");
+    expect(markup).toContain('data-animation="fade"');
+    expect(markup).toContain('data-visibility="exiting"');
   });
 
   it("prioritizes recording dictation over a visible caption", () => {

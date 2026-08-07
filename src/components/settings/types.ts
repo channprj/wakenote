@@ -2,6 +2,7 @@ import type { AppSettings } from "@/lib/types";
 
 export interface SettingsActions {
   onPatch: (patch: Partial<AppSettings>) => void | Promise<void>;
+  onPreviewSubtitle: (patch: Partial<AppSettings>) => void | Promise<void>;
   onSetMicrophoneInputVolume: (
     deviceId: string,
     volumePercent: number,

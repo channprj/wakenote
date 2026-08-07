@@ -46,6 +46,7 @@ import {
   openScreenRecordingSettings,
   openDictionaryFile,
   processNextTranscription,
+  previewSubtitle,
   reloadDictionaryFile,
   reprocessJobs,
   trashActivityJobs,
@@ -612,6 +613,7 @@ export default function App() {
         snapshot={snapshot}
         actions={{
           onPatch: patchSettings,
+          onPreviewSubtitle: (patch) => previewSubtitle(patch),
           onSetMicrophoneInputVolume: (deviceId, volumePercent) =>
             void runAction(() =>
               setMicrophoneInputVolume(deviceId, volumePercent),

@@ -9,6 +9,7 @@ import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
   onPatch: vi.fn(),
+  onPreviewSubtitle: vi.fn(),
   onSetMicrophoneInputVolume: vi.fn(),
   onSuspendDictationShortcut: vi.fn(),
   onResumeDictationShortcut: vi.fn(),
@@ -117,7 +118,10 @@ describe("SettingsPage ownership", () => {
     expect(integrations).toContain("OpenAI");
     expect(integrations).toContain("Soniox");
     expect(integrations).toContain("OpenRouter reports");
-    expect(integrations).toContain("Floating overlay");
+    expect(integrations).toContain("Subtitles");
+    expect(integrations).not.toContain("Floating overlay");
+    expect(integrations).toContain("Subtitle duration");
+    expect(integrations).toContain("Subtitle animation");
     expect(advanced).toContain("VAD gate");
     expect(advanced).not.toContain("OpenRouter");
   });

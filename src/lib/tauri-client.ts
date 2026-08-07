@@ -568,6 +568,18 @@ export async function saveSettingsPatch(
         Math.min(30, Math.round(safePatch.llm_max_iterations)),
       );
     }
+    if (typeof safePatch.floating_overlay_font_size_px === "number") {
+      safePatch.floating_overlay_font_size_px = Math.max(
+        10,
+        Math.min(48, Math.round(safePatch.floating_overlay_font_size_px)),
+      );
+    }
+    if (typeof safePatch.subtitle_duration_seconds === "number") {
+      safePatch.subtitle_duration_seconds = Math.max(
+        1,
+        Math.min(10, Math.round(safePatch.subtitle_duration_seconds)),
+      );
+    }
     if (typeof safePatch.dictation_shortcut === "string") {
       safePatch.dictation_shortcut = normalizeDictationShortcut(
         safePatch.dictation_shortcut,
@@ -612,6 +624,13 @@ export async function saveSettingsPatch(
 
   await invoke<AppSettings>("update_settings", { patch });
   return loadSnapshot();
+}
+
+export async function previewSubtitle(patch: SettingsPatch): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  await invoke("preview_subtitle", { patch });
 }
 
 export async function setMicrophoneInputVolume(

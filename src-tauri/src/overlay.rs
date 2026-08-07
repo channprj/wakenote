@@ -81,8 +81,12 @@ pub fn overlay_state_for_tray_state(tray_state: TrayState) -> OverlayState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayAnchor {
+    TopLeft,
     Top,
+    TopRight,
+    BottomLeft,
     Bottom,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -218,10 +222,8 @@ pub fn show_overlay(
     };
 
     if let Some(rect) = monitor_with_cursor(&window) {
-        let anchor = match position {
-            FloatingOverlayPosition::Top => OverlayAnchor::Top,
-            FloatingOverlayPosition::Bottom => OverlayAnchor::Bottom,
-            FloatingOverlayPosition::Off => return hide_overlay(app),
+        let Some(anchor) = overlay_anchor(position) else {
+            return hide_overlay(app);
         };
         let overlay_size = overlay_size_for_monitor(rect);
         let logical = calculate_position(rect, anchor, overlay_size);
@@ -254,10 +256,8 @@ pub fn show_caption_overlay(
     };
 
     if let Some(rect) = monitor_with_cursor(&window) {
-        let anchor = match position {
-            FloatingOverlayPosition::Top => OverlayAnchor::Top,
-            FloatingOverlayPosition::Bottom => OverlayAnchor::Bottom,
-            FloatingOverlayPosition::Off => return hide_overlay(app),
+        let Some(anchor) = overlay_anchor(position) else {
+            return hide_overlay(app);
         };
         let overlay_size = caption_overlay_size_for_monitor(rect, text, font_size_px);
         let logical = calculate_position(rect, anchor, overlay_size);
@@ -419,15 +419,39 @@ pub(crate) fn calculate_position(
     let monitor_logical_w = monitor.size_physical.0 as f64 / scale;
     let monitor_logical_h = monitor.size_physical.1 as f64 / scale;
 
-    let logical_x = monitor_origin_logical_x + (monitor_logical_w - overlay_w) / 2.0;
+    let logical_x = match anchor {
+        OverlayAnchor::TopLeft | OverlayAnchor::BottomLeft => {
+            monitor_origin_logical_x + OVERLAY_SCREEN_MARGIN_LOGICAL
+        }
+        OverlayAnchor::Top | OverlayAnchor::Bottom => {
+            monitor_origin_logical_x + (monitor_logical_w - overlay_w) / 2.0
+        }
+        OverlayAnchor::TopRight | OverlayAnchor::BottomRight => {
+            monitor_origin_logical_x + monitor_logical_w - overlay_w - OVERLAY_SCREEN_MARGIN_LOGICAL
+        }
+    };
     let logical_y = match anchor {
-        OverlayAnchor::Top => monitor_origin_logical_y + TOP_OFFSET_LOGICAL,
-        OverlayAnchor::Bottom => {
+        OverlayAnchor::TopLeft | OverlayAnchor::Top | OverlayAnchor::TopRight => {
+            monitor_origin_logical_y + TOP_OFFSET_LOGICAL
+        }
+        OverlayAnchor::BottomLeft | OverlayAnchor::Bottom | OverlayAnchor::BottomRight => {
             monitor_origin_logical_y + monitor_logical_h - overlay_h - BOTTOM_OFFSET_LOGICAL
         }
     };
 
     LogicalPosition::new(logical_x, logical_y)
+}
+
+fn overlay_anchor(position: FloatingOverlayPosition) -> Option<OverlayAnchor> {
+    match position {
+        FloatingOverlayPosition::Off => None,
+        FloatingOverlayPosition::TopLeft => Some(OverlayAnchor::TopLeft),
+        FloatingOverlayPosition::Top => Some(OverlayAnchor::Top),
+        FloatingOverlayPosition::TopRight => Some(OverlayAnchor::TopRight),
+        FloatingOverlayPosition::BottomLeft => Some(OverlayAnchor::BottomLeft),
+        FloatingOverlayPosition::Bottom => Some(OverlayAnchor::Bottom),
+        FloatingOverlayPosition::BottomRight => Some(OverlayAnchor::BottomRight),
+    }
 }
 
 pub(crate) fn calculate_dictation_position(
@@ -504,7 +528,7 @@ pub(crate) fn caption_overlay_size_for_monitor(
         1.0
     };
     let monitor_logical_h = monitor.size_physical.1 as f64 / scale;
-    let font_size = (font_size_px as f64).clamp(18.0, 48.0);
+    let font_size = (font_size_px as f64).clamp(10.0, 48.0);
     let text_width = (width - OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL).max(font_size * 8.0);
     let average_char_width = font_size * 0.56;
     let chars_per_line = (text_width / average_char_width).floor().max(8.0);
@@ -618,6 +642,22 @@ mod tests {
             pos.y,
             1080.0 - OVERLAY_HEIGHT_LOGICAL - BOTTOM_OFFSET_LOGICAL
         );
+    }
+
+    #[test]
+    fn corner_anchors_respect_screen_margins_and_vertical_offsets() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let size = overlay_size_for_monitor(monitor);
+
+        for (anchor, expected) in [
+            (OverlayAnchor::TopLeft, (24.0, 46.0)),
+            (OverlayAnchor::TopRight, (1176.0, 46.0)),
+            (OverlayAnchor::BottomLeft, (24.0, 930.0)),
+            (OverlayAnchor::BottomRight, (1176.0, 930.0)),
+        ] {
+            let actual = calculate_position(monitor, anchor, size);
+            assert_eq!((actual.x, actual.y), expected);
+        }
     }
 
     #[test]

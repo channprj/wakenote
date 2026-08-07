@@ -141,6 +141,7 @@ function mockInvoke(command: string) {
         in_sync: true,
       });
     case "open_dictionary_file":
+    case "preview_subtitle":
       return Promise.resolve(null);
     case "regenerate_transcript":
       return Promise.resolve(queue satisfies QueueSnapshot);
@@ -319,6 +320,21 @@ describe("tauri runtime client snapshots", () => {
     });
     expect(mocks.invoke).toHaveBeenCalledWith("dictation_state");
     expect(mocks.invoke).toHaveBeenCalledWith("cancel_dictation");
+  });
+
+  it("previews subtitle settings through the native overlay command", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { previewSubtitle } = await import("./tauri-client");
+    const patch = {
+      floating_overlay_font_size_px: 10,
+      floating_overlay_position: "bottom_right" as const,
+      subtitle_animation: "dissolve" as const,
+    };
+
+    await previewSubtitle(patch);
+
+    expect(mocks.invoke).toHaveBeenCalledWith("preview_subtitle", { patch });
   });
 
   it("opens and reloads the stable dictionary file through exact commands", async () => {

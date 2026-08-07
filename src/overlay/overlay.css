@@ -7,8 +7,9 @@ body {
   background: transparent;
   overflow: hidden;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
-    Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial,
+    sans-serif;
   font-size: 16px;
   color: #fff;
   pointer-events: none;
@@ -38,10 +39,28 @@ body {
   padding: 14px 18px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgb(var(--overlay-caption-background-rgb, 0 0 0) / var(--overlay-caption-background-alpha, 0.82));
+  background: rgb(
+    var(--overlay-caption-background-rgb, 0 0 0) /
+      var(--overlay-caption-background-alpha, 0.82)
+  );
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
   box-sizing: border-box;
-  animation: overlay-fade-in 300ms ease-out both;
+}
+
+.overlay-caption[data-animation="fade"][data-visibility="visible"] {
+  animation: subtitle-fade-in 180ms ease-out both;
+}
+
+.overlay-caption[data-animation="fade"][data-visibility="exiting"] {
+  animation: subtitle-fade-out 180ms ease-in both;
+}
+
+.overlay-caption[data-animation="dissolve"][data-visibility="visible"] {
+  animation: subtitle-dissolve-in 240ms ease-out both;
+}
+
+.overlay-caption[data-animation="dissolve"][data-visibility="exiting"] {
+  animation: subtitle-dissolve-out 240ms ease-in both;
 }
 
 .overlay-caption__text {
@@ -71,7 +90,10 @@ body {
   padding: 0 12px;
   border: 1px solid rgb(var(--dictation-foreground-rgb, 255 255 255) / 0.15);
   border-radius: 999px;
-  background: rgb(var(--dictation-background-rgb, 0 0 0) / var(--dictation-background-opacity, 0.88));
+  background: rgb(
+    var(--dictation-background-rgb, 0 0 0) /
+      var(--dictation-background-opacity, 0.88)
+  );
   color: rgb(var(--dictation-foreground-rgb, 255 255 255));
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
   box-sizing: border-box;
@@ -92,7 +114,8 @@ body {
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--dictation-accent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--dictation-accent) 72%, transparent);
+  box-shadow: 0 0 12px
+    color-mix(in srgb, var(--dictation-accent) 72%, transparent);
 }
 
 .overlay-dictation__waveform {
@@ -142,12 +165,47 @@ body {
   animation: dictation-spinner 700ms linear infinite;
 }
 
-@keyframes overlay-fade-in {
+@keyframes subtitle-fade-in {
   from {
     opacity: 0;
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes subtitle-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes subtitle-dissolve-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+@keyframes subtitle-dissolve-out {
+  from {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    filter: blur(8px);
+    transform: scale(0.985);
   }
 }
 
@@ -169,6 +227,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .overlay-caption,
   .overlay-dictation,
   .overlay-dictation__spinner {
     animation: none;

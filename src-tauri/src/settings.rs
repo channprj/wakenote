@@ -11,17 +11,32 @@ pub enum AudioFormat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FloatingOverlayPosition {
     Off,
+    TopLeft,
     Top,
+    TopRight,
+    BottomLeft,
     Bottom,
+    BottomRight,
 }
 
-pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 18;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitleAnimation {
+    Instant,
+    #[default]
+    Fade,
+    Dissolve,
+}
+
+pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 10;
 pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
+pub const SUBTITLE_DURATION_MIN_SECONDS: u8 = 1;
+pub const SUBTITLE_DURATION_MAX_SECONDS: u8 = 10;
 pub const LLM_MAX_ITERATIONS_MIN: u8 = 1;
 pub const LLM_MAX_ITERATIONS_MAX: u8 = 30;
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-5.2";
@@ -44,6 +59,10 @@ pub fn default_floating_overlay_background_color() -> String {
 
 pub fn default_floating_overlay_background_opacity() -> u8 {
     82
+}
+
+pub fn default_subtitle_duration_seconds() -> u8 {
+    5
 }
 
 pub fn default_dictation_bubble_background_color() -> String {
@@ -124,6 +143,8 @@ pub struct FloatingOverlayCaptionStyle {
     pub text_color: String,
     pub background_color: String,
     pub background_opacity: u8,
+    pub animation: SubtitleAnimation,
+    pub duration_seconds: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,6 +414,10 @@ pub struct AppSettings {
     pub floating_overlay_background_color: String,
     #[serde(default = "default_floating_overlay_background_opacity")]
     pub floating_overlay_background_opacity: u8,
+    #[serde(default = "default_subtitle_duration_seconds")]
+    pub subtitle_duration_seconds: u8,
+    #[serde(default)]
+    pub subtitle_animation: SubtitleAnimation,
     pub theme_mode: ThemeMode,
     pub theme_primary_color: String,
     /// Master switch for system-audio (Google Meet / YouTube …) capture.
@@ -479,6 +504,8 @@ pub struct SettingsPatch {
     pub floating_overlay_text_color: Option<String>,
     pub floating_overlay_background_color: Option<String>,
     pub floating_overlay_background_opacity: Option<u8>,
+    pub subtitle_duration_seconds: Option<u8>,
+    pub subtitle_animation: Option<SubtitleAnimation>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
@@ -1177,6 +1204,13 @@ impl AppSettings {
                 FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX,
             );
         }
+        if let Some(value) = patch.subtitle_duration_seconds {
+            self.subtitle_duration_seconds =
+                value.clamp(SUBTITLE_DURATION_MIN_SECONDS, SUBTITLE_DURATION_MAX_SECONDS);
+        }
+        if let Some(value) = patch.subtitle_animation {
+            self.subtitle_animation = value;
+        }
         if let Some(value) = patch.theme_mode {
             self.theme_mode = value;
         }
@@ -1286,6 +1320,8 @@ impl Default for AppSettings {
             floating_overlay_text_color: default_floating_overlay_text_color(),
             floating_overlay_background_color: default_floating_overlay_background_color(),
             floating_overlay_background_opacity: default_floating_overlay_background_opacity(),
+            subtitle_duration_seconds: default_subtitle_duration_seconds(),
+            subtitle_animation: SubtitleAnimation::default(),
             theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
@@ -1331,6 +1367,8 @@ impl AppSettings {
             text_color: self.floating_overlay_text_color.clone(),
             background_color: self.floating_overlay_background_color.clone(),
             background_opacity: self.floating_overlay_background_opacity,
+            animation: self.subtitle_animation,
+            duration_seconds: self.subtitle_duration_seconds,
         }
     }
 
@@ -1921,6 +1959,8 @@ mod tests {
         assert_eq!(settings.floating_overlay_text_color, "#ffffff");
         assert_eq!(settings.floating_overlay_background_color, "#000000");
         assert_eq!(settings.floating_overlay_background_opacity, 82);
+        assert_eq!(settings.subtitle_duration_seconds, 5);
+        assert_eq!(settings.subtitle_animation, SubtitleAnimation::Fade);
     }
 
     #[test]
@@ -1931,21 +1971,27 @@ mod tests {
             floating_overlay_text_color: Some("#f8fafc".into()),
             floating_overlay_background_color: Some("#123456".into()),
             floating_overlay_background_opacity: Some(128),
+            subtitle_duration_seconds: Some(0),
+            subtitle_animation: Some(SubtitleAnimation::Dissolve),
             dictation_bubble_background_color: Some("#ffffff".into()),
             dictation_bubble_background_opacity: Some(100),
             ..Default::default()
         });
 
-        assert_eq!(settings.floating_overlay_font_size_px, 18);
+        assert_eq!(settings.floating_overlay_font_size_px, 10);
         assert_eq!(settings.floating_overlay_text_color, "#f8fafc");
         assert_eq!(settings.floating_overlay_background_color, "#000000");
         assert_eq!(settings.floating_overlay_background_opacity, 100);
+        assert_eq!(settings.subtitle_duration_seconds, 1);
+        assert_eq!(settings.subtitle_animation, SubtitleAnimation::Dissolve);
         assert_eq!(settings.dictation_bubble_background_color, "#ffffff");
         assert_eq!(settings.dictation_bubble_background_opacity, 100);
 
         settings.apply_patch(SettingsPatch {
             floating_overlay_background_color: Some("#ffffff".into()),
             floating_overlay_background_opacity: Some(0),
+            subtitle_duration_seconds: Some(99),
+            subtitle_animation: Some(SubtitleAnimation::Instant),
             dictation_bubble_background_color: Some("#FFFFFF".into()),
             dictation_bubble_background_opacity: Some(0),
             ..Default::default()
@@ -1953,6 +1999,8 @@ mod tests {
 
         assert_eq!(settings.floating_overlay_background_color, "#ffffff");
         assert_eq!(settings.floating_overlay_background_opacity, 0);
+        assert_eq!(settings.subtitle_duration_seconds, 10);
+        assert_eq!(settings.subtitle_animation, SubtitleAnimation::Instant);
         assert_eq!(settings.dictation_bubble_background_color, "#000000");
         assert_eq!(settings.dictation_bubble_background_opacity, 0);
     }

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::{FloatingOverlayCaptionStyle, FloatingOverlayPosition};
 
-pub const OVERLAY_CAPTION_FINAL_HOLD: Duration = Duration::from_secs(5);
 pub const OVERLAY_CAPTION_UPDATED_EVENT: &str = "overlay-caption-updated";
 pub const OVERLAY_CAPTION_HIDDEN_EVENT: &str = "overlay-caption-hidden";
 
@@ -72,7 +71,7 @@ impl OverlayCaptionRuntime {
             position: self.position,
             final_hold_ms: self
                 .hide_at
-                .map(|_| OVERLAY_CAPTION_FINAL_HOLD.as_millis() as u64),
+                .map(|_| self.final_hold_duration().as_millis() as u64),
             style: self.style.clone(),
         }
     }
@@ -145,7 +144,7 @@ impl OverlayCaptionRuntime {
         } else {
             self.visible = true;
             self.phase = OverlayCaptionPhase::Final;
-            self.hide_at = Some(Instant::now() + OVERLAY_CAPTION_FINAL_HOLD);
+            self.hide_at = Some(Instant::now() + self.final_hold_duration());
         }
     }
 
@@ -198,7 +197,7 @@ impl OverlayCaptionRuntime {
         self.text = text;
         self.position = position;
         self.style = style;
-        self.hide_at = Some(Instant::now() + OVERLAY_CAPTION_FINAL_HOLD);
+        self.hide_at = Some(Instant::now() + self.final_hold_duration());
         true
     }
 
@@ -237,12 +236,27 @@ impl OverlayCaptionRuntime {
 
     pub fn set_style(&mut self, style: FloatingOverlayCaptionStyle) {
         self.style = style;
+        if self.hide_at.is_some() {
+            self.hide_at = Some(Instant::now() + self.final_hold_duration());
+        }
     }
 
     pub fn due_hide_generation(&self, now: Instant) -> Option<u64> {
         self.hide_at
             .filter(|hide_at| *hide_at <= now)
             .map(|_| self.generation)
+    }
+
+    pub fn hide_delay_for_generation(&self, generation: u64, now: Instant) -> Option<Duration> {
+        if self.generation != generation {
+            return None;
+        }
+        self.hide_at
+            .map(|hide_at| hide_at.saturating_duration_since(now))
+    }
+
+    fn final_hold_duration(&self) -> Duration {
+        Duration::from_secs(u64::from(self.style.duration_seconds.clamp(1, 10)))
     }
 
     fn matches_result(&self, chunk_id: Option<u64>, audio_path: &Path) -> bool {
@@ -329,6 +343,30 @@ mod tests {
         assert_eq!(snapshot.phase, OverlayCaptionPhase::Final);
         assert_eq!(snapshot.text, "최종 자막");
         assert_eq!(snapshot.final_hold_ms, Some(5_000));
+    }
+
+    #[test]
+    fn configured_subtitle_duration_controls_the_final_hold() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let mut custom_style = style();
+        custom_style.duration_seconds = 9;
+        runtime.show_partial(
+            7,
+            "오래 유지되는 자막",
+            FloatingOverlayPosition::BottomRight,
+            custom_style.clone(),
+        );
+        assert!(runtime.show_final_at(
+            Some(7),
+            PathBuf::from("/tmp/chunk.wav"),
+            "최종 자막",
+            FloatingOverlayPosition::BottomRight,
+            custom_style,
+        ));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.final_hold_ms, Some(9_000));
+        assert_eq!(snapshot.position, FloatingOverlayPosition::BottomRight);
     }
 
     #[test]

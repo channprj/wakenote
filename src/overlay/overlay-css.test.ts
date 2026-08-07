@@ -14,14 +14,20 @@ function ruleBody(selector: string): string {
 describe("overlay caption css", () => {
   it("does not clamp or ellipsize long caption text", () => {
     expect(css).not.toContain("-webkit-line-clamp");
-    expect(css).not.toMatch(/\.overlay-caption__text\s*\{[^}]*overflow:\s*hidden/);
-    expect(css).toMatch(/\.overlay-caption__text\s*\{[^}]*white-space:\s*normal/);
+    expect(css).not.toMatch(
+      /\.overlay-caption__text\s*\{[^}]*overflow:\s*hidden/,
+    );
+    expect(css).toMatch(
+      /\.overlay-caption__text\s*\{[^}]*white-space:\s*normal/,
+    );
   });
 
   it("keeps vertical breathing room inside the overlay window", () => {
     expect(css).toMatch(/#overlay-root\s*\{[^}]*padding:\s*8px\s+0/);
     expect(css).toMatch(/#overlay-root\s*\{[^}]*box-sizing:\s*border-box/);
-    expect(css).toMatch(/\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/);
+    expect(css).toMatch(
+      /\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/,
+    );
   });
 
   it.each([
@@ -35,12 +41,18 @@ describe("overlay caption css", () => {
       "var(--dictation-background-rgb, 0 0 0)",
       "var(--dictation-background-opacity, 0.88)",
     ],
-  ])("uses one solid variable-driven background for %s", (selector, rgb, opacity) => {
-    const rule = ruleBody(selector);
-    expect(rule).not.toContain("linear-gradient");
-    expect(rule).not.toContain("inset");
-    expect(rule).toContain(`background: rgb(${rgb} / ${opacity})`);
-  });
+  ])(
+    "uses one solid variable-driven background for %s",
+    (selector, rgb, opacity) => {
+      const rule = ruleBody(selector);
+      const normalizedRule = rule.replace(/\s+/g, " ");
+      expect(rule).not.toContain("linear-gradient");
+      expect(rule).not.toContain("inset");
+      expect(normalizedRule).toContain(
+        `background: rgb( ${rgb} / ${opacity} )`,
+      );
+    },
+  );
 
   it("styles a compact dictation capsule and responsive waveform bars", () => {
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*height:\s*44px/);
@@ -56,6 +68,30 @@ describe("overlay caption css", () => {
   it("removes dictation motion when reduced motion is requested", () => {
     expect(css).toMatch(
       /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.overlay-dictation[\s\S]*animation:\s*none/,
+    );
+  });
+
+  it("supports instant, fade, and dissolve subtitle transitions", () => {
+    expect(css).toMatch(
+      /\.overlay-caption\[data-animation="fade"\]\[data-visibility="visible"\][^{]*\{[^}]*subtitle-fade-in/,
+    );
+    expect(css).toMatch(
+      /\.overlay-caption\[data-animation="fade"\]\[data-visibility="exiting"\][^{]*\{[^}]*subtitle-fade-out/,
+    );
+    expect(css).toMatch(
+      /\.overlay-caption\[data-animation="dissolve"\]\[data-visibility="visible"\][^{]*\{[^}]*subtitle-dissolve-in/,
+    );
+    expect(css).toMatch(
+      /\.overlay-caption\[data-animation="dissolve"\]\[data-visibility="exiting"\][^{]*\{[^}]*subtitle-dissolve-out/,
+    );
+    expect(css).not.toMatch(
+      /\.overlay-caption\[data-animation="instant"\][^{]*animation:/,
+    );
+  });
+
+  it("removes subtitle motion when reduced motion is requested", () => {
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.overlay-caption[\s\S]*animation:\s*none/,
     );
   });
 });
