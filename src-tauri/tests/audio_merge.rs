@@ -121,7 +121,7 @@ fn validation_rejects_duplicate_unsupported_and_malformed_inputs() {
         tmp.path().join("malformed.m4a"),
         vec![
             input(&first, "not-a-timestamp"),
-            input(&tmp.path().join("second.wav"), "2026-08-04T05:00:02Z"),
+            input(tmp.path().join("second.wav"), "2026-08-04T05:00:02Z"),
         ],
     );
     write_source(&tmp.path().join("second.wav"));
