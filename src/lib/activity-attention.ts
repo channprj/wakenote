@@ -82,8 +82,12 @@ export function isActivityAttentionOutcome(job: QueueJob): boolean {
   return job.status === "completed" && activityIssue(job)?.severity === "warning";
 }
 
+export function isReprocessableActivityStatus(status: QueueJobStatus): boolean {
+  return ["completed", "failed", "cancelled", "skipped"].includes(status);
+}
+
 export function isReprocessableActivityJob(job: QueueJob): boolean {
-  return isActivityAttentionOutcome(job);
+  return isReprocessableActivityStatus(job.status);
 }
 
 export function isRecentUnreadWarning(job: QueueJob, nowMs: number): boolean {

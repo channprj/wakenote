@@ -19,6 +19,13 @@ describe("app state derivation", () => {
     expect(defaultSettings().voice_auto_level_enabled).toBe(true);
   });
 
+  it("keeps input monitoring and the floating overlay off by default", () => {
+    const settings = defaultSettings();
+
+    expect(settings.input_monitoring_enabled).toBe(false);
+    expect(settings.show_floating_overlay).toBe(false);
+  });
+
   it("uses the upstream whisper.cpp repository for mock model downloads", () => {
     const whisperModels = mockModels().filter(
       (model) => model.provider_runtime === "whisper-rs",

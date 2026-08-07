@@ -341,7 +341,7 @@ fn queue_prunes_old_completed_jobs_but_keeps_active_and_recent_completed_jobs() 
 }
 
 #[test]
-fn queue_rejects_retry_and_skip_for_terminal_or_active_jobs() {
+fn queue_retries_terminal_jobs_but_rejects_active_jobs() {
     let mut queue = TranscriptionQueue::new();
     let pending = queue.enqueue_file("/recordings/pending.wav", "whisper-medium");
     let running = queue.enqueue_file("/recordings/running.wav", "whisper-medium");
@@ -356,17 +356,14 @@ fn queue_rejects_retry_and_skip_for_terminal_or_active_jobs() {
     queue.mark_completed(completed).expect("complete job");
     queue.skip(skipped).expect("skip job");
 
-    assert!(queue.retry(pending).is_ok(), "cancelled jobs can retry");
-    assert!(queue.retry(running).is_err(), "running jobs cannot retry");
-    assert!(
-        queue.retry(completed).is_err(),
-        "completed jobs cannot retry"
-    );
-    assert!(queue.retry(skipped).is_err(), "skipped jobs cannot retry");
-
-    assert!(queue.skip(pending).is_ok(), "pending jobs can skip");
+    assert!(queue.skip(pending).is_ok(), "cancelled jobs can skip");
     assert!(queue.skip(running).is_err(), "running jobs cannot skip");
     assert!(queue.skip(completed).is_err(), "completed jobs cannot skip");
+
+    assert!(queue.retry(pending).is_ok(), "skipped jobs can rerun");
+    assert!(queue.retry(running).is_err(), "running jobs cannot retry");
+    assert!(queue.retry(completed).is_ok(), "completed jobs can rerun");
+    assert!(queue.retry(skipped).is_ok(), "skipped jobs can rerun");
 }
 
 #[test]

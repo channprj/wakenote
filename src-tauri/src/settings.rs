@@ -1280,7 +1280,7 @@ impl Default for AppSettings {
             show_dock_icon: true,
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
-            show_floating_overlay: true,
+            show_floating_overlay: false,
             floating_overlay_position: FloatingOverlayPosition::Top,
             floating_overlay_font_size_px: default_floating_overlay_font_size_px(),
             floating_overlay_text_color: default_floating_overlay_text_color(),
@@ -1376,6 +1376,18 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.input_monitoring_enabled);
+    }
+
+    #[test]
+    fn opt_in_audio_surfaces_default_to_off() {
+        let settings = AppSettings::default();
+
+        assert!(!settings.input_monitoring_enabled);
+        assert!(!settings.show_floating_overlay);
+        assert_eq!(
+            settings.effective_floating_overlay_position(),
+            FloatingOverlayPosition::Off
+        );
     }
 
     #[test]

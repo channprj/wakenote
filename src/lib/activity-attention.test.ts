@@ -108,13 +108,13 @@ describe("activity attention", () => {
     ).toMatchObject({ severity: "warning", code: "no_speech" });
   });
 
-  it("includes completed warnings in history and reprocessing eligibility", () => {
+  it("keeps completed warnings in attention and all completions reprocessable", () => {
     const completedWarning = job("completed", warning());
     const cleanCompleted = job("completed", undefined, { id: 2 });
 
     expect(countUnreadActivityOutcomes([completedWarning, cleanCompleted])).toBe(1);
     expect(isReprocessableActivityJob(completedWarning)).toBe(true);
-    expect(isReprocessableActivityJob(cleanCompleted)).toBe(false);
+    expect(isReprocessableActivityJob(cleanCompleted)).toBe(true);
     expect(activityIssueCounts([completedWarning, job("failed", error(), { id: 3 })])).toEqual({
       warning: 1,
       error: 1,

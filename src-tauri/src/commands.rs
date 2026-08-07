@@ -2100,6 +2100,21 @@ impl AppBackend {
     }
 
     pub fn retry_job(&mut self, id: u64) -> Result<QueueSnapshot, String> {
+        let job = self
+            .queue
+            .job(id)
+            .ok_or_else(|| format!("job {id} not found"))?;
+        if !job.is_reprocessable() {
+            return Err(format!("job {id} cannot be retried from {:?}", job.status));
+        }
+        if matches!(
+            job.status,
+            QueueJobStatus::Completed | QueueJobStatus::Skipped
+        ) {
+            let chunk = RecordedChunk::from_audio_path(job.audio_path.clone());
+            TranscriptionSidecar::reset_for_regenerate(&chunk)
+                .map_err(|error| error.to_string())?;
+        }
         self.queue.retry(id)?;
         self.persist_queue();
         Ok(self.queue.snapshot())
@@ -2162,7 +2177,7 @@ impl AppBackend {
                 .queue
                 .job(*id)
                 .ok_or_else(|| format!("job {id} not found"))?;
-            if !job.is_reprocessable_attention_outcome() {
+            if !job.is_reprocessable() {
                 return Err(format!(
                     "job {id} cannot be reprocessed from {:?}",
                     job.status

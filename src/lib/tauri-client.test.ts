@@ -982,6 +982,44 @@ describe("tauri live capture client", () => {
     });
   });
 
+  it.each(["completed", "skipped"] as const)(
+    "reruns %s browser fallback queue jobs",
+    async (status) => {
+      const before = await enqueueAudioFiles([
+        `/tmp/imported/rerun-${status}.wav`,
+      ]);
+      const job = before.queue.jobs.find(
+        (candidate) =>
+          candidate.audio_path === `/tmp/imported/rerun-${status}.wav`,
+      );
+      expect(job?.id).toBeTypeOf("number");
+      if (job) {
+        job.status = status;
+        job.issue =
+          status === "skipped"
+            ? {
+                severity: "warning",
+                code: "skipped",
+                message: "Skipped by user",
+                occurred_at: "2026-08-07T12:00:00.000Z",
+              }
+            : null;
+        job.is_read = true;
+      }
+
+      const rerun = await retryJob(job?.id ?? -1);
+
+      expect(
+        rerun.queue.jobs.find((candidate) => candidate.id === job?.id),
+      ).toMatchObject({
+        status: "pending",
+        error: null,
+        issue: null,
+        is_read: false,
+      });
+    },
+  );
+
   it("reprocesses only selected browser fallback issue jobs with an explicit model", async () => {
     await downloadModel("whisper-small");
     await loadSnapshot();
@@ -1025,7 +1063,7 @@ describe("tauri live capture client", () => {
     });
   });
 
-  it("reprocesses completed warnings but rejects clean completed jobs", async () => {
+  it("reprocesses warning and clean completed jobs", async () => {
     await downloadModel("whisper-small");
     const before = await enqueueAudioFiles([
       "/tmp/imported/reprocess-warning.wav",
@@ -1051,20 +1089,16 @@ describe("tauri live capture client", () => {
     }
 
     const reprocessed = await reprocessJobs(
-      [warningJob?.id ?? -1],
+      [warningJob?.id ?? -1, cleanJob?.id ?? -1],
       "whisper-small",
     );
     expect(
       reprocessed.queue.jobs.find((job) => job.id === warningJob?.id),
     ).toMatchObject({ status: "pending", issue: null, is_read: false });
 
-    const unchanged = await reprocessJobs(
-      [cleanJob?.id ?? -1],
-      "whisper-small",
-    );
     expect(
-      unchanged.queue.jobs.find((job) => job.id === cleanJob?.id),
-    ).toMatchObject({ status: "completed" });
+      reprocessed.queue.jobs.find((job) => job.id === cleanJob?.id),
+    ).toMatchObject({ status: "pending", issue: null, is_read: false });
   });
 
   it("removes selected browser Activity jobs through the Trash outcome contract", async () => {

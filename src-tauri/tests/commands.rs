@@ -1342,14 +1342,14 @@ fn backend_reprocesses_selected_attention_jobs_with_an_explicit_model() {
 }
 
 #[test]
-fn backend_reprocess_jobs_rejects_an_invalid_batch_without_mutating_the_queue() {
+fn backend_reprocess_jobs_rejects_an_active_batch_without_mutating_the_queue() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");
     write_ready_local_model(&model_dir, "whisper-medium");
     let issue_audio = tmp.path().join("issue.wav");
-    let completed_audio = tmp.path().join("completed.wav");
+    let pending_audio = tmp.path().join("pending.wav");
     std::fs::write(&issue_audio, b"issue audio").expect("issue audio");
-    std::fs::write(&completed_audio, b"completed audio").expect("completed audio");
+    std::fs::write(&pending_audio, b"pending audio").expect("pending audio");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_dir.to_string_lossy().to_string()),
@@ -1363,31 +1363,28 @@ fn backend_reprocess_jobs_rejects_an_invalid_batch_without_mutating_the_queue() 
         .find(|job| job.audio_path == issue_audio)
         .expect("issue job")
         .id;
-    let completed_id = backend
-        .enqueue_audio_file(&completed_audio, None)
+    let pending_id = backend
+        .enqueue_audio_file(&pending_audio, None)
         .jobs
         .into_iter()
-        .find(|job| job.audio_path == completed_audio)
-        .expect("completed job")
+        .find(|job| job.audio_path == pending_audio)
+        .expect("pending job")
         .id;
     backend
         .finish_transcription_job(TranscriptionJobOutcome::failed(issue_id, "mock failure"))
         .expect("fail issue job");
-    backend
-        .finish_transcription_job(TranscriptionJobOutcome::completed(completed_id))
-        .expect("complete other job");
     let before = backend.queue_snapshot();
 
     let error = backend
-        .reprocess_jobs(vec![issue_id, completed_id], "whisper-medium".into())
-        .expect_err("completed jobs cannot be batch reprocessed");
+        .reprocess_jobs(vec![issue_id, pending_id], "whisper-medium".into())
+        .expect_err("pending jobs cannot be batch reprocessed");
 
     assert!(error.contains("cannot be reprocessed"));
     assert_eq!(backend.queue_snapshot(), before);
 }
 
 #[test]
-fn backend_reprocesses_completed_warning_but_rejects_clean_completed_jobs() {
+fn backend_reprocesses_warning_and_clean_completed_jobs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");
     write_ready_local_model(&model_dir, "whisper-medium");
@@ -1396,6 +1393,8 @@ fn backend_reprocesses_completed_warning_but_rejects_clean_completed_jobs() {
     std::fs::write(&warning_audio, b"warning audio").expect("warning audio");
     std::fs::write(&clean_audio, b"clean audio").expect("clean audio");
     std::fs::write(warning_audio.with_extension("txt"), "[noise]\n").expect("warning transcript");
+    std::fs::write(clean_audio.with_extension("txt"), "clean transcript\n")
+        .expect("clean transcript");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_dir.to_string_lossy().to_string()),
@@ -1430,8 +1429,8 @@ fn backend_reprocesses_completed_warning_but_rejects_clean_completed_jobs() {
         .expect("complete clean job");
 
     let snapshot = backend
-        .reprocess_jobs(vec![warning_id], "whisper-medium".into())
-        .expect("reprocess warning");
+        .reprocess_jobs(vec![warning_id, clean_id], "whisper-medium".into())
+        .expect("reprocess completed jobs");
     let warning = snapshot
         .jobs
         .iter()
@@ -1440,11 +1439,64 @@ fn backend_reprocesses_completed_warning_but_rejects_clean_completed_jobs() {
     assert_eq!(warning.status, QueueJobStatus::Pending);
     assert_eq!(warning.issue, None);
     assert!(!warning_audio.with_extension("txt").exists());
+    let clean = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.id == clean_id)
+        .expect("clean job");
+    assert_eq!(clean.status, QueueJobStatus::Pending);
+    assert_eq!(clean.issue, None);
+    assert!(!clean_audio.with_extension("txt").exists());
+}
 
-    let error = backend
-        .reprocess_jobs(vec![clean_id], "whisper-medium".into())
-        .expect_err("clean completed jobs stay ineligible");
-    assert!(error.contains("cannot be reprocessed"));
+#[test]
+fn backend_retry_reruns_completed_and_skipped_jobs_after_resetting_sidecars() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let completed_audio = tmp.path().join("completed.wav");
+    let skipped_audio = tmp.path().join("skipped.wav");
+    std::fs::write(&completed_audio, b"completed audio").expect("completed audio");
+    std::fs::write(&skipped_audio, b"skipped audio").expect("skipped audio");
+    let mut backend = AppBackend::default();
+    let completed_id = backend
+        .enqueue_audio_file(&completed_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == completed_audio)
+        .expect("completed job")
+        .id;
+    let skipped_id = backend
+        .enqueue_audio_file(&skipped_audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == skipped_audio)
+        .expect("skipped job")
+        .id;
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed(completed_id))
+        .expect("complete job");
+    backend.skip_job(skipped_id).expect("skip job");
+    std::fs::write(
+        completed_audio.with_extension("txt"),
+        "completed transcript",
+    )
+    .expect("completed transcript");
+    std::fs::write(skipped_audio.with_extension("txt"), "skipped transcript")
+        .expect("skipped transcript");
+
+    backend
+        .retry_job(completed_id)
+        .expect("rerun completed job");
+    backend.retry_job(skipped_id).expect("rerun skipped job");
+
+    let snapshot = backend.queue_snapshot();
+    for id in [completed_id, skipped_id] {
+        let job = snapshot.jobs.iter().find(|job| job.id == id).expect("job");
+        assert_eq!(job.status, QueueJobStatus::Pending);
+        assert_eq!(job.issue, None);
+        assert!(!job.is_read);
+    }
+    assert!(!completed_audio.with_extension("txt").exists());
+    assert!(!skipped_audio.with_extension("txt").exists());
 }
 
 #[test]
@@ -1551,6 +1603,7 @@ fn backend_system_capture_emits_live_transcript_events() {
         save_root: Some(tmp.path().to_string_lossy().to_string()),
         audio_format: Some(AudioFormat::Wav),
         model_directory: Some(model_directory.to_string_lossy().to_string()),
+        show_floating_overlay: Some(true),
         floating_overlay_position: Some(FloatingOverlayPosition::Bottom),
         transcription_enabled: Some(true),
         threshold_dbfs: Some(-45.0),

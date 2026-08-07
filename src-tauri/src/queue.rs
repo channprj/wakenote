@@ -112,6 +112,16 @@ pub struct QueueJob {
 }
 
 impl QueueJob {
+    pub fn is_reprocessable(&self) -> bool {
+        matches!(
+            self.status,
+            QueueJobStatus::Completed
+                | QueueJobStatus::Failed
+                | QueueJobStatus::Cancelled
+                | QueueJobStatus::Skipped
+        )
+    }
+
     pub fn is_reprocessable_attention_outcome(&self) -> bool {
         matches!(
             self.status,
@@ -374,10 +384,7 @@ impl TranscriptionQueue {
         let job = self
             .job_mut(id)
             .ok_or_else(|| format!("job {id} not found"))?;
-        if !matches!(
-            job.status,
-            QueueJobStatus::Failed | QueueJobStatus::Cancelled
-        ) {
+        if !job.is_reprocessable() {
             return Err(format!("job {id} cannot be retried from {:?}", job.status));
         }
         job.status = QueueJobStatus::Pending;

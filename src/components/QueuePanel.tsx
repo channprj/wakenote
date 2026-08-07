@@ -45,6 +45,7 @@ import {
   isActivityAttentionOutcome,
   isRecentUnreadWarning,
   isReprocessableActivityJob,
+  isReprocessableActivityStatus,
 } from "../lib/activity-attention";
 import {
   fileUrlFromPath,
@@ -191,7 +192,7 @@ export function activityPage(
 
 export function queueJobActionState(status: QueueJobStatus) {
   return {
-    canRetry: status === "failed" || status === "cancelled",
+    canRetry: isReprocessableActivityStatus(status),
     canSkip:
       status === "pending" || status === "failed" || status === "cancelled",
   };
@@ -247,12 +248,6 @@ export function queueJobRetryDisabledReason(
   }
   if (status === "running") {
     return "Job is still running";
-  }
-  if (status === "completed") {
-    return "Job already completed";
-  }
-  if (status === "skipped") {
-    return "Job was skipped";
   }
   return "Job has not run yet";
 }
@@ -675,7 +670,7 @@ export function QueuePanel({
                     availableReprocessingModels.length === 0
                       ? "No ready file transcription model"
                       : selectedReprocessableIds.length === 0
-                        ? "Select at least one issue"
+                        ? "Select at least one rerunnable job"
                         : `Reprocess ${selectedReprocessableIds.length} selected ${selectedReprocessableIds.length === 1 ? "job" : "jobs"}`
                   }
                 >

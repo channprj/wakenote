@@ -172,7 +172,7 @@ describe("Activity issue reprocessing", () => {
     ["skipped", true],
     ["pending", false],
     ["running", false],
-    ["completed", false],
+    ["completed", true],
   ] satisfies Array<[QueueJobStatus, boolean]>)(
     "allows %s jobs to be selected for reprocessing",
     (status, expected) => {
@@ -187,7 +187,7 @@ describe("Activity issue reprocessing", () => {
     },
   );
 
-  it("includes completed warnings but rejects clean completed jobs", () => {
+  it("allows both warning and clean completed jobs to be reprocessed", () => {
     const completedWarning: QueueJob = {
       id: 1,
       audio_path: "/warning.wav",
@@ -207,7 +207,7 @@ describe("Activity issue reprocessing", () => {
     };
 
     expect(isReprocessableJob(completedWarning)).toBe(true);
-    expect(isReprocessableJob(cleanCompleted)).toBe(false);
+    expect(isReprocessableJob(cleanCompleted)).toBe(true);
     expect(filterActivityJobs([completedWarning], "attention")).toEqual([
       completedWarning,
     ]);
@@ -238,10 +238,10 @@ describe("queue row actions", () => {
   it.each([
     ["pending", false, true],
     ["running", false, false],
-    ["completed", false, false],
+    ["completed", true, false],
     ["failed", true, true],
     ["cancelled", true, true],
-    ["skipped", false, false],
+    ["skipped", true, false],
   ] satisfies Array<[QueueJobStatus, boolean, boolean]>)(
     "derives valid actions for %s jobs",
     (status, canRetry, canSkip) => {
@@ -342,8 +342,8 @@ describe("queue job retry disabled reason", () => {
     ["cancelled", null],
     ["pending", "Job has not run yet"],
     ["running", "Job is still running"],
-    ["completed", "Job already completed"],
-    ["skipped", "Job was skipped"],
+    ["completed", null],
+    ["skipped", null],
   ] satisfies Array<[QueueJobStatus, string | null]>)(
     "describes retry availability for %s jobs",
     (status, reason) => {

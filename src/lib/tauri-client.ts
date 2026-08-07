@@ -2271,7 +2271,7 @@ export async function retryJob(id: number): Promise<AppSnapshot> {
   if (!isTauriRuntime()) {
     let retried = false;
     const jobs = browserSnapshot.queue.jobs.map((job) => {
-      if (job.id !== id || !["failed", "cancelled"].includes(job.status)) {
+      if (job.id !== id || !isReprocessableActivityJob(job)) {
         return job;
       }
 
