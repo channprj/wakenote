@@ -1,4 +1,4 @@
-import { Children, type ReactNode } from "react";
+import { Children, type ReactNode, useEffect, useId, useState } from "react";
 import {
   Card,
   CardContent,
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { useMasonryGrid } from "@/hooks/use-masonry-grid";
 
 export function SettingsCard({
@@ -210,6 +211,89 @@ export function SettingSlider({
           onValueChange={(values) => onValueChange(values[0] ?? value)}
         />
         <output>{valueLabel ?? `${value}${suffix}`}</output>
+      </div>
+    </Field>
+  );
+}
+
+export function SettingNumberInput({
+  label,
+  description,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix = "",
+  disabled = false,
+  onValueChange,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  disabled?: boolean;
+  onValueChange: (value: number) => void;
+}) {
+  const inputId = useId();
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = Number(draft);
+    const normalized = Number.isFinite(parsed)
+      ? Math.max(min, Math.min(max, Math.round(parsed / step) * step))
+      : value;
+    setDraft(String(normalized));
+    if (normalized !== value) {
+      onValueChange(normalized);
+    }
+  };
+
+  return (
+    <Field
+      orientation="responsive"
+      className="settings-row"
+      data-disabled={disabled || undefined}
+    >
+      <FieldContent>
+        <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+        {description ? (
+          <FieldDescription>{description}</FieldDescription>
+        ) : null}
+      </FieldContent>
+      <div className="settings-inline-control">
+        <Input
+          id={inputId}
+          aria-label={label}
+          type="number"
+          inputMode="numeric"
+          className="w-24 text-right tabular-nums"
+          value={draft}
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commit();
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setDraft(String(value));
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        {suffix ? (
+          <span className="text-xs text-muted-foreground">{suffix}</span>
+        ) : null}
       </div>
     </Field>
   );

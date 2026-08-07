@@ -327,14 +327,33 @@ describe("tauri runtime client snapshots", () => {
     mocks.invoke.mockImplementation(mockInvoke);
     const { previewSubtitle } = await import("./tauri-client");
     const patch = {
-      floating_overlay_font_size_px: 10,
+      floating_overlay_font_size_px: 4,
       floating_overlay_position: "bottom_right" as const,
       subtitle_animation: "dissolve" as const,
+      subtitle_padding_horizontal_px: 99,
+      subtitle_border_width_px: 12,
+      subtitle_border_color: "#12AbEf",
+      subtitle_min_width_px: 1_200,
+      subtitle_max_width_px: 480,
+      subtitle_min_height_px: 900,
+      subtitle_max_height_px: 320,
     };
 
     await previewSubtitle(patch);
 
-    expect(mocks.invoke).toHaveBeenCalledWith("preview_subtitle", { patch });
+    expect(mocks.invoke).toHaveBeenCalledWith("preview_subtitle", {
+      patch: {
+        ...patch,
+        floating_overlay_font_size_px: 10,
+        subtitle_padding_horizontal_px: 64,
+        subtitle_border_width_px: 8,
+        subtitle_border_color: "#12abef",
+        subtitle_min_width_px: 480,
+        subtitle_max_width_px: 1_200,
+        subtitle_min_height_px: 320,
+        subtitle_max_height_px: 900,
+      },
+    });
   });
 
   it("opens and reloads the stable dictionary file through exact commands", async () => {

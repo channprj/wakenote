@@ -149,8 +149,6 @@ type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
 const EVENT_DICTIONARY_CHANGED: &str = "dictionary-changed";
 const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
 const MICROPHONE_INPUT_LEVELS_CHANGED_EVENT: &str = "microphone-input-levels-changed";
-const SUBTITLE_PREVIEW_HOLD: Duration = Duration::from_millis(1_500);
-
 #[derive(Debug, Clone, PartialEq)]
 enum DictionaryApplyOutcome {
     Unchanged,
@@ -644,11 +642,54 @@ fn dictation_allows_caption_window_mutation(stage: DictationStage) -> bool {
     matches!(stage, DictationStage::Idle)
 }
 
+fn begin_subtitle_preview(state: &AtomicU64) -> u64 {
+    loop {
+        let current = state.load(Ordering::SeqCst);
+        let token = (current & !1).wrapping_add(2) | 1;
+        if state
+            .compare_exchange(current, token, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return token;
+        }
+    }
+}
+
+fn finish_subtitle_preview(state: &AtomicU64, token: u64) -> bool {
+    state
+        .compare_exchange(
+            token,
+            token.wrapping_add(1),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_ok()
+}
+
+fn subtitle_preview_is_active(state: &AtomicU64) -> bool {
+    state.load(Ordering::SeqCst) & 1 == 1
+}
+
 fn publish_overlay_caption_snapshot(
     app: &AppHandle,
     snapshot: OverlayCaptionSnapshot,
     context: &'static str,
 ) {
+    let preview_protects_visible_window = !snapshot.visible
+        && app
+            .try_state::<SubtitlePreviewState>()
+            .is_some_and(|state| subtitle_preview_is_active(state.inner()));
+    if preview_protects_visible_window {
+        return;
+    }
+    let expiry = app.try_state::<OverlayCaptionState>().and_then(|state| {
+        let runtime_state = state.inner().clone();
+        let generation = runtime_state
+            .lock()
+            .ok()
+            .and_then(|mut runtime| runtime.take_expiry_generation_to_schedule());
+        generation.map(|generation| (runtime_state, generation))
+    });
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         let is_visible = snapshot.visible
@@ -677,9 +718,14 @@ fn publish_overlay_caption_snapshot(
                 &app_for_task,
                 snapshot.position,
                 &snapshot.text,
-                snapshot.style.font_size_px,
+                &snapshot.style,
             ) {
                 eprintln!("[overlay-caption] {context} show failed: {error}");
+                if let Err(hide_error) = overlay::hide_overlay(&app_for_task) {
+                    eprintln!(
+                        "[overlay-caption] {context} cleanup after show failure failed: {hide_error}"
+                    );
+                }
             }
         } else {
             let exit_duration = subtitle_exit_duration(snapshot.style.animation);
@@ -698,6 +744,14 @@ fn publish_overlay_caption_snapshot(
         }
     }) {
         eprintln!("[overlay-caption] {context} schedule failed: {error}");
+        if let Err(hide_error) = overlay::hide_overlay_on_main_thread(app, context) {
+            eprintln!(
+                "[overlay-caption] {context} cleanup after schedule failure failed: {hide_error}"
+            );
+        }
+    }
+    if let Some((runtime_state, generation)) = expiry {
+        schedule_overlay_caption_hide(app.clone(), runtime_state, generation);
     }
 }
 
@@ -1048,33 +1102,28 @@ fn preview_subtitle(
         FloatingOverlayPosition::Off => FloatingOverlayPosition::Top,
         position => position,
     };
-    let generation = state
-        .lock()
-        .map_err(|error| error.to_string())?
-        .snapshot()
-        .generation;
+    let style = settings.floating_overlay_caption_style();
+    let preview_hold = Duration::from_secs(u64::from(style.duration_seconds));
+    let preview_token = begin_subtitle_preview(preview_state.inner());
     let preview = OverlayCaptionSnapshot {
-        generation,
+        generation: preview_token,
         visible: true,
         phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
         chunk_id: None,
         audio_path: None,
         text: "Subtitle preview · 자막 미리보기".to_string(),
         position,
-        final_hold_ms: Some(SUBTITLE_PREVIEW_HOLD.as_millis() as u64),
-        style: settings.floating_overlay_caption_style(),
+        final_hold_ms: Some(preview_hold.as_millis() as u64),
+        style,
     };
-    let preview_token = preview_state
-        .fetch_add(1, Ordering::SeqCst)
-        .saturating_add(1);
     publish_overlay_caption_snapshot(&app, preview.clone(), "subtitle preview");
 
     let app_for_restore = app.clone();
     let state_for_restore = state.inner().clone();
     let preview_state_for_restore = preview_state.inner().clone();
     thread::spawn(move || {
-        thread::sleep(SUBTITLE_PREVIEW_HOLD);
-        if preview_state_for_restore.load(Ordering::SeqCst) != preview_token {
+        thread::sleep(preview_hold);
+        if !finish_subtitle_preview(&preview_state_for_restore, preview_token) {
             return;
         }
         let snapshot = state_for_restore
@@ -6058,22 +6107,11 @@ fn wire_live_transcription(
                     runtime.snapshot()
                 });
                 if let Some(snapshot) = snapshot {
-                    let generation = snapshot.generation;
-                    let should_schedule_hide = snapshot.final_hold_ms.is_some()
-                        && snapshot.visible
-                        && !matches!(snapshot.position, FloatingOverlayPosition::Off);
                     publish_overlay_caption_snapshot(
                         &app_for_handler,
                         snapshot,
                         "live committed caption",
                     );
-                    if should_schedule_hide {
-                        schedule_overlay_caption_hide(
-                            app_for_handler.clone(),
-                            caption_state.inner().clone(),
-                            generation,
-                        );
-                    }
                 }
             }
             if let Err(error) = app_for_handler.emit(
@@ -6379,17 +6417,7 @@ fn emit_outcome_to_frontend(
                     }
                 });
                 if let Some(snapshot) = snapshot {
-                    let generation = snapshot.generation;
-                    let should_schedule_hide = snapshot.visible
-                        && !matches!(snapshot.position, FloatingOverlayPosition::Off);
                     publish_overlay_caption_snapshot(app, snapshot, "live final caption");
-                    if should_schedule_hide {
-                        schedule_overlay_caption_hide(
-                            app.clone(),
-                            caption_state.inner().clone(),
-                            generation,
-                        );
-                    }
                 }
             }
             if wakenote::text_input::auto_transcript_input_should_type(
@@ -7965,6 +7993,22 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use wakenote::settings::{DictionaryEntry, SourceAutoPromptEntry};
+
+    #[test]
+    fn subtitle_preview_tokens_keep_only_the_latest_preview_active() {
+        let state = AtomicU64::new(0);
+        assert!(!subtitle_preview_is_active(&state));
+
+        let first = begin_subtitle_preview(&state);
+        assert!(subtitle_preview_is_active(&state));
+        let second = begin_subtitle_preview(&state);
+        assert_ne!(first, second);
+
+        assert!(!finish_subtitle_preview(&state, first));
+        assert!(subtitle_preview_is_active(&state));
+        assert!(finish_subtitle_preview(&state, second));
+        assert!(!subtitle_preview_is_active(&state));
+    }
 
     fn dictionary_entry(id: &str, term: &str, aliases: &[&str]) -> DictionaryEntry {
         DictionaryEntry {

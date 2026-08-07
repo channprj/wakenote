@@ -37,6 +37,11 @@ pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
 pub const SUBTITLE_DURATION_MIN_SECONDS: u8 = 1;
 pub const SUBTITLE_DURATION_MAX_SECONDS: u8 = 10;
+pub const SUBTITLE_PADDING_MAX_PX: u32 = 64;
+pub const SUBTITLE_BORDER_WIDTH_MAX_PX: u32 = 8;
+pub const SUBTITLE_BORDER_RADIUS_MAX_PX: u32 = 48;
+pub const SUBTITLE_WIDTH_MAX_PX: u32 = 1_600;
+pub const SUBTITLE_HEIGHT_MAX_PX: u32 = 1_200;
 pub const LLM_MAX_ITERATIONS_MIN: u8 = 1;
 pub const LLM_MAX_ITERATIONS_MAX: u8 = 30;
 pub const OPENROUTER_DEFAULT_MODEL_ID: &str = "z-ai/glm-5.2";
@@ -65,6 +70,42 @@ pub fn default_subtitle_duration_seconds() -> u8 {
     5
 }
 
+pub fn default_subtitle_padding_horizontal_px() -> u32 {
+    18
+}
+
+pub fn default_subtitle_padding_vertical_px() -> u32 {
+    14
+}
+
+pub fn default_subtitle_border_width_px() -> u32 {
+    1
+}
+
+pub fn default_subtitle_border_color() -> String {
+    "#ffffff".to_string()
+}
+
+pub fn default_subtitle_border_radius_px() -> u32 {
+    8
+}
+
+pub fn default_subtitle_min_width_px() -> u32 {
+    260
+}
+
+pub fn default_subtitle_max_width_px() -> u32 {
+    720
+}
+
+pub fn default_subtitle_min_height_px() -> u32 {
+    58
+}
+
+pub fn default_subtitle_max_height_px() -> u32 {
+    1_000
+}
+
 pub fn default_dictation_bubble_background_color() -> String {
     "#000000".to_string()
 }
@@ -78,6 +119,18 @@ fn normalize_solid_background_color(value: &str) -> String {
         "#ffffff".to_string()
     } else {
         "#000000".to_string()
+    }
+}
+
+fn normalize_subtitle_border_color(value: &str) -> String {
+    let value = value.trim();
+    if value.len() == 7
+        && value.starts_with('#')
+        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        value.to_ascii_lowercase()
+    } else {
+        default_subtitle_border_color()
     }
 }
 
@@ -145,6 +198,15 @@ pub struct FloatingOverlayCaptionStyle {
     pub background_opacity: u8,
     pub animation: SubtitleAnimation,
     pub duration_seconds: u8,
+    pub padding_horizontal_px: u32,
+    pub padding_vertical_px: u32,
+    pub border_width_px: u32,
+    pub border_color: String,
+    pub border_radius_px: u32,
+    pub min_width_px: u32,
+    pub max_width_px: u32,
+    pub min_height_px: u32,
+    pub max_height_px: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,6 +480,24 @@ pub struct AppSettings {
     pub subtitle_duration_seconds: u8,
     #[serde(default)]
     pub subtitle_animation: SubtitleAnimation,
+    #[serde(default = "default_subtitle_padding_horizontal_px")]
+    pub subtitle_padding_horizontal_px: u32,
+    #[serde(default = "default_subtitle_padding_vertical_px")]
+    pub subtitle_padding_vertical_px: u32,
+    #[serde(default = "default_subtitle_border_width_px")]
+    pub subtitle_border_width_px: u32,
+    #[serde(default = "default_subtitle_border_color")]
+    pub subtitle_border_color: String,
+    #[serde(default = "default_subtitle_border_radius_px")]
+    pub subtitle_border_radius_px: u32,
+    #[serde(default = "default_subtitle_min_width_px")]
+    pub subtitle_min_width_px: u32,
+    #[serde(default = "default_subtitle_max_width_px")]
+    pub subtitle_max_width_px: u32,
+    #[serde(default = "default_subtitle_min_height_px")]
+    pub subtitle_min_height_px: u32,
+    #[serde(default = "default_subtitle_max_height_px")]
+    pub subtitle_max_height_px: u32,
     pub theme_mode: ThemeMode,
     pub theme_primary_color: String,
     /// Master switch for system-audio (Google Meet / YouTube …) capture.
@@ -506,6 +586,15 @@ pub struct SettingsPatch {
     pub floating_overlay_background_opacity: Option<u8>,
     pub subtitle_duration_seconds: Option<u8>,
     pub subtitle_animation: Option<SubtitleAnimation>,
+    pub subtitle_padding_horizontal_px: Option<u32>,
+    pub subtitle_padding_vertical_px: Option<u32>,
+    pub subtitle_border_width_px: Option<u32>,
+    pub subtitle_border_color: Option<String>,
+    pub subtitle_border_radius_px: Option<u32>,
+    pub subtitle_min_width_px: Option<u32>,
+    pub subtitle_max_width_px: Option<u32>,
+    pub subtitle_min_height_px: Option<u32>,
+    pub subtitle_max_height_px: Option<u32>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_primary_color: Option<String>,
     pub system_audio_enabled: Option<bool>,
@@ -1211,6 +1300,65 @@ impl AppSettings {
         if let Some(value) = patch.subtitle_animation {
             self.subtitle_animation = value;
         }
+        if let Some(value) = patch.subtitle_padding_horizontal_px {
+            self.subtitle_padding_horizontal_px = value.min(SUBTITLE_PADDING_MAX_PX);
+        }
+        if let Some(value) = patch.subtitle_padding_vertical_px {
+            self.subtitle_padding_vertical_px = value.min(SUBTITLE_PADDING_MAX_PX);
+        }
+        if let Some(value) = patch.subtitle_border_width_px {
+            self.subtitle_border_width_px = value.min(SUBTITLE_BORDER_WIDTH_MAX_PX);
+        }
+        if let Some(value) = patch.subtitle_border_color {
+            self.subtitle_border_color = normalize_subtitle_border_color(&value);
+        }
+        if let Some(value) = patch.subtitle_border_radius_px {
+            self.subtitle_border_radius_px = value.min(SUBTITLE_BORDER_RADIUS_MAX_PX);
+        }
+        match (
+            patch
+                .subtitle_min_width_px
+                .map(|value| value.min(SUBTITLE_WIDTH_MAX_PX)),
+            patch
+                .subtitle_max_width_px
+                .map(|value| value.min(SUBTITLE_WIDTH_MAX_PX)),
+        ) {
+            (Some(minimum), Some(maximum)) => {
+                self.subtitle_min_width_px = minimum.min(maximum);
+                self.subtitle_max_width_px = minimum.max(maximum);
+            }
+            (Some(minimum), None) => {
+                self.subtitle_min_width_px = minimum;
+                self.subtitle_max_width_px = self.subtitle_max_width_px.max(minimum);
+            }
+            (None, Some(maximum)) => {
+                self.subtitle_max_width_px = maximum;
+                self.subtitle_min_width_px = self.subtitle_min_width_px.min(maximum);
+            }
+            (None, None) => {}
+        }
+        match (
+            patch
+                .subtitle_min_height_px
+                .map(|value| value.min(SUBTITLE_HEIGHT_MAX_PX)),
+            patch
+                .subtitle_max_height_px
+                .map(|value| value.min(SUBTITLE_HEIGHT_MAX_PX)),
+        ) {
+            (Some(minimum), Some(maximum)) => {
+                self.subtitle_min_height_px = minimum.min(maximum);
+                self.subtitle_max_height_px = minimum.max(maximum);
+            }
+            (Some(minimum), None) => {
+                self.subtitle_min_height_px = minimum;
+                self.subtitle_max_height_px = self.subtitle_max_height_px.max(minimum);
+            }
+            (None, Some(maximum)) => {
+                self.subtitle_max_height_px = maximum;
+                self.subtitle_min_height_px = self.subtitle_min_height_px.min(maximum);
+            }
+            (None, None) => {}
+        }
         if let Some(value) = patch.theme_mode {
             self.theme_mode = value;
         }
@@ -1322,6 +1470,15 @@ impl Default for AppSettings {
             floating_overlay_background_opacity: default_floating_overlay_background_opacity(),
             subtitle_duration_seconds: default_subtitle_duration_seconds(),
             subtitle_animation: SubtitleAnimation::default(),
+            subtitle_padding_horizontal_px: default_subtitle_padding_horizontal_px(),
+            subtitle_padding_vertical_px: default_subtitle_padding_vertical_px(),
+            subtitle_border_width_px: default_subtitle_border_width_px(),
+            subtitle_border_color: default_subtitle_border_color(),
+            subtitle_border_radius_px: default_subtitle_border_radius_px(),
+            subtitle_min_width_px: default_subtitle_min_width_px(),
+            subtitle_max_width_px: default_subtitle_max_width_px(),
+            subtitle_min_height_px: default_subtitle_min_height_px(),
+            subtitle_max_height_px: default_subtitle_max_height_px(),
             theme_mode: ThemeMode::Dark,
             theme_primary_color: "#000".to_string(),
             system_audio_enabled: false,
@@ -1362,6 +1519,18 @@ impl AppSettings {
     }
 
     pub fn floating_overlay_caption_style(&self) -> FloatingOverlayCaptionStyle {
+        let (min_width_px, max_width_px) =
+            if self.subtitle_min_width_px <= self.subtitle_max_width_px {
+                (self.subtitle_min_width_px, self.subtitle_max_width_px)
+            } else {
+                (self.subtitle_max_width_px, self.subtitle_min_width_px)
+            };
+        let (min_height_px, max_height_px) =
+            if self.subtitle_min_height_px <= self.subtitle_max_height_px {
+                (self.subtitle_min_height_px, self.subtitle_max_height_px)
+            } else {
+                (self.subtitle_max_height_px, self.subtitle_min_height_px)
+            };
         FloatingOverlayCaptionStyle {
             font_size_px: self.floating_overlay_font_size_px,
             text_color: self.floating_overlay_text_color.clone(),
@@ -1369,6 +1538,23 @@ impl AppSettings {
             background_opacity: self.floating_overlay_background_opacity,
             animation: self.subtitle_animation,
             duration_seconds: self.subtitle_duration_seconds,
+            padding_horizontal_px: self
+                .subtitle_padding_horizontal_px
+                .min(SUBTITLE_PADDING_MAX_PX),
+            padding_vertical_px: self
+                .subtitle_padding_vertical_px
+                .min(SUBTITLE_PADDING_MAX_PX),
+            border_width_px: self
+                .subtitle_border_width_px
+                .min(SUBTITLE_BORDER_WIDTH_MAX_PX),
+            border_color: normalize_subtitle_border_color(&self.subtitle_border_color),
+            border_radius_px: self
+                .subtitle_border_radius_px
+                .min(SUBTITLE_BORDER_RADIUS_MAX_PX),
+            min_width_px: min_width_px.min(SUBTITLE_WIDTH_MAX_PX),
+            max_width_px: max_width_px.min(SUBTITLE_WIDTH_MAX_PX),
+            min_height_px: min_height_px.min(SUBTITLE_HEIGHT_MAX_PX),
+            max_height_px: max_height_px.min(SUBTITLE_HEIGHT_MAX_PX),
         }
     }
 
@@ -1961,6 +2147,15 @@ mod tests {
         assert_eq!(settings.floating_overlay_background_opacity, 82);
         assert_eq!(settings.subtitle_duration_seconds, 5);
         assert_eq!(settings.subtitle_animation, SubtitleAnimation::Fade);
+        assert_eq!(settings.subtitle_padding_horizontal_px, 18);
+        assert_eq!(settings.subtitle_padding_vertical_px, 14);
+        assert_eq!(settings.subtitle_border_width_px, 1);
+        assert_eq!(settings.subtitle_border_color, "#ffffff");
+        assert_eq!(settings.subtitle_border_radius_px, 8);
+        assert_eq!(settings.subtitle_min_width_px, 260);
+        assert_eq!(settings.subtitle_max_width_px, 720);
+        assert_eq!(settings.subtitle_min_height_px, 58);
+        assert_eq!(settings.subtitle_max_height_px, 1_000);
     }
 
     #[test]
@@ -2003,5 +2198,59 @@ mod tests {
         assert_eq!(settings.subtitle_animation, SubtitleAnimation::Instant);
         assert_eq!(settings.dictation_bubble_background_color, "#000000");
         assert_eq!(settings.dictation_bubble_background_opacity, 0);
+    }
+
+    #[test]
+    fn subtitle_layout_defaults_and_patch_values_share_one_normalized_style() {
+        let mut settings = AppSettings::default();
+        assert_eq!(settings.subtitle_padding_horizontal_px, 18);
+        assert_eq!(settings.subtitle_padding_vertical_px, 14);
+        assert_eq!(settings.subtitle_border_width_px, 1);
+        assert_eq!(settings.subtitle_border_color, "#ffffff");
+        assert_eq!(settings.subtitle_border_radius_px, 8);
+        assert_eq!(settings.subtitle_min_width_px, 260);
+        assert_eq!(settings.subtitle_max_width_px, 720);
+        assert_eq!(settings.subtitle_min_height_px, 58);
+        assert_eq!(settings.subtitle_max_height_px, 1_000);
+
+        settings.apply_patch(SettingsPatch {
+            subtitle_padding_horizontal_px: Some(99),
+            subtitle_padding_vertical_px: Some(65),
+            subtitle_border_width_px: Some(12),
+            subtitle_border_color: Some("#12AbEf".into()),
+            subtitle_border_radius_px: Some(99),
+            subtitle_min_width_px: Some(1_200),
+            subtitle_max_width_px: Some(480),
+            subtitle_min_height_px: Some(900),
+            subtitle_max_height_px: Some(320),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.subtitle_padding_horizontal_px, 64);
+        assert_eq!(settings.subtitle_padding_vertical_px, 64);
+        assert_eq!(settings.subtitle_border_width_px, 8);
+        assert_eq!(settings.subtitle_border_color, "#12abef");
+        assert_eq!(settings.subtitle_border_radius_px, 48);
+        assert_eq!(settings.subtitle_min_width_px, 480);
+        assert_eq!(settings.subtitle_max_width_px, 1_200);
+        assert_eq!(settings.subtitle_min_height_px, 320);
+        assert_eq!(settings.subtitle_max_height_px, 900);
+
+        let style = settings.floating_overlay_caption_style();
+        assert_eq!(style.padding_horizontal_px, 64);
+        assert_eq!(style.padding_vertical_px, 64);
+        assert_eq!(style.border_width_px, 8);
+        assert_eq!(style.border_color, "#12abef");
+        assert_eq!(style.border_radius_px, 48);
+        assert_eq!(style.min_width_px, 480);
+        assert_eq!(style.max_width_px, 1_200);
+        assert_eq!(style.min_height_px, 320);
+        assert_eq!(style.max_height_px, 900);
+
+        settings.apply_patch(SettingsPatch {
+            subtitle_border_color: Some("not-a-color".into()),
+            ..Default::default()
+        });
+        assert_eq!(settings.subtitle_border_color, "#ffffff");
     }
 }

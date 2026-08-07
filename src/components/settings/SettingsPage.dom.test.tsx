@@ -863,6 +863,11 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({
       subtitle_duration_seconds: 10,
     });
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        subtitle_duration_seconds: 10,
+      }),
+    );
 
     await user.click(
       screen.getByRole("combobox", { name: "Subtitle animation" }),
@@ -871,6 +876,61 @@ describe("SettingsPage interactions", () => {
     await waitFor(() =>
       expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
         subtitle_animation: "dissolve",
+      }),
+    );
+  });
+
+  it("edits subtitle layout and border values as labelled pixel inputs", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    for (const name of [
+      "Subtitle horizontal padding",
+      "Subtitle vertical padding",
+      "Subtitle border width",
+      "Subtitle corner radius",
+      "Subtitle minimum width",
+      "Subtitle maximum width",
+      "Subtitle minimum height",
+      "Subtitle maximum height",
+    ]) {
+      expect(screen.getByRole("spinbutton", { name })).toBeTruthy();
+    }
+
+    const horizontalPadding = screen.getByRole("spinbutton", {
+      name: "Subtitle horizontal padding",
+    });
+    await user.clear(horizontalPadding);
+    await user.type(horizontalPadding, "32");
+    await user.tab();
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_padding_horizontal_px: 32,
+    });
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        subtitle_padding_horizontal_px: 32,
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("Subtitle border color"), {
+      target: { value: "#12abef" },
+    });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_border_color: "#12abef",
+    });
+    await waitFor(() =>
+      expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
+        subtitle_border_color: "#12abef",
       }),
     );
   });

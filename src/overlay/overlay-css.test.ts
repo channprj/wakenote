@@ -20,14 +20,35 @@ describe("overlay caption css", () => {
     expect(css).toMatch(
       /\.overlay-caption__text\s*\{[^}]*white-space:\s*normal/,
     );
+    expect(css).toMatch(
+      /\.overlay-caption__text\s*\{[^}]*word-break:\s*keep-all/,
+    );
+    expect(css).toMatch(
+      /\.overlay-caption__text\s*\{[^}]*overflow-wrap:\s*anywhere/,
+    );
+  });
+
+  it("drives caption geometry and border from style variables", () => {
+    const rule = ruleBody(".overlay-caption");
+    for (const variable of [
+      "--overlay-caption-min-width",
+      "--overlay-caption-max-width",
+      "--overlay-caption-min-height",
+      "--overlay-caption-max-height",
+      "--overlay-caption-padding-horizontal",
+      "--overlay-caption-padding-vertical",
+      "--overlay-caption-border-width",
+      "--overlay-caption-border-rgb",
+      "--overlay-caption-border-radius",
+    ]) {
+      expect(rule).toContain(variable);
+    }
   });
 
   it("keeps vertical breathing room inside the overlay window", () => {
     expect(css).toMatch(/#overlay-root\s*\{[^}]*padding:\s*8px\s+0/);
     expect(css).toMatch(/#overlay-root\s*\{[^}]*box-sizing:\s*border-box/);
-    expect(css).toMatch(
-      /\.overlay-caption\s*\{[^}]*max-height:\s*calc\(100vh - 16px\)/,
-    );
+    expect(ruleBody(".overlay-caption")).toContain("calc(100vh - 16px)");
   });
 
   it.each([

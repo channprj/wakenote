@@ -41,6 +41,7 @@ pub struct OverlayCaptionRuntime {
     position: FloatingOverlayPosition,
     style: FloatingOverlayCaptionStyle,
     hide_at: Option<Instant>,
+    scheduled_generation: Option<u64>,
 }
 
 impl Default for OverlayCaptionRuntime {
@@ -55,6 +56,7 @@ impl Default for OverlayCaptionRuntime {
             position: FloatingOverlayPosition::Off,
             style: default_overlay_caption_style(),
             hide_at: None,
+            scheduled_generation: None,
         }
     }
 }
@@ -102,6 +104,17 @@ impl OverlayCaptionRuntime {
         position: FloatingOverlayPosition,
         style: FloatingOverlayCaptionStyle,
     ) {
+        self.show_partial_at(chunk_id, text, position, style, Instant::now());
+    }
+
+    fn show_partial_at(
+        &mut self,
+        chunk_id: u64,
+        text: impl AsRef<str>,
+        position: FloatingOverlayPosition,
+        style: FloatingOverlayCaptionStyle,
+        now: Instant,
+    ) {
         if matches!(position, FloatingOverlayPosition::Off) {
             self.hide();
             return;
@@ -121,10 +134,20 @@ impl OverlayCaptionRuntime {
         self.text = text;
         self.position = position;
         self.style = style;
-        self.hide_at = None;
+        self.hide_at = Some(now + self.final_hold_duration());
     }
 
     pub fn mark_committed(&mut self, chunk_id: u64, audio_path: PathBuf, will_transcribe: bool) {
+        self.mark_committed_at(chunk_id, audio_path, will_transcribe, Instant::now());
+    }
+
+    fn mark_committed_at(
+        &mut self,
+        chunk_id: u64,
+        audio_path: PathBuf,
+        will_transcribe: bool,
+        now: Instant,
+    ) {
         if self.chunk_id.is_some() && self.chunk_id != Some(chunk_id) {
             return;
         }
@@ -140,11 +163,11 @@ impl OverlayCaptionRuntime {
         if will_transcribe {
             self.visible = true;
             self.phase = OverlayCaptionPhase::Refining;
-            self.hide_at = None;
+            self.hide_at = Some(now + self.final_hold_duration());
         } else {
             self.visible = true;
             self.phase = OverlayCaptionPhase::Final;
-            self.hide_at = Some(Instant::now() + self.final_hold_duration());
+            self.hide_at = Some(now + self.final_hold_duration());
         }
     }
 
@@ -226,6 +249,17 @@ impl OverlayCaptionRuntime {
         true
     }
 
+    pub fn take_expiry_generation_to_schedule(&mut self) -> Option<u64> {
+        if !self.visible
+            || self.hide_at.is_none()
+            || self.scheduled_generation == Some(self.generation)
+        {
+            return None;
+        }
+        self.scheduled_generation = Some(self.generation);
+        Some(self.generation)
+    }
+
     pub fn set_position(&mut self, position: FloatingOverlayPosition) {
         if matches!(position, FloatingOverlayPosition::Off) {
             self.hide();
@@ -302,7 +336,7 @@ mod tests {
         assert_eq!(snapshot.chunk_id, Some(7));
         assert_eq!(snapshot.text, "지금 말하는 내용입니다");
         assert_eq!(snapshot.position, FloatingOverlayPosition::Top);
-        assert_eq!(snapshot.final_hold_ms, None);
+        assert_eq!(snapshot.final_hold_ms, Some(5_000));
     }
 
     #[test]
@@ -316,6 +350,7 @@ mod tests {
         assert_eq!(snapshot.phase, OverlayCaptionPhase::Refining);
         assert_eq!(snapshot.text, "초안 자막");
         assert_eq!(snapshot.audio_path.as_deref(), Some("/tmp/chunk.wav"));
+        assert_eq!(snapshot.final_hold_ms, Some(5_000));
     }
 
     #[test]
@@ -380,6 +415,42 @@ mod tests {
         assert!(runtime.snapshot().visible);
         assert!(runtime.hide_if_generation(runtime.snapshot().generation));
         assert!(!runtime.snapshot().visible);
+    }
+
+    #[test]
+    fn repeated_partial_updates_restart_one_generation_safe_expiry() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let started = Instant::now();
+        runtime.show_partial_at(7, "첫 자막", FloatingOverlayPosition::Top, style(), started);
+        let generation = runtime.snapshot().generation;
+        assert_eq!(
+            runtime.take_expiry_generation_to_schedule(),
+            Some(generation)
+        );
+        assert_eq!(runtime.take_expiry_generation_to_schedule(), None);
+
+        runtime.show_partial_at(
+            7,
+            "갱신된 자막",
+            FloatingOverlayPosition::Top,
+            style(),
+            started + Duration::from_secs(4),
+        );
+
+        assert_eq!(runtime.snapshot().generation, generation);
+        assert_eq!(runtime.take_expiry_generation_to_schedule(), None);
+        assert_eq!(
+            runtime.hide_delay_for_generation(generation, started + Duration::from_secs(5)),
+            Some(Duration::from_secs(4))
+        );
+        assert_eq!(
+            runtime.due_hide_generation(started + Duration::from_secs(8)),
+            None
+        );
+        assert_eq!(
+            runtime.due_hide_generation(started + Duration::from_secs(9)),
+            Some(generation)
+        );
     }
 
     #[test]

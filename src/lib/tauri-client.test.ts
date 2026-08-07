@@ -192,6 +192,27 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
+  it("keeps one-sided subtitle size patches ordered like the backend", async () => {
+    await saveSettingsPatch({
+      subtitle_min_width_px: 260,
+      subtitle_max_width_px: 720,
+      subtitle_min_height_px: 58,
+      subtitle_max_height_px: 1_000,
+    });
+
+    const raisedMinimum = await saveSettingsPatch({
+      subtitle_min_width_px: 1_200,
+    });
+    expect(raisedMinimum.settings.subtitle_min_width_px).toBe(1_200);
+    expect(raisedMinimum.settings.subtitle_max_width_px).toBe(1_200);
+
+    const loweredMaximum = await saveSettingsPatch({
+      subtitle_max_height_px: 40,
+    });
+    expect(loweredMaximum.settings.subtitle_min_height_px).toBe(40);
+    expect(loweredMaximum.settings.subtitle_max_height_px).toBe(40);
+  });
+
   it("validates browser fallback dictation shortcut patches like the backend", async () => {
     const normalized = await saveSettingsPatch({
       dictation_shortcut: " Command + Alt + D ",

@@ -32,13 +32,27 @@ body {
   align-items: center;
   justify-content: center;
   width: fit-content;
-  min-width: min(260px, calc(100vw - 24px));
-  max-width: calc(100vw - 24px);
-  min-height: 58px;
-  max-height: calc(100vh - 16px);
-  padding: 14px 18px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  min-width: min(
+    var(--overlay-caption-min-width, 260px),
+    calc(100vw - 24px)
+  );
+  max-width: min(
+    var(--overlay-caption-max-width, 720px),
+    calc(100vw - 24px)
+  );
+  min-height: min(
+    var(--overlay-caption-min-height, 58px),
+    calc(100vh - 16px)
+  );
+  max-height: min(
+    var(--overlay-caption-max-height, 1000px),
+    calc(100vh - 16px)
+  );
+  padding: var(--overlay-caption-padding-vertical, 14px)
+    var(--overlay-caption-padding-horizontal, 18px);
+  border-radius: var(--overlay-caption-border-radius, 8px);
+  border: var(--overlay-caption-border-width, 1px) solid
+    rgb(var(--overlay-caption-border-rgb, 255 255 255) / 0.16);
   background: rgb(
     var(--overlay-caption-background-rgb, 0 0 0) /
       var(--overlay-caption-background-alpha, 0.82)
@@ -69,6 +83,7 @@ body {
   font-size: var(--overlay-caption-font-size, 24px);
   font-weight: 650;
   line-height: 1.25;
+  word-break: keep-all;
   overflow-wrap: anywhere;
   white-space: normal;
   text-align: center;

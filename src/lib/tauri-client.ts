@@ -120,6 +120,121 @@ export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
 
+function normalizeSubtitlePatch(
+  patch: SettingsPatch,
+  current?: AppSettings,
+): SettingsPatch {
+  const safePatch = { ...patch };
+  const clampInteger = (value: number, maximum: number) =>
+    Math.max(0, Math.min(maximum, Math.round(value)));
+
+  if (typeof safePatch.floating_overlay_font_size_px === "number") {
+    safePatch.floating_overlay_font_size_px = Math.max(
+      10,
+      Math.min(48, Math.round(safePatch.floating_overlay_font_size_px)),
+    );
+  }
+  if (typeof safePatch.subtitle_duration_seconds === "number") {
+    safePatch.subtitle_duration_seconds = Math.max(
+      1,
+      Math.min(10, Math.round(safePatch.subtitle_duration_seconds)),
+    );
+  }
+  for (const key of [
+    "subtitle_padding_horizontal_px",
+    "subtitle_padding_vertical_px",
+  ] as const) {
+    if (typeof safePatch[key] === "number") {
+      safePatch[key] = clampInteger(safePatch[key], 64);
+    }
+  }
+  if (typeof safePatch.subtitle_border_width_px === "number") {
+    safePatch.subtitle_border_width_px = clampInteger(
+      safePatch.subtitle_border_width_px,
+      8,
+    );
+  }
+  if (typeof safePatch.subtitle_border_radius_px === "number") {
+    safePatch.subtitle_border_radius_px = clampInteger(
+      safePatch.subtitle_border_radius_px,
+      48,
+    );
+  }
+  for (const key of [
+    "subtitle_min_width_px",
+    "subtitle_max_width_px",
+  ] as const) {
+    if (typeof safePatch[key] === "number") {
+      safePatch[key] = clampInteger(safePatch[key], 1_600);
+    }
+  }
+  for (const key of [
+    "subtitle_min_height_px",
+    "subtitle_max_height_px",
+  ] as const) {
+    if (typeof safePatch[key] === "number") {
+      safePatch[key] = clampInteger(safePatch[key], 1_200);
+    }
+  }
+  if (typeof safePatch.subtitle_border_color === "string") {
+    const color = safePatch.subtitle_border_color.trim();
+    safePatch.subtitle_border_color = /^#[0-9a-fA-F]{6}$/.test(color)
+      ? color.toLowerCase()
+      : "#ffffff";
+  }
+  if (
+    typeof safePatch.subtitle_min_width_px === "number" &&
+    typeof safePatch.subtitle_max_width_px === "number" &&
+    safePatch.subtitle_min_width_px > safePatch.subtitle_max_width_px
+  ) {
+    [safePatch.subtitle_min_width_px, safePatch.subtitle_max_width_px] = [
+      safePatch.subtitle_max_width_px,
+      safePatch.subtitle_min_width_px,
+    ];
+  }
+  if (
+    typeof safePatch.subtitle_min_height_px === "number" &&
+    typeof safePatch.subtitle_max_height_px === "number" &&
+    safePatch.subtitle_min_height_px > safePatch.subtitle_max_height_px
+  ) {
+    [safePatch.subtitle_min_height_px, safePatch.subtitle_max_height_px] = [
+      safePatch.subtitle_max_height_px,
+      safePatch.subtitle_min_height_px,
+    ];
+  }
+  if (
+    current &&
+    typeof safePatch.subtitle_min_width_px === "number" &&
+    typeof safePatch.subtitle_max_width_px !== "number" &&
+    safePatch.subtitle_min_width_px > current.subtitle_max_width_px
+  ) {
+    safePatch.subtitle_max_width_px = safePatch.subtitle_min_width_px;
+  } else if (
+    current &&
+    typeof safePatch.subtitle_max_width_px === "number" &&
+    typeof safePatch.subtitle_min_width_px !== "number" &&
+    safePatch.subtitle_max_width_px < current.subtitle_min_width_px
+  ) {
+    safePatch.subtitle_min_width_px = safePatch.subtitle_max_width_px;
+  }
+  if (
+    current &&
+    typeof safePatch.subtitle_min_height_px === "number" &&
+    typeof safePatch.subtitle_max_height_px !== "number" &&
+    safePatch.subtitle_min_height_px > current.subtitle_max_height_px
+  ) {
+    safePatch.subtitle_max_height_px = safePatch.subtitle_min_height_px;
+  } else if (
+    current &&
+    typeof safePatch.subtitle_max_height_px === "number" &&
+    typeof safePatch.subtitle_min_height_px !== "number" &&
+    safePatch.subtitle_max_height_px < current.subtitle_min_height_px
+  ) {
+    safePatch.subtitle_min_height_px = safePatch.subtitle_max_height_px;
+  }
+  return safePatch;
+}
+
 export async function suspendDictationShortcut(): Promise<void> {
   if (isTauriRuntime()) {
     await invoke("suspend_dictation_shortcut");
@@ -549,10 +664,11 @@ export async function rebuildTranscriptDayIndex(
 export async function saveSettingsPatch(
   patch: SettingsPatch,
 ): Promise<AppSnapshot> {
+  const normalizedPatch = normalizeSubtitlePatch(patch);
   if (!isTauriRuntime()) {
     const previousSettings = browserSnapshot.settings ?? defaultSettings();
     const models = browserSnapshot.models ?? mockModels();
-    const safePatch = { ...patch };
+    const safePatch = normalizeSubtitlePatch(patch, previousSettings);
     if (
       typeof safePatch.selected_model === "string" &&
       !isUsableBrowserModel(safePatch.selected_model, models)
@@ -566,18 +682,6 @@ export async function saveSettingsPatch(
       safePatch.llm_max_iterations = Math.max(
         1,
         Math.min(30, Math.round(safePatch.llm_max_iterations)),
-      );
-    }
-    if (typeof safePatch.floating_overlay_font_size_px === "number") {
-      safePatch.floating_overlay_font_size_px = Math.max(
-        10,
-        Math.min(48, Math.round(safePatch.floating_overlay_font_size_px)),
-      );
-    }
-    if (typeof safePatch.subtitle_duration_seconds === "number") {
-      safePatch.subtitle_duration_seconds = Math.max(
-        1,
-        Math.min(10, Math.round(safePatch.subtitle_duration_seconds)),
       );
     }
     if (typeof safePatch.dictation_shortcut === "string") {
@@ -622,7 +726,7 @@ export async function saveSettingsPatch(
     return browserSnapshot;
   }
 
-  await invoke<AppSettings>("update_settings", { patch });
+  await invoke<AppSettings>("update_settings", { patch: normalizedPatch });
   return loadSnapshot();
 }
 
@@ -630,7 +734,7 @@ export async function previewSubtitle(patch: SettingsPatch): Promise<void> {
   if (!isTauriRuntime()) {
     return;
   }
-  await invoke("preview_subtitle", { patch });
+  await invoke("preview_subtitle", { patch: normalizeSubtitlePatch(patch) });
 }
 
 export async function setMicrophoneInputVolume(

@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { AppSnapshot } from "@/lib/types";
 import {
   SettingSelect,
+  SettingNumberInput,
   SettingSlider,
   SettingSwitch,
   SettingsCard,
@@ -158,7 +159,7 @@ export function IntegrationsSettings({
           max={10}
           suffix=" sec"
           onValueChange={(subtitle_duration_seconds) =>
-            updateSubtitle({ subtitle_duration_seconds }, false)
+            updateSubtitle({ subtitle_duration_seconds })
           }
         />
         <SettingSelect
@@ -171,6 +172,99 @@ export function IntegrationsSettings({
           ]}
           onValueChange={(subtitle_animation) =>
             updateSubtitle({ subtitle_animation })
+          }
+        />
+      </SettingsCard>
+
+      <SettingsCard
+        title="Subtitle layout & border"
+        description="Enter exact pixel values for the caption box."
+      >
+        <SettingNumberInput
+          label="Subtitle horizontal padding"
+          value={settings.subtitle_padding_horizontal_px}
+          min={0}
+          max={64}
+          suffix="px"
+          onValueChange={(subtitle_padding_horizontal_px) =>
+            updateSubtitle({ subtitle_padding_horizontal_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle vertical padding"
+          value={settings.subtitle_padding_vertical_px}
+          min={0}
+          max={64}
+          suffix="px"
+          onValueChange={(subtitle_padding_vertical_px) =>
+            updateSubtitle({ subtitle_padding_vertical_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle border width"
+          value={settings.subtitle_border_width_px}
+          min={0}
+          max={8}
+          suffix="px"
+          onValueChange={(subtitle_border_width_px) =>
+            updateSubtitle({ subtitle_border_width_px })
+          }
+        />
+        <ColorSetting
+          label="Subtitle border color"
+          value={settings.subtitle_border_color}
+          onChange={(subtitle_border_color) =>
+            updateSubtitle({ subtitle_border_color })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle corner radius"
+          value={settings.subtitle_border_radius_px}
+          min={0}
+          max={48}
+          suffix="px"
+          onValueChange={(subtitle_border_radius_px) =>
+            updateSubtitle({ subtitle_border_radius_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle minimum width"
+          value={settings.subtitle_min_width_px}
+          min={0}
+          max={1600}
+          suffix="px"
+          onValueChange={(subtitle_min_width_px) =>
+            updateSubtitle({ subtitle_min_width_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle maximum width"
+          value={settings.subtitle_max_width_px}
+          min={0}
+          max={1600}
+          suffix="px"
+          onValueChange={(subtitle_max_width_px) =>
+            updateSubtitle({ subtitle_max_width_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle minimum height"
+          value={settings.subtitle_min_height_px}
+          min={0}
+          max={1200}
+          suffix="px"
+          onValueChange={(subtitle_min_height_px) =>
+            updateSubtitle({ subtitle_min_height_px })
+          }
+        />
+        <SettingNumberInput
+          label="Subtitle maximum height"
+          value={settings.subtitle_max_height_px}
+          min={0}
+          max={1200}
+          suffix="px"
+          onValueChange={(subtitle_max_height_px) =>
+            updateSubtitle({ subtitle_max_height_px })
           }
         />
       </SettingsCard>

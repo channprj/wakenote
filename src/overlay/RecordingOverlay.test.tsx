@@ -106,6 +106,15 @@ describe("caption overlay content", () => {
           background_opacity: 68,
           animation: "dissolve",
           duration_seconds: 7,
+          padding_horizontal_px: 22,
+          padding_vertical_px: 11,
+          border_width_px: 3,
+          border_color: "#12abef",
+          border_radius_px: 16,
+          min_width_px: 300,
+          max_width_px: 840,
+          min_height_px: 64,
+          max_height_px: 640,
         },
       } as Partial<OverlayCaptionSnapshot>),
     );
@@ -114,6 +123,15 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-text-color:#f8fafc");
     expect(markup).toContain("--overlay-caption-background-rgb:255 255 255");
     expect(markup).toContain("--overlay-caption-background-alpha:0.68");
+    expect(markup).toContain("--overlay-caption-padding-horizontal:22px");
+    expect(markup).toContain("--overlay-caption-padding-vertical:11px");
+    expect(markup).toContain("--overlay-caption-border-width:3px");
+    expect(markup).toContain("--overlay-caption-border-rgb:18 171 239");
+    expect(markup).toContain("--overlay-caption-border-radius:16px");
+    expect(markup).toContain("--overlay-caption-min-width:300px");
+    expect(markup).toContain("--overlay-caption-max-width:840px");
+    expect(markup).toContain("--overlay-caption-min-height:64px");
+    expect(markup).toContain("--overlay-caption-max-height:640px");
     expect(markup).toContain("background-color:rgba(255, 255, 255, 0.68)");
     expect(markup).toContain('data-animation="dissolve"');
   });

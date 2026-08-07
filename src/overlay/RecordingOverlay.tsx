@@ -47,6 +47,15 @@ export interface OverlayCaptionStyle {
   background_opacity: number;
   animation: SubtitleAnimation;
   duration_seconds: number;
+  padding_horizontal_px: number;
+  padding_vertical_px: number;
+  border_width_px: number;
+  border_color: string;
+  border_radius_px: number;
+  min_width_px: number;
+  max_width_px: number;
+  min_height_px: number;
+  max_height_px: number;
 }
 
 export function emptyCaptionSnapshot(): OverlayCaptionSnapshot {
@@ -71,6 +80,15 @@ function defaultCaptionStyle(): OverlayCaptionStyle {
     background_opacity: 82,
     animation: "fade",
     duration_seconds: 5,
+    padding_horizontal_px: 18,
+    padding_vertical_px: 14,
+    border_width_px: 1,
+    border_color: "#ffffff",
+    border_radius_px: 8,
+    min_width_px: 260,
+    max_width_px: 720,
+    min_height_px: 58,
+    max_height_px: 1_000,
   };
 }
 
@@ -115,11 +133,36 @@ function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
   const fontSize = Math.max(10, Math.min(48, Math.round(style.font_size_px)));
   const opacity =
     Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
+  const minWidth = Math.max(
+    0,
+    Math.min(1_600, Math.round(Math.min(style.min_width_px, style.max_width_px))),
+  );
+  const maxWidth = Math.max(
+    minWidth,
+    Math.min(1_600, Math.round(Math.max(style.min_width_px, style.max_width_px))),
+  );
+  const minHeight = Math.max(
+    0,
+    Math.min(1_200, Math.round(Math.min(style.min_height_px, style.max_height_px))),
+  );
+  const maxHeight = Math.max(
+    minHeight,
+    Math.min(1_200, Math.round(Math.max(style.min_height_px, style.max_height_px))),
+  );
   return {
     "--overlay-caption-font-size": `${fontSize}px`,
     "--overlay-caption-text-color": style.text_color,
     "--overlay-caption-background-rgb": hexToRgbTriplet(style.background_color),
     "--overlay-caption-background-alpha": `${opacity}`,
+    "--overlay-caption-padding-horizontal": `${Math.max(0, Math.min(64, Math.round(style.padding_horizontal_px)))}px`,
+    "--overlay-caption-padding-vertical": `${Math.max(0, Math.min(64, Math.round(style.padding_vertical_px)))}px`,
+    "--overlay-caption-border-width": `${Math.max(0, Math.min(8, Math.round(style.border_width_px)))}px`,
+    "--overlay-caption-border-rgb": hexToRgbTriplet(style.border_color),
+    "--overlay-caption-border-radius": `${Math.max(0, Math.min(48, Math.round(style.border_radius_px)))}px`,
+    "--overlay-caption-min-width": `${minWidth}px`,
+    "--overlay-caption-max-width": `${maxWidth}px`,
+    "--overlay-caption-min-height": `${minHeight}px`,
+    "--overlay-caption-max-height": `${maxHeight}px`,
     backgroundColor: rgbaColor(style.background_color, opacity),
   } as CSSProperties;
 }

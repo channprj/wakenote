@@ -215,6 +215,15 @@ export interface AppSettings {
   floating_overlay_background_opacity: number;
   subtitle_duration_seconds: number;
   subtitle_animation: SubtitleAnimation;
+  subtitle_padding_horizontal_px: number;
+  subtitle_padding_vertical_px: number;
+  subtitle_border_width_px: number;
+  subtitle_border_color: string;
+  subtitle_border_radius_px: number;
+  subtitle_min_width_px: number;
+  subtitle_max_width_px: number;
+  subtitle_min_height_px: number;
+  subtitle_max_height_px: number;
   theme_mode: ThemeMode;
   theme_primary_color: string;
   system_audio_enabled: boolean;

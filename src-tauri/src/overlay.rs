@@ -2,7 +2,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
 use crate::commands::TrayState;
-use crate::settings::{DictationBubblePosition, DictationOverlayStyle, FloatingOverlayPosition};
+use crate::settings::{
+    DictationBubblePosition, DictationOverlayStyle, FloatingOverlayCaptionStyle,
+    FloatingOverlayPosition,
+};
 
 pub const OVERLAY_LABEL: &str = "overlay";
 pub const OVERLAY_EVENT: &str = "overlay-state";
@@ -20,9 +23,7 @@ const DICTATION_OVERLAY_HORIZONTAL_OFFSET_LOGICAL: f64 = 18.0;
 const DICTATION_OVERLAY_TOP_OFFSET_LOGICAL: f64 = 32.0;
 const DICTATION_OVERLAY_BOTTOM_OFFSET_LOGICAL: f64 = 18.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
-const OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL: f64 = 36.0;
-const OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL: f64 = 28.0;
-const OVERLAY_CAPTION_BORDER_LOGICAL: f64 = 2.0;
+const OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL: f64 = 24.0;
 const OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL: f64 = 16.0;
 const OVERLAY_CAPTION_LINE_HEIGHT_RATIO: f64 = 1.25;
 
@@ -242,7 +243,7 @@ pub fn show_caption_overlay(
     app: &AppHandle,
     position: FloatingOverlayPosition,
     text: &str,
-    font_size_px: u32,
+    style: &FloatingOverlayCaptionStyle,
 ) -> tauri::Result<()> {
     if matches!(position, FloatingOverlayPosition::Off) || text.trim().is_empty() {
         return hide_overlay(app);
@@ -259,7 +260,7 @@ pub fn show_caption_overlay(
         let Some(anchor) = overlay_anchor(position) else {
             return hide_overlay(app);
         };
-        let overlay_size = caption_overlay_size_for_monitor(rect, text, font_size_px);
+        let overlay_size = caption_overlay_size_for_monitor(rect, text, style);
         let logical = calculate_position(rect, anchor, overlay_size);
         window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
         window.set_position(logical)?;
@@ -519,36 +520,66 @@ fn dictation_overlay_size_for_monitor(_monitor: MonitorRect) -> (f64, f64) {
 pub(crate) fn caption_overlay_size_for_monitor(
     monitor: MonitorRect,
     text: &str,
-    font_size_px: u32,
+    style: &FloatingOverlayCaptionStyle,
 ) -> (f64, f64) {
-    let (width, _) = overlay_size_for_monitor(monitor);
     let scale = if monitor.scale_factor > 0.0 {
         monitor.scale_factor
     } else {
         1.0
     };
+    let monitor_logical_w = monitor.size_physical.0 as f64 / scale;
     let monitor_logical_h = monitor.size_physical.1 as f64 / scale;
-    let font_size = (font_size_px as f64).clamp(10.0, 48.0);
-    let text_width = (width - OVERLAY_CAPTION_HORIZONTAL_PADDING_LOGICAL).max(font_size * 8.0);
+    let available_window_width = (monitor_logical_w - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
+    let available_window_height =
+        (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
+    let available_caption_width =
+        (available_window_width - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL).max(1.0);
+    let available_caption_height =
+        (available_window_height - OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL).max(1.0);
+
+    let font_size = (style.font_size_px as f64).clamp(10.0, 48.0);
+    let padding_horizontal = style.padding_horizontal_px as f64;
+    let padding_vertical = style.padding_vertical_px as f64;
+    let border = style.border_width_px as f64;
+    let requested_min_width = style.min_width_px.min(style.max_width_px) as f64;
+    let requested_max_width = style.min_width_px.max(style.max_width_px) as f64;
+    let requested_min_height = style.min_height_px.min(style.max_height_px) as f64;
+    let requested_max_height = style.min_height_px.max(style.max_height_px) as f64;
+
     let average_char_width = font_size * 0.56;
-    let chars_per_line = (text_width / average_char_width).floor().max(8.0);
     let weighted_chars = text
         .chars()
         .map(|ch| if ch.is_ascii() { 0.58 } else { 1.0 })
         .sum::<f64>()
         .max(1.0);
+    let desired_caption_width =
+        weighted_chars * average_char_width + padding_horizontal * 2.0 + border * 2.0;
+    let effective_max_width = requested_max_width.min(available_caption_width);
+    let effective_min_width = requested_min_width.min(effective_max_width);
+    let caption_width = desired_caption_width
+        .max(effective_min_width)
+        .min(effective_max_width)
+        .max(1.0);
+    let text_width = (caption_width - padding_horizontal * 2.0 - border * 2.0).max(font_size * 2.0);
+    let chars_per_line = (text_width / average_char_width).floor().max(8.0);
     let lines = (weighted_chars / chars_per_line).ceil().max(1.0);
     let text_height = lines * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
-    let max_height =
-        (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(OVERLAY_HEIGHT_LOGICAL);
-    let height = (text_height
-        + OVERLAY_CAPTION_VERTICAL_PADDING_LOGICAL
-        + OVERLAY_CAPTION_BORDER_LOGICAL
-        + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL)
-        .ceil()
-        .max(OVERLAY_HEIGHT_LOGICAL)
-        .min(max_height);
-    (width, height)
+    let desired_caption_height = text_height + padding_vertical * 2.0 + border * 2.0;
+    let effective_max_height = requested_max_height.min(available_caption_height);
+    let effective_min_height = requested_min_height.min(effective_max_height);
+    let caption_height = desired_caption_height
+        .max(effective_min_height)
+        .min(effective_max_height)
+        .max(1.0);
+
+    (
+        (caption_width + OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL)
+            .ceil()
+            .min(available_window_width),
+        (caption_height + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL)
+            .ceil()
+            .min(available_window_height),
+    )
 }
 
 pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
@@ -615,6 +646,10 @@ mod tests {
             size_physical: size,
             scale_factor: scale,
         }
+    }
+
+    fn caption_style() -> FloatingOverlayCaptionStyle {
+        crate::settings::AppSettings::default().floating_overlay_caption_style()
     }
 
     #[test]
@@ -730,14 +765,16 @@ mod tests {
     #[test]
     fn caption_overlay_height_grows_for_long_text() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let short = caption_overlay_size_for_monitor(monitor, "짧은 자막", 24);
+        let style = caption_style();
+        let short = caption_overlay_size_for_monitor(monitor, "짧은 자막", &style);
         let long = caption_overlay_size_for_monitor(
             monitor,
             "긴 자막은 두 줄에서 잘리면 안 됩니다. 실시간 전사 문장이 길어져도 전체 텍스트가 보이도록 오버레이 높이를 텍스트 길이에 맞춰 확장해야 합니다. 사용자가 회의 중 빠르게 말하면 partial transcript가 길어질 수 있으므로 말줄임표 없이 모두 표시해야 합니다.",
-            24,
+            &style,
         );
 
-        assert_eq!(short.1, OVERLAY_HEIGHT_LOGICAL);
+        assert_eq!(short.0, 284.0);
+        assert_eq!(short.1, 76.0);
         assert!(long.1 > short.1);
         assert!(long.1 <= 1080.0 - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0);
     }
@@ -746,9 +783,40 @@ mod tests {
     fn caption_overlay_height_keeps_breathing_room_for_four_lines() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
         let four_line_caption = "a".repeat(280);
-        let size = caption_overlay_size_for_monitor(monitor, &four_line_caption, 24);
+        let size = caption_overlay_size_for_monitor(monitor, &four_line_caption, &caption_style());
 
         assert!(size.1 >= 166.0, "caption height was {}", size.1);
+    }
+
+    #[test]
+    fn caption_overlay_size_uses_custom_padding_border_and_bounds() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let mut compact = caption_style();
+        compact.padding_horizontal_px = 0;
+        compact.padding_vertical_px = 0;
+        compact.border_width_px = 0;
+        compact.min_width_px = 80;
+        compact.max_width_px = 320;
+        compact.min_height_px = 0;
+        compact.max_height_px = 80;
+        let compact_size = caption_overlay_size_for_monitor(monitor, "abc", &compact);
+
+        let mut padded = compact.clone();
+        padded.padding_horizontal_px = 30;
+        padded.padding_vertical_px = 20;
+        padded.border_width_px = 4;
+        let padded_size = caption_overlay_size_for_monitor(monitor, "abc", &padded);
+
+        assert_eq!(compact_size, (104.0, 46.0));
+        assert!(padded_size.0 > compact_size.0);
+        assert!(padded_size.1 > compact_size.1);
+        assert!(padded_size.0 <= 344.0);
+        assert!(padded_size.1 <= 96.0);
+
+        let tiny_monitor = rect((0, 0), (100, 100), 1.0);
+        let safe_size = caption_overlay_size_for_monitor(tiny_monitor, &"가".repeat(400), &padded);
+        assert!(safe_size.0 <= 52.0);
+        assert!(safe_size.1 <= 52.0);
     }
 
     #[cfg(target_os = "macos")]
