@@ -23,6 +23,7 @@ const DICTATION_OVERLAY_HORIZONTAL_OFFSET_LOGICAL: f64 = 18.0;
 const DICTATION_OVERLAY_TOP_OFFSET_LOGICAL: f64 = 32.0;
 const DICTATION_OVERLAY_BOTTOM_OFFSET_LOGICAL: f64 = 18.0;
 const OVERLAY_SCREEN_MARGIN_LOGICAL: f64 = 24.0;
+const OVERLAY_CAPTION_CORNER_MARGIN_LOGICAL: f64 = 4.0;
 const OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL: f64 = 24.0;
 const OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL: f64 = 16.0;
 const OVERLAY_CAPTION_LINE_HEIGHT_RATIO: f64 = 1.25;
@@ -261,7 +262,7 @@ pub fn show_caption_overlay(
             return hide_overlay(app);
         };
         let overlay_size = caption_overlay_size_for_monitor(rect, text, style);
-        let logical = calculate_position(rect, anchor, overlay_size);
+        let logical = calculate_caption_position(rect, anchor, overlay_size);
         window.set_size(LogicalSize::new(overlay_size.0, overlay_size.1))?;
         window.set_position(logical)?;
     }
@@ -408,6 +409,33 @@ pub(crate) fn calculate_position(
     anchor: OverlayAnchor,
     size_logical: (f64, f64),
 ) -> LogicalPosition<f64> {
+    calculate_position_with_horizontal_margin(
+        monitor,
+        anchor,
+        size_logical,
+        OVERLAY_SCREEN_MARGIN_LOGICAL,
+    )
+}
+
+fn calculate_caption_position(
+    monitor: MonitorRect,
+    anchor: OverlayAnchor,
+    size_logical: (f64, f64),
+) -> LogicalPosition<f64> {
+    calculate_position_with_horizontal_margin(
+        monitor,
+        anchor,
+        size_logical,
+        OVERLAY_CAPTION_CORNER_MARGIN_LOGICAL,
+    )
+}
+
+fn calculate_position_with_horizontal_margin(
+    monitor: MonitorRect,
+    anchor: OverlayAnchor,
+    size_logical: (f64, f64),
+    horizontal_margin_logical: f64,
+) -> LogicalPosition<f64> {
     let (overlay_w, overlay_h) = size_logical;
     let scale = if monitor.scale_factor > 0.0 {
         monitor.scale_factor
@@ -422,13 +450,13 @@ pub(crate) fn calculate_position(
 
     let logical_x = match anchor {
         OverlayAnchor::TopLeft | OverlayAnchor::BottomLeft => {
-            monitor_origin_logical_x + OVERLAY_SCREEN_MARGIN_LOGICAL
+            monitor_origin_logical_x + horizontal_margin_logical
         }
         OverlayAnchor::Top | OverlayAnchor::Bottom => {
             monitor_origin_logical_x + (monitor_logical_w - overlay_w) / 2.0
         }
         OverlayAnchor::TopRight | OverlayAnchor::BottomRight => {
-            monitor_origin_logical_x + monitor_logical_w - overlay_w - OVERLAY_SCREEN_MARGIN_LOGICAL
+            monitor_origin_logical_x + monitor_logical_w - overlay_w - horizontal_margin_logical
         }
     };
     let logical_y = match anchor {
@@ -693,6 +721,21 @@ mod tests {
             let actual = calculate_position(monitor, anchor, size);
             assert_eq!((actual.x, actual.y), expected);
         }
+    }
+
+    #[test]
+    fn caption_corner_anchors_sit_closer_to_horizontal_screen_edges() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let size =
+            caption_overlay_size_for_monitor(monitor, "화면 가장자리 자막", &caption_style());
+
+        let left = calculate_caption_position(monitor, OverlayAnchor::TopLeft, size);
+        let right = calculate_caption_position(monitor, OverlayAnchor::BottomRight, size);
+
+        assert_eq!(left.x, 4.0);
+        assert_eq!(left.y, TOP_OFFSET_LOGICAL);
+        assert_eq!(right.x, 1920.0 - size.0 - 4.0);
+        assert_eq!(right.y, 1080.0 - size.1 - BOTTOM_OFFSET_LOGICAL);
     }
 
     #[test]
