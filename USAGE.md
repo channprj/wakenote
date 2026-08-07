@@ -95,16 +95,16 @@ The initial defaults are `~/Documents/WakeNote`, `whisper-medium`, Korean transc
 | --- | --- |
 | Capture | Live microphone state, recording waveform, calibration, and newest decoded phrases |
 | Meetings | Manual long-form recording, audio import, resumable transcription, and optional speaker separation |
-| Transcripts | Per-day capture history, playback, selection, regeneration, and report creation |
+| Transcripts | Per-day capture history, newest/oldest ordering, 50-item pages, playback, selection, bundle Trash, regeneration, and report creation |
 | Reports | Summary or detailed-report composition, progress, history, and rendered Markdown |
-| Activity | Queue status, warning/error review, retry, skip, cancel, bulk reprocessing, and Trash actions |
+| Activity | Per-day queue status, newest/oldest ordering, warning/error review, retry, skip, safe running-job cancellation, bulk reprocessing, and Trash actions |
 | Settings | General behavior, Audio, Dictation, Models, Storage, Integrations, and Advanced sources |
 
 ### Capture lifecycle
 
 The speech gate starts a chunk only after the input remains above Threshold for the Attack duration. It closes only after the input remains below Threshold for Release, while Pre-roll, Lead-in, and Post-roll protect the edges. Max Chunk splits continuous audio into bounded recordings.
 
-With two configured microphones, **Merge microphone inputs** is on by default. WakeNote preserves separate device streams and health state, then resamples and aligns them into one `mic-merged` artifact. Turning merge off creates separate Primary and Secondary artifacts and keeps their device identity in metadata and transcript filters.
+With two configured microphones, **Microphone processing** offers three modes. **Separate recordings** writes independent Primary and Secondary artifacts. **Merge Audio** is the default: it buffers up to 220 ms, estimates fractional delay and clock drift, corrects gain and polarity, and blends only while alignment confidence is sufficient. **Priority Audio** instead writes one sufficiently loud, clean source at a time, using switching hysteresis and a 50 ms equal-power crossfade so two room responses are never summed. Every mode retains physical-device identity in metadata and transcript filters.
 
 Recording, Transcription, and Pause are independent controls. You can retain audio without creating new transcription jobs, process an existing backlog without recording, or pause both.
 
@@ -124,6 +124,8 @@ The default save root is `~/Documents/WakeNote`.
 │   └── all.json
 ├── uploaded/20260805/
 ├── meetings/<meeting-id>/
+│   ├── audio.m4a
+│   └── meeting.json
 └── reports/
 ```
 
@@ -135,6 +137,7 @@ The default save root is `~/Documents/WakeNote`.
 | `*.error.txt` | Recoverable transcription error |
 | `YYYYMMDD/all.json` | Derived transcript-day index; individual sidecars remain authoritative |
 | `uploaded/YYYYMMDD/` | Audio imported into the normal transcription queue |
+| `meetings/<id>/audio.m4a` | Durable audio created by manual Meeting recording; imported meeting audio keeps its original supported codec |
 | `meetings/<id>/meeting.json` | Long-form meeting state, segments, progress, and optional speaker turns |
 | `reports/*.md` and `*.json` | Persisted report body and metadata |
 | `reports/.runs/*.json` | Active and terminal report-run state |
@@ -223,7 +226,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
 | Primary microphone | `System Default` | one available input |
 | Secondary microphone | none | one distinct physical input |
-| Merge microphone inputs | `on` | `on` / `off` |
+| Microphone processing | Merge Audio | Separate recordings / Merge Audio / Priority Audio |
 | Threshold | `-40 dBFS` | `-90 … -10` |
 | Voice-aware Auto Level | `on` | Local RNN speech detection, adaptive digital gain, clipping protection, and hardware input-volume recommendations when the microphone allows them |
 | Mic input volume | Current macOS value | `0 … 100%`; system-authoritative and not reset with recording defaults |
@@ -246,9 +249,18 @@ Settings patches are clamped or normalized by the Rust backend.
 | Shortcut dictation | `off` | `on` / `off` |
 | Dictation shortcut | `Option+Space` | supported key, key chord, or physical modifier combination |
 | Dictation language | `auto` | same language set as archival transcription |
-| Floating overlay | `on`, top | off, top, bottom |
-| Overlay font size | `24 px` | `18 … 48 px` |
-| Overlay background | black at `82%` | black/white, `0 … 100%` |
+| Subtitle | `off` | `on` / `off` |
+| Subtitle position | top center | off; top/bottom × left/center/right |
+| Subtitle font size | `24 px` | `10 … 48 px` |
+| Subtitle background | black at `82%` | black/white, `0 … 100%` |
+| Subtitle horizontal padding | `18 px` | `0 … 64 px` |
+| Subtitle vertical padding | `14 px` | `0 … 64 px` |
+| Subtitle border | `1 px`, `#ffffff` | `0 … 8 px`, six-digit hex color |
+| Subtitle corner radius | `8 px` | `0 … 48 px` |
+| Subtitle width | `260 … 720 px` | minimum/maximum `0 … 1,600 px`; normalized so minimum ≤ maximum |
+| Subtitle height | `58 … 1,000 px` | minimum/maximum `0 … 1,200 px`; normalized so minimum ≤ maximum |
+| Subtitle duration | `5 sec` | `1 … 10 sec` |
+| Subtitle animation | fade | instant / fade / dissolve |
 | Theme | dark | light / dark |
 | OpenRouter report model | `z-ai/glm-5.2` | provider model ID |
 | Maximum report iterations | `3` | `1 … 30` |
@@ -302,6 +314,20 @@ Blank lines and `#` comments are ignored. The file accepts at most 1 MiB and 1,0
 
 WakeNote sends canonical terms as native provider context where supported, then performs deterministic alias-to-canonical correction before saving, captioning, or typing. ASCII aliases match case-insensitively at alphanumeric boundaries; non-ASCII aliases match exactly. There is no fuzzy replacement.
 
+### Subtitle presentation
+
+Enable **Settings › Integrations › Subtitle** and choose any top/bottom × left/center/right position. Corner positions use a smaller display-edge margin than the recording waveform, while the centered positions keep their existing anchor.
+
+Padding, border width/color/radius, and minimum/maximum width and height are numeric pixel settings. The backend clamps unsafe values and orders each minimum/maximum pair before the same geometry is applied to the native overlay window and its web content. Subtitle text uses `word-break: keep-all`; unbreakable URLs and long tokens may still wrap anywhere as an overflow safeguard.
+
+Changing a presentation option shows the real overlay as a preview. Each edit restarts the preview for the configured 1–10 second duration. Live and preview text share the same generation-safe expiry, so an older timer cannot hide newer text and the final Subtitle does not remain on screen indefinitely.
+
+### History navigation and Trash
+
+**Transcripts** and **Activity** open newest-first and can switch to oldest-first. Both navigate one local calendar day at a time. Transcripts renders at most 50 filtered rows per page; changing the day, filter, or order returns to the first page and clears stale off-page selection. This bounds browser DOM and audio-control work, while the existing per-day `all.json` remains the disk index rather than a server-style cursor.
+
+Selected Transcript rows can be moved to Trash together. WakeNote stages every exact-stem audio, `.txt`, `.json`, and `.error.txt` sibling, rolls the bundle back if a move fails, then refreshes that day's `all.json`. Activity uses the same bundle transaction. Cancelling a running Activity job is idempotent and suppresses late partial/final writes; deleting one requests cancellation and waits for its worker to exit before moving the bundle and removing the queue record. Trash remains recoverable through macOS Finder.
+
 ### Shortcut dictation
 
 Enable **Settings › Dictation › Shortcut dictation**, choose a compatible model and language, then keep the cursor in the destination application:
@@ -312,7 +338,7 @@ Enable **Settings › Dictation › Shortcut dictation**, choose a compatible mo
 
 The dictation stream is independent from voice-activated archival capture. Each attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, a press during transcription is ignored, and recording stops automatically after ten minutes. WakeNote restores the previous clipboard after native insertion.
 
-The top-center feedback bubble remains available even when the general floating caption is off. Microphone permission is required for capture; Accessibility permission is required for focused-cursor typing.
+The top-center feedback bubble remains available even when Subtitle is off. Microphone permission is required for capture; Accessibility permission is required for focused-cursor typing.
 
 ### Reports
 
@@ -348,7 +374,7 @@ The browser fixture includes captures, reports, runs, queue outcomes, and instal
 ### Keep two microphone identities separate
 
 1. Select explicit, distinct Primary and Secondary devices in **Settings › Audio**.
-2. Turn off **Merge microphone inputs**.
+2. Choose **Separate recordings** under **Microphone processing**.
 3. Record normally.
 
 WakeNote writes separate source-labelled files and interleaves their transcript entries chronologically. Input monitoring still uses Primary only.
@@ -361,6 +387,8 @@ WakeNote writes separate source-labelled files and interleaves their transcript 
 4. Start transcription and leave the source file in place until WakeNote has copied it into the meeting directory.
 
 Progress is checkpointed to `meeting.json` after each segment so interrupted work can resume.
+
+Manual Meeting recording is streamed through a hidden temporary WAV and finalized as `audio.m4a` with the configured compressed bitrate. The temporary file is removed after successful encoding. If finalization fails, WakeNote keeps recoverable audio instead of discarding the recording. Imported meeting files keep their original `mp3`, `m4a`, or `wav` codec.
 
 ### Add an external-command model
 
@@ -417,6 +445,10 @@ Use the actual generated filename for `<version>`.
 ### Activity shows a warning instead of an error
 
 No-speech, empty-transcript, low-confidence, and transcript-artifact outcomes are completed quality warnings. They preserve the recording and remain available for review or model-specific reprocessing. **Mark all resolved** acknowledges them without deleting history.
+
+### A running Activity job does not disappear immediately after Delete
+
+Deletion waits until the active transcription worker acknowledges cancellation so it cannot recreate a transcript or metadata sidecar after the bundle reaches Trash. A non-interruptible cloud request may therefore leave the row visible briefly. Do not force-quit the app during that handoff; WakeNote removes the queue record only after worker exit and a successful recoverable bundle move.
 
 ### Cloud transcription failed
 

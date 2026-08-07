@@ -11,10 +11,10 @@ The desktop app uses Tauri 2 and Rust for capture, persistence, and transcriptio
 ## Highlights
 
 - **Automatic capture** — a calibrated dBFS gate, attack/release timing, pre-roll, lead-in, and post-roll preserve speech without continuously writing silence.
-- **Resilient dual microphones** — Primary and optional Secondary inputs keep independent streams and recovery state, then merge into one time-aligned recording by default.
+- **Flexible dual microphones** — Keep Primary and Secondary separate, adaptively synchronize and merge them, or use Priority Audio to record whichever input is currently cleanest without summing both microphones.
 - **Local and opt-in cloud ASR** — Whisper, sherpa-onnx, and Qwen3-ASR run locally; OpenRouter, OpenAI, and Soniox are available only after their API keys are saved.
-- **Live and archival workflows** — floating captions, shortcut dictation, dated transcript history, long-form meetings, and Markdown reports share the same model and Dictionary contracts.
-- **Durable recovery** — queued jobs survive restarts, interrupted running jobs return to pending, and warnings remain reviewable without deleting recordings.
+- **Live and archival workflows** — Customizable Subtitles, shortcut dictation, paged daily transcript and Activity history, M4A meeting recordings, and Markdown reports share the same model and Dictionary contracts.
+- **Durable recovery** — queued jobs survive restarts, running work can be cancelled safely, and selected recording bundles move to macOS Trash together instead of leaving text, JSON, or audio behind.
 - **Inspectable storage** — audio, metadata, transcripts, recoverable errors, meetings, and reports stay under a user-selected save root.
 
 ## Installation

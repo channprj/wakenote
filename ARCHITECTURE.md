@@ -5,7 +5,7 @@
 WakeNote is a macOS Tauri 2 application with two user interfaces and one Rust backend:
 
 - the main React workspace for capture, history, reports, queue activity, and settings;
-- a separate click-through React overlay for live captions and dictation feedback;
+- a separate click-through React overlay for live Subtitle text and dictation feedback;
 - the Rust process that owns audio devices, recording, transcription runtimes, persistence, permissions, tray behavior, and Tauri commands.
 
 The central architectural boundary is the filesystem. A capture becomes useful only after its audio and metadata are committed. Transcription then adds a success or error sidecar, while the persistent queue records processing state. This keeps recordings recoverable even if transcription, a cloud provider, or the UI fails.
@@ -22,16 +22,16 @@ The primary routes are defined in `src/lib/navigation.ts`:
 | --- | --- |
 | Capture | Live levels, recorder state, calibration, and recent partial/final text |
 | Meetings | Imported or manually recorded long-form audio and resumable transcription |
-| Transcripts | Date-based capture archive, playback, selection, and report entry points |
+| Transcripts | Day-indexed archive, order/filter controls, 50-row pages, playback, recoverable bundle deletion, and report entry points |
 | Reports | Report composition, run progress, history, and rendered Markdown |
-| Activity | Persistent transcription queue, warnings/errors, retry, reprocessing, and recovery actions |
+| Activity | Day-indexed persistent queue, warnings/errors, running cancellation, retry, reprocessing, and recoverable bundle deletion |
 | Settings | General, Audio, Dictation, Models, Storage, Integrations, and Advanced configuration |
 
-`src/lib/app-state.ts` reduces snapshots and events into frontend state. Domain helpers in `src/lib/` keep capability filtering, queue presentation, meeting progress, report composition, and browser mocks out of page components.
+`src/lib/app-state.ts` reduces snapshots and events into frontend state. Domain helpers in `src/lib/` keep capability filtering, queue presentation, meeting progress, report composition, and browser mocks out of page components. `DatePagePicker.tsx` supplies the shared local-day navigation used by Transcripts and Activity; each view owns its order, filter, selection, and page-reset semantics.
 
-### Caption overlay
+### Subtitle overlay
 
-`src/overlay/main.tsx` mounts `RecordingOverlay.tsx` into the separate Tauri overlay window. The backend emits overlay state and live transcript events; the overlay never owns capture or transcription state. It is a click-through presentation surface, while the main window remains the control surface.
+`src/overlay/main.tsx` mounts `RecordingOverlay.tsx` into the separate Tauri overlay window. The backend emits Subtitle and dictation state events; the overlay never owns capture or transcription state. It is a click-through presentation surface, while the main window remains the control surface. One normalized style contract carries pixel padding, border, radius, and width/height bounds through settings, native window sizing, and CSS. Generation-tagged expiry timers give both previews and live text the configured lifetime without allowing stale timers to hide newer content.
 
 ### Tauri command and event bridge
 
@@ -45,15 +45,16 @@ Commands cover settings, credentials, permissions, models, queue actions, captur
 | --- | --- |
 | `audio.rs` | Speech gate, level monitoring, calibration inputs, and capture timing |
 | `live_capture.rs` | CPAL input runtime and bounded frame dispatch |
-| `multi_capture.rs` | Independent Primary/Secondary streams, recovery, resampling, and time-aligned merge |
+| `multi_capture.rs` | Independent Primary/Secondary streams, recovery, resampling, adaptive drift-aware merge, and Priority Audio selection |
 | `system_audio.rs` | ScreenCaptureKit-backed system-audio capture |
 | `source_watcher.rs` / `sources.rs` | Recognized application/window sources and lifecycle detection |
 | `capture.rs` | Converts gated frames into completed chunks |
 | `recorder.rs` | Writes WAV directly, M4A through `afconvert`, MP3 through `ffmpeg`, plus metadata and sidecars |
 | `storage.rs` | Allocates dated, collision-safe output paths and uploaded-audio paths |
+| `trash.rs` | Stages exact-stem artifact bundles, moves them to recoverable macOS Trash, and rolls back partial failures |
 | `audio_analysis.rs` / `audio_merge.rs` | Waveform analysis and non-destructive audio merge operations |
 
-Live callbacks push frames into bounded queues so filesystem or inference work does not block the audio callback. Each selected microphone has its own stream and health state. When merge is enabled, the downstream recorder receives one synchronized input while metadata retains both physical devices.
+Live callbacks push frames into bounded queues so filesystem or inference work does not block the audio callback. Each selected microphone has its own stream and health state. Separate mode preserves both streams. Adaptive Merge uses a 220 ms bounded buffer to track fractional delay, gain, polarity, and clock drift; it blends coherent inputs and falls back toward the cleaner source when confidence drops. Priority Audio never sums room responses: it scores sufficiently voiced input quality, requires three windows before switching, and changes source through a 50 ms equal-power crossfade. Metadata retains both physical devices.
 
 ### Transcription runtimes
 
@@ -77,6 +78,8 @@ Live callbacks push frames into bounded queues so filesystem or inference work d
 
 The production worker runs at most one transcription job at a time. A job retains its chosen model and transcription options. On startup, a persisted `running` job is rewritten to `pending`, allowing the worker to retry work interrupted by an app exit. Completed no-speech, empty, low-confidence, and artifact outcomes can carry warnings without being represented as processing failures.
 
+Running cancellation is cooperative at the worker boundary and idempotent at the queue boundary. Once cancelled, partial events, sidecar commits, and late final outcomes are suppressed. Running deletion is two-phase: mark the job cancelled and pending deletion, wait for the active worker to acknowledge exit, then move the exact audio/text/metadata/error bundle to Trash and remove the queue record. A failed move rolls the staged bundle back and keeps the record recoverable.
+
 Activity acknowledgement is separate from job lifecycle: marking an outcome resolved sets its read state but does not delete the queue record or its audio. Reprocessing creates a new pending attempt with the selected model.
 
 ### Dictionary
@@ -93,7 +96,7 @@ Dictation uses the configured Primary microphone but does not interrupt the arch
 
 ### Meetings
 
-`meeting.rs` keeps long-form work separate from short capture chunks. Imported `mp3`, `m4a`, or `wav` files are copied into `meetings/<id>/`, normalized, split into bounded segments, and checkpointed to `meeting.json` after each segment. Interrupted work can resume from persisted progress.
+`meeting.rs` keeps long-form work separate from short capture chunks. Imported `mp3`, `m4a`, or `wav` files are copied into `meetings/<id>/` without changing their durable codec, normalized for inference, split into bounded segments, and checkpointed to `meeting.json` after each segment. Manual Meeting capture streams PCM into a hidden WAV, finalizes `audio.m4a` through the same native encoder and configured bitrate as transcript recordings, and removes the temporary file after success. Encoding failure preserves recoverable audio. Interrupted transcription work can resume from persisted progress.
 
 OpenAI GPT-4o Transcribe Diarize can persist speaker turns when speaker separation is requested. Other compatible models use the standard segment transcript path.
 
@@ -111,7 +114,7 @@ The frontend renders report Markdown without enabling raw HTML. Hiding a report 
 physical microphones / supported system source
   -> independent capture runtimes and bounded frame queues
   -> level monitor + SpeechGate
-  -> optional Primary/Secondary time-aligned merge
+  -> Separate recordings / adaptive Merge Audio / Priority Audio
   -> Recorder
   -> YYYYMMDD audio + metadata sidecar
   -> persistent TranscriptionQueue
@@ -123,7 +126,7 @@ physical microphones / supported system source
 
 The audio and metadata are committed before the queue processes them. The transcript sidecar is therefore additive rather than the only durable representation of a capture.
 
-### Realtime captions
+### Realtime Subtitles
 
 ```text
 cumulative live samples
@@ -151,8 +154,8 @@ global shortcut pressed
 ### Meetings
 
 ```text
-imported or manually recorded audio
-  -> meetings/<id>/audio.* + meeting.json
+imported audio (original supported codec) or manual PCM capture
+  -> imported audio.* or finalized meetings/<id>/audio.m4a + meeting.json
   -> normalization and segmentation
   -> compatible model per segment or provider request
   -> atomic meeting.json progress checkpoints
@@ -205,6 +208,8 @@ The default is `~/Documents/WakeNote`.
 │   └── all.json
 ├── uploaded/YYYYMMDD/
 ├── meetings/<meeting-id>/
+│   ├── audio.m4a or imported audio.*
+│   └── meeting.json
 └── reports/
     ├── *.md
     ├── *.json
@@ -256,9 +261,11 @@ Local models are the default. Cloud runtimes require a saved provider key and re
 
 OpenAI and Soniox protocols have separate adapters and error parsing. They converge only at credential redaction, typed failures, realtime partial/final contracts, usage accounting, Dictionary correction, and artifact persistence.
 
-### Non-destructive history controls
+### Recoverable history controls
 
-Resolved Activity outcomes and hidden transcripts, meetings, or reports remain stored. Destructive actions are explicit and separate from acknowledgement or visibility state.
+Resolved Activity outcomes and hidden transcripts, meetings, or reports remain stored. Deletion is explicit and separate from acknowledgement or visibility state. Transcript and Activity deletion operates on exact-stem bundles, moves audio plus `.txt`, `.json`, and `.error.txt` siblings to macOS Trash, rolls back on failure, and rebuilds the affected per-day index. Running Activity deletion also waits for worker acknowledgement so late output cannot recreate the bundle.
+
+Transcripts and Activity both navigate at the existing local-day index boundary and default to newest-first with an oldest-first option. Transcripts limits rendered results to 50 rows per page and resets page-local selection when the day, filter, or order changes. This bounds DOM and audio-control work; `all.json` still loads one day at a time, so the design does not claim backend cursor pagination.
 
 ### Atomic small-state writes
 
