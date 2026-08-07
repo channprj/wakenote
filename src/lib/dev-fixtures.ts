@@ -267,14 +267,14 @@ function dayFolder(date: Date): string {
   return `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}`;
 }
 
-function timeBasename(date: Date): string {
-  return `${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
+function recordingBasename(date: Date): string {
+  return `${dayFolder(date).slice(2)}-${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
 }
 
 function transcriptFromSeed(now: Date, seed: CaptureSeed): RecentTranscript {
   const date = captureDate(now, seed);
   const folder = `${saveRoot}/${dayFolder(date)}`;
-  const basename = timeBasename(date);
+  const basename = recordingBasename(date);
   return {
     transcript_path: `${folder}/${basename}.txt`,
     audio_path: `${folder}/${basename}.m4a`,

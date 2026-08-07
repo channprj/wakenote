@@ -26,13 +26,14 @@ describe("dev fixtures", () => {
         String(recorded.getMonth() + 1).padStart(2, "0"),
         String(recorded.getDate()).padStart(2, "0"),
       ].join("");
-      const basename = [
+      const time = [
         recorded.getHours(),
         recorded.getMinutes(),
         recorded.getSeconds(),
       ]
         .map((part) => String(part).padStart(2, "0"))
         .join("");
+      const basename = `${folder.slice(2)}-${time}`;
 
       expect(transcript.transcript_path).toBe(
         `~/Documents/WakeNote/${folder}/${basename}.txt`,

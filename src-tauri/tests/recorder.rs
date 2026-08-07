@@ -23,7 +23,7 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
     let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 8, 14).unwrap();
     let local = started_at.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
 
     let chunk = Recorder::write_chunk(RecordingRequest {
         save_root: tmp.path(),
@@ -70,7 +70,7 @@ fn recorder_writes_mp3_with_ffmpeg_encoder() {
     let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 9, 14).unwrap();
     let local = started_at.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
 
     let chunk = Recorder::write_chunk(RecordingRequest {
         save_root: tmp.path(),
@@ -108,7 +108,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
     let ended_at = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 11).unwrap();
     let local = started_at.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
 
     let chunk = Recorder::write_chunk(RecordingRequest {
         save_root: tmp.path(),

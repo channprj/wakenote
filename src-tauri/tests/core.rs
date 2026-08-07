@@ -113,7 +113,7 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
     let local = timestamp.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
 
     let first =
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("first path");
@@ -152,7 +152,7 @@ fn output_paths_support_mp3_recording_format() {
     let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
     let local = timestamp.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
 
     let target =
         next_available_output(tmp.path(), timestamp, AudioFormat::Mp3, None).expect("mp3 path");

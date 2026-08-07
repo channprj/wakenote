@@ -31,11 +31,13 @@ pub fn next_available_output(
     // File paths use local wall-clock for human readability; metadata JSON keeps UTC for archival.
     let local = timestamp.with_timezone(&Local);
     let date_dir = local.format("%Y%m%d").to_string();
-    // Non-mic sources get a `-{slug}` suffix (e.g. HHMMSS-meet) so a system chunk
-    // never collides with a mic chunk that started the same second.
+    // Keep the compact date in every artifact name so files remain identifiable
+    // when copied out of their YYYYMMDD directory. Non-mic sources get a
+    // `-{slug}` suffix (e.g. YYMMDD-HHMMSS-meet).
+    let dated_time = local.format("%y%m%d-%H%M%S");
     let stem = match source_slug.and_then(normalize_source_slug) {
-        Some(slug) => format!("{}-{slug}", local.format("%H%M%S")),
-        None => local.format("%H%M%S").to_string(),
+        Some(slug) => format!("{dated_time}-{slug}"),
+        None => dated_time.to_string(),
     };
     let extension = match format {
         AudioFormat::M4a => "m4a",
@@ -199,7 +201,11 @@ mod tests {
         let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("meet"))
             .expect("target");
         let name = target.audio_path.file_name().unwrap().to_string_lossy();
-        assert!(name.ends_with("-meet.m4a"), "got {name}");
+        let expected = ts()
+            .with_timezone(&Local)
+            .format("%y%m%d-%H%M%S-meet.m4a")
+            .to_string();
+        assert_eq!(name, expected);
     }
 
     #[test]
@@ -217,8 +223,11 @@ mod tests {
         let target =
             next_available_output(tmp.path(), ts(), AudioFormat::M4a, None).expect("target");
         let name = target.audio_path.file_name().unwrap().to_string_lossy();
-        assert!(name.ends_with(".m4a"));
-        assert!(!name.contains('-'), "unexpected suffix in {name}");
+        let expected = ts()
+            .with_timezone(&Local)
+            .format("%y%m%d-%H%M%S.m4a")
+            .to_string();
+        assert_eq!(name, expected);
     }
 
     #[test]

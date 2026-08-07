@@ -370,8 +370,12 @@ export function audioPathBasename(audioPath: string): string {
 }
 
 export function humanizeBasenameTime(basename: string): string {
-  // 010203.m4a → 01:02:03.m4a; 010203-2.wav → 01:02:03-2.wav
-  return basename.replace(/^(\d{2})(\d{2})(\d{2})(?=[.\-])/, "$1:$2:$3");
+  // Date-prefixed names already inherit their day from the parent folder in UI
+  // labels, so strip YYMMDD before humanizing the clock. Legacy names continue
+  // to render unchanged apart from their HH:MM:SS separators.
+  return basename
+    .replace(/^\d{6}-(?=\d{6}(?:[.\-]))/, "")
+    .replace(/^(\d{2})(\d{2})(\d{2})(?=[.\-])/, "$1:$2:$3");
 }
 
 export function humanizeDateSegment(segment: string): string {
@@ -490,7 +494,7 @@ function compareQueueJobsChronologically(
 function queueJobTimeKey(audioPath: string): string {
   const segments = audioPath.split("/");
   const basename = segments[segments.length - 1] ?? "";
-  const match = basename.match(/^(\d{6})/);
+  const match = basename.match(/^(?:\d{6}-)?(\d{6})(?=[.\-])/);
   return match ? match[1] : "";
 }
 

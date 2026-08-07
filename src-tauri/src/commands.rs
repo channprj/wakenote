@@ -3580,7 +3580,7 @@ fn recorded_at_from_path(path: &Path) -> Option<String> {
     }
 
     let stem = path.file_stem()?.to_str()?;
-    let time_part = stem.get(0..6)?;
+    let time_part = recording_time_part(stem)?;
     if !time_part
         .chars()
         .all(|character| character.is_ascii_digit())
@@ -3598,6 +3598,26 @@ fn recorded_at_from_path(path: &Path) -> Option<String> {
             Some(DateTime::<Utc>::from_naive_utc_and_offset(local, Utc).to_rfc3339())
         }
     }
+}
+
+fn recording_time_part(stem: &str) -> Option<&str> {
+    if let Some(dated_time) = stem.get(0..13)
+        && dated_time.as_bytes().get(6) == Some(&b'-')
+        && dated_time[..6]
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        && dated_time[7..]
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return dated_time.get(7..13);
+    }
+
+    let legacy_time = stem.get(0..6)?;
+    legacy_time
+        .chars()
+        .all(|character| character.is_ascii_digit())
+        .then_some(legacy_time)
 }
 
 fn is_transcript_sidecar(path: &Path) -> bool {
@@ -4331,6 +4351,21 @@ mod tests {
             recorded_at_for_audio_path(&audio_path),
             started_at.to_rfc3339()
         );
+    }
+
+    #[test]
+    fn recorded_at_path_fallback_accepts_dated_and_legacy_recording_names() {
+        for filename in ["260615-235959.wav", "235959.wav"] {
+            let path = Path::new("/tmp/WakeNote/20260615").join(filename);
+            let recorded_at = recorded_at_from_path(&path).expect("recorded at from path");
+            let parsed = DateTime::parse_from_rfc3339(&recorded_at).expect("RFC3339");
+
+            assert_eq!(
+                parsed.date_naive(),
+                NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()
+            );
+            assert_eq!(parsed.time(), NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+        }
     }
 
     #[test]

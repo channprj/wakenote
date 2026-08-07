@@ -65,7 +65,7 @@ fn capture_processor_writes_chunk_after_attack_and_release() {
     let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
     let local = base_time.with_timezone(&chrono::Local);
     let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%H%M%S").to_string();
+    let stem = local.format("%y%m%d-%H%M%S").to_string();
     let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
         save_root: tmp.path().to_path_buf(),
         settings: settings(),

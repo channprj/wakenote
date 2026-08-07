@@ -547,7 +547,7 @@ mod tests {
         let base_time = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
         let stem = base_time
             .with_timezone(&chrono::Local)
-            .format("%H%M%S")
+            .format("%y%m%d-%H%M%S")
             .to_string();
         let mut controller = CaptureController::new(CaptureControllerConfig {
             save_root: tmp.path().to_path_buf(),

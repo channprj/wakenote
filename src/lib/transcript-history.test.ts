@@ -147,6 +147,18 @@ describe("transcript history helpers", () => {
     expect(humanizeBasenameTime("010203-001.wav")).toBe("01:02:03-001.wav");
   });
 
+  it("humanizes the clock in date-prefixed recording basenames", () => {
+    expect(humanizeBasenameTime("260510-010203.m4a")).toBe("01:02:03.m4a");
+    expect(humanizeBasenameTime("260510-010203-meet.wav")).toBe(
+      "01:02:03-meet.wav",
+    );
+    expect(
+      formatAudioPathLabel(
+        "/Users/me/Documents/WakeNote/20260510/260510-010203.m4a",
+      ),
+    ).toBe("2026-05-10/01:02:03.m4a");
+  });
+
   it("leaves basenames without a leading HHMMSS unchanged", () => {
     expect(humanizeBasenameTime("pending.wav")).toBe("pending.wav");
     expect(humanizeBasenameTime("standalone.m4a")).toBe("standalone.m4a");
@@ -273,6 +285,29 @@ describe("transcript history helpers", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].day).toBe("2026-05-10");
     expect(groups[0].entries.map((entry) => entry.id)).toEqual([11, 12, 10]);
+  });
+
+  it("sorts date-prefixed queue jobs by their HHMMSS component", () => {
+    const jobs: QueueJob[] = [
+      {
+        id: 20,
+        audio_path: "/tmp/WakeNote/20260510/260510-183000.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+      {
+        id: 21,
+        audio_path: "/tmp/WakeNote/20260510/260510-091500.m4a",
+        model_id: "whisper-medium",
+        status: "completed",
+        error: null,
+      },
+    ];
+
+    expect(
+      groupQueueJobsByDay(jobs)[0].entries.map((entry) => entry.id),
+    ).toEqual([21, 20]);
   });
 
   it("falls back to job id when imported audio paths have no HHMMSS prefix", () => {

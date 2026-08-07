@@ -31,7 +31,7 @@ fn epoch_local_path_parts() -> (String, String) {
     let local = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH.with_timezone(&chrono::Local);
     (
         local.format("%Y%m%d").to_string(),
-        local.format("%H%M%S").to_string(),
+        local.format("%y%m%d-%H%M%S").to_string(),
     )
 }
 
@@ -930,7 +930,7 @@ fn backend_enqueues_completed_youtube_system_capture_chunks() {
 
     let expected_local = base_time.with_timezone(&chrono::Local);
     let expected_dir = expected_local.format("%Y%m%d").to_string();
-    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let expected_stem = expected_local.format("%y%m%d-%H%M%S").to_string();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
     assert!(
@@ -1014,7 +1014,7 @@ fn backend_records_microphone_and_youtube_as_separate_parallel_inputs() {
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 2);
     let expected_local = base_time.with_timezone(&chrono::Local);
-    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let expected_stem = expected_local.format("%y%m%d-%H%M%S").to_string();
     let mut paths = snapshot
         .jobs
         .iter()
@@ -1086,7 +1086,7 @@ fn backend_uses_frame_capture_time_for_recording_filename() {
     let expected_started_at = base_time + chrono::Duration::seconds(60);
     let expected_local = expected_started_at.with_timezone(&chrono::Local);
     let expected_dir = expected_local.format("%Y%m%d").to_string();
-    let expected_stem = expected_local.format("%H%M%S").to_string();
+    let expected_stem = expected_local.format("%y%m%d-%H%M%S").to_string();
     let snapshot = backend.queue_snapshot();
     assert_eq!(snapshot.pending_count, 1);
     assert!(

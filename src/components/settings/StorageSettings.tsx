@@ -98,14 +98,16 @@ export function StorageSettings({
 
       <SettingsCard title="Path preview" description="Files created for each captured clip.">
         <div className="settings-path-list">
-          <code title={`${pathPrefix}/YYYYMMDD/HHMMSS.${settings.audio_format}`}>
-            {pathPrefix}/YYYYMMDD/HHMMSS.{settings.audio_format}
+          <code
+            title={`${pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.${settings.audio_format}`}
+          >
+            {pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.{settings.audio_format}
           </code>
-          <code title={`${pathPrefix}/YYYYMMDD/HHMMSS.txt`}>
-            {pathPrefix}/YYYYMMDD/HHMMSS.txt
+          <code title={`${pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.txt`}>
+            {pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.txt
           </code>
-          <code title={`${pathPrefix}/YYYYMMDD/HHMMSS.json`}>
-            {pathPrefix}/YYYYMMDD/HHMMSS.json
+          <code title={`${pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.json`}>
+            {pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.json
           </code>
         </div>
       </SettingsCard>
