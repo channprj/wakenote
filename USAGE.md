@@ -115,12 +115,12 @@ The default save root is `~/Documents/WakeNote`.
 ```text
 ~/Documents/WakeNote/
 ├── 20260805/
-│   ├── 091530-mic-merged.m4a
-│   ├── 091530-mic-merged.json
-│   ├── 091530-mic-merged.txt
-│   ├── 092201.json
-│   ├── 092201.mp3
-│   ├── 092201.error.txt
+│   ├── 260805-091530-mic-merged.m4a
+│   ├── 260805-091530-mic-merged.json
+│   ├── 260805-091530-mic-merged.txt
+│   ├── 260805-092201.json
+│   ├── 260805-092201.mp3
+│   ├── 260805-092201.error.txt
 │   └── all.json
 ├── uploaded/20260805/
 ├── meetings/<meeting-id>/

@@ -198,10 +198,10 @@ The default is `~/Documents/WakeNote`.
 ```text
 <save_root>/
 ├── YYYYMMDD/
-│   ├── HHMMSS[-source][-N].{m4a|mp3|wav}
-│   ├── HHMMSS[-source][-N].json
-│   ├── HHMMSS[-source][-N].txt
-│   ├── HHMMSS[-source][-N].error.txt
+│   ├── YYMMDD-HHMMSS[-source][-N].{m4a|mp3|wav}
+│   ├── YYMMDD-HHMMSS[-source][-N].json
+│   ├── YYMMDD-HHMMSS[-source][-N].txt
+│   ├── YYMMDD-HHMMSS[-source][-N].error.txt
 │   └── all.json
 ├── uploaded/YYYYMMDD/
 ├── meetings/<meeting-id>/
