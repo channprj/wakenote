@@ -71,6 +71,22 @@ import {
   eligibleAudioMergeEntries,
   type AudioMergeUiState,
 } from "../lib/audio-merge";
+import {
+  addDays,
+  DatePagePicker,
+  formatLocalDay,
+  type HistorySortOrder,
+  isYearMonthDayLabel,
+  weekStartFor,
+} from "./DatePagePicker";
+
+export {
+  addDays,
+  formatLocalDay,
+  nextWeekDisabledReason,
+  previousWeekDisabledReason,
+  weekStartFor,
+} from "./DatePagePicker";
 
 type CopyToastKind = "all" | "selected";
 type DragMode = "select" | "deselect";
@@ -80,11 +96,33 @@ type RegenerationModel = Pick<
 >;
 
 const ALL_SOURCE_FILTER = "all";
+export const TRANSCRIPT_PAGE_SIZE = 50;
 
 export interface TranscriptSourceFilterOption {
   id: string;
   label: string;
   count: number;
+}
+
+export function transcriptPage(
+  entries: readonly RecentTranscript[],
+  requestedPage: number,
+  pageSize = TRANSCRIPT_PAGE_SIZE,
+) {
+  const total = entries.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Math.floor(requestedPage)), pageCount);
+  const offset = (page - 1) * pageSize;
+  const pageEntries = entries.slice(offset, offset + pageSize);
+
+  return {
+    entries: pageEntries,
+    page,
+    pageCount,
+    rangeStart: total === 0 ? 0 : offset + 1,
+    rangeEnd: offset + pageEntries.length,
+    total,
+  };
 }
 
 interface DragState {
@@ -150,8 +188,6 @@ export function nextPlayableTranscriptPath(
   }
   return null;
 }
-
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export function TranscriptsView({
   days,
@@ -257,6 +293,8 @@ export function TranscriptsView({
   >(initialPlayingTranscriptPath);
   const [playbackPaused, setPlaybackPaused] = useState(false);
   const [sourceFilter, setSourceFilter] = useState(initialSourceFilter);
+  const [sortOrder, setSortOrder] = useState<HistorySortOrder>("newest");
+  const [requestedPage, setRequestedPage] = useState(1);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -270,12 +308,13 @@ export function TranscriptsView({
 
   const activeEntries = useMemo(() => {
     const entries = entriesByDay.get(effectiveActiveDay) ?? [];
-    return [...entries].sort(
+    const chronological = [...entries].sort(
       (left, right) =>
         timestampValue(left.recorded_at) - timestampValue(right.recorded_at) ||
         left.transcript_path.localeCompare(right.transcript_path),
     );
-  }, [entriesByDay, effectiveActiveDay]);
+    return sortOrder === "newest" ? chronological.reverse() : chronological;
+  }, [entriesByDay, effectiveActiveDay, sortOrder]);
 
   const sourceFilterOptions = useMemo(
     () => transcriptSourceFilterOptions(activeEntries, sourceLabels),
@@ -295,6 +334,8 @@ export function TranscriptsView({
     () => filterTranscriptsBySource(activeEntries, effectiveSourceFilter),
     [activeEntries, effectiveSourceFilter],
   );
+  const pagination = transcriptPage(filteredEntries, requestedPage);
+  const pageEntries = pagination.entries;
 
   const usableRegenerationModels = useMemo(
     () =>
@@ -335,7 +376,7 @@ export function TranscriptsView({
     setSelectedPaths(new Set());
     lastSelectionAnchorRef.current = null;
     setCopyToast(null);
-  }, [effectiveActiveDay, visibilityMode]);
+  }, [effectiveActiveDay, visibilityMode, sortOrder, pagination.page]);
 
   useEffect(() => {
     if (!sourceFilterOptions.some((option) => option.id === sourceFilter)) {
@@ -345,7 +386,7 @@ export function TranscriptsView({
 
   useEffect(() => {
     const visiblePaths = new Set(
-      filteredEntries.map((entry) => entry.transcript_path),
+      pageEntries.map((entry) => entry.transcript_path),
     );
     if (
       lastSelectionAnchorRef.current &&
@@ -365,7 +406,7 @@ export function TranscriptsView({
       }
       return changed ? next : prev;
     });
-  }, [filteredEntries]);
+  }, [pageEntries]);
 
   useEffect(() => {
     const endDrag = () => {
@@ -409,7 +450,7 @@ export function TranscriptsView({
         }
         setSelectedPaths((prev) =>
           selectTranscriptPathsAfterShiftClick(
-            filteredEntries,
+            pageEntries,
             prev,
             anchorPath,
             path,
@@ -430,7 +471,7 @@ export function TranscriptsView({
         return next;
       });
     },
-    [filteredEntries],
+    [pageEntries],
   );
 
   const continueDragSelection = useCallback((path: string) => {
@@ -452,6 +493,21 @@ export function TranscriptsView({
   const handleSelectDay = (day: string) => {
     setActiveDay(day);
     setViewWeekStart(null);
+    setRequestedPage(1);
+  };
+
+  const handleSourceFilterChange = (nextFilter: string) => {
+    setSourceFilter(nextFilter);
+    setRequestedPage(1);
+    setSelectedPaths(new Set());
+    lastSelectionAnchorRef.current = null;
+  };
+
+  const handleSortOrderChange = (nextOrder: HistorySortOrder) => {
+    setSortOrder(nextOrder);
+    setRequestedPage(1);
+    setSelectedPaths(new Set());
+    lastSelectionAnchorRef.current = null;
   };
 
   const writeToClipboard = useCallback(
@@ -478,21 +534,19 @@ export function TranscriptsView({
   }, [writeToClipboard, filteredEntries, sourceLabels]);
 
   const handleCopySelected = useCallback(() => {
-    const selected = filteredEntries.filter((entry) =>
+    const selected = pageEntries.filter((entry) =>
       selectedPaths.has(entry.transcript_path),
     );
     void writeToClipboard(
       formatTranscriptsForCopy(selected, sourceLabels),
       "selected",
     );
-  }, [writeToClipboard, filteredEntries, selectedPaths, sourceLabels]);
+  }, [writeToClipboard, pageEntries, selectedPaths, sourceLabels]);
 
   const selectedEntries = useMemo(
     () =>
-      filteredEntries.filter((entry) =>
-        selectedPaths.has(entry.transcript_path),
-      ),
-    [filteredEntries, selectedPaths],
+      pageEntries.filter((entry) => selectedPaths.has(entry.transcript_path)),
+    [pageEntries, selectedPaths],
   );
   const selectedAudioMergeEntries = useMemo(
     () => eligibleAudioMergeEntries(selectedEntries),
@@ -550,10 +604,9 @@ export function TranscriptsView({
   ]);
 
   const handleSelectAllVisible = useCallback(() => {
-    setSelectedPaths(selectTranscriptPathsForEntries(filteredEntries));
-    lastSelectionAnchorRef.current =
-      filteredEntries[0]?.transcript_path ?? null;
-  }, [filteredEntries]);
+    setSelectedPaths(selectTranscriptPathsForEntries(pageEntries));
+    lastSelectionAnchorRef.current = pageEntries[0]?.transcript_path ?? null;
+  }, [pageEntries]);
 
   const handleTranscriptSelectionChange = useCallback(
     (path: string, selected: boolean) => {
@@ -609,7 +662,7 @@ export function TranscriptsView({
   const handlePlaybackEnded = useCallback(() => {
     if (autoPlayNext) {
       const nextPath = nextPlayableTranscriptPath(
-        filteredEntries,
+        pageEntries,
         playingTranscriptPath,
       );
       if (nextPath) {
@@ -619,7 +672,7 @@ export function TranscriptsView({
       }
     }
     setPlaybackPaused(true);
-  }, [autoPlayNext, filteredEntries, playingTranscriptPath]);
+  }, [autoPlayNext, pageEntries, playingTranscriptPath]);
 
   const openContextMenu = useCallback(
     (entry: RecentTranscript, x: number, y: number) => {
@@ -633,7 +686,7 @@ export function TranscriptsView({
       }
       const targets = transcriptVisibilityTargetsForContextMenu(
         entry,
-        filteredEntries,
+        pageEntries,
         selectedPaths,
       );
       if (targets.length === 0) {
@@ -641,7 +694,7 @@ export function TranscriptsView({
       }
       const regenerationTargets = transcriptRegenerationTargetsForContextMenu(
         entry,
-        filteredEntries,
+        pageEntries,
         selectedPaths,
       );
       if (!selectedPaths.has(entry.transcript_path)) {
@@ -660,7 +713,7 @@ export function TranscriptsView({
       });
     },
     [
-      filteredEntries,
+      pageEntries,
       onRegenerate,
       onSetTranscriptsHidden,
       selectedPaths,
@@ -689,10 +742,10 @@ export function TranscriptsView({
     void applyTranscriptVisibility(targets);
   }, [applyTranscriptVisibility, contextMenu]);
 
-  const selectionCount = filteredEntries.filter((entry) =>
+  const selectionCount = pageEntries.filter((entry) =>
     selectedPaths.has(entry.transcript_path),
   ).length;
-  const hasEntries = filteredEntries.length > 0;
+  const hasEntries = pageEntries.length > 0;
   const hasAnyEntries = activeEntries.length > 0;
   const isLoadingActive = loadingDay === effectiveActiveDay;
   const canRegenerateFromContext =
@@ -751,12 +804,13 @@ export function TranscriptsView({
 
   return (
     <div className="transcripts-panel">
-      <TranscriptPagination
+      <DatePagePicker
         activeDay={effectiveActiveDay}
         availableDays={availableDays}
         todayDay={todayDay}
         weekStart={effectiveWeekStart}
         earliestDay={earliestDay}
+        itemLabel="Transcript"
         onSelectDay={handleSelectDay}
         onPrevWeek={handlePrevWeek}
         onNextWeek={handleNextWeek}
@@ -766,7 +820,7 @@ export function TranscriptsView({
         visibleCount={visibleCount}
         hiddenCount={hiddenCount}
         selectedCount={selectionCount}
-        totalInMode={filteredEntries.length}
+        totalInMode={pageEntries.length}
         mutating={visibilityMutating}
         statusMessage={visibilityStatus}
         onModeChange={(mode) => onVisibilityModeChange?.(mode)}
@@ -792,7 +846,7 @@ export function TranscriptsView({
                 <span>Source</span>
                 <Select
                   value={effectiveSourceFilter}
-                  onValueChange={setSourceFilter}
+                  onValueChange={handleSourceFilterChange}
                 >
                   <SelectTrigger size="sm" aria-label="Transcript source">
                     <SelectValue>
@@ -811,6 +865,23 @@ export function TranscriptsView({
                 </Select>
               </label>
             ) : null}
+            <label className="transcript-source-filter">
+              <span>Order</span>
+              <Select
+                value={sortOrder}
+                onValueChange={(value) =>
+                  handleSortOrderChange(value as HistorySortOrder)
+                }
+              >
+                <SelectTrigger size="sm" aria-label="Transcript order">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
             {hasEntries && selectionCount > 0 ? (
               <>
                 <span
@@ -1019,7 +1090,7 @@ export function TranscriptsView({
             data-slot="transcript-list"
             className="transcript-entry-list transcript-entry-list--condensed"
           >
-            {filteredEntries.map((entry) => (
+            {pageEntries.map((entry) => (
               <TranscriptEntryRow
                 entry={entry}
                 isPlaybackActive={
@@ -1073,6 +1144,39 @@ export function TranscriptsView({
             description="Captures land here automatically once recording picks up speech. Pick another day above, or start input from Capture."
           />
         )}
+        {pagination.pageCount > 1 ? (
+          <nav className="queue-pagination" aria-label="Transcript pages">
+            <span className="queue-pagination__range">
+              {pagination.rangeStart}–{pagination.rangeEnd} of{" "}
+              {pagination.total}
+            </span>
+            <div className="queue-pagination__controls">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Previous Transcript page"
+                disabled={pagination.page === 1}
+                onClick={() => setRequestedPage(pagination.page - 1)}
+              >
+                <ChevronLeft data-icon="solo" />
+              </Button>
+              <span aria-live="polite">
+                Page {pagination.page} of {pagination.pageCount}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Next Transcript page"
+                disabled={pagination.page === pagination.pageCount}
+                onClick={() => setRequestedPage(pagination.page + 1)}
+              >
+                <ChevronRight data-icon="solo" />
+              </Button>
+            </div>
+          </nav>
+        ) : null}
         {visibilityError ? (
           <div className="warning-banner warning-banner--danger">
             List visibility unavailable: {visibilityError}
@@ -1676,152 +1780,7 @@ function transcriptSourcePresentation(
   };
 }
 
-export function formatLocalDay(date: Date): string {
-  if (Number.isNaN(date.getTime())) {
-    return formatLocalDay(new Date());
-  }
-
-  return [
-    date.getFullYear(),
-    pad2(date.getMonth() + 1),
-    pad2(date.getDate()),
-  ].join("-");
-}
-
-function isYearMonthDayLabel(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function parseDay(day: string): Date {
-  const [year, month, date] = day.split("-").map(Number);
-  return new Date(year, month - 1, date);
-}
-
 function timestampValue(value: string): number {
   const time = new Date(value).getTime();
   return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
-}
-
-export function addDays(day: string, count: number): string {
-  const date = parseDay(day);
-  date.setDate(date.getDate() + count);
-  return formatLocalDay(date);
-}
-
-export function weekStartFor(day: string): string {
-  const date = parseDay(day);
-  date.setDate(date.getDate() - date.getDay());
-  return formatLocalDay(date);
-}
-
-export function previousWeekDisabledReason(
-  weekStart: string,
-  earliestDay: string,
-): string | null {
-  if (weekStart <= weekStartFor(earliestDay)) {
-    return "Already on the earliest week";
-  }
-  return null;
-}
-
-export function nextWeekDisabledReason(
-  weekStart: string,
-  todayDay: string,
-): string | null {
-  if (weekStart >= weekStartFor(todayDay)) {
-    return "Already on this week";
-  }
-  return null;
-}
-
-function TranscriptPagination({
-  activeDay,
-  availableDays,
-  todayDay,
-  weekStart,
-  earliestDay,
-  onSelectDay,
-  onPrevWeek,
-  onNextWeek,
-}: {
-  activeDay: string;
-  availableDays: ReadonlySet<string>;
-  todayDay: string;
-  weekStart: string;
-  earliestDay: string;
-  onSelectDay: (day: string) => void;
-  onPrevWeek: () => void;
-  onNextWeek: () => void;
-}) {
-  const previousReason = previousWeekDisabledReason(weekStart, earliestDay);
-  const nextReason = nextWeekDisabledReason(weekStart, todayDay);
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-
-  return (
-    <nav
-      data-slot="transcript-week-picker"
-      className="transcript-pagination transcript-pagination--calendar"
-      aria-label="Transcript date pages"
-    >
-      <Button
-        aria-label="Previous week"
-        disabled={previousReason !== null}
-        onClick={onPrevWeek}
-        size="icon"
-        title={previousReason ?? undefined}
-        type="button"
-        variant="secondary"
-      >
-        <ChevronLeft />
-      </Button>
-      <div className="transcript-pagination__week">
-        {weekDays.map((day, dayOfWeek) => {
-          const hasEntries = availableDays.has(day);
-          const isFuture = day > todayDay;
-          const isToday = day === todayDay;
-          const selectable = !isFuture && (hasEntries || isToday);
-          const isActive = activeDay === day;
-          const dayNumber = day.split("-")[2];
-          const monthNumber = day.split("-")[1];
-
-          return (
-            <button
-              key={day}
-              aria-current={isActive ? "page" : undefined}
-              aria-label={`Go to ${day} transcripts`}
-              className="transcript-pagination__day"
-              data-day-of-week={dayOfWeek}
-              data-has-entries={hasEntries ? "true" : undefined}
-              data-today={isToday ? "true" : undefined}
-              disabled={!selectable}
-              onClick={() => onSelectDay(day)}
-              type="button"
-            >
-              <span className="transcript-pagination__day-label">
-                {DAY_LABELS[dayOfWeek]}
-              </span>
-              <span className="transcript-pagination__day-number">
-                {monthNumber}/{dayNumber}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <Button
-        aria-label="Next week"
-        disabled={nextReason !== null}
-        onClick={onNextWeek}
-        size="icon"
-        title={nextReason ?? undefined}
-        type="button"
-        variant="secondary"
-      >
-        <ChevronRight />
-      </Button>
-    </nav>
-  );
 }

@@ -18,6 +18,7 @@ import {
   selectTranscriptPathsForEntries,
   shouldCopySelectedTranscriptsOnKeydown,
   transcriptPlaybackStateAfterToggle,
+  transcriptPage,
   transcriptRegenerationTargetsForContextMenu,
   transcriptSourceFilterOptions,
   transcriptVisibilityTargetsForContextMenu,
@@ -319,7 +320,7 @@ describe("TranscriptsView", () => {
     expect(markup).toContain('aria-label="Go to 2026-05-10 transcripts"');
   });
 
-  it("renders transcripts in chronological order within the selected (today) date", () => {
+  it("renders transcripts newest-first within the selected date by default", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 2 }],
@@ -341,9 +342,26 @@ describe("TranscriptsView", () => {
         ],
       ]),
     });
-    expect(markup.indexOf("morning transcript")).toBeLessThan(
-      markup.indexOf("evening transcript"),
+    expect(markup.indexOf("evening transcript")).toBeLessThan(
+      markup.indexOf("morning transcript"),
     );
+  });
+
+  it("caps Transcript pages at 50 entries", () => {
+    const entries = Array.from({ length: 51 }, (_, index) =>
+      transcript({
+        transcript_path: `/tmp/WakeNote/20260510/${String(index + 1).padStart(6, "0")}.txt`,
+      }),
+    );
+
+    expect(transcriptPage(entries, 1)).toMatchObject({
+      page: 1,
+      pageCount: 2,
+      rangeStart: 1,
+      rangeEnd: 50,
+      total: 51,
+    });
+    expect(transcriptPage(entries, 2).entries).toEqual([entries[50]]);
   });
 
   it("shows Visible and Hidden counts without treating hidden rows as iCloud gaps", () => {

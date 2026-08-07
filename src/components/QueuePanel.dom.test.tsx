@@ -54,7 +54,7 @@ function readyFileModel(id: string, displayName: string): ModelDescriptor {
 function paginatedJobs(): QueueJob[] {
   const olderJobs: QueueJob[] = Array.from({ length: 50 }, (_, index) => ({
     id: index + 1,
-    audio_path: `/recordings/20260802/${String(index + 1).padStart(6, "0")}.wav`,
+    audio_path: `/recordings/20260804/${String(index + 1).padStart(6, "0")}.wav`,
     model_id: "whisper-medium",
     status: "completed",
   }));
@@ -62,7 +62,7 @@ function paginatedJobs(): QueueJob[] {
     ...olderJobs,
     {
       id: 51,
-      audio_path: "/recordings/20260803/010203.wav",
+      audio_path: "/recordings/20260804/235959.wav",
       model_id: "whisper-medium",
       status: "failed",
     },
@@ -202,8 +202,78 @@ describe("QueuePanel pagination", () => {
       ),
     ).toHaveLength(1);
     expect(
-      document.querySelector('a[title="/recordings/20260802/000050.wav"]'),
+      document.querySelector('a[title="/recordings/20260804/000001.wav"]'),
     ).toBeTruthy();
+  });
+
+  it("browses Activity by date and reverses the selected day's order", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        queue={{
+          jobs: [
+            {
+              id: 1,
+              audio_path: "/recordings/20260803/120000.wav",
+              model_id: "whisper-medium",
+              status: "failed",
+            },
+            {
+              id: 2,
+              audio_path: "/recordings/20260804/090000.wav",
+              model_id: "whisper-medium",
+              status: "failed",
+            },
+            {
+              id: 3,
+              audio_path: "/recordings/20260804/180000.wav",
+              model_id: "whisper-medium",
+              status: "failed",
+            },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 3,
+        }}
+        models={[]}
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
+      />,
+    );
+
+    const visiblePaths = () =>
+      Array.from(
+        container.querySelectorAll<HTMLAnchorElement>(
+          '[data-slot="queue-table"] tbody a.truncate',
+        ),
+      ).map((link) => link.title);
+    expect(visiblePaths()).toEqual([
+      "/recordings/20260804/180000.wav",
+      "/recordings/20260804/090000.wav",
+    ]);
+
+    await user.click(screen.getByRole("combobox", { name: "Activity order" }));
+    await user.click(screen.getByRole("option", { name: "Oldest first" }));
+    expect(visiblePaths()).toEqual([
+      "/recordings/20260804/090000.wav",
+      "/recordings/20260804/180000.wav",
+    ]);
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Go to 2026-08-03 Activity",
+      }),
+    );
+    expect(visiblePaths()).toEqual(["/recordings/20260803/120000.wav"]);
   });
 
   it("requires confirmation before scanning the full backlog", async () => {
@@ -395,7 +465,7 @@ describe("QueuePanel pagination", () => {
       container.querySelector('a[title="/dictation-openai.wav"]'),
     ).toBeTruthy();
     expect(container.querySelector('a[title="/live-openai.wav"]')).toBeNull();
-    expect(screen.getByText("1 of 3 shown")).toBeTruthy();
+    expect(screen.getByText("1 on 2026-08-04 · 1 filtered of 3")).toBeTruthy();
   });
 
   it("selects every matching issue across pages and reprocesses with the chosen model", async () => {
@@ -410,7 +480,7 @@ describe("QueuePanel pagination", () => {
     }));
     const { container } = render(
       <QueuePanel
-        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        nowMs={Date.parse("2026-08-03T12:00:00.000Z")}
         queue={{ jobs, pending_count: 0, running_count: 0, failed_count: 26 }}
         models={[
           readyFileModel("whisper-medium", "Whisper Medium"),

@@ -55,6 +55,7 @@ import {
   queueDayBreakdown,
   queueJobSidecarPath,
   queueStatsBanner,
+  transcriptDayFromAudioPath,
 } from "../lib/transcript-history";
 import type {
   ModelDescriptor,
@@ -65,6 +66,14 @@ import type {
 } from "../lib/types";
 import { ActivityAudioPlayer } from "./activity/ActivityAudioPlayer";
 import { ModelSelectGroups } from "./ModelSelectGroups";
+import {
+  addDays,
+  DatePagePicker,
+  formatLocalDay,
+  type HistorySortOrder,
+  isYearMonthDayLabel,
+  weekStartFor,
+} from "./DatePagePicker";
 
 export const ACTIVITY_PAGE_SIZE = 50;
 export type ActivityView = "all" | "attention" | "resolved";
@@ -170,10 +179,13 @@ export function activityPage(
   jobs: QueueJob[],
   requestedPage: number,
   pageSize = ACTIVITY_PAGE_SIZE,
+  sortOrder: HistorySortOrder = "newest",
 ) {
-  const orderedJobs = groupQueueJobsByDay(jobs).flatMap(
-    (group) => group.entries,
-  );
+  const groups = groupQueueJobsByDay(jobs);
+  const orderedJobs =
+    sortOrder === "newest"
+      ? groups.flatMap((group) => [...group.entries].reverse())
+      : [...groups].reverse().flatMap((group) => group.entries);
   const total = orderedJobs.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(1, Math.floor(requestedPage)), pageCount);
@@ -188,6 +200,11 @@ export function activityPage(
     rangeEnd: offset + pageJobs.length,
     total,
   };
+}
+
+export function activityDayForJob(job: QueueJob, fallbackDay: string): string {
+  const day = transcriptDayFromAudioPath(job.audio_path);
+  return isYearMonthDayLabel(day) ? day : fallbackDay;
 }
 
 export function queueJobActionState(status: QueueJobStatus) {
@@ -302,7 +319,11 @@ export function QueuePanel({
   onTrash?: (ids: number[]) => Promise<number[]>;
   onReprocess: (ids: number[], modelId: string) => Promise<boolean>;
 }) {
+  const todayDay = formatLocalDay(new Date(nowMs));
   const [requestedPage, setRequestedPage] = useState(1);
+  const [activeDay, setActiveDay] = useState(todayDay);
+  const [viewWeekStart, setViewWeekStart] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<HistorySortOrder>("newest");
   const [activityView, setActivityView] = useState<ActivityView>("all");
   const [activityFilters, setActivityFilters] = useState<ActivityFilters>(
     DEFAULT_ACTIVITY_FILTERS,
@@ -329,8 +350,29 @@ export function QueuePanel({
     activityView,
     activityFilters,
   );
-  const pagination = activityPage(filteredJobs, requestedPage);
-  const groupedJobs = groupQueueJobsByDay(pagination.jobs);
+  const availableDays = new Set<string>([todayDay]);
+  for (const job of queue.jobs) {
+    const day = activityDayForJob(job, todayDay);
+    if (day <= todayDay) {
+      availableDays.add(day);
+    }
+  }
+  const effectiveActiveDay = availableDays.has(activeDay)
+    ? activeDay
+    : todayDay;
+  const earliestDay =
+    [...availableDays].filter(isYearMonthDayLabel).sort()[0] ?? todayDay;
+  const activeDayJobs = filteredJobs.filter(
+    (job) => activityDayForJob(job, todayDay) === effectiveActiveDay,
+  );
+  const pagination = activityPage(
+    activeDayJobs,
+    requestedPage,
+    ACTIVITY_PAGE_SIZE,
+    sortOrder,
+  );
+  const groupedJobs = [{ day: effectiveActiveDay, entries: pagination.jobs }];
+  const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const statsBanner = queueStatsBanner(queue);
   const activeAttention = activityAttentionAt(queue.jobs, nowMs);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
@@ -360,11 +402,11 @@ export function QueuePanel({
   )
     ? requestedReprocessingModelId
     : preferredModelId;
-  const filteredReprocessableJobs = filteredJobs.filter(isReprocessableJob);
+  const filteredReprocessableJobs = activeDayJobs.filter(isReprocessableJob);
   const filteredReprocessableIds = filteredReprocessableJobs.map(
     (job) => job.id,
   );
-  const filteredSelectableIds = filteredJobs.map((job) => job.id);
+  const filteredSelectableIds = activeDayJobs.map((job) => job.id);
   const selectedIds = filteredSelectableIds.filter((id) =>
     selectedJobIds.has(id),
   );
@@ -401,11 +443,13 @@ export function QueuePanel({
             description:
               "Outcomes marked as resolved remain available here for review.",
           }
-        : filteredJobs.length === 0 && queue.jobs.length > 0
+        : activeDayJobs.length === 0 && queue.jobs.length > 0
           ? {
-              title: "No Activity matches these filters",
+              title: `No Activity for ${effectiveActiveDay}`,
               description:
-                "Change a model, type, or status filter to show more transcription jobs.",
+                filteredJobs.length === 0
+                  ? "Change a model, type, or status filter to show more transcription jobs."
+                  : "Choose another date above to review matching transcription jobs.",
             }
           : {
               title: "No queued transcription jobs",
@@ -415,6 +459,19 @@ export function QueuePanel({
 
   function updateActivityFilters(patch: Partial<ActivityFilters>) {
     setActivityFilters((current) => ({ ...current, ...patch }));
+    setRequestedPage(1);
+    setSelectedJobIds(new Set());
+  }
+
+  function handleSelectDay(day: string) {
+    setActiveDay(day);
+    setViewWeekStart(null);
+    setRequestedPage(1);
+    setSelectedJobIds(new Set());
+  }
+
+  function handleSortOrderChange(nextOrder: HistorySortOrder) {
+    setSortOrder(nextOrder);
     setRequestedPage(1);
     setSelectedJobIds(new Set());
   }
@@ -588,6 +645,17 @@ export function QueuePanel({
           Cancel Current
         </Button>
       </div>
+      <DatePagePicker
+        activeDay={effectiveActiveDay}
+        availableDays={availableDays}
+        todayDay={todayDay}
+        weekStart={effectiveWeekStart}
+        earliestDay={earliestDay}
+        itemLabel="Activity"
+        onSelectDay={handleSelectDay}
+        onPrevWeek={() => setViewWeekStart(addDays(effectiveWeekStart, -7))}
+        onNextWeek={() => setViewWeekStart(addDays(effectiveWeekStart, 7))}
+      />
       <div className="queue-view-bar">
         <div className="queue-view-bar__history">
           <div
@@ -774,8 +842,23 @@ export function QueuePanel({
             <SelectItem value="completed">Completed</SelectItem>
           </SelectContent>
         </Select>
+        <Select
+          value={sortOrder}
+          onValueChange={(value) =>
+            handleSortOrderChange(value as HistorySortOrder)
+          }
+        >
+          <SelectTrigger size="sm" aria-label="Activity order">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+          </SelectContent>
+        </Select>
         <span className="queue-filters__result" aria-live="polite">
-          {filteredJobs.length} of {queue.jobs.length} shown
+          {activeDayJobs.length} on {effectiveActiveDay} · {filteredJobs.length}{" "}
+          filtered of {queue.jobs.length}
         </span>
         {!filtersAreDefault ? (
           <Button
@@ -819,7 +902,7 @@ export function QueuePanel({
             </tr>
           </thead>
           <tbody>
-            {filteredJobs.length === 0 ? (
+            {activeDayJobs.length === 0 ? (
               <tr>
                 <td colSpan={5} className="empty-cell">
                   <EmptyState

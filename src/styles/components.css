@@ -1453,7 +1453,7 @@ svg {
    leftover space, so a tall window does not stretch the summary cards. */
 .queue-panel {
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
   gap: 12px;
   min-height: 0;
 }

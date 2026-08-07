@@ -76,7 +76,15 @@ describe("Activity pagination", () => {
       rangeEnd: 51,
       total: 51,
     });
-    expect(second.jobs.map((job) => job.id)).toEqual([50]);
+    expect(second.jobs.map((job) => job.id)).toEqual([1]);
+
+    const oldestFirst = activityPage(
+      [...olderJobs, newestJob],
+      1,
+      50,
+      "oldest",
+    );
+    expect(oldestFirst.jobs[0]?.id).toBe(1);
   });
 
   it("clamps out-of-range pages and keeps an empty queue on page one", () => {

@@ -8,6 +8,25 @@ import { TranscriptsView } from "./TranscriptsView";
 
 afterEach(cleanup);
 
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: {
+    configurable: true,
+    value: () => false,
+  },
+  setPointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  releasePointerCapture: {
+    configurable: true,
+    value: () => {},
+  },
+  scrollIntoView: {
+    configurable: true,
+    value: () => {},
+  },
+});
+
 const day = "2026-05-10";
 const entry: RecentTranscript = {
   transcript_path: "/tmp/WakeNote/20260510/010203.txt",
@@ -181,5 +200,49 @@ describe("TranscriptsView recoverable deletion", () => {
     );
 
     expect(checkbox.getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+describe("TranscriptsView pagination and order", () => {
+  it("renders 50 rows per page and resets to page one when order changes", async () => {
+    const user = userEvent.setup();
+    const entries = Array.from({ length: 51 }, (_, index) => {
+      const sequence = index + 1;
+      const seconds = String(sequence).padStart(2, "0");
+      return {
+        ...entry,
+        transcript_path: `/tmp/WakeNote/20260510/0102${seconds}.txt`,
+        audio_path: `/tmp/WakeNote/20260510/0102${seconds}.m4a`,
+        recorded_at: `2026-05-10T01:02:${seconds}+09:00`,
+        text: `Transcript ${sequence}`,
+      };
+    });
+    const { container } = render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: entries.length }]}
+        entriesByDay={new Map([[day, entries]])}
+      />,
+    );
+
+    const visibleTexts = () =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>(".transcript-entry__text"),
+      ).map((node) => node.textContent);
+    expect(visibleTexts()).toHaveLength(50);
+    expect(visibleTexts()[0]).toBe("Transcript 51");
+    expect(screen.getByText("1–50 of 51")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Next Transcript page" }),
+    );
+    expect(visibleTexts()).toEqual(["Transcript 1"]);
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Transcript order" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Oldest first" }));
+    expect(screen.getByText("Page 1 of 2")).toBeTruthy();
+    expect(visibleTexts()[0]).toBe("Transcript 1");
   });
 });

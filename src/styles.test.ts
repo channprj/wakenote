@@ -542,9 +542,9 @@ describe("compact overflow safety contract", () => {
     expect(reportLayout).not.toMatch(/min-height:\s*\d+px/);
     expect(reportList).not.toContain("max-height:");
 
-    // Only the job table absorbs slack; stats, toolbar, and pagination keep their own height.
+    // Only the job table absorbs slack; stats, toolbar, date picker, and pagination keep their own height.
     expect(queuePanel).toContain(
-      "grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;",
+      "grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;",
     );
     expect(cssRule(".queue-view-bar", componentsCss)).toContain(
       "display: flex;",
