@@ -1683,6 +1683,113 @@ fn backend_rejects_a_running_job_before_moving_any_audio_to_trash() {
 }
 
 #[test]
+fn backend_trashes_selected_transcript_bundles_and_refreshes_the_day_index() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let save_root = tmp.path().join("WakeNote");
+    let day = save_root.join("20260807");
+    let fake_trash = tmp.path().join("Trash");
+    std::fs::create_dir_all(&day).expect("day");
+    std::fs::create_dir_all(&fake_trash).expect("fake Trash");
+    let transcript = day.join("260807-120000-mic.txt");
+    let audio = transcript.with_extension("m4a");
+    let metadata = transcript.with_extension("json");
+    let error = transcript.with_extension("error.txt");
+    let unrelated = day.join("260807-120100-mic.txt");
+    std::fs::write(&transcript, "selected transcript").expect("transcript");
+    std::fs::write(&audio, b"audio").expect("audio");
+    std::fs::write(&metadata, b"{}").expect("metadata");
+    std::fs::write(&error, "old error").expect("error");
+    std::fs::write(&unrelated, "keep me").expect("unrelated transcript");
+    wakenote::commands::rebuild_transcript_day_index_from_save_root(
+        &save_root,
+        "2026-08-07",
+        false,
+    )
+    .expect("initial day index");
+
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(save_root.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+    let job_id = backend
+        .enqueue_audio_file(&audio, None)
+        .jobs
+        .into_iter()
+        .find(|job| job.audio_path == audio)
+        .expect("queued recording")
+        .id;
+    let outcome = backend
+        .trash_transcripts_with(vec![transcript.clone()], |reference| {
+            wakenote::trash::move_recording_bundle_to_trash_with(reference, |stage_path| {
+                let destination = fake_trash.join(stage_path.file_name().expect("stage name"));
+                std::fs::rename(stage_path, &destination).map_err(|error| error.to_string())?;
+                Ok(destination)
+            })
+        })
+        .expect("trash selected transcript");
+
+    assert_eq!(outcome.removed_transcript_paths, vec![transcript.clone()]);
+    assert_eq!(outcome.trashed_transcript_paths, vec![transcript.clone()]);
+    assert!(outcome.missing_transcript_paths.is_empty());
+    assert!(outcome.failures.is_empty());
+    for path in [&transcript, &audio, &metadata, &error] {
+        assert!(!path.exists(), "bundle member remained: {}", path.display());
+    }
+    assert!(unrelated.exists());
+    assert!(
+        backend
+            .queue_snapshot()
+            .jobs
+            .iter()
+            .all(|job| job.id != job_id)
+    );
+    let refreshed =
+        wakenote::commands::transcripts_for_day_from_save_root(&save_root, "2026-08-07", false);
+    assert_eq!(refreshed.len(), 1);
+    assert_eq!(refreshed[0].transcript_path, unrelated.to_string_lossy());
+}
+
+#[test]
+fn backend_restores_transcript_bundle_when_day_index_refresh_fails() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let save_root = tmp.path().join("WakeNote");
+    let day = save_root.join("20260807");
+    let fake_trash = tmp.path().join("Trash");
+    std::fs::create_dir_all(&day).expect("day");
+    std::fs::create_dir_all(&fake_trash).expect("fake Trash");
+    std::fs::create_dir(day.join("all.json.tmp")).expect("block index temp write");
+    let transcript = day.join("260807-120000-mic.txt");
+    let audio = transcript.with_extension("m4a");
+    let metadata = transcript.with_extension("json");
+    for path in [&transcript, &audio, &metadata] {
+        std::fs::write(path, b"fixture").expect("bundle fixture");
+    }
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(save_root.to_string_lossy().to_string()),
+        ..SettingsPatch::default()
+    });
+
+    let outcome = backend
+        .trash_transcripts_with(vec![transcript.clone()], |reference| {
+            wakenote::trash::move_recording_bundle_to_trash_with(reference, |stage_path| {
+                let destination = fake_trash.join(stage_path.file_name().expect("stage name"));
+                std::fs::rename(stage_path, &destination).map_err(|error| error.to_string())?;
+                Ok(destination)
+            })
+        })
+        .expect("transaction result");
+
+    assert!(outcome.removed_transcript_paths.is_empty());
+    assert_eq!(outcome.failures.len(), 1);
+    assert!(outcome.failures[0].error.contains("bundle restored"));
+    assert!(transcript.exists());
+    assert!(audio.exists());
+    assert!(metadata.exists());
+}
+
+#[test]
 fn backend_system_capture_emits_live_transcript_events() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

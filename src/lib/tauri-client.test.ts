@@ -26,6 +26,7 @@ import {
   regenerateTranscript,
   reprocessJobs,
   trashActivityJobs,
+  trashTranscripts,
   openTranscriptFolder,
   retryJob,
   retryLlmReport,
@@ -1145,6 +1146,12 @@ describe("tauri live capture client", () => {
     expect(
       outcome.snapshot.queue.jobs.some((job) => job.id === unselected?.id),
     ).toBe(true);
+  });
+
+  it("requires a Transcript selection before browser Trash mutation", async () => {
+    await expect(trashTranscripts([])).rejects.toThrow(
+      "Select at least one Transcript item",
+    );
   });
 
   it("queues one simulated browser capture chunk after threshold activation", async () => {

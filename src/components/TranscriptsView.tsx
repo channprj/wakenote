@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
   RotateCw,
+  Trash2,
   Video,
   Youtube,
 } from "lucide-react";
@@ -44,6 +45,17 @@ import {
   type ListVisibilityMode,
 } from "./ListVisibilityToolbar";
 import { Button } from "./ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog";
 import { Checkbox } from "./ui/checkbox";
 import { EmptyState } from "./ui/empty-state";
 import {
@@ -167,8 +179,11 @@ export function TranscriptsView({
   visibilityMutating = false,
   visibilityStatus = "",
   visibilityError = null,
+  trashMutating = false,
+  trashError = null,
   onVisibilityModeChange,
   onSetTranscriptsHidden,
+  onTrashTranscripts,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
   today = new Date(),
@@ -204,11 +219,16 @@ export function TranscriptsView({
   visibilityMutating?: boolean;
   visibilityStatus?: string;
   visibilityError?: string | null;
+  trashMutating?: boolean;
+  trashError?: string | null;
   onVisibilityModeChange?: (mode: ListVisibilityMode) => void;
   onSetTranscriptsHidden?: (
     entries: readonly RecentTranscript[],
     hidden: boolean,
   ) => boolean | Promise<boolean>;
+  onTrashTranscripts?: (
+    entries: readonly RecentTranscript[],
+  ) => readonly string[] | Promise<readonly string[]>;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
   today?: Date;
@@ -497,6 +517,38 @@ export function TranscriptsView({
     lastSelectionAnchorRef.current = null;
   }, []);
 
+  const handleTrashSelected = useCallback(async () => {
+    if (!onTrashTranscripts || selectedEntries.length === 0 || trashMutating) {
+      return;
+    }
+    const removedPaths = new Set(await onTrashTranscripts(selectedEntries));
+    if (removedPaths.size === 0) {
+      return;
+    }
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      for (const path of removedPaths) {
+        next.delete(path);
+      }
+      return next;
+    });
+    if (playingTranscriptPath && removedPaths.has(playingTranscriptPath)) {
+      setPlayingTranscriptPath(null);
+      setPlaybackPaused(false);
+    }
+    if (
+      lastSelectionAnchorRef.current &&
+      removedPaths.has(lastSelectionAnchorRef.current)
+    ) {
+      lastSelectionAnchorRef.current = null;
+    }
+  }, [
+    onTrashTranscripts,
+    playingTranscriptPath,
+    selectedEntries,
+    trashMutating,
+  ]);
+
   const handleSelectAllVisible = useCallback(() => {
     setSelectedPaths(selectTranscriptPathsForEntries(filteredEntries));
     lastSelectionAnchorRef.current =
@@ -784,6 +836,51 @@ export function TranscriptsView({
                     </>
                   )}
                 </Button>
+                {onTrashTranscripts ? (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        aria-label="Move selected transcript bundles to Trash"
+                        disabled={trashMutating}
+                        size="sm"
+                        type="button"
+                        variant="destructive"
+                      >
+                        {trashMutating ? (
+                          <Loader2 className="loading-spin" />
+                        ) : (
+                          <Trash2 />
+                        )}
+                        {trashMutating
+                          ? "Moving…"
+                          : `Move ${selectionCount} to Trash`}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Move {selectionCount} transcript
+                          {selectionCount === 1 ? "" : "s"} to Trash?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Each selected recording moves as one recoverable
+                          bundle containing its audio, transcript text, metadata
+                          JSON, and error text when present. Nothing is
+                          permanently deleted until you empty the macOS Trash.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          variant="destructive"
+                          onClick={() => void handleTrashSelected()}
+                        >
+                          Move bundles to Trash
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                ) : null}
                 {onMergeAudio && selectedAudioMergeEntries.length >= 2 ? (
                   <Button
                     aria-label={`Merge Audio · ${selectedAudioMergeEntries.length}`}
@@ -979,6 +1076,11 @@ export function TranscriptsView({
         {visibilityError ? (
           <div className="warning-banner warning-banner--danger">
             List visibility unavailable: {visibilityError}
+          </div>
+        ) : null}
+        {trashError ? (
+          <div className="warning-banner warning-banner--danger transcript-trash-error">
+            Move to Trash incomplete: {trashError}
           </div>
         ) : null}
         {reportError ? (

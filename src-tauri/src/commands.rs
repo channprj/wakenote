@@ -46,6 +46,7 @@ use crate::transcription::{
     FallbackTranscriber, RuntimeTranscriber, Transcriber, TranscriptionJobOutcome,
     TranscriptionWorker, TranscriptionWorkerOptions, apply_outcome, model_supports_live_partials,
 };
+use crate::trash::{TrashedRecordingBundle, recording_bundle_paths, restore_recording_bundle};
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
 /// reverse-lookup after a queue worker finishes. Bounded to avoid unbounded growth
@@ -540,6 +541,20 @@ pub struct TrashActivityJobsResult {
     pub trashed_ids: Vec<u64>,
     pub missing_ids: Vec<u64>,
     pub failures: Vec<TrashActivityJobFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashTranscriptFailure {
+    pub transcript_path: PathBuf,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashTranscriptsResult {
+    pub removed_transcript_paths: Vec<PathBuf>,
+    pub trashed_transcript_paths: Vec<PathBuf>,
+    pub missing_transcript_paths: Vec<PathBuf>,
+    pub failures: Vec<TrashTranscriptFailure>,
 }
 
 #[derive(Debug, Clone)]
@@ -2293,6 +2308,116 @@ impl AppBackend {
         })
     }
 
+    pub fn trash_transcripts_with<F>(
+        &mut self,
+        transcript_paths: Vec<PathBuf>,
+        mut move_bundle_to_trash: F,
+    ) -> Result<TrashTranscriptsResult, String>
+    where
+        F: FnMut(&Path) -> Result<Option<TrashedRecordingBundle>, String>,
+    {
+        let transcript_paths = transcript_paths.into_iter().collect::<BTreeSet<_>>();
+        if transcript_paths.is_empty() {
+            return Err("select at least one Transcript item to move to Trash".to_string());
+        }
+
+        let save_root = self.save_root_path();
+        let mut bundle_paths_by_transcript = BTreeMap::new();
+        for transcript_path in &transcript_paths {
+            validate_transcript_trash_path(&save_root, transcript_path)?;
+            let bundle_paths = recording_bundle_paths(transcript_path)?;
+            if let Some(job) = self.queue.snapshot().jobs.into_iter().find(|job| {
+                job.status == QueueJobStatus::Running && bundle_paths.contains(&job.audio_path)
+            }) {
+                return Err(format!(
+                    "Transcript {} belongs to running job {}",
+                    transcript_path.display(),
+                    job.id
+                ));
+            }
+            bundle_paths_by_transcript.insert(transcript_path.clone(), bundle_paths);
+        }
+
+        let mut removed_transcript_paths = Vec::new();
+        let mut trashed_transcript_paths = Vec::new();
+        let mut missing_transcript_paths = Vec::new();
+        let mut failures = Vec::new();
+        let mut removed_audio_paths = BTreeSet::new();
+
+        for transcript_path in transcript_paths {
+            match move_bundle_to_trash(&transcript_path) {
+                Ok(Some(bundle)) => {
+                    if let Err(index_error) =
+                        refresh_transcript_day_index_for_recording_path(&transcript_path)
+                    {
+                        let restore_error = restore_recording_bundle(&bundle).err();
+                        let _ = refresh_transcript_day_index_for_recording_path(&transcript_path);
+                        failures.push(TrashTranscriptFailure {
+                            transcript_path,
+                            error: match restore_error {
+                                Some(restore_error) => format!(
+                                    "failed to refresh Transcript index: {index_error}; rollback incomplete: {restore_error}"
+                                ),
+                                None => format!(
+                                    "failed to refresh Transcript index: {index_error}; bundle restored"
+                                ),
+                            },
+                        });
+                        continue;
+                    }
+                    removed_audio_paths.extend(
+                        bundle
+                            .original_paths
+                            .iter()
+                            .filter(|path| is_recording_audio_path(path))
+                            .cloned(),
+                    );
+                    removed_transcript_paths.push(transcript_path.clone());
+                    trashed_transcript_paths.push(transcript_path);
+                }
+                Ok(None) => {
+                    if let Some(bundle_paths) = bundle_paths_by_transcript.get(&transcript_path) {
+                        removed_audio_paths.extend(
+                            bundle_paths
+                                .iter()
+                                .filter(|path| is_recording_audio_path(path))
+                                .cloned(),
+                        );
+                    }
+                    let _ = refresh_transcript_day_index_for_recording_path(&transcript_path);
+                    removed_transcript_paths.push(transcript_path.clone());
+                    missing_transcript_paths.push(transcript_path);
+                }
+                Err(error) => failures.push(TrashTranscriptFailure {
+                    transcript_path,
+                    error,
+                }),
+            }
+        }
+
+        if !removed_audio_paths.is_empty() {
+            let queue_ids = self
+                .queue
+                .snapshot()
+                .jobs
+                .into_iter()
+                .filter(|job| removed_audio_paths.contains(&job.audio_path))
+                .map(|job| job.id)
+                .collect::<Vec<_>>();
+            if !queue_ids.is_empty() {
+                self.queue.remove_jobs(&queue_ids);
+                self.persist_queue();
+            }
+        }
+
+        Ok(TrashTranscriptsResult {
+            removed_transcript_paths,
+            trashed_transcript_paths,
+            missing_transcript_paths,
+            failures,
+        })
+    }
+
     pub fn skip_job(&mut self, id: u64) -> Result<QueueSnapshot, String> {
         self.queue.skip(id)?;
         self.persist_queue();
@@ -2906,6 +3031,65 @@ impl AppBackend {
             .transcription_enabled
             .then(|| self.settings.selected_model.clone())
     }
+}
+
+fn validate_transcript_trash_path(save_root: &Path, transcript_path: &Path) -> Result<(), String> {
+    if !is_transcript_sidecar(transcript_path) {
+        return Err(format!(
+            "selected path is not a Transcript text sidecar: {}",
+            transcript_path.display()
+        ));
+    }
+    if transcript_path.file_stem().and_then(|stem| stem.to_str()) == Some("all") {
+        return Err("the Transcript day index cannot be moved to Trash".to_string());
+    }
+
+    let canonical_root = save_root.canonicalize().map_err(|error| {
+        format!(
+            "failed to resolve save root {}: {error}",
+            save_root.display()
+        )
+    })?;
+    let parent = transcript_path
+        .parent()
+        .ok_or_else(|| "selected Transcript path has no parent directory".to_string())?;
+    let canonical_parent = parent.canonicalize().map_err(|error| {
+        format!(
+            "failed to resolve Transcript directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    let relative = canonical_parent
+        .strip_prefix(&canonical_root)
+        .map_err(|_| {
+            format!(
+                "selected Transcript is outside the configured save root: {}",
+                transcript_path.display()
+            )
+        })?;
+    let components = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let valid_day = match components.as_slice() {
+        [day] => dashed_day_from_compact(day).is_some(),
+        [uploaded, day] if uploaded == "uploaded" => dashed_day_from_compact(day).is_some(),
+        _ => false,
+    };
+    if !valid_day {
+        return Err(format!(
+            "selected Transcript is not inside a YYYYMMDD recording directory: {}",
+            transcript_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn is_recording_audio_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("m4a" | "wav" | "mp3")
+    )
 }
 
 /// Lists the `YYYY-MM-DD` days that contain at least one non-empty transcript

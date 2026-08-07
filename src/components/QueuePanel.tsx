@@ -688,10 +688,10 @@ export function QueuePanel({
                     Trash?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Activity records will be removed and the selected audio
-                    files will move to the macOS Trash. Transcript text files
-                    stay in place, and recordings remain recoverable until you
-                    empty the Trash.
+                    Activity records will be removed and each selected recording
+                    will move to the macOS Trash as one bundle with its audio,
+                    transcript text, metadata JSON, and error text when present.
+                    Bundles remain recoverable until you empty the Trash.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -700,7 +700,7 @@ export function QueuePanel({
                     variant="destructive"
                     onClick={() => void handleTrash()}
                   >
-                    Move recordings to Trash
+                    Move bundles to Trash
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

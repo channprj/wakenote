@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
 import { useListVisibility } from "../hooks/use-list-visibility";
 import { projectListItems } from "../lib/list-visibility";
@@ -16,6 +10,7 @@ import {
   rebuildTranscriptDayIndex,
   regenerateTranscript,
   startLlmReport,
+  trashTranscripts,
 } from "../lib/tauri-client";
 import {
   nextAudioMergeProgress,
@@ -47,9 +42,9 @@ export function TranscriptsPanel({
   onOpenReports?: () => void;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
-  const [entriesByDay, setEntriesByDay] = useState<Map<string, RecentTranscript[]>>(
-    () => new Map(),
-  );
+  const [entriesByDay, setEntriesByDay] = useState<
+    Map<string, RecentTranscript[]>
+  >(() => new Map());
   const [loadingDay, setLoadingDay] = useState<string | null>(null);
   const { activeRun, runs } = useLlmReportRuns();
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
@@ -57,8 +52,11 @@ export function TranscriptsPanel({
   const [audioMergeState, setAudioMergeState] = useState<AudioMergeUiState>({
     status: "idle",
   });
-  const [visibilityMode, setVisibilityMode] =
-    useState<"visible" | "hidden">("visible");
+  const [trashMutating, setTrashMutating] = useState(false);
+  const [trashError, setTrashError] = useState<string | null>(null);
+  const [visibilityMode, setVisibilityMode] = useState<"visible" | "hidden">(
+    "visible",
+  );
   const visibility = useListVisibility();
   const requestedRef = useRef<Set<string>>(new Set());
   const startedRun = runs.find((run) => run.run_id === startedRunId);
@@ -222,6 +220,59 @@ export function TranscriptsPanel({
     await openTranscriptFolder(destinationPath);
   }, []);
 
+  const trashEntries = useCallback(
+    async (entries: readonly RecentTranscript[]) => {
+      if (entries.length === 0 || trashMutating) {
+        return [];
+      }
+      setTrashMutating(true);
+      setTrashError(null);
+      try {
+        const outcome = await trashTranscripts(entries);
+        const removedPaths = new Set(outcome.removed_transcript_paths);
+        if (removedPaths.size > 0) {
+          setEntriesByDay((current) => {
+            const next = new Map(current);
+            for (const [day, dayEntries] of next) {
+              next.set(
+                day,
+                dayEntries.filter(
+                  (entry) => !removedPaths.has(entry.transcript_path),
+                ),
+              );
+            }
+            return next;
+          });
+        }
+        const affectedDays = new Set(
+          entries
+            .filter((entry) => removedPaths.has(entry.transcript_path))
+            .map((entry) => formatLocalDay(new Date(entry.recorded_at))),
+        );
+        for (const day of affectedDays) {
+          requestedRef.current.add(day);
+          await loadDay(day, false);
+        }
+        if (affectedDays.size > 0) {
+          await refreshDays();
+        }
+        if (outcome.failures.length > 0) {
+          const first = outcome.failures[0];
+          setTrashError(
+            `${outcome.failures.length} bundle${outcome.failures.length === 1 ? "" : "s"} could not be moved. ${first.error}`,
+          );
+        }
+        return outcome.removed_transcript_paths;
+      } catch (error) {
+        setTrashError(error instanceof Error ? error.message : String(error));
+        return [];
+      } finally {
+        setTrashMutating(false);
+      }
+    },
+    [loadDay, refreshDays, trashMutating],
+  );
+
   const generateReport = useCallback(
     async (entries: readonly RecentTranscript[], kind: LlmReportKind) => {
       if (entries.length === 0) {
@@ -297,11 +348,11 @@ export function TranscriptsPanel({
       visibleCountByDay={visibilityCounts.visible}
       hiddenCountByDay={visibilityCounts.hidden}
       visibilityMode={visibilityMode}
-      visibilityMutating={
-        visibility.loading || visibility.mutating
-      }
+      visibilityMutating={visibility.loading || visibility.mutating}
       visibilityStatus={visibility.announcement}
       visibilityError={visibility.error}
+      trashMutating={trashMutating}
+      trashError={trashError}
       loadingDay={loadingDay}
       models={models}
       selectedModelId={selectedModelId}
@@ -329,6 +380,7 @@ export function TranscriptsPanel({
           hidden,
         )
       }
+      onTrashTranscripts={trashEntries}
     />
   );
 }

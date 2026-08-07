@@ -351,6 +351,18 @@ export interface TrashActivityJobsOutcome extends TrashActivityJobsResult {
   snapshot: AppSnapshot;
 }
 
+export interface TrashTranscriptFailure {
+  transcript_path: string;
+  error: string;
+}
+
+export interface TrashTranscriptsResult {
+  removed_transcript_paths: string[];
+  trashed_transcript_paths: string[];
+  missing_transcript_paths: string[];
+  failures: TrashTranscriptFailure[];
+}
+
 export type ListVisibilityKind =
   | "meeting"
   | "transcript"

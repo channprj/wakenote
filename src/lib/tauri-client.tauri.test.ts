@@ -153,6 +153,13 @@ function mockInvoke(command: string) {
         missing_ids: [],
         failures: [],
       });
+    case "trash_transcripts":
+      return Promise.resolve({
+        removed_transcript_paths: ["/tmp/WakeNote/20260611/024304-spotify.txt"],
+        trashed_transcript_paths: ["/tmp/WakeNote/20260611/024304-spotify.txt"],
+        missing_transcript_paths: [],
+        failures: [],
+      });
     case "open_transcript_folder":
       return Promise.resolve(null);
     case "manual_meeting_recording_status":
@@ -504,6 +511,27 @@ describe("tauri runtime client snapshots", () => {
       ids: [7],
     });
     expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
+  });
+
+  it("moves selected Transcript bundles to Trash with exact transcript paths", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { trashTranscripts } = await import("./tauri-client");
+    const transcript: RecentTranscript = {
+      transcript_path: "/tmp/WakeNote/20260611/024304-spotify.txt",
+      audio_path: "/tmp/WakeNote/20260611/024304-spotify.m4a",
+      recorded_at: "2026-06-11T02:43:04+09:00",
+      text: "Selected transcript",
+    };
+
+    const outcome = await trashTranscripts([transcript, transcript]);
+
+    expect(outcome.removed_transcript_paths).toEqual([
+      transcript.transcript_path,
+    ]);
+    expect(mocks.invoke).toHaveBeenCalledWith("trash_transcripts", {
+      transcriptPaths: [transcript.transcript_path],
+    });
   });
 
   it("does not start an audio merge when the save dialog is cancelled", async () => {

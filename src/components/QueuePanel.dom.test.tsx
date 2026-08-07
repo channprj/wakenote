@@ -576,7 +576,7 @@ describe("QueuePanel pagination", () => {
     expect(screen.getByText(/Activity records will be removed/i)).toBeTruthy();
 
     await user.click(
-      screen.getByRole("button", { name: "Move recordings to Trash" }),
+      screen.getByRole("button", { name: "Move bundles to Trash" }),
     );
 
     expect(onTrash).toHaveBeenCalledWith([1, 2]);

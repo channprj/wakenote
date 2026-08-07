@@ -64,6 +64,7 @@ import type {
   MergeAudioRequest,
   TrashActivityJobsOutcome,
   TrashActivityJobsResult,
+  TrashTranscriptsResult,
   DictationStatePayload,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
@@ -2040,6 +2041,54 @@ export async function trashActivityJobs(
     ids,
   });
   return { ...result, snapshot: await loadSnapshot() };
+}
+
+export async function trashTranscripts(
+  entries: readonly RecentTranscript[],
+): Promise<TrashTranscriptsResult> {
+  const transcriptPaths = [
+    ...new Set(
+      entries
+        .map((entry) => entry.transcript_path.trim())
+        .filter((path) => path.length > 0),
+    ),
+  ];
+  if (transcriptPaths.length === 0) {
+    throw new Error("Select at least one Transcript item to move to Trash.");
+  }
+
+  if (!isTauriRuntime()) {
+    const selectedPaths = new Set(transcriptPaths);
+    const selectedAudioPaths = new Set(
+      entries
+        .filter((entry) => selectedPaths.has(entry.transcript_path))
+        .flatMap((entry) => (entry.audio_path ? [entry.audio_path] : [])),
+    );
+    const settings = browserSnapshot.settings ?? defaultSettings();
+    const queue = queueFromJobs(
+      browserSnapshot.queue.jobs.filter(
+        (job) => !selectedAudioPaths.has(job.audio_path),
+      ),
+    );
+    browserSnapshot = {
+      ...browserSnapshot,
+      queue,
+      status: statusFrom(settings, queue),
+      recent_transcripts: (browserSnapshot.recent_transcripts ?? []).filter(
+        (entry) => !selectedPaths.has(entry.transcript_path),
+      ),
+    };
+    return {
+      removed_transcript_paths: transcriptPaths,
+      trashed_transcript_paths: transcriptPaths,
+      missing_transcript_paths: [],
+      failures: [],
+    };
+  }
+
+  return invoke<TrashTranscriptsResult>("trash_transcripts", {
+    transcriptPaths,
+  });
 }
 
 export async function openTranscriptFolder(path: string): Promise<AppSnapshot> {

@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RecentTranscript } from "@/lib/types";
@@ -54,10 +49,7 @@ describe("TranscriptsView list visibility", () => {
     }) as HTMLButtonElement;
     await userEvent.click(apply);
 
-    expect(onSetTranscriptsHidden).toHaveBeenCalledWith(
-      [entry],
-      true,
-    );
+    expect(onSetTranscriptsHidden).toHaveBeenCalledWith([entry], true);
     expect(apply.disabled).toBe(true);
   });
 
@@ -92,10 +84,7 @@ describe("TranscriptsView list visibility", () => {
       screen.getByRole("menuitem", { name: "Hide selected" }),
     );
 
-    expect(onSetTranscriptsHidden).toHaveBeenCalledWith(
-      [entry],
-      true,
-    );
+    expect(onSetTranscriptsHidden).toHaveBeenCalledWith([entry], true);
   });
 });
 
@@ -129,5 +118,68 @@ describe("TranscriptsView audio merge selection", () => {
     expect(onMergeAudio).toHaveBeenCalledWith([entry, second]);
     expect(checkboxes[0].getAttribute("aria-checked")).toBe("true");
     expect(checkboxes[1].getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+describe("TranscriptsView recoverable deletion", () => {
+  it("confirms and moves the exact selected Transcript bundle to Trash", async () => {
+    const onTrashTranscripts = vi
+      .fn()
+      .mockResolvedValue([entry.transcript_path]);
+    render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: 1 }]}
+        entriesByDay={new Map([[day, [entry]]])}
+        onTrashTranscripts={onTrashTranscripts}
+      />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Select transcript 2026-05-10 01:02:03",
+    });
+    await userEvent.click(checkbox);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Move selected transcript bundles to Trash",
+      }),
+    );
+    expect(screen.getByText("Move 1 transcript to Trash?")).toBeTruthy();
+    expect(
+      screen.getByText(/audio, transcript text, metadata JSON, and error text/),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Move bundles to Trash" }),
+    );
+
+    expect(onTrashTranscripts).toHaveBeenCalledWith([entry]);
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("preserves failed Transcript selections for retry", async () => {
+    const onTrashTranscripts = vi.fn().mockResolvedValue([]);
+    render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: 1 }]}
+        entriesByDay={new Map([[day, [entry]]])}
+        onTrashTranscripts={onTrashTranscripts}
+      />,
+    );
+
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Select transcript 2026-05-10 01:02:03",
+    });
+    await userEvent.click(checkbox);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Move selected transcript bundles to Trash",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Move bundles to Trash" }),
+    );
+
+    expect(checkbox.getAttribute("aria-checked")).toBe("true");
   });
 });

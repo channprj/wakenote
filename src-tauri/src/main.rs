@@ -30,8 +30,8 @@ use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
     AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
     MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
-    TrashActivityJobsResult, TrayMenuPresentation, TrayRuntimePresentation, TrayState,
-    UploadedAudio, live_preview_model_id, main_window_close_action,
+    TrashActivityJobsResult, TrashTranscriptsResult, TrayMenuPresentation, TrayRuntimePresentation,
+    TrayState, UploadedAudio, live_preview_model_id, main_window_close_action,
     microphone_devices_from_input_devices, open_containing_folder_request,
     recorded_at_for_audio_path, refresh_transcript_day_index_for_recording_path,
     reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
@@ -3725,7 +3725,36 @@ fn trash_activity_jobs(
     ids: Vec<u64>,
 ) -> Result<TrashActivityJobsResult, String> {
     let mut backend = state.lock().map_err(|error| error.to_string())?;
-    backend.trash_activity_jobs_with(ids, |path| wakenote::trash::move_to_trash(path).map(|_| ()))
+    backend.trash_activity_jobs_with(ids, move_recording_bundle_to_trash_and_refresh)
+}
+
+#[tauri::command]
+fn trash_transcripts(
+    state: State<'_, BackendState>,
+    transcript_paths: Vec<String>,
+) -> Result<TrashTranscriptsResult, String> {
+    let mut backend = state.lock().map_err(|error| error.to_string())?;
+    backend.trash_transcripts_with(
+        transcript_paths.into_iter().map(PathBuf::from).collect(),
+        wakenote::trash::move_recording_bundle_to_trash,
+    )
+}
+
+fn move_recording_bundle_to_trash_and_refresh(path: &Path) -> Result<(), String> {
+    let Some(bundle) = wakenote::trash::move_recording_bundle_to_trash(path)? else {
+        return Ok(());
+    };
+    if let Err(index_error) = refresh_transcript_day_index_for_recording_path(path) {
+        return match wakenote::trash::restore_recording_bundle(&bundle) {
+            Ok(()) => Err(format!(
+                "failed to refresh Transcript index: {index_error}; bundle restored"
+            )),
+            Err(restore_error) => Err(format!(
+                "failed to refresh Transcript index: {index_error}; rollback incomplete: {restore_error}"
+            )),
+        };
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -7459,6 +7488,7 @@ fn main() {
             regenerate_transcript,
             reprocess_jobs,
             trash_activity_jobs,
+            trash_transcripts,
             open_transcript_folder,
             skip_job,
             mark_all_activity_read,
