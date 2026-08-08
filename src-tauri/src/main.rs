@@ -53,8 +53,8 @@ use wakenote::dictionary_file::{
 };
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
-    AudioFrame, AudioInputConfig, AudioStreamHandle, CpalAudioInput, LiveCaptureError,
-    LiveCaptureRuntime, ResolvedCpalInputDevice,
+    AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
+    LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
 };
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
@@ -651,6 +651,140 @@ fn dictation_allows_caption_window_mutation(
                 OverlayCaptionSource::Dictation
             )
         )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DictationCaptionUpdate {
+    Partial(String),
+    Final { audio_path: PathBuf, text: String },
+}
+
+fn apply_dictation_caption_update<B: AudioInputBackend>(
+    dictation_state: &Arc<Mutex<DictationRuntime<B>>>,
+    caption_state: &OverlayCaptionState,
+    operation_id: u64,
+    update: DictationCaptionUpdate,
+    settings: &AppSettings,
+) -> Option<OverlayCaptionSnapshot> {
+    if !settings.dictation_subtitles_enabled() {
+        return None;
+    }
+    let update_has_text = match &update {
+        DictationCaptionUpdate::Partial(text) | DictationCaptionUpdate::Final { text, .. } => {
+            text.split_whitespace().next().is_some()
+        }
+    };
+    if !update_has_text {
+        return None;
+    }
+    let dictation = dictation_state.lock().ok()?;
+    if dictation.stage() != DictationStage::Transcribing
+        || !dictation.is_operation_active(operation_id)
+    {
+        return None;
+    }
+
+    let position = settings.effective_dictation_subtitle_position();
+    let style = settings.floating_overlay_caption_style();
+    let mut runtime = caption_state.lock().ok()?;
+    let changed = match update {
+        DictationCaptionUpdate::Partial(text) => runtime.show_partial_for_source(
+            OverlayCaptionSource::Dictation,
+            operation_id,
+            text,
+            position,
+            style,
+        ),
+        DictationCaptionUpdate::Final { audio_path, text } => runtime.show_final_for_source(
+            OverlayCaptionSource::Dictation,
+            Some(operation_id),
+            audio_path,
+            text,
+            position,
+            style,
+        ),
+    };
+    changed.then(|| runtime.snapshot())
+}
+
+fn current_dictation_caption_settings(app: &AppHandle, fallback: &AppSettings) -> AppSettings {
+    app.try_state::<BackendState>()
+        .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
+        .unwrap_or_else(|| fallback.clone())
+}
+
+fn publish_dictation_partial(
+    app: &AppHandle,
+    operation_id: u64,
+    text: impl Into<String>,
+    fallback_settings: &AppSettings,
+) -> bool {
+    let Some(dictation_state) = app.try_state::<DictationState>() else {
+        return false;
+    };
+    let Some(caption_state) = app.try_state::<OverlayCaptionState>() else {
+        return false;
+    };
+    let settings = current_dictation_caption_settings(app, fallback_settings);
+    let snapshot = apply_dictation_caption_update(
+        dictation_state.inner(),
+        caption_state.inner(),
+        operation_id,
+        DictationCaptionUpdate::Partial(text.into()),
+        &settings,
+    );
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    publish_overlay_caption_snapshot(app, snapshot, "Dictation partial caption");
+    true
+}
+
+fn publish_dictation_final(
+    app: &AppHandle,
+    operation_id: u64,
+    audio_path: PathBuf,
+    text: impl Into<String>,
+    fallback_settings: &AppSettings,
+) -> bool {
+    let Some(dictation_state) = app.try_state::<DictationState>() else {
+        return false;
+    };
+    let Some(caption_state) = app.try_state::<OverlayCaptionState>() else {
+        return false;
+    };
+    let settings = current_dictation_caption_settings(app, fallback_settings);
+    let snapshot = apply_dictation_caption_update(
+        dictation_state.inner(),
+        caption_state.inner(),
+        operation_id,
+        DictationCaptionUpdate::Final {
+            audio_path,
+            text: text.into(),
+        },
+        &settings,
+    );
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    publish_overlay_caption_snapshot(app, snapshot, "Dictation final caption");
+    true
+}
+
+fn hide_dictation_caption(app: &AppHandle) -> bool {
+    let Some(caption_state) = app.try_state::<OverlayCaptionState>() else {
+        return false;
+    };
+    let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
+        runtime
+            .hide_source(OverlayCaptionSource::Dictation)
+            .then(|| runtime.snapshot())
+    });
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    publish_overlay_caption_snapshot(app, snapshot, "Dictation caption cleanup");
+    true
 }
 
 fn begin_subtitle_preview(state: &AtomicU64) -> u64 {
@@ -1783,6 +1917,7 @@ fn show_dictation_error(app: &AppHandle, error: String) {
             state: DictationStage::Error,
             error: Some(error.clone()),
         });
+    hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     let message = if error == "No speech detected" {
         error
@@ -1823,6 +1958,7 @@ fn show_dictation_operation_error(app: &AppHandle, operation_id: u64, error: Str
 
     eprintln!("[dictation] {error}");
     log_dictation_runtime(app, format!("[dictation] error={error}"));
+    hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     let message = if error == "No speech detected" {
         error
@@ -1869,6 +2005,7 @@ fn cancel_dictation_runtime(app: &AppHandle) -> Result<bool, String> {
         manager.close_source("dictation".to_string());
     }
     log_dictation_runtime(app, "[dictation] cancelled by user");
+    hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     refresh_tray_from_backend(app);
     restore_overlay_after_dictation(app);
@@ -1927,8 +2064,20 @@ fn process_dictation_recording(
     };
     let transcription_options =
         validate_model_options(&models, &dictation_model, &settings.transcription_options);
+    let uses_realtime_manager = matches!(
+        dictation_model.as_str(),
+        "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+    );
+    let partial_callback: Option<TranscriptionPartialCallback> =
+        (settings.dictation_subtitles_enabled() && !uses_realtime_manager).then(|| {
+            let callback_app = app.clone();
+            let callback_settings = settings.clone();
+            Arc::new(move |text| {
+                publish_dictation_partial(&callback_app, operation_id, text, &callback_settings);
+            }) as TranscriptionPartialCallback
+        });
     let transcriber =
-        transcriber.with_file_streaming(transcription_options.streaming_enabled, None);
+        transcriber.with_file_streaming(transcription_options.streaming_enabled, partial_callback);
     let fallback_model_id = if transcription_options.cost_limit_fallback_enabled {
         transcription_options.cost_limit_fallback_model_id.clone()
     } else {
@@ -1968,7 +2117,7 @@ fn process_dictation_recording(
         let result = match &archive_result {
             Ok(archive) => {
                 let source_key = "dictation".to_string();
-                let chunk_id = recording.started_at.timestamp_micros().unsigned_abs();
+                let chunk_id = operation_id;
                 let request = RealtimeSamplesRequest {
                     source_key: source_key.clone(),
                     source_label: "Dictation".to_string(),
@@ -2140,6 +2289,13 @@ fn process_dictation_recording(
                     transcription_elapsed.as_millis(),
                     started.elapsed().as_millis(),
                 ),
+            );
+            publish_dictation_final(
+                app,
+                operation_id,
+                archive.audio_path.clone(),
+                &text,
+                &settings,
             );
             type_dictation_text_on_main_thread(app, operation_id, input_text, settings, started);
         }
@@ -5786,37 +5942,57 @@ fn kick_transcription_worker_if_needed(
 }
 
 fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial: RealtimePartial) {
-    if partial.microphone_slot != Some(MicrophoneSlot::Secondary)
-        && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
-    {
-        let (overlay_position, caption_style) = backend_state
-            .lock()
-            .ok()
-            .map(|backend| {
-                let settings = backend.settings();
-                (
-                    settings.effective_floating_overlay_position(),
-                    settings.floating_overlay_caption_style(),
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    FloatingOverlayPosition::Off,
-                    AppSettings::default().floating_overlay_caption_style(),
-                )
-            });
-        let snapshot = caption_state.lock().ok().map(|mut runtime| {
-            runtime.show_partial(
-                partial.chunk_id,
-                &partial.text,
-                overlay_position,
-                caption_style,
-            );
-            runtime.snapshot()
-        });
-        if let Some(snapshot) = snapshot {
-            publish_overlay_caption_snapshot(app, snapshot, "cloud realtime partial");
+    let caption_source = if partial.source_key == "dictation" {
+        OverlayCaptionSource::Dictation
+    } else {
+        OverlayCaptionSource::LiveTranscription
+    };
+    match caption_source {
+        OverlayCaptionSource::Dictation => {
+            let settings = backend_state
+                .lock()
+                .ok()
+                .map(|backend| backend.settings())
+                .unwrap_or_default();
+            publish_dictation_partial(app, partial.chunk_id, &partial.text, &settings);
         }
+        OverlayCaptionSource::LiveTranscription
+            if partial.microphone_slot != Some(MicrophoneSlot::Secondary) =>
+        {
+            if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
+                let (overlay_position, caption_style) = backend_state
+                    .lock()
+                    .ok()
+                    .map(|backend| {
+                        let settings = backend.settings();
+                        (
+                            settings.effective_floating_overlay_position(),
+                            settings.floating_overlay_caption_style(),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            FloatingOverlayPosition::Off,
+                            AppSettings::default().floating_overlay_caption_style(),
+                        )
+                    });
+                let snapshot = caption_state.lock().ok().and_then(|mut runtime| {
+                    runtime
+                        .show_partial_for_source(
+                            OverlayCaptionSource::LiveTranscription,
+                            partial.chunk_id,
+                            &partial.text,
+                            overlay_position,
+                            caption_style,
+                        )
+                        .then(|| runtime.snapshot())
+                });
+                if let Some(snapshot) = snapshot {
+                    publish_overlay_caption_snapshot(app, snapshot, "cloud realtime partial");
+                }
+            }
+        }
+        OverlayCaptionSource::LiveTranscription | OverlayCaptionSource::Preview => {}
     }
     if let Err(error) = app.emit(
         EVENT_LIVE_PARTIAL,
@@ -8114,6 +8290,153 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use wakenote::settings::{DictionaryEntry, SourceAutoPromptEntry};
+
+    struct CaptionTestStream;
+
+    impl AudioStreamHandle for CaptionTestStream {}
+
+    struct CaptionTestInput;
+
+    impl wakenote::live_capture::AudioInputBackend for CaptionTestInput {
+        fn start(
+            &mut self,
+            _config: AudioInputConfig,
+            _on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
+        ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
+            Ok(Box::new(CaptionTestStream))
+        }
+    }
+
+    fn active_caption_test_dictation_state() -> (Arc<Mutex<DictationRuntime<CaptionTestInput>>>, u64)
+    {
+        let mut runtime = DictationRuntime::new(CaptionTestInput);
+        assert_eq!(
+            runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+            DictationAction::StartRecording
+        );
+        let operation_id = runtime
+            .start_recording(AudioInputConfig {
+                device_id: "test".to_string(),
+                sample_rate: Some(16_000),
+                label_hint: None,
+                core_audio_uid: None,
+            })
+            .expect("test Dictation recording starts");
+        assert_eq!(
+            runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+            DictationAction::StopAndTranscribe
+        );
+        runtime.stop_recording().expect("test recording stops");
+        (Arc::new(Mutex::new(runtime)), operation_id)
+    }
+
+    #[test]
+    fn dictation_caption_updates_require_an_active_enabled_operation() {
+        let (dictation_state, operation_id) = active_caption_test_dictation_state();
+        let caption_state = Arc::new(Mutex::new(OverlayCaptionRuntime::default()));
+        let mut settings = AppSettings {
+            show_floating_overlay: true,
+            floating_overlay_position: FloatingOverlayPosition::Top,
+            ..AppSettings::default()
+        };
+
+        let partial = apply_dictation_caption_update(
+            &dictation_state,
+            &caption_state,
+            operation_id,
+            DictationCaptionUpdate::Partial("  딕테이션 중간 자막  ".to_string()),
+            &settings,
+        )
+        .expect("active Dictation partial is shown");
+        assert_eq!(partial.source, OverlayCaptionSource::Dictation);
+        assert_eq!(partial.text, "딕테이션 중간 자막");
+
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id + 1,
+                DictationCaptionUpdate::Partial("stale".to_string()),
+                &settings,
+            )
+            .is_none()
+        );
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id,
+                DictationCaptionUpdate::Partial("  ".to_string()),
+                &settings,
+            )
+            .is_none()
+        );
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id,
+                DictationCaptionUpdate::Final {
+                    audio_path: PathBuf::from("/tmp/empty.m4a"),
+                    text: " \n ".to_string(),
+                },
+                &settings,
+            )
+            .is_none()
+        );
+
+        settings.subtitle_source_mode = wakenote::settings::SubtitleSourceMode::LiveTranscription;
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id,
+                DictationCaptionUpdate::Partial("disabled".to_string()),
+                &settings,
+            )
+            .is_none()
+        );
+        settings.subtitle_source_mode = wakenote::settings::SubtitleSourceMode::Both;
+
+        let final_caption = apply_dictation_caption_update(
+            &dictation_state,
+            &caption_state,
+            operation_id,
+            DictationCaptionUpdate::Final {
+                audio_path: PathBuf::from("/tmp/dictation.m4a"),
+                text: "최종 딕테이션 자막".to_string(),
+            },
+            &settings,
+        )
+        .expect("active Dictation final is shown");
+        assert_eq!(
+            final_caption.phase,
+            wakenote::overlay_caption::OverlayCaptionPhase::Final
+        );
+        assert_eq!(final_caption.text, "최종 딕테이션 자막");
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id,
+                DictationCaptionUpdate::Partial("late partial".to_string()),
+                &settings,
+            )
+            .is_none()
+        );
+
+        assert!(dictation_state.lock().unwrap().cancel_active());
+        assert!(
+            apply_dictation_caption_update(
+                &dictation_state,
+                &caption_state,
+                operation_id,
+                DictationCaptionUpdate::Partial("cancelled".to_string()),
+                &settings,
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn subtitle_preview_tokens_keep_only_the_latest_preview_active() {
