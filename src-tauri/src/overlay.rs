@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
+use crate::caption_layout::{caption_line_capacity_for_width, caption_line_metrics};
 use crate::commands::TrayState;
 use crate::settings::{
     DictationBubblePosition, DictationOverlayStyle, FloatingOverlayCaptionStyle,
@@ -573,20 +574,16 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let requested_min_height = style.min_height_px.min(style.max_height_px) as f64;
     let requested_max_height = style.min_height_px.max(style.max_height_px) as f64;
 
-    let average_char_width = font_size * 0.56;
-    let weighted_chars = text
-        .chars()
-        .map(|ch| if ch.is_ascii() { 0.58 } else { 1.0 })
-        .sum::<f64>()
-        .max(1.0);
-    let desired_caption_width =
-        weighted_chars * average_char_width + padding_horizontal * 2.0 + border * 2.0;
     let effective_max_width = requested_max_width.min(available_caption_width);
+    let line_capacity = caption_line_capacity_for_width(style, effective_max_width);
+    let line_metrics = caption_line_metrics(text, line_capacity);
+    let average_char_width = font_size * 0.56;
+    let desired_caption_width = line_metrics.widest_line_width * average_char_width
+        + padding_horizontal * 2.0
+        + border * 2.0;
     let caption_width = desired_caption_width.min(effective_max_width).max(1.0);
-    let text_width = (caption_width - padding_horizontal * 2.0 - border * 2.0).max(font_size * 2.0);
-    let chars_per_line = (text_width / average_char_width).floor().max(8.0);
-    let lines = (weighted_chars / chars_per_line).ceil().max(1.0);
-    let text_height = lines * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
+    let text_height =
+        line_metrics.line_count as f64 * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
     let desired_caption_height = text_height + padding_vertical * 2.0 + border * 2.0;
     let effective_max_height = requested_max_height.min(available_caption_height);
     let effective_min_height = requested_min_height.min(effective_max_height);
@@ -824,6 +821,42 @@ mod tests {
         let size = caption_overlay_size_for_monitor(monitor, &four_line_caption, &caption_style());
 
         assert!(size.1 >= 166.0, "caption height was {}", size.1);
+    }
+
+    #[test]
+    fn caption_overlay_geometry_honors_three_explicit_balanced_lines() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let style = caption_style();
+        let one_line = caption_overlay_size_for_monitor(monitor, "첫 번째 균형 줄", &style);
+        let three_lines = caption_overlay_size_for_monitor(
+            monitor,
+            "첫 번째 균형 줄\n두 번째 균형 줄\n세 번째 균형 줄",
+            &style,
+        );
+
+        assert!(three_lines.1 > one_line.1);
+        assert!(three_lines.0 < style.max_width_px as f64);
+        assert!(three_lines.0 < one_line.0 * 1.5);
+    }
+
+    #[test]
+    fn narrow_monitor_adds_emergency_rows_for_an_explicit_line() {
+        let style = caption_style();
+        let text = "가".repeat(40);
+        let wide = caption_overlay_size_for_monitor(rect((0, 0), (1920, 1080), 1.0), &text, &style);
+        let narrow =
+            caption_overlay_size_for_monitor(rect((0, 0), (300, 1080), 1.0), &text, &style);
+
+        assert!(narrow.0 < wide.0);
+        assert!(narrow.1 > wide.1);
+    }
+
+    #[test]
+    fn short_one_line_caption_remains_content_sized() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &caption_style());
+
+        assert_eq!(size, (124.0, 76.0));
     }
 
     #[test]

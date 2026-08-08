@@ -18,7 +18,7 @@ describe("overlay caption css", () => {
       /\.overlay-caption__text\s*\{[^}]*overflow:\s*hidden/,
     );
     expect(css).toMatch(
-      /\.overlay-caption__text\s*\{[^}]*white-space:\s*normal/,
+      /\.overlay-caption__text\s*\{[^}]*white-space:\s*pre-line/,
     );
     expect(css).toMatch(
       /\.overlay-caption__text\s*\{[^}]*word-break:\s*keep-all/,

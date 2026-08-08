@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::caption_layout::balanced_caption_text;
 use crate::settings::{FloatingOverlayCaptionStyle, FloatingOverlayPosition};
 
 pub const OVERLAY_CAPTION_UPDATED_EVENT: &str = "overlay-caption-updated";
@@ -441,7 +442,7 @@ impl OverlayCaptionRuntime {
     }
 
     fn refresh_display_text(&mut self) {
-        self.text.clone_from(&self.raw_text);
+        self.text = balanced_caption_text(&self.raw_text, &self.style);
     }
 
     fn source_can_replace(&self, incoming: OverlayCaptionSource) -> bool {
@@ -533,6 +534,35 @@ mod tests {
         assert_eq!(runtime.snapshot().generation, generation);
         assert_eq!(runtime.raw_text, final_text);
         assert_eq!(runtime.snapshot().final_hold_ms, Some(20_000));
+    }
+
+    #[test]
+    fn growing_partial_rebalances_from_raw_text_without_retaining_old_breaks() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let mut compact_style = style();
+        compact_style.max_width_px = 160;
+        runtime.show_partial(
+            7,
+            "alpha beta. gamma delta",
+            FloatingOverlayPosition::Top,
+            compact_style.clone(),
+        );
+        assert!(runtime.snapshot().text.contains('\n'));
+
+        let grown = "alpha beta. gamma delta epsilon zeta";
+        runtime.show_partial(
+            7,
+            grown,
+            FloatingOverlayPosition::Top,
+            compact_style.clone(),
+        );
+
+        assert_eq!(runtime.raw_text, grown);
+        assert!(!runtime.raw_text.contains('\n'));
+        assert_eq!(
+            runtime.snapshot().text,
+            balanced_caption_text(grown, &compact_style)
+        );
     }
 
     #[test]

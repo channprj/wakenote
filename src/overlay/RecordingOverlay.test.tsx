@@ -77,6 +77,20 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("<button");
   });
 
+  it("preserves balanced line breaks from the caption runtime", () => {
+    const balancedText = "균형 잡힌 첫 줄\n읽기 편한 두 번째 줄";
+    const markup = render(
+      caption({
+        chunk_id: 1,
+        phase: "final",
+        text: balancedText,
+        visible: true,
+      }),
+    );
+
+    expect(markup).toContain(balancedText);
+  });
+
   it("identifies the caption source in overlay markup", () => {
     const markup = render(
       caption({

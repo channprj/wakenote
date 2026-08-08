@@ -25,6 +25,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use wakenote::audio::{MicHealthAction, list_input_devices};
 use wakenote::audio_analysis::AudioWaveform;
 use wakenote::audio_merge::{AudioMergeResult, MergeAudioRequest, merge_audio_to_m4a};
+use wakenote::caption_layout::balanced_caption_text;
 use wakenote::cloud_realtime::{RealtimePartial, RealtimeSamplesRequest};
 use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
@@ -1253,8 +1254,9 @@ fn preview_subtitle(
         position => position,
     };
     let style = settings.floating_overlay_caption_style();
-    let preview_text = "Subtitle preview · 자막 미리보기";
-    let preview_hold = adaptive_caption_hold(preview_text, style.duration_seconds);
+    let preview_raw_text = "Subtitle preview · 자막 미리보기";
+    let preview_hold = adaptive_caption_hold(preview_raw_text, style.duration_seconds);
+    let preview_text = balanced_caption_text(preview_raw_text, &style);
     let preview_token = begin_subtitle_preview(preview_state.inner());
     let preview = OverlayCaptionSnapshot {
         generation: preview_token,
@@ -1263,7 +1265,7 @@ fn preview_subtitle(
         phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
         chunk_id: None,
         audio_path: None,
-        text: preview_text.to_string(),
+        text: preview_text,
         position,
         final_hold_ms: Some(preview_hold.as_millis() as u64),
         style,

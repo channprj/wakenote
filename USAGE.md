@@ -263,7 +263,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Subtitle vertical padding | `14 px` | `0 … 64 px` |
 | Subtitle border | `1 px`, `#ffffff` | `0 … 8 px`, six-digit hex color |
 | Subtitle corner radius | `8 px` | `0 … 48 px` |
-| Subtitle width | `260 … 720 px` | minimum/maximum `0 … 1,600 px`; normalized so minimum ≤ maximum |
+| Subtitle maximum width | `720 px` | `0 … 1,600 px` |
 | Subtitle height | `58 … 1,000 px` | minimum/maximum `0 … 1,200 px`; normalized so minimum ≤ maximum |
 | Minimum subtitle duration | `5 sec` | `1 … 10 sec` |
 | Subtitle animation | fade | instant / fade / dissolve |
@@ -324,7 +324,7 @@ WakeNote sends canonical terms as native provider context where supported, then 
 
 Enable **Settings › Integrations › Subtitle** and choose any top/bottom × left/center/right position. Corner positions use a smaller display-edge margin than the recording waveform, while the centered positions keep their existing anchor.
 
-Padding, border width/color/radius, and minimum/maximum width and height are numeric pixel settings. The backend clamps unsafe values and orders each minimum/maximum pair before the same geometry is applied to the native overlay window and its web content. Subtitle text uses `word-break: keep-all`; unbreakable URLs and long tokens may still wrap anywhere as an overflow safeguard.
+Padding, border width/color/radius, maximum width, and minimum/maximum height are numeric pixel settings. Short subtitles remain content-sized; long subtitles never grow beyond the configured maximum width. The backend balances long lines from the current full caption, softly preferring sentence endings when the visual result is otherwise similar. The same explicit lines size the native window and render in the web content. Unbreakable URLs and long tokens remain intact and may wrap anywhere only as an overflow safeguard.
 
 Changing a presentation option shows the real overlay as a preview. Each edit restarts the preview for at least the configured 1–10 second minimum. Longer live, dictation, and preview text stays visible for its estimated reading time, capped at 30 seconds. All caption sources share the same generation-safe expiry, so an older timer cannot hide newer text and a final subtitle does not remain on screen indefinitely.
 

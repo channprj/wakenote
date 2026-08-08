@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod audio_analysis;
 pub mod audio_merge;
+pub mod caption_layout;
 pub mod capture;
 pub mod cloud_realtime;
 pub mod cloud_transcription;
