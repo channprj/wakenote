@@ -569,8 +569,7 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let padding_horizontal = style.padding_horizontal_px as f64;
     let padding_vertical = style.padding_vertical_px as f64;
     let border = style.border_width_px as f64;
-    let requested_min_width = style.min_width_px.min(style.max_width_px) as f64;
-    let requested_max_width = style.min_width_px.max(style.max_width_px) as f64;
+    let requested_max_width = style.max_width_px as f64;
     let requested_min_height = style.min_height_px.min(style.max_height_px) as f64;
     let requested_max_height = style.min_height_px.max(style.max_height_px) as f64;
 
@@ -583,11 +582,7 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let desired_caption_width =
         weighted_chars * average_char_width + padding_horizontal * 2.0 + border * 2.0;
     let effective_max_width = requested_max_width.min(available_caption_width);
-    let effective_min_width = requested_min_width.min(effective_max_width);
-    let caption_width = desired_caption_width
-        .max(effective_min_width)
-        .min(effective_max_width)
-        .max(1.0);
+    let caption_width = desired_caption_width.min(effective_max_width).max(1.0);
     let text_width = (caption_width - padding_horizontal * 2.0 - border * 2.0).max(font_size * 2.0);
     let chars_per_line = (text_width / average_char_width).floor().max(8.0);
     let lines = (weighted_chars / chars_per_line).ceil().max(1.0);
@@ -816,7 +811,7 @@ mod tests {
             &style,
         );
 
-        assert_eq!(short.0, 284.0);
+        assert_eq!(short.0, 124.0);
         assert_eq!(short.1, 76.0);
         assert!(long.1 > short.1);
         assert!(long.1 <= 1080.0 - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0);
@@ -838,7 +833,6 @@ mod tests {
         compact.padding_horizontal_px = 0;
         compact.padding_vertical_px = 0;
         compact.border_width_px = 0;
-        compact.min_width_px = 80;
         compact.max_width_px = 320;
         compact.min_height_px = 0;
         compact.max_height_px = 80;
@@ -850,7 +844,7 @@ mod tests {
         padded.border_width_px = 4;
         let padded_size = caption_overlay_size_for_monitor(monitor, "abc", &padded);
 
-        assert_eq!(compact_size, (104.0, 46.0));
+        assert_eq!(compact_size, (48.0, 46.0));
         assert!(padded_size.0 > compact_size.0);
         assert!(padded_size.1 > compact_size.1);
         assert!(padded_size.0 <= 344.0);

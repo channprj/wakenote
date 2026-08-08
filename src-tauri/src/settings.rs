@@ -90,10 +90,6 @@ pub fn default_subtitle_border_radius_px() -> u32 {
     8
 }
 
-pub fn default_subtitle_min_width_px() -> u32 {
-    260
-}
-
 pub fn default_subtitle_max_width_px() -> u32 {
     720
 }
@@ -203,7 +199,6 @@ pub struct FloatingOverlayCaptionStyle {
     pub border_width_px: u32,
     pub border_color: String,
     pub border_radius_px: u32,
-    pub min_width_px: u32,
     pub max_width_px: u32,
     pub min_height_px: u32,
     pub max_height_px: u32,
@@ -492,8 +487,6 @@ pub struct AppSettings {
     pub subtitle_border_color: String,
     #[serde(default = "default_subtitle_border_radius_px")]
     pub subtitle_border_radius_px: u32,
-    #[serde(default = "default_subtitle_min_width_px")]
-    pub subtitle_min_width_px: u32,
     #[serde(default = "default_subtitle_max_width_px")]
     pub subtitle_max_width_px: u32,
     #[serde(default = "default_subtitle_min_height_px")]
@@ -594,7 +587,6 @@ pub struct SettingsPatch {
     pub subtitle_border_width_px: Option<u32>,
     pub subtitle_border_color: Option<String>,
     pub subtitle_border_radius_px: Option<u32>,
-    pub subtitle_min_width_px: Option<u32>,
     pub subtitle_max_width_px: Option<u32>,
     pub subtitle_min_height_px: Option<u32>,
     pub subtitle_max_height_px: Option<u32>,
@@ -1330,27 +1322,8 @@ impl AppSettings {
         if let Some(value) = patch.subtitle_border_radius_px {
             self.subtitle_border_radius_px = value.min(SUBTITLE_BORDER_RADIUS_MAX_PX);
         }
-        match (
-            patch
-                .subtitle_min_width_px
-                .map(|value| value.min(SUBTITLE_WIDTH_MAX_PX)),
-            patch
-                .subtitle_max_width_px
-                .map(|value| value.min(SUBTITLE_WIDTH_MAX_PX)),
-        ) {
-            (Some(minimum), Some(maximum)) => {
-                self.subtitle_min_width_px = minimum.min(maximum);
-                self.subtitle_max_width_px = minimum.max(maximum);
-            }
-            (Some(minimum), None) => {
-                self.subtitle_min_width_px = minimum;
-                self.subtitle_max_width_px = self.subtitle_max_width_px.max(minimum);
-            }
-            (None, Some(maximum)) => {
-                self.subtitle_max_width_px = maximum;
-                self.subtitle_min_width_px = self.subtitle_min_width_px.min(maximum);
-            }
-            (None, None) => {}
+        if let Some(value) = patch.subtitle_max_width_px {
+            self.subtitle_max_width_px = value.min(SUBTITLE_WIDTH_MAX_PX);
         }
         match (
             patch
@@ -1491,7 +1464,6 @@ impl Default for AppSettings {
             subtitle_border_width_px: default_subtitle_border_width_px(),
             subtitle_border_color: default_subtitle_border_color(),
             subtitle_border_radius_px: default_subtitle_border_radius_px(),
-            subtitle_min_width_px: default_subtitle_min_width_px(),
             subtitle_max_width_px: default_subtitle_max_width_px(),
             subtitle_min_height_px: default_subtitle_min_height_px(),
             subtitle_max_height_px: default_subtitle_max_height_px(),
@@ -1535,12 +1507,6 @@ impl AppSettings {
     }
 
     pub fn floating_overlay_caption_style(&self) -> FloatingOverlayCaptionStyle {
-        let (min_width_px, max_width_px) =
-            if self.subtitle_min_width_px <= self.subtitle_max_width_px {
-                (self.subtitle_min_width_px, self.subtitle_max_width_px)
-            } else {
-                (self.subtitle_max_width_px, self.subtitle_min_width_px)
-            };
         let (min_height_px, max_height_px) =
             if self.subtitle_min_height_px <= self.subtitle_max_height_px {
                 (self.subtitle_min_height_px, self.subtitle_max_height_px)
@@ -1567,8 +1533,7 @@ impl AppSettings {
             border_radius_px: self
                 .subtitle_border_radius_px
                 .min(SUBTITLE_BORDER_RADIUS_MAX_PX),
-            min_width_px: min_width_px.min(SUBTITLE_WIDTH_MAX_PX),
-            max_width_px: max_width_px.min(SUBTITLE_WIDTH_MAX_PX),
+            max_width_px: self.subtitle_max_width_px.min(SUBTITLE_WIDTH_MAX_PX),
             min_height_px: min_height_px.min(SUBTITLE_HEIGHT_MAX_PX),
             max_height_px: max_height_px.min(SUBTITLE_HEIGHT_MAX_PX),
         }
@@ -2168,7 +2133,6 @@ mod tests {
         assert_eq!(settings.subtitle_border_width_px, 1);
         assert_eq!(settings.subtitle_border_color, "#ffffff");
         assert_eq!(settings.subtitle_border_radius_px, 8);
-        assert_eq!(settings.subtitle_min_width_px, 260);
         assert_eq!(settings.subtitle_max_width_px, 720);
         assert_eq!(settings.subtitle_min_height_px, 58);
         assert_eq!(settings.subtitle_max_height_px, 1_000);
@@ -2224,7 +2188,6 @@ mod tests {
         assert_eq!(settings.subtitle_border_width_px, 1);
         assert_eq!(settings.subtitle_border_color, "#ffffff");
         assert_eq!(settings.subtitle_border_radius_px, 8);
-        assert_eq!(settings.subtitle_min_width_px, 260);
         assert_eq!(settings.subtitle_max_width_px, 720);
         assert_eq!(settings.subtitle_min_height_px, 58);
         assert_eq!(settings.subtitle_max_height_px, 1_000);
@@ -2235,7 +2198,6 @@ mod tests {
             subtitle_border_width_px: Some(12),
             subtitle_border_color: Some("#12AbEf".into()),
             subtitle_border_radius_px: Some(99),
-            subtitle_min_width_px: Some(1_200),
             subtitle_max_width_px: Some(480),
             subtitle_min_height_px: Some(900),
             subtitle_max_height_px: Some(320),
@@ -2247,8 +2209,7 @@ mod tests {
         assert_eq!(settings.subtitle_border_width_px, 8);
         assert_eq!(settings.subtitle_border_color, "#12abef");
         assert_eq!(settings.subtitle_border_radius_px, 48);
-        assert_eq!(settings.subtitle_min_width_px, 480);
-        assert_eq!(settings.subtitle_max_width_px, 1_200);
+        assert_eq!(settings.subtitle_max_width_px, 480);
         assert_eq!(settings.subtitle_min_height_px, 320);
         assert_eq!(settings.subtitle_max_height_px, 900);
 
@@ -2258,8 +2219,7 @@ mod tests {
         assert_eq!(style.border_width_px, 8);
         assert_eq!(style.border_color, "#12abef");
         assert_eq!(style.border_radius_px, 48);
-        assert_eq!(style.min_width_px, 480);
-        assert_eq!(style.max_width_px, 1_200);
+        assert_eq!(style.max_width_px, 480);
         assert_eq!(style.min_height_px, 320);
         assert_eq!(style.max_height_px, 900);
 
@@ -2268,5 +2228,17 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(settings.subtitle_border_color, "#ffffff");
+    }
+
+    #[test]
+    fn legacy_subtitle_minimum_width_is_ignored_when_settings_are_resaved() {
+        let mut json = serde_json::to_value(AppSettings::default()).expect("serialize settings");
+        json["subtitle_min_width_px"] = serde_json::json!(1_200);
+
+        let settings: AppSettings = serde_json::from_value(json).expect("load legacy settings");
+        let resaved = serde_json::to_value(settings).expect("resave settings");
+
+        assert!(resaved.get("subtitle_min_width_px").is_none());
+        assert_eq!(resaved["subtitle_max_width_px"], serde_json::json!(720));
     }
 }

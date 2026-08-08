@@ -194,19 +194,18 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
-  it("keeps one-sided subtitle size patches ordered like the backend", async () => {
+  it("clamps subtitle maximum width without synthesizing a minimum width", async () => {
     await saveSettingsPatch({
-      subtitle_min_width_px: 260,
       subtitle_max_width_px: 720,
       subtitle_min_height_px: 58,
       subtitle_max_height_px: 1_000,
     });
 
-    const raisedMinimum = await saveSettingsPatch({
-      subtitle_min_width_px: 1_200,
+    const cappedMaximum = await saveSettingsPatch({
+      subtitle_max_width_px: 2_000,
     });
-    expect(raisedMinimum.settings.subtitle_min_width_px).toBe(1_200);
-    expect(raisedMinimum.settings.subtitle_max_width_px).toBe(1_200);
+    expect(cappedMaximum.settings.subtitle_max_width_px).toBe(1_600);
+    expect(cappedMaximum.settings).not.toHaveProperty("subtitle_min_width_px");
 
     const loweredMaximum = await saveSettingsPatch({
       subtitle_max_height_px: 40,

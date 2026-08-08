@@ -28,17 +28,18 @@ describe("app state derivation", () => {
   });
 
   it("keeps the existing subtitle geometry as editable pixel defaults", () => {
-    expect(defaultSettings()).toMatchObject({
+    const settings = defaultSettings();
+    expect(settings).toMatchObject({
       subtitle_padding_horizontal_px: 18,
       subtitle_padding_vertical_px: 14,
       subtitle_border_width_px: 1,
       subtitle_border_color: "#ffffff",
       subtitle_border_radius_px: 8,
-      subtitle_min_width_px: 260,
       subtitle_max_width_px: 720,
       subtitle_min_height_px: 58,
       subtitle_max_height_px: 1_000,
     });
+    expect(settings).not.toHaveProperty("subtitle_min_width_px");
   });
 
   it("uses the upstream whisper.cpp repository for mock model downloads", () => {

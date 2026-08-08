@@ -221,7 +221,6 @@ export interface AppSettings {
   subtitle_border_width_px: number;
   subtitle_border_color: string;
   subtitle_border_radius_px: number;
-  subtitle_min_width_px: number;
   subtitle_max_width_px: number;
   subtitle_min_height_px: number;
   subtitle_max_height_px: number;

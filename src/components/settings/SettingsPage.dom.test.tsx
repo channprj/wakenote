@@ -903,13 +903,15 @@ describe("SettingsPage interactions", () => {
       "Subtitle vertical padding",
       "Subtitle border width",
       "Subtitle corner radius",
-      "Subtitle minimum width",
       "Subtitle maximum width",
       "Subtitle minimum height",
       "Subtitle maximum height",
     ]) {
       expect(screen.getByRole("spinbutton", { name })).toBeTruthy();
     }
+    expect(
+      screen.queryByRole("spinbutton", { name: "Subtitle minimum width" }),
+    ).toBeNull();
 
     const horizontalPadding = screen.getByRole("spinbutton", {
       name: "Subtitle horizontal padding",

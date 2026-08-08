@@ -228,16 +228,6 @@ export function IntegrationsSettings({
           }
         />
         <SettingNumberInput
-          label="Subtitle minimum width"
-          value={settings.subtitle_min_width_px}
-          min={0}
-          max={1600}
-          suffix="px"
-          onValueChange={(subtitle_min_width_px) =>
-            updateSubtitle({ subtitle_min_width_px })
-          }
-        />
-        <SettingNumberInput
           label="Subtitle maximum width"
           value={settings.subtitle_max_width_px}
           min={0}

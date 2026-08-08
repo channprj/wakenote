@@ -207,7 +207,6 @@ export function defaultSettings(): AppSettings {
     subtitle_border_width_px: 1,
     subtitle_border_color: "#ffffff",
     subtitle_border_radius_px: 8,
-    subtitle_min_width_px: 260,
     subtitle_max_width_px: 720,
     subtitle_min_height_px: 58,
     subtitle_max_height_px: 1_000,

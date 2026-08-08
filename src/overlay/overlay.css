@@ -32,10 +32,6 @@ body {
   align-items: center;
   justify-content: center;
   width: fit-content;
-  min-width: min(
-    var(--overlay-caption-min-width, 260px),
-    calc(100vw - 24px)
-  );
   max-width: min(
     var(--overlay-caption-max-width, 720px),
     calc(100vw - 24px)

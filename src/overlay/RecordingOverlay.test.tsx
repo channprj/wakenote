@@ -111,7 +111,6 @@ describe("caption overlay content", () => {
           border_width_px: 3,
           border_color: "#12abef",
           border_radius_px: 16,
-          min_width_px: 300,
           max_width_px: 840,
           min_height_px: 64,
           max_height_px: 640,
@@ -128,7 +127,6 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-border-width:3px");
     expect(markup).toContain("--overlay-caption-border-rgb:18 171 239");
     expect(markup).toContain("--overlay-caption-border-radius:16px");
-    expect(markup).toContain("--overlay-caption-min-width:300px");
     expect(markup).toContain("--overlay-caption-max-width:840px");
     expect(markup).toContain("--overlay-caption-min-height:64px");
     expect(markup).toContain("--overlay-caption-max-height:640px");

@@ -28,10 +28,15 @@ describe("overlay caption css", () => {
     );
   });
 
+  it("lets short captions shrink to content while enforcing the configured maximum width", () => {
+    const rule = ruleBody(".overlay-caption");
+    expect(rule).not.toMatch(/(^|\s)min-width\s*:/);
+    expect(rule).toContain("--overlay-caption-max-width");
+  });
+
   it("drives caption geometry and border from style variables", () => {
     const rule = ruleBody(".overlay-caption");
     for (const variable of [
-      "--overlay-caption-min-width",
       "--overlay-caption-max-width",
       "--overlay-caption-min-height",
       "--overlay-caption-max-height",

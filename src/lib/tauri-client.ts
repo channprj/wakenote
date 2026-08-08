@@ -161,13 +161,11 @@ function normalizeSubtitlePatch(
       48,
     );
   }
-  for (const key of [
-    "subtitle_min_width_px",
-    "subtitle_max_width_px",
-  ] as const) {
-    if (typeof safePatch[key] === "number") {
-      safePatch[key] = clampInteger(safePatch[key], 1_600);
-    }
+  if (typeof safePatch.subtitle_max_width_px === "number") {
+    safePatch.subtitle_max_width_px = clampInteger(
+      safePatch.subtitle_max_width_px,
+      1_600,
+    );
   }
   for (const key of [
     "subtitle_min_height_px",
@@ -184,16 +182,6 @@ function normalizeSubtitlePatch(
       : "#ffffff";
   }
   if (
-    typeof safePatch.subtitle_min_width_px === "number" &&
-    typeof safePatch.subtitle_max_width_px === "number" &&
-    safePatch.subtitle_min_width_px > safePatch.subtitle_max_width_px
-  ) {
-    [safePatch.subtitle_min_width_px, safePatch.subtitle_max_width_px] = [
-      safePatch.subtitle_max_width_px,
-      safePatch.subtitle_min_width_px,
-    ];
-  }
-  if (
     typeof safePatch.subtitle_min_height_px === "number" &&
     typeof safePatch.subtitle_max_height_px === "number" &&
     safePatch.subtitle_min_height_px > safePatch.subtitle_max_height_px
@@ -202,21 +190,6 @@ function normalizeSubtitlePatch(
       safePatch.subtitle_max_height_px,
       safePatch.subtitle_min_height_px,
     ];
-  }
-  if (
-    current &&
-    typeof safePatch.subtitle_min_width_px === "number" &&
-    typeof safePatch.subtitle_max_width_px !== "number" &&
-    safePatch.subtitle_min_width_px > current.subtitle_max_width_px
-  ) {
-    safePatch.subtitle_max_width_px = safePatch.subtitle_min_width_px;
-  } else if (
-    current &&
-    typeof safePatch.subtitle_max_width_px === "number" &&
-    typeof safePatch.subtitle_min_width_px !== "number" &&
-    safePatch.subtitle_max_width_px < current.subtitle_min_width_px
-  ) {
-    safePatch.subtitle_min_width_px = safePatch.subtitle_max_width_px;
   }
   if (
     current &&
