@@ -141,6 +141,24 @@ pub fn shelf_origin(
     )
 }
 
+#[cfg(target_os = "macos")]
+#[path = "permission_drag/macos.rs"]
+mod platform;
+
+#[cfg(target_os = "macos")]
+pub use platform::{close_permission_drag_shelf, show_permission_drag_shelf};
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_permission_drag_shelf(
+    _app: &tauri::AppHandle,
+    _target: PermissionDragTarget,
+) -> Result<(), String> {
+    Err("Permission drag authorization is available only on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn close_permission_drag_shelf(_app: &tauri::AppHandle) {}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};

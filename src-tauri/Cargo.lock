@@ -5324,6 +5324,7 @@ dependencies = [
  "block2",
  "chrono",
  "core-foundation",
+ "core-graphics",
  "cpal",
  "dispatch2",
  "enigo",
