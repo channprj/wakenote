@@ -174,10 +174,11 @@ describe("caption overlay content", () => {
     expect(markup).toContain('data-visibility="exiting"');
   });
 
-  it("prioritizes recording dictation over a visible caption", () => {
+  it("prioritizes recording dictation over a visible Dictation caption", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
         caption={caption({
+          source: "dictation",
           visible: true,
           text: "caption",
         })}
@@ -209,6 +210,46 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("overlay-dictation__waveform");
   });
 
+  it("keeps transcribing above a visible Live transcription caption", () => {
+    const markup = renderToStaticMarkup(
+      <OverlayContent
+        caption={caption({
+          source: "live_transcription",
+          visible: true,
+          text: "라이브 자막",
+        })}
+        dictation={dictation("transcribing", "Transcribing…")}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+
+    expect(markup).toContain("Transcribing…");
+    expect(markup).toContain("overlay-dictation__spinner");
+    expect(markup).not.toContain("라이브 자막");
+  });
+
+  it("replaces transcribing with a visible Dictation caption", () => {
+    const markup = renderToStaticMarkup(
+      <OverlayContent
+        caption={caption({
+          source: "dictation",
+          phase: "partial",
+          visible: true,
+          text: "딕테이션 자막",
+        })}
+        dictation={dictation("transcribing", "Transcribing…")}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+
+    expect(markup).toContain("딕테이션 자막");
+    expect(markup).toContain('data-source="dictation"');
+    expect(markup).not.toContain("Transcribing…");
+    expect(markup).not.toContain("overlay-dictation__spinner");
+  });
+
   it("renders an actionable error without a spinner", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
@@ -223,6 +264,24 @@ describe("caption overlay content", () => {
     expect(markup).toContain("Dictation failed");
     expect(markup).toContain("overlay-dictation__dot");
     expect(markup).not.toContain("overlay-dictation__spinner");
+  });
+
+  it("keeps Dictation errors above visible Dictation captions", () => {
+    const markup = renderToStaticMarkup(
+      <OverlayContent
+        caption={caption({
+          source: "dictation",
+          visible: true,
+          text: "딕테이션 자막",
+        })}
+        dictation={dictation("error", "Dictation failed")}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+
+    expect(markup).toContain("Dictation failed");
+    expect(markup).not.toContain("딕테이션 자막");
   });
 
   it("derives contrasting Dictation variables at both opacity boundaries", () => {

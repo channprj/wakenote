@@ -372,7 +372,6 @@ impl OverlayCaptionRuntime {
             self.generation = self.generation.saturating_add(1);
         }
         self.visible = false;
-        self.source = OverlayCaptionSource::default();
         self.phase = OverlayCaptionPhase::Idle;
         self.chunk_id = None;
         self.audio_path = None;
@@ -637,6 +636,8 @@ mod tests {
         assert_eq!(runtime.snapshot().text, "딕테이션 자막");
 
         assert!(runtime.hide_source(OverlayCaptionSource::Dictation));
+        assert_eq!(runtime.snapshot().source, OverlayCaptionSource::Dictation);
+        assert!(!runtime.snapshot().visible);
         assert!(runtime.show_partial_for_source(
             OverlayCaptionSource::LiveTranscription,
             8,

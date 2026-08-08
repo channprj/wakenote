@@ -252,6 +252,24 @@ export function OverlayContent({
   elapsedSeconds: number;
   captionExiting?: boolean;
 }) {
+  const captionVisible = caption.visible && Boolean(caption.text);
+  const dictationCaptionVisible =
+    captionVisible && caption.source === "dictation";
+  const captionContent = captionVisible ? (
+    <div
+      className="overlay-caption"
+      data-source={caption.source}
+      data-status={caption.phase}
+      data-animation={caption.style.animation}
+      data-visibility={captionExiting ? "exiting" : "visible"}
+      role="status"
+      aria-live="polite"
+      style={captionStyleVariables(caption.style)}
+    >
+      <span className="overlay-caption__text">{caption.text}</span>
+    </div>
+  ) : null;
+
   if (dictation.state === "recording") {
     return (
       <div
@@ -274,23 +292,6 @@ export function OverlayContent({
     );
   }
 
-  if (dictation.state === "transcribing") {
-    return (
-      <div
-        className="overlay-dictation"
-        data-dictation-state="transcribing"
-        role="status"
-        aria-live="polite"
-        style={dictationStyleVariables(dictation.style)}
-      >
-        <span className="overlay-dictation__spinner" aria-hidden="true" />
-        <span className="overlay-dictation__message">
-          {dictation.message ?? "Transcribing…"}
-        </span>
-      </div>
-    );
-  }
-
   if (dictation.state === "error") {
     return (
       <div
@@ -308,24 +309,32 @@ export function OverlayContent({
     );
   }
 
-  if (!caption.visible || !caption.text) {
+  if (dictationCaptionVisible) {
+    return captionContent;
+  }
+
+  if (dictation.state === "transcribing") {
+    return (
+      <div
+        className="overlay-dictation"
+        data-dictation-state="transcribing"
+        role="status"
+        aria-live="polite"
+        style={dictationStyleVariables(dictation.style)}
+      >
+        <span className="overlay-dictation__spinner" aria-hidden="true" />
+        <span className="overlay-dictation__message">
+          {dictation.message ?? "Transcribing…"}
+        </span>
+      </div>
+    );
+  }
+
+  if (dictation.state !== "hidden") {
     return null;
   }
 
-  return (
-    <div
-      className="overlay-caption"
-      data-source={caption.source}
-      data-status={caption.phase}
-      data-animation={caption.style.animation}
-      data-visibility={captionExiting ? "exiting" : "visible"}
-      role="status"
-      aria-live="polite"
-      style={captionStyleVariables(caption.style)}
-    >
-      <span className="overlay-caption__text">{caption.text}</span>
-    </div>
-  );
+  return captionContent;
 }
 
 export function RecordingOverlay() {

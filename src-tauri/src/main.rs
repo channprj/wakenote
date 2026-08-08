@@ -639,8 +639,18 @@ struct TranscriptionModelFallbackPayload {
     effective_model_id: String,
 }
 
-fn dictation_allows_caption_window_mutation(stage: DictationStage) -> bool {
+fn dictation_allows_caption_window_mutation(
+    stage: DictationStage,
+    source: OverlayCaptionSource,
+) -> bool {
     matches!(stage, DictationStage::Idle)
+        || matches!(
+            (stage, source),
+            (
+                DictationStage::Transcribing,
+                OverlayCaptionSource::Dictation
+            )
+        )
 }
 
 fn begin_subtitle_preview(state: &AtomicU64) -> u64 {
@@ -710,7 +720,7 @@ fn publish_overlay_caption_snapshot(
             .try_state::<DictationState>()
             .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
             .unwrap_or(DictationStage::Idle);
-        if !dictation_allows_caption_window_mutation(dictation_stage) {
+        if !dictation_allows_caption_window_mutation(dictation_stage, snapshot.source) {
             return;
         }
 
@@ -738,6 +748,7 @@ fn publish_overlay_caption_snapshot(
                 schedule_subtitle_window_hide(
                     app_for_task.clone(),
                     snapshot.generation,
+                    snapshot.source,
                     exit_duration,
                     context,
                 );
@@ -767,6 +778,7 @@ fn subtitle_exit_duration(animation: SubtitleAnimation) -> Duration {
 fn schedule_subtitle_window_hide(
     app: AppHandle,
     generation: u64,
+    source: OverlayCaptionSource,
     delay: Duration,
     context: &'static str,
 ) {
@@ -775,12 +787,14 @@ fn schedule_subtitle_window_hide(
         let should_hide = app
             .try_state::<OverlayCaptionState>()
             .and_then(|state| state.lock().ok().map(|runtime| runtime.snapshot()))
-            .is_some_and(|snapshot| snapshot.generation == generation && !snapshot.visible);
-        let dictation_idle = app
+            .is_some_and(|snapshot| {
+                snapshot.generation == generation && snapshot.source == source && !snapshot.visible
+            });
+        let dictation_allows_hide = app
             .try_state::<DictationState>()
             .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
-            .is_none_or(dictation_allows_caption_window_mutation);
-        if !should_hide || !dictation_idle {
+            .is_none_or(|stage| dictation_allows_caption_window_mutation(stage, source));
+        if !should_hide || !dictation_allows_hide {
             return;
         }
         let app_for_task = app.clone();
@@ -2536,6 +2550,8 @@ fn update_settings(
 
 fn overlay_presentation_settings_changed(previous: &AppSettings, next: &AppSettings) -> bool {
     previous.effective_floating_overlay_position() != next.effective_floating_overlay_position()
+        || previous.effective_dictation_subtitle_position()
+            != next.effective_dictation_subtitle_position()
         || previous.floating_overlay_caption_style() != next.floating_overlay_caption_style()
         || previous.dictation_bubble_position != next.dictation_bubble_position
         || previous.dictation_overlay_style() != next.dictation_overlay_style()
@@ -2576,7 +2592,14 @@ fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
     let mut published_caption = false;
     if let Some(caption_state) = app.try_state::<OverlayCaptionState>() {
         let snapshot = caption_state.lock().ok().map(|mut runtime| {
-            runtime.set_position(settings.effective_floating_overlay_position());
+            let position = match runtime.snapshot().source {
+                OverlayCaptionSource::LiveTranscription => {
+                    settings.effective_floating_overlay_position()
+                }
+                OverlayCaptionSource::Dictation => settings.effective_dictation_subtitle_position(),
+                OverlayCaptionSource::Preview => settings.floating_overlay_position,
+            };
+            runtime.set_position(position);
             runtime.set_style(settings.floating_overlay_caption_style());
             runtime.snapshot()
         });
@@ -5893,7 +5916,7 @@ fn wire_live_transcription(
                 );
                 if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
                     let snapshot = caption_state.lock().ok().map(|mut runtime| {
-                        runtime.hide();
+                        runtime.hide_source(OverlayCaptionSource::LiveTranscription);
                         runtime.snapshot()
                     });
                     if let Some(snapshot) = snapshot {
@@ -5931,7 +5954,7 @@ fn wire_live_transcription(
                 );
                 if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
                     let snapshot = caption_state.lock().ok().map(|mut runtime| {
-                        runtime.hide();
+                        runtime.hide_source(OverlayCaptionSource::LiveTranscription);
                         runtime.snapshot()
                     });
                     if let Some(snapshot) = snapshot {
@@ -6567,7 +6590,7 @@ fn emit_outcome_to_frontend(
                 && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
             {
                 let snapshot = caption_state.lock().ok().map(|mut runtime| {
-                    runtime.hide();
+                    runtime.hide_source(OverlayCaptionSource::LiveTranscription);
                     runtime.snapshot()
                 });
                 if let Some(snapshot) = snapshot {
@@ -9263,18 +9286,26 @@ mod tests {
     }
 
     #[test]
-    fn active_dictation_stage_suppresses_caption_window_mutation() {
-        assert!(!dictation_allows_caption_window_mutation(
-            DictationStage::Recording
+    fn dictation_stage_and_caption_source_gate_window_mutation() {
+        assert!(dictation_allows_caption_window_mutation(
+            DictationStage::Transcribing,
+            OverlayCaptionSource::Dictation,
         ));
         assert!(!dictation_allows_caption_window_mutation(
-            DictationStage::Transcribing
+            DictationStage::Transcribing,
+            OverlayCaptionSource::LiveTranscription,
         ));
         assert!(!dictation_allows_caption_window_mutation(
-            DictationStage::Error
+            DictationStage::Recording,
+            OverlayCaptionSource::Dictation,
+        ));
+        assert!(!dictation_allows_caption_window_mutation(
+            DictationStage::Error,
+            OverlayCaptionSource::Dictation,
         ));
         assert!(dictation_allows_caption_window_mutation(
-            DictationStage::Idle
+            DictationStage::Idle,
+            OverlayCaptionSource::LiveTranscription,
         ));
     }
 
