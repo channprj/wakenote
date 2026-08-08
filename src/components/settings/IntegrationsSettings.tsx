@@ -170,8 +170,8 @@ export function IntegrationsSettings({
           }
         />
         <SettingSlider
-          label="Subtitle duration"
-          description="Keep each final subtitle visible from 1 to 10 seconds."
+          label="Minimum subtitle duration"
+          description="Short subtitles use this duration. Longer subtitles stay visible for their estimated reading time, up to 30 seconds."
           value={settings.subtitle_duration_seconds}
           min={1}
           max={10}

@@ -949,7 +949,14 @@ describe("SettingsPage interactions", () => {
       }),
     );
 
-    const duration = screen.getByRole("slider", { name: "Subtitle duration" });
+    const duration = screen.getByRole("slider", {
+      name: "Minimum subtitle duration",
+    });
+    expect(
+      screen.getByText(
+        "Short subtitles use this duration. Longer subtitles stay visible for their estimated reading time, up to 30 seconds.",
+      ),
+    ).toBeTruthy();
     fireEvent.keyDown(duration, { key: "Home" });
     expect(actions.onPatch).toHaveBeenCalledWith({
       subtitle_duration_seconds: 1,

@@ -80,7 +80,7 @@ use wakenote::openai_realtime::OpenAiRealtimeManager;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
     OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT, OverlayCaptionRuntime,
-    OverlayCaptionSnapshot, OverlayCaptionSource,
+    OverlayCaptionSnapshot, OverlayCaptionSource, adaptive_caption_hold,
 };
 use wakenote::permission_drag::{self, PermissionDragTarget};
 use wakenote::permissions::{self, AppPermissions};
@@ -1253,7 +1253,8 @@ fn preview_subtitle(
         position => position,
     };
     let style = settings.floating_overlay_caption_style();
-    let preview_hold = Duration::from_secs(u64::from(style.duration_seconds));
+    let preview_text = "Subtitle preview · 자막 미리보기";
+    let preview_hold = adaptive_caption_hold(preview_text, style.duration_seconds);
     let preview_token = begin_subtitle_preview(preview_state.inner());
     let preview = OverlayCaptionSnapshot {
         generation: preview_token,
@@ -1262,7 +1263,7 @@ fn preview_subtitle(
         phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
         chunk_id: None,
         audio_path: None,
-        text: "Subtitle preview · 자막 미리보기".to_string(),
+        text: preview_text.to_string(),
         position,
         final_hold_ms: Some(preview_hold.as_millis() as u64),
         style,

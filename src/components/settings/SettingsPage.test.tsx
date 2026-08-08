@@ -120,7 +120,7 @@ describe("SettingsPage ownership", () => {
     expect(integrations).toContain("OpenRouter reports");
     expect(integrations).toContain("Subtitles");
     expect(integrations).not.toContain("Floating overlay");
-    expect(integrations).toContain("Subtitle duration");
+    expect(integrations).toContain("Minimum subtitle duration");
     expect(integrations).toContain("Subtitle animation");
     expect(advanced).toContain("VAD gate");
     expect(advanced).not.toContain("OpenRouter");

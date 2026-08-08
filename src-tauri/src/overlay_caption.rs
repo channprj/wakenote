@@ -49,6 +49,7 @@ pub struct OverlayCaptionRuntime {
     phase: OverlayCaptionPhase,
     chunk_id: Option<u64>,
     audio_path: Option<String>,
+    raw_text: String,
     text: String,
     position: FloatingOverlayPosition,
     style: FloatingOverlayCaptionStyle,
@@ -65,6 +66,7 @@ impl Default for OverlayCaptionRuntime {
             phase: OverlayCaptionPhase::Idle,
             chunk_id: None,
             audio_path: None,
+            raw_text: String::new(),
             text: String::new(),
             position: FloatingOverlayPosition::Off,
             style: default_overlay_caption_style(),
@@ -124,6 +126,7 @@ impl OverlayCaptionRuntime {
         self.phase = OverlayCaptionPhase::Idle;
         self.chunk_id = Some(chunk_id);
         self.audio_path = None;
+        self.raw_text.clear();
         self.text.clear();
         self.position = position;
         self.style = style;
@@ -202,9 +205,10 @@ impl OverlayCaptionRuntime {
         self.source = source;
         self.phase = OverlayCaptionPhase::Partial;
         self.chunk_id = Some(chunk_id);
-        self.text = text;
         self.position = position;
         self.style = style;
+        self.raw_text = text;
+        self.refresh_display_text();
         self.hide_at = Some(now + self.final_hold_duration());
         true
     }
@@ -263,7 +267,7 @@ impl OverlayCaptionRuntime {
         self.chunk_id = Some(chunk_id);
         self.audio_path = Some(audio_path.to_string_lossy().to_string());
 
-        if self.text.is_empty() {
+        if self.raw_text.is_empty() {
             self.visible = false;
             self.hide_at = None;
             return true;
@@ -348,9 +352,10 @@ impl OverlayCaptionRuntime {
         self.phase = OverlayCaptionPhase::Final;
         self.chunk_id = next_chunk_id;
         self.audio_path = Some(audio_path.to_string_lossy().to_string());
-        self.text = text;
         self.position = position;
         self.style = style;
+        self.raw_text = text;
+        self.refresh_display_text();
         self.hide_at = Some(Instant::now() + self.final_hold_duration());
         true
     }
@@ -365,6 +370,7 @@ impl OverlayCaptionRuntime {
 
     pub fn hide(&mut self) {
         if self.visible
+            || !self.raw_text.is_empty()
             || !self.text.is_empty()
             || self.chunk_id.is_some()
             || self.audio_path.is_some()
@@ -375,6 +381,7 @@ impl OverlayCaptionRuntime {
         self.phase = OverlayCaptionPhase::Idle;
         self.chunk_id = None;
         self.audio_path = None;
+        self.raw_text.clear();
         self.text.clear();
         self.position = FloatingOverlayPosition::Off;
         self.hide_at = None;
@@ -409,6 +416,7 @@ impl OverlayCaptionRuntime {
 
     pub fn set_style(&mut self, style: FloatingOverlayCaptionStyle) {
         self.style = style;
+        self.refresh_display_text();
         if self.hide_at.is_some() {
             self.hide_at = Some(Instant::now() + self.final_hold_duration());
         }
@@ -429,7 +437,11 @@ impl OverlayCaptionRuntime {
     }
 
     fn final_hold_duration(&self) -> Duration {
-        Duration::from_secs(u64::from(self.style.duration_seconds.clamp(1, 10)))
+        adaptive_caption_hold(&self.raw_text, self.style.duration_seconds)
+    }
+
+    fn refresh_display_text(&mut self) {
+        self.text.clone_from(&self.raw_text);
     }
 
     fn source_can_replace(&self, incoming: OverlayCaptionSource) -> bool {
@@ -450,6 +462,19 @@ impl OverlayCaptionRuntime {
     }
 }
 
+pub fn adaptive_caption_hold(text: &str, minimum_seconds: u8) -> Duration {
+    let reading_chars = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .count() as u64;
+    let reading_seconds = reading_chars.div_ceil(8);
+    let hold_seconds = reading_seconds
+        .max(u64::from(minimum_seconds.clamp(1, 10)))
+        .clamp(1, 30);
+
+    Duration::from_secs(hold_seconds)
+}
+
 fn normalize_caption_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -464,6 +489,50 @@ mod tests {
 
     fn style() -> FloatingOverlayCaptionStyle {
         default_overlay_caption_style()
+    }
+
+    #[test]
+    fn adaptive_hold_uses_minimum_and_reading_time_with_a_thirty_second_cap() {
+        assert_eq!(
+            adaptive_caption_hold("짧은 자막", 5),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            adaptive_caption_hold(&"가".repeat(80), 5),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            adaptive_caption_hold(&"가".repeat(160), 5),
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            adaptive_caption_hold(&"가".repeat(241), 5),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn whitespace_does_not_inflate_reading_time() {
+        assert_eq!(
+            adaptive_caption_hold(&format!("{}   \n\t", "가".repeat(80)), 5),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn growing_partial_and_final_restart_hold_from_normalized_raw_text() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let partial = "가".repeat(80);
+        runtime.show_partial(7, &partial, FloatingOverlayPosition::Top, style());
+        let generation = runtime.snapshot().generation;
+        assert_eq!(runtime.raw_text, partial);
+        assert_eq!(runtime.snapshot().final_hold_ms, Some(10_000));
+
+        let final_text = "나".repeat(160);
+        assert!(runtime.show_final(Some(7), PathBuf::from("/tmp/chunk.wav"), &final_text,));
+        assert_eq!(runtime.snapshot().generation, generation);
+        assert_eq!(runtime.raw_text, final_text);
+        assert_eq!(runtime.snapshot().final_hold_ms, Some(20_000));
     }
 
     #[test]

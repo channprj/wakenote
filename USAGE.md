@@ -265,7 +265,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Subtitle corner radius | `8 px` | `0 … 48 px` |
 | Subtitle width | `260 … 720 px` | minimum/maximum `0 … 1,600 px`; normalized so minimum ≤ maximum |
 | Subtitle height | `58 … 1,000 px` | minimum/maximum `0 … 1,200 px`; normalized so minimum ≤ maximum |
-| Subtitle duration | `5 sec` | `1 … 10 sec` |
+| Minimum subtitle duration | `5 sec` | `1 … 10 sec` |
 | Subtitle animation | fade | instant / fade / dissolve |
 | Theme | dark | light / dark |
 | OpenRouter report model | `z-ai/glm-5.2` | provider model ID |
@@ -326,7 +326,7 @@ Enable **Settings › Integrations › Subtitle** and choose any top/bottom × l
 
 Padding, border width/color/radius, and minimum/maximum width and height are numeric pixel settings. The backend clamps unsafe values and orders each minimum/maximum pair before the same geometry is applied to the native overlay window and its web content. Subtitle text uses `word-break: keep-all`; unbreakable URLs and long tokens may still wrap anywhere as an overflow safeguard.
 
-Changing a presentation option shows the real overlay as a preview. Each edit restarts the preview for the configured 1–10 second duration. Live and preview text share the same generation-safe expiry, so an older timer cannot hide newer text and the final Subtitle does not remain on screen indefinitely.
+Changing a presentation option shows the real overlay as a preview. Each edit restarts the preview for at least the configured 1–10 second minimum. Longer live, dictation, and preview text stays visible for its estimated reading time, capped at 30 seconds. All caption sources share the same generation-safe expiry, so an older timer cannot hide newer text and a final subtitle does not remain on screen indefinitely.
 
 ### History navigation and Trash
 
