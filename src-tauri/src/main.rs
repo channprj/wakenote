@@ -80,7 +80,7 @@ use wakenote::openai_realtime::OpenAiRealtimeManager;
 use wakenote::overlay;
 use wakenote::overlay_caption::{
     OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT, OverlayCaptionRuntime,
-    OverlayCaptionSnapshot,
+    OverlayCaptionSnapshot, OverlayCaptionSource,
 };
 use wakenote::permissions::{self, AppPermissions};
 use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
@@ -1109,6 +1109,7 @@ fn preview_subtitle(
     let preview = OverlayCaptionSnapshot {
         generation: preview_token,
         visible: true,
+        source: OverlayCaptionSource::Preview,
         phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
         chunk_id: None,
         audio_path: None,

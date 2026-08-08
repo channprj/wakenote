@@ -77,6 +77,20 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("<button");
   });
 
+  it("identifies the caption source in overlay markup", () => {
+    const markup = render(
+      caption({
+        source: "dictation",
+        chunk_id: 1,
+        phase: "partial",
+        text: "딕테이션 중간 자막",
+        visible: true,
+      }),
+    );
+
+    expect(markup).toContain('data-source="dictation"');
+  });
+
   it("does not add visible status labels around final caption text", () => {
     const markup = render(
       caption({

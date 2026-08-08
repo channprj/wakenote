@@ -2,6 +2,10 @@ import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 
 export type OverlayCaptionPhase = "idle" | "partial" | "refining" | "final";
+export type OverlayCaptionSource =
+  | "live_transcription"
+  | "dictation"
+  | "preview";
 export type FloatingOverlayPosition =
   | "off"
   | "top_left"
@@ -31,6 +35,7 @@ export interface DictationOverlayStyle {
 export interface OverlayCaptionSnapshot {
   generation: number;
   visible: boolean;
+  source: OverlayCaptionSource;
   phase: OverlayCaptionPhase;
   chunk_id: number | null;
   audio_path: string | null;
@@ -61,6 +66,7 @@ export function emptyCaptionSnapshot(): OverlayCaptionSnapshot {
   return {
     generation: 0,
     visible: false,
+    source: "live_transcription",
     phase: "idle",
     chunk_id: null,
     audio_path: null,
@@ -99,9 +105,14 @@ function defaultDictationStyle(): DictationOverlayStyle {
 
 function snapshotFromPayload(payload: unknown): OverlayCaptionSnapshot {
   const data = payload as Partial<OverlayCaptionSnapshot> | null;
+  const source = data?.source;
   return {
     ...emptyCaptionSnapshot(),
     ...(data ?? {}),
+    source:
+      source === "dictation" || source === "preview"
+        ? source
+        : "live_transcription",
     style: {
       ...defaultCaptionStyle(),
       ...(data?.style ?? {}),
@@ -304,6 +315,7 @@ export function OverlayContent({
   return (
     <div
       className="overlay-caption"
+      data-source={caption.source}
       data-status={caption.phase}
       data-animation={caption.style.animation}
       data-visibility={captionExiting ? "exiting" : "visible"}

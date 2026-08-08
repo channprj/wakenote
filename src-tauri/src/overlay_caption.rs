@@ -8,6 +8,15 @@ use crate::settings::{FloatingOverlayCaptionStyle, FloatingOverlayPosition};
 pub const OVERLAY_CAPTION_UPDATED_EVENT: &str = "overlay-caption-updated";
 pub const OVERLAY_CAPTION_HIDDEN_EVENT: &str = "overlay-caption-hidden";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayCaptionSource {
+    #[default]
+    LiveTranscription,
+    Dictation,
+    Preview,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OverlayCaptionPhase {
@@ -21,6 +30,8 @@ pub enum OverlayCaptionPhase {
 pub struct OverlayCaptionSnapshot {
     pub generation: u64,
     pub visible: bool,
+    #[serde(default)]
+    pub source: OverlayCaptionSource,
     pub phase: OverlayCaptionPhase,
     pub chunk_id: Option<u64>,
     pub audio_path: Option<String>,
@@ -34,6 +45,7 @@ pub struct OverlayCaptionSnapshot {
 pub struct OverlayCaptionRuntime {
     generation: u64,
     visible: bool,
+    source: OverlayCaptionSource,
     phase: OverlayCaptionPhase,
     chunk_id: Option<u64>,
     audio_path: Option<String>,
@@ -49,6 +61,7 @@ impl Default for OverlayCaptionRuntime {
         Self {
             generation: 0,
             visible: false,
+            source: OverlayCaptionSource::default(),
             phase: OverlayCaptionPhase::Idle,
             chunk_id: None,
             audio_path: None,
@@ -66,6 +79,7 @@ impl OverlayCaptionRuntime {
         OverlayCaptionSnapshot {
             generation: self.generation,
             visible: self.visible,
+            source: self.source,
             phase: self.phase,
             chunk_id: self.chunk_id,
             audio_path: self.audio_path.clone(),
@@ -84,10 +98,29 @@ impl OverlayCaptionRuntime {
         position: FloatingOverlayPosition,
         style: FloatingOverlayCaptionStyle,
     ) {
-        if self.chunk_id != Some(chunk_id) {
+        let _ = self.start_chunk_for_source(
+            OverlayCaptionSource::LiveTranscription,
+            chunk_id,
+            position,
+            style,
+        );
+    }
+
+    pub fn start_chunk_for_source(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: u64,
+        position: FloatingOverlayPosition,
+        style: FloatingOverlayCaptionStyle,
+    ) -> bool {
+        if !self.source_can_replace(source) {
+            return false;
+        }
+        if self.source != source || self.chunk_id != Some(chunk_id) {
             self.generation = self.generation.saturating_add(1);
         }
         self.visible = false;
+        self.source = source;
         self.phase = OverlayCaptionPhase::Idle;
         self.chunk_id = Some(chunk_id);
         self.audio_path = None;
@@ -95,6 +128,7 @@ impl OverlayCaptionRuntime {
         self.position = position;
         self.style = style;
         self.hide_at = None;
+        true
     }
 
     pub fn show_partial(
@@ -107,6 +141,17 @@ impl OverlayCaptionRuntime {
         self.show_partial_at(chunk_id, text, position, style, Instant::now());
     }
 
+    pub fn show_partial_for_source(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: u64,
+        text: impl AsRef<str>,
+        position: FloatingOverlayPosition,
+        style: FloatingOverlayCaptionStyle,
+    ) -> bool {
+        self.show_partial_for_source_at(source, chunk_id, text, position, style, Instant::now())
+    }
+
     fn show_partial_at(
         &mut self,
         chunk_id: u64,
@@ -115,30 +160,73 @@ impl OverlayCaptionRuntime {
         style: FloatingOverlayCaptionStyle,
         now: Instant,
     ) {
+        let _ = self.show_partial_for_source_at(
+            OverlayCaptionSource::LiveTranscription,
+            chunk_id,
+            text,
+            position,
+            style,
+            now,
+        );
+    }
+
+    fn show_partial_for_source_at(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: u64,
+        text: impl AsRef<str>,
+        position: FloatingOverlayPosition,
+        style: FloatingOverlayCaptionStyle,
+        now: Instant,
+    ) -> bool {
         if matches!(position, FloatingOverlayPosition::Off) {
-            self.hide();
-            return;
+            return self.hide_source(source);
+        }
+        if !self.source_can_replace(source)
+            || (self.source == source
+                && self.chunk_id == Some(chunk_id)
+                && self.phase == OverlayCaptionPhase::Final)
+        {
+            return false;
         }
 
         let text = normalize_caption_text(text.as_ref());
         if text.is_empty() {
-            return;
+            return false;
         }
 
-        if self.chunk_id != Some(chunk_id) {
+        if self.source != source || self.chunk_id != Some(chunk_id) {
             self.generation = self.generation.saturating_add(1);
         }
         self.visible = true;
+        self.source = source;
         self.phase = OverlayCaptionPhase::Partial;
         self.chunk_id = Some(chunk_id);
         self.text = text;
         self.position = position;
         self.style = style;
         self.hide_at = Some(now + self.final_hold_duration());
+        true
     }
 
     pub fn mark_committed(&mut self, chunk_id: u64, audio_path: PathBuf, will_transcribe: bool) {
         self.mark_committed_at(chunk_id, audio_path, will_transcribe, Instant::now());
+    }
+
+    pub fn mark_committed_for_source(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: u64,
+        audio_path: PathBuf,
+        will_transcribe: bool,
+    ) -> bool {
+        self.mark_committed_for_source_at(
+            source,
+            chunk_id,
+            audio_path,
+            will_transcribe,
+            Instant::now(),
+        )
     }
 
     fn mark_committed_at(
@@ -148,16 +236,37 @@ impl OverlayCaptionRuntime {
         will_transcribe: bool,
         now: Instant,
     ) {
-        if self.chunk_id.is_some() && self.chunk_id != Some(chunk_id) {
-            return;
+        let _ = self.mark_committed_for_source_at(
+            OverlayCaptionSource::LiveTranscription,
+            chunk_id,
+            audio_path,
+            will_transcribe,
+            now,
+        );
+    }
+
+    fn mark_committed_for_source_at(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: u64,
+        audio_path: PathBuf,
+        will_transcribe: bool,
+        now: Instant,
+    ) -> bool {
+        if !self.source_can_replace(source) || (self.visible && self.source != source) {
+            return false;
         }
+        if self.chunk_id.is_some() && self.chunk_id != Some(chunk_id) {
+            return false;
+        }
+        self.source = source;
         self.chunk_id = Some(chunk_id);
         self.audio_path = Some(audio_path.to_string_lossy().to_string());
 
         if self.text.is_empty() {
             self.visible = false;
             self.hide_at = None;
-            return;
+            return true;
         }
 
         if will_transcribe {
@@ -169,6 +278,7 @@ impl OverlayCaptionRuntime {
             self.phase = OverlayCaptionPhase::Final;
             self.hide_at = Some(now + self.final_hold_duration());
         }
+        true
     }
 
     pub fn show_final(
@@ -194,26 +304,47 @@ impl OverlayCaptionRuntime {
         position: FloatingOverlayPosition,
         style: FloatingOverlayCaptionStyle,
     ) -> bool {
+        self.show_final_for_source(
+            OverlayCaptionSource::LiveTranscription,
+            chunk_id,
+            audio_path,
+            text,
+            position,
+            style,
+        )
+    }
+
+    pub fn show_final_for_source(
+        &mut self,
+        source: OverlayCaptionSource,
+        chunk_id: Option<u64>,
+        audio_path: PathBuf,
+        text: impl AsRef<str>,
+        position: FloatingOverlayPosition,
+        style: FloatingOverlayCaptionStyle,
+    ) -> bool {
         if matches!(position, FloatingOverlayPosition::Off) {
-            self.hide();
-            return true;
+            return self.hide_source(source);
+        }
+        if !self.source_can_replace(source) {
+            return false;
         }
 
-        if !self.matches_result(chunk_id, &audio_path) {
+        if self.source == source && !self.matches_result(chunk_id, &audio_path) {
             return false;
         }
 
         let text = normalize_caption_text(text.as_ref());
         if text.is_empty() {
-            self.hide();
-            return true;
+            return self.hide_source(source);
         }
 
-        let next_chunk_id = chunk_id.or(self.chunk_id);
-        if self.chunk_id != next_chunk_id {
+        let next_chunk_id = chunk_id.or((self.source == source).then_some(self.chunk_id).flatten());
+        if self.source != source || self.chunk_id != next_chunk_id {
             self.generation = self.generation.saturating_add(1);
         }
         self.visible = true;
+        self.source = source;
         self.phase = OverlayCaptionPhase::Final;
         self.chunk_id = next_chunk_id;
         self.audio_path = Some(audio_path.to_string_lossy().to_string());
@@ -221,6 +352,14 @@ impl OverlayCaptionRuntime {
         self.position = position;
         self.style = style;
         self.hide_at = Some(Instant::now() + self.final_hold_duration());
+        true
+    }
+
+    pub fn hide_source(&mut self, source: OverlayCaptionSource) -> bool {
+        if self.source != source {
+            return false;
+        }
+        self.hide();
         true
     }
 
@@ -233,6 +372,7 @@ impl OverlayCaptionRuntime {
             self.generation = self.generation.saturating_add(1);
         }
         self.visible = false;
+        self.source = OverlayCaptionSource::default();
         self.phase = OverlayCaptionPhase::Idle;
         self.chunk_id = None;
         self.audio_path = None;
@@ -291,6 +431,13 @@ impl OverlayCaptionRuntime {
 
     fn final_hold_duration(&self) -> Duration {
         Duration::from_secs(u64::from(self.style.duration_seconds.clamp(1, 10)))
+    }
+
+    fn source_can_replace(&self, incoming: OverlayCaptionSource) -> bool {
+        !self.visible
+            || self.source == incoming
+            || self.source != OverlayCaptionSource::Dictation
+            || incoming == OverlayCaptionSource::Dictation
     }
 
     fn matches_result(&self, chunk_id: Option<u64>, audio_path: &Path) -> bool {
@@ -466,6 +613,82 @@ mod tests {
         assert_eq!(runtime.snapshot().chunk_id, Some(8));
         assert_eq!(runtime.snapshot().text, "새 자막");
         assert_eq!(runtime.snapshot().phase, OverlayCaptionPhase::Partial);
+    }
+
+    #[test]
+    fn dictation_caption_blocks_live_replacement_until_hidden() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        assert!(runtime.show_partial_for_source(
+            OverlayCaptionSource::Dictation,
+            7,
+            "딕테이션 자막",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+
+        assert!(!runtime.show_partial_for_source(
+            OverlayCaptionSource::LiveTranscription,
+            8,
+            "라이브 자막",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+        assert_eq!(runtime.snapshot().source, OverlayCaptionSource::Dictation);
+        assert_eq!(runtime.snapshot().text, "딕테이션 자막");
+
+        assert!(runtime.hide_source(OverlayCaptionSource::Dictation));
+        assert!(runtime.show_partial_for_source(
+            OverlayCaptionSource::LiveTranscription,
+            8,
+            "라이브 자막",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+        assert_eq!(
+            runtime.snapshot().source,
+            OverlayCaptionSource::LiveTranscription
+        );
+        assert_eq!(runtime.snapshot().text, "라이브 자막");
+    }
+
+    #[test]
+    fn late_dictation_partial_cannot_replace_same_operation_final() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        assert!(runtime.show_final_for_source(
+            OverlayCaptionSource::Dictation,
+            Some(7),
+            PathBuf::from("/tmp/dictation.wav"),
+            "최종 딕테이션",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+
+        assert!(!runtime.show_partial_for_source(
+            OverlayCaptionSource::Dictation,
+            7,
+            "늦은 중간 결과",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+        assert_eq!(runtime.snapshot().phase, OverlayCaptionPhase::Final);
+        assert_eq!(runtime.snapshot().text, "최종 딕테이션");
+    }
+
+    #[test]
+    fn source_specific_hide_preserves_another_visible_source() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        assert!(runtime.show_partial_for_source(
+            OverlayCaptionSource::Dictation,
+            7,
+            "딕테이션 자막",
+            FloatingOverlayPosition::Top,
+            style(),
+        ));
+
+        assert!(!runtime.hide_source(OverlayCaptionSource::LiveTranscription));
+        assert!(runtime.snapshot().visible);
+        assert_eq!(runtime.snapshot().source, OverlayCaptionSource::Dictation);
+        assert_eq!(runtime.snapshot().text, "딕테이션 자막");
     }
 
     #[test]
