@@ -453,6 +453,16 @@ describe("compact overflow safety contract", () => {
     expect(activityMinimumCss).not.toContain("display: none;");
   });
 
+  it("reserves enough desktop Activity width for every running-job action", () => {
+    const actionsColumn = cssRule(
+      '[data-slot="queue-table"] th:nth-child(5),\n.queue-job__actions-cell',
+      pagesCss,
+    );
+
+    // Six 34px icon controls, five 2px gaps, and 8px cell padding per side.
+    expect(actionsColumn).toContain("width: 230px;");
+  });
+
   it("keeps compact Activity values out of the narrow label column", () => {
     const compact = cssBlock("@media (max-width: 979px)", pagesCss);
     const values = cssRule(

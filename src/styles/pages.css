@@ -946,7 +946,7 @@
 
 [data-slot="queue-table"] th:nth-child(5),
 .queue-job__actions-cell {
-  width: 176px;
+  width: 230px;
 }
 
 .queue-job__selection-heading,
