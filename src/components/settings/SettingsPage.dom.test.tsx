@@ -884,6 +884,32 @@ describe("SettingsPage interactions", () => {
     );
   });
 
+  it("selects Live transcription, Dictation, or Both as subtitle sources", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.show_floating_overlay = true;
+
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Subtitle source" }));
+    for (const option of ["Live transcription", "Dictation", "Both"]) {
+      expect(await screen.findByRole("option", { name: option })).toBeTruthy();
+    }
+    await user.click(screen.getByRole("option", { name: "Dictation" }));
+
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_source_mode: "dictation",
+    });
+  });
+
   it("edits subtitle layout and border values as labelled pixel inputs", async () => {
     const user = userEvent.setup();
     const actions = makeActions();
@@ -993,7 +1019,7 @@ describe("SettingsPage interactions", () => {
     });
   });
 
-  it("disables the subtitle position when subtitles are hidden", () => {
+  it("disables the subtitle source and position when subtitles are hidden", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.show_floating_overlay = false;
 
@@ -1009,7 +1035,11 @@ describe("SettingsPage interactions", () => {
     const position = screen.getByRole("combobox", {
       name: "Subtitle position",
     });
+    const source = screen.getByRole("combobox", {
+      name: "Subtitle source",
+    });
     expect((position as HTMLButtonElement).disabled).toBe(true);
+    expect((source as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("routes the authoritative macOS microphone volume through its dedicated action", async () => {

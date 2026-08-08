@@ -29,6 +29,7 @@ describe("app state derivation", () => {
 
   it("keeps the existing subtitle geometry as editable pixel defaults", () => {
     const settings = defaultSettings();
+    expect(settings.subtitle_source_mode).toBe("both");
     expect(settings).toMatchObject({
       subtitle_padding_horizontal_px: 18,
       subtitle_padding_vertical_px: 14,

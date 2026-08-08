@@ -75,13 +75,31 @@ export function IntegrationsSettings({
 
       <SettingsCard
         title="Subtitles"
-        description="Show live speech as configurable subtitles above other windows."
+        description="Show Live transcription, Dictation, or both as configurable subtitles above other windows."
       >
         <SettingSwitch
           label="Show subtitles"
           checked={settings.show_floating_overlay}
           onCheckedChange={(show_floating_overlay) =>
             updateSubtitle({ show_floating_overlay }, false)
+          }
+        />
+        <SettingSelect
+          label="Subtitle source"
+          value={settings.subtitle_source_mode}
+          disabled={!settings.show_floating_overlay}
+          title={
+            settings.show_floating_overlay
+              ? "Choose which transcription workflows appear as subtitles."
+              : "Enable subtitles before choosing their source."
+          }
+          options={[
+            { value: "live_transcription", label: "Live transcription" },
+            { value: "dictation", label: "Dictation" },
+            { value: "both", label: "Both" },
+          ]}
+          onValueChange={(subtitle_source_mode) =>
+            updateSubtitle({ subtitle_source_mode }, false)
           }
         />
         <SettingSelect

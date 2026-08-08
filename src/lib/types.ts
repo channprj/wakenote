@@ -9,6 +9,7 @@ export type FloatingOverlayPosition =
   | "bottom"
   | "bottom_right";
 export type SubtitleAnimation = "instant" | "fade" | "dissolve";
+export type SubtitleSourceMode = "live_transcription" | "dictation" | "both";
 export type DictationCueSound = "original" | "alternative";
 export type DictationCueVolume = "muted" | "small" | "medium" | "large";
 export type DictationStage = "idle" | "recording" | "transcribing" | "error";
@@ -209,6 +210,7 @@ export interface AppSettings {
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;
   show_floating_overlay: boolean;
+  subtitle_source_mode: SubtitleSourceMode;
   floating_overlay_position: FloatingOverlayPosition;
   floating_overlay_font_size_px: number;
   floating_overlay_text_color: string;

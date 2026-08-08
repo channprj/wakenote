@@ -31,6 +31,15 @@ pub enum SubtitleAnimation {
     Dissolve,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitleSourceMode {
+    LiveTranscription,
+    Dictation,
+    #[default]
+    Both,
+}
+
 pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 10;
 pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
@@ -464,6 +473,8 @@ pub struct AppSettings {
     #[serde(default = "default_tray_left_click_action")]
     pub tray_left_click_action: TrayClickAction,
     pub show_floating_overlay: bool,
+    #[serde(default)]
+    pub subtitle_source_mode: SubtitleSourceMode,
     pub floating_overlay_position: FloatingOverlayPosition,
     #[serde(default = "default_floating_overlay_font_size_px")]
     pub floating_overlay_font_size_px: u32,
@@ -575,6 +586,7 @@ pub struct SettingsPatch {
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
     pub show_floating_overlay: Option<bool>,
+    pub subtitle_source_mode: Option<SubtitleSourceMode>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
     pub floating_overlay_font_size_px: Option<u32>,
     pub floating_overlay_text_color: Option<String>,
@@ -1279,6 +1291,9 @@ impl AppSettings {
         if let Some(value) = patch.show_floating_overlay {
             self.show_floating_overlay = value;
         }
+        if let Some(value) = patch.subtitle_source_mode {
+            self.subtitle_source_mode = value;
+        }
         if let Some(value) = patch.floating_overlay_position {
             self.floating_overlay_position = value;
         }
@@ -1452,6 +1467,7 @@ impl Default for AppSettings {
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
             show_floating_overlay: false,
+            subtitle_source_mode: SubtitleSourceMode::default(),
             floating_overlay_position: FloatingOverlayPosition::Top,
             floating_overlay_font_size_px: default_floating_overlay_font_size_px(),
             floating_overlay_text_color: default_floating_overlay_text_color(),
@@ -1499,7 +1515,31 @@ impl AppSettings {
     }
 
     pub fn effective_floating_overlay_position(&self) -> FloatingOverlayPosition {
-        if self.show_floating_overlay {
+        if self.live_subtitles_enabled() {
+            self.floating_overlay_position
+        } else {
+            FloatingOverlayPosition::Off
+        }
+    }
+
+    pub fn live_subtitles_enabled(&self) -> bool {
+        self.show_floating_overlay
+            && matches!(
+                self.subtitle_source_mode,
+                SubtitleSourceMode::LiveTranscription | SubtitleSourceMode::Both
+            )
+    }
+
+    pub fn dictation_subtitles_enabled(&self) -> bool {
+        self.show_floating_overlay
+            && matches!(
+                self.subtitle_source_mode,
+                SubtitleSourceMode::Dictation | SubtitleSourceMode::Both
+            )
+    }
+
+    pub fn effective_dictation_subtitle_position(&self) -> FloatingOverlayPosition {
+        if self.dictation_subtitles_enabled() {
             self.floating_overlay_position
         } else {
             FloatingOverlayPosition::Off
@@ -2228,6 +2268,47 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(settings.subtitle_border_color, "#ffffff");
+    }
+
+    #[test]
+    fn subtitle_source_mode_defaults_to_both_without_bypassing_the_master_switch() {
+        let mut settings = AppSettings::default();
+        assert_eq!(settings.subtitle_source_mode, SubtitleSourceMode::Both);
+        assert!(!settings.live_subtitles_enabled());
+        assert!(!settings.dictation_subtitles_enabled());
+
+        settings.show_floating_overlay = true;
+        assert!(settings.live_subtitles_enabled());
+        assert!(settings.dictation_subtitles_enabled());
+    }
+
+    #[test]
+    fn subtitle_source_modes_gate_live_and_dictation_independently() {
+        let mut settings = AppSettings {
+            show_floating_overlay: true,
+            ..AppSettings::default()
+        };
+
+        settings.subtitle_source_mode = SubtitleSourceMode::LiveTranscription;
+        assert!(settings.live_subtitles_enabled());
+        assert!(!settings.dictation_subtitles_enabled());
+
+        settings.subtitle_source_mode = SubtitleSourceMode::Dictation;
+        assert!(!settings.live_subtitles_enabled());
+        assert!(settings.dictation_subtitles_enabled());
+    }
+
+    #[test]
+    fn legacy_settings_default_subtitle_source_mode_to_both() {
+        let mut json = serde_json::to_value(AppSettings::default()).expect("serialize settings");
+        json.as_object_mut()
+            .expect("settings object")
+            .remove("subtitle_source_mode");
+
+        let settings: AppSettings = serde_json::from_value(json).expect("load legacy settings");
+        let resaved = serde_json::to_value(settings).expect("resave settings");
+
+        assert_eq!(resaved["subtitle_source_mode"], serde_json::json!("both"));
     }
 
     #[test]

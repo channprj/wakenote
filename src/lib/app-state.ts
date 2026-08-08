@@ -195,6 +195,7 @@ export function defaultSettings(): AppSettings {
     show_tray_icon: true,
     tray_left_click_action: "open_menu",
     show_floating_overlay: false,
+    subtitle_source_mode: "both",
     floating_overlay_position: "top",
     floating_overlay_font_size_px: 24,
     floating_overlay_text_color: "#ffffff",
