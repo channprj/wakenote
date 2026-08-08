@@ -22,6 +22,7 @@ pub mod multi_capture;
 pub mod openai_realtime;
 pub mod overlay;
 pub mod overlay_caption;
+pub mod permission_drag;
 pub mod permissions;
 pub mod persistence;
 pub mod queue;
