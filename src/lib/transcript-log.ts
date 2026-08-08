@@ -35,6 +35,7 @@ export type TranscriptEvent =
       type: "committed";
       chunk_id: number;
       audio_path: string;
+      will_transcribe?: boolean;
     })
   | ({
       type: "final";
@@ -102,6 +103,9 @@ export function reduceTranscriptLog(
       });
 
     case "committed":
+      if (event.will_transcribe === false) {
+        return entries.filter((entry) => !sameChunk(entry, event));
+      }
       return updateEntry(entries, event, (entry) =>
         entry.status === "final" || entry.status === "failed"
           ? entry

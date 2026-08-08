@@ -258,6 +258,7 @@ export default function App() {
               microphone_slot?: "primary" | "secondary" | null;
               chunk_id: number;
               audio_path: string;
+              will_transcribe: boolean;
             };
             return {
               type: "committed",
@@ -266,6 +267,7 @@ export default function App() {
               microphone_slot: data.microphone_slot,
               chunk_id: data.chunk_id,
               audio_path: data.audio_path,
+              will_transcribe: data.will_transcribe,
             };
           },
         ],

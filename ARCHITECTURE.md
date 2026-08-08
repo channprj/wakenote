@@ -92,7 +92,7 @@ Provider-native context is used only when supported. Deterministic correction re
 
 `dictation.rs` owns shortcut validation, push-to-talk state, dedicated microphone capture, the ten-minute guard, and its temporary inference audio. `text_input.rs` inserts a non-empty final transcript into the focused macOS application and restores the previous clipboard contents.
 
-Dictation uses the configured Primary microphone but does not interrupt the archival voice-activated recorder. Its audio, metadata, transcript, or recoverable error sidecar is stored like any other capture; only temporary inference files are discarded.
+Dictation uses the configured Primary microphone without interrupting archival voice-activated recording. VOR chunks that overlap Dictation remain as audio-only records and skip live/final transcription so the same speech is not stored twice. Dictation audio, metadata, transcript, or recoverable error sidecar is stored like any other capture; only temporary inference files are discarded.
 
 ### Meetings
 

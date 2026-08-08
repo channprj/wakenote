@@ -111,6 +111,21 @@ describe("reduceTranscriptLog", () => {
     });
   });
 
+  it("removes a VOR preview when Dictation suppresses its final transcription", () => {
+    const entries = apply([
+      { type: "started", chunk_id: 9, started_at: "2026-05-09T08:00:00Z" },
+      { type: "partial", chunk_id: 9, text: "겹친 VOR 미리보기" },
+      {
+        type: "committed",
+        chunk_id: 9,
+        audio_path: "/tmp/9.m4a",
+        will_transcribe: false,
+      },
+    ]);
+
+    expect(entries).toEqual([]);
+  });
+
   it("ignores late partials after failure and retains the last preview text", () => {
     const entries = apply([
       { type: "started", chunk_id: 4, started_at: "2026-05-09T08:00:00Z" },

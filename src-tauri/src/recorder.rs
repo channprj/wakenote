@@ -307,6 +307,16 @@ impl TranscriptionSidecar {
             None,
         )
     }
+
+    pub fn mark_not_requested(chunk: &RecordedChunk) -> Result<(), RecorderError> {
+        remove_file_if_present(&chunk.transcript_path)?;
+        remove_file_if_present(&chunk.error_path)?;
+        update_metadata_status_if_present(
+            &chunk.metadata_path,
+            TranscriptionStatus::NotRequested,
+            None,
+        )
+    }
 }
 
 fn recorded_chunk(target: OutputTarget) -> RecordedChunk {

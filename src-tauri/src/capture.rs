@@ -176,6 +176,10 @@ impl CaptureController {
         self.processor.completed_chunks()
     }
 
+    pub fn active_chunk_id(&self) -> Option<u64> {
+        self.processor.current_chunk_id
+    }
+
     fn drain_new_events(&mut self) -> Vec<CaptureControllerEvent> {
         self.processor.take_pending_events()
     }

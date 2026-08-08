@@ -1192,6 +1192,82 @@ fn backend_uses_frame_capture_time_for_recording_filename() {
 }
 
 #[test]
+fn dictation_suspends_overlapping_vor_transcription_without_dropping_audio() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        transcription_enabled: Some(true),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    backend
+        .start_capture_session_with_device(10, base_time, "default", "System Default", false)
+        .expect("start VOR capture");
+    backend
+        .process_audio_frame(AudioFrame {
+            samples: vec![0.8],
+            duration_ms: 100,
+            captured_at: base_time + chrono::Duration::milliseconds(100),
+        })
+        .expect("start an overlapping VOR chunk");
+    backend.set_live_transcription_suspended_for_dictation(true);
+
+    for step in 2..=5 {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: if step <= 2 { vec![0.8] } else { vec![0.0] },
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(step * 100),
+            })
+            .expect("process suspended VOR frame");
+    }
+
+    assert_eq!(backend.queue_snapshot().pending_count, 0);
+    let (dir, stem) = epoch_local_path_parts();
+    let metadata_path = tmp.path().join(dir).join(format!("{stem}.json"));
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(metadata_path).expect("suspended VOR metadata"))
+            .expect("metadata json");
+    assert_eq!(
+        metadata.transcription_status,
+        TranscriptionStatus::NotRequested
+    );
+    assert!(
+        backend
+            .drain_live_events()
+            .iter()
+            .all(|event| !matches!(event, LiveTranscriptEvent::SamplesReady { .. }))
+    );
+
+    backend.set_live_transcription_suspended_for_dictation(false);
+    backend
+        .stop_capture_session()
+        .expect("stop first VOR capture");
+    let resumed_at = base_time + chrono::Duration::seconds(60);
+    backend
+        .start_capture_session_with_device(10, resumed_at, "default", "System Default", false)
+        .expect("restart resumed VOR capture");
+    for step in 1..=5 {
+        backend
+            .process_audio_frame(AudioFrame {
+                samples: if step <= 2 { vec![0.8] } else { vec![0.0] },
+                duration_ms: 100,
+                captured_at: resumed_at + chrono::Duration::milliseconds(step * 100),
+            })
+            .expect("process resumed VOR frame");
+    }
+    assert_eq!(backend.queue_snapshot().pending_count, 1);
+}
+
+#[test]
 fn backend_live_events_hide_overlay_context_when_the_overlay_is_disabled() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

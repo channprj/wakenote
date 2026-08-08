@@ -1769,6 +1769,39 @@ fn dictation_operation_is_active(app: &AppHandle, operation_id: u64) -> bool {
         .unwrap_or(false)
 }
 
+fn dictation_suppresses_vor_live_transcription(app: &AppHandle) -> bool {
+    app.try_state::<DictationState>()
+        .and_then(|state| state.lock().ok().map(|runtime| runtime.stage()))
+        .is_some_and(|stage| {
+            matches!(
+                stage,
+                DictationStage::Recording | DictationStage::Transcribing
+            )
+        })
+}
+
+fn set_vor_live_transcription_suspended_for_dictation(app: &AppHandle, suspended: bool) {
+    let source_keys = app
+        .try_state::<BackendState>()
+        .and_then(|state| {
+            state.lock().ok().map(|mut backend| {
+                backend.set_live_transcription_suspended_for_dictation(suspended)
+            })
+        })
+        .unwrap_or_default();
+    if !suspended {
+        return;
+    }
+    for source_key in source_keys {
+        if let Some(manager) = app.try_state::<OpenAiRealtimeManager>() {
+            manager.close_source(source_key.clone());
+        }
+        if let Some(manager) = app.try_state::<SonioxRealtimeManager>() {
+            manager.close_source(source_key);
+        }
+    }
+}
+
 fn type_dictation_text_on_main_thread(
     app: &AppHandle,
     operation_id: u64,
@@ -1880,6 +1913,7 @@ fn complete_dictation(app: &AppHandle) {
             state: DictationStage::Idle,
             error: None,
         });
+    set_vor_live_transcription_suspended_for_dictation(app, false);
     emit_dictation_state(app, payload);
     refresh_tray_from_backend(app);
     restore_overlay_after_dictation(app);
@@ -1896,6 +1930,7 @@ fn complete_dictation_operation(app: &AppHandle, operation_id: u64) -> bool {
     let Some(payload) = payload else {
         return false;
     };
+    set_vor_live_transcription_suspended_for_dictation(app, false);
     emit_dictation_state(app, payload);
     refresh_tray_from_backend(app);
     restore_overlay_after_dictation(app);
@@ -1917,6 +1952,7 @@ fn show_dictation_error(app: &AppHandle, error: String) {
             state: DictationStage::Error,
             error: Some(error.clone()),
         });
+    set_vor_live_transcription_suspended_for_dictation(app, false);
     hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     let message = if error == "No speech detected" {
@@ -1958,6 +1994,7 @@ fn show_dictation_operation_error(app: &AppHandle, operation_id: u64, error: Str
 
     eprintln!("[dictation] {error}");
     log_dictation_runtime(app, format!("[dictation] error={error}"));
+    set_vor_live_transcription_suspended_for_dictation(app, false);
     hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     let message = if error == "No speech detected" {
@@ -2005,6 +2042,7 @@ fn cancel_dictation_runtime(app: &AppHandle) -> Result<bool, String> {
         manager.close_source("dictation".to_string());
     }
     log_dictation_runtime(app, "[dictation] cancelled by user");
+    set_vor_live_transcription_suspended_for_dictation(app, false);
     hide_dictation_caption(app);
     emit_dictation_state(app, payload);
     refresh_tray_from_backend(app);
@@ -2466,6 +2504,7 @@ fn handle_dictation_shortcut_event(
             Ok(())
         }
         DictationAction::StartRecording => {
+            set_vor_live_transcription_suspended_for_dictation(app, true);
             preload_dictation_model(app, &settings);
             let payload = state
                 .lock()
@@ -5942,6 +5981,9 @@ fn kick_transcription_worker_if_needed(
 }
 
 fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial: RealtimePartial) {
+    if partial.source_key != "dictation" && dictation_suppresses_vor_live_transcription(app) {
+        return;
+    }
     let caption_source = if partial.source_key == "dictation" {
         OverlayCaptionSource::Dictation
     } else {
@@ -6024,6 +6066,9 @@ fn wire_live_transcription(
     let on_partial: Arc<dyn Fn(LivePartialEvent) + Send + Sync> = Arc::new(
         move |event| match event {
             LivePartialEvent::Text(result) => {
+                if dictation_suppresses_vor_live_transcription(&app_for_partial) {
+                    return;
+                }
                 eprintln!(
                     "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
@@ -6084,6 +6129,9 @@ fn wire_live_transcription(
                 chunk_id,
                 model_id,
             } => {
+                if dictation_suppresses_vor_live_transcription(&app_for_partial) {
+                    return;
+                }
                 eprintln!(
                     "[wakenote] live partial: model missing chunk_id={chunk_id} model={model_id}"
                 );
@@ -6125,6 +6173,9 @@ fn wire_live_transcription(
                 chunk_id,
                 message,
             } => {
+                if dictation_suppresses_vor_live_transcription(&app_for_partial) {
+                    return;
+                }
                 eprintln!(
                     "[wakenote] live partial: engine error chunk_id={chunk_id} message={message}"
                 );

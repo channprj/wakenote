@@ -336,7 +336,7 @@ Enable **Settings › Dictation › Shortcut dictation**, choose a compatible mo
 2. Speak while holding it, then release it to stop and transcribe.
 3. WakeNote writes the dictation artifact and, for non-empty final text, types at the focused cursor.
 
-The dictation stream is independent from voice-activated archival capture. Each attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, a press during transcription is ignored, and recording stops automatically after ten minutes. WakeNote restores the previous clipboard after native insertion.
+The dictation stream is independent from voice-activated archival capture. VOR keeps recording during Dictation, but overlapping VOR chunks stay audio-only and skip transcription to avoid saving the same speech twice. Each Dictation attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, a press during transcription is ignored, and recording stops automatically after ten minutes. WakeNote restores the previous clipboard after native insertion.
 
 The top-center feedback bubble remains available even when Subtitle is off. Microphone permission is required for capture; Accessibility permission is required for focused-cursor typing.
 

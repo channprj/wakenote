@@ -628,6 +628,8 @@ pub struct AppBackend {
     pending_live_events: Vec<LiveTranscriptEvent>,
     chunk_id_history: VecDeque<(PathBuf, u64)>,
     chunk_id_index: HashMap<PathBuf, u64>,
+    live_transcription_suspended_for_dictation: bool,
+    dictation_suppressed_live_chunks: HashSet<(String, u64)>,
     active_transcription_jobs: BTreeSet<u64>,
     mic_health: MicHealthMonitor,
     /// One-shot device override used by the recovery watchdog to force a
@@ -686,6 +688,14 @@ impl std::fmt::Debug for AppBackend {
             )
             .field("pending_live_events_len", &self.pending_live_events.len())
             .field("chunk_id_history_len", &self.chunk_id_history.len())
+            .field(
+                "live_transcription_suspended_for_dictation",
+                &self.live_transcription_suspended_for_dictation,
+            )
+            .field(
+                "dictation_suppressed_live_chunks",
+                &self.dictation_suppressed_live_chunks,
+            )
             .field("active_transcription_jobs", &self.active_transcription_jobs)
             .field("mic_health", &self.mic_health)
             .field("mic_recovery_override", &self.mic_recovery_override)
@@ -721,6 +731,8 @@ impl Default for AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            live_transcription_suspended_for_dictation: false,
+            dictation_suppressed_live_chunks: HashSet::new(),
             active_transcription_jobs: BTreeSet::new(),
             mic_health: MicHealthMonitor::default(),
             mic_recovery_override: None,
@@ -764,6 +776,8 @@ impl AppBackend {
             pending_live_events: Vec::new(),
             chunk_id_history: VecDeque::new(),
             chunk_id_index: HashMap::new(),
+            live_transcription_suspended_for_dictation: false,
+            dictation_suppressed_live_chunks: HashSet::new(),
             active_transcription_jobs: BTreeSet::new(),
             mic_health: MicHealthMonitor::default(),
             mic_recovery_override: None,
@@ -780,6 +794,51 @@ impl AppBackend {
 
     pub fn drain_live_events(&mut self) -> Vec<LiveTranscriptEvent> {
         std::mem::take(&mut self.pending_live_events)
+    }
+
+    pub fn set_live_transcription_suspended_for_dictation(
+        &mut self,
+        suspended: bool,
+    ) -> Vec<String> {
+        self.live_transcription_suspended_for_dictation = suspended;
+        if !suspended {
+            return Vec::new();
+        }
+
+        let mut active_sources = Vec::new();
+        if self.microphone_mixer.is_some() {
+            if let Some(chunk_id) = self
+                .capture
+                .as_ref()
+                .and_then(CaptureController::active_chunk_id)
+            {
+                let source_key = format!("microphone:{}", self.merged_microphone_device_id());
+                self.dictation_suppressed_live_chunks
+                    .insert((source_key.clone(), chunk_id));
+                active_sources.push(source_key);
+            }
+            return active_sources;
+        }
+
+        for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+            let chunk_id = match slot {
+                MicrophoneSlot::Primary => self
+                    .capture
+                    .as_ref()
+                    .and_then(CaptureController::active_chunk_id),
+                MicrophoneSlot::Secondary => self
+                    .secondary_capture
+                    .as_ref()
+                    .and_then(CaptureController::active_chunk_id),
+            };
+            if let Some(chunk_id) = chunk_id {
+                let source_key = self.microphone_source_key_for_slot(slot);
+                self.dictation_suppressed_live_chunks
+                    .insert((source_key.clone(), chunk_id));
+                active_sources.push(source_key);
+            }
+        }
+        active_sources
     }
 
     pub fn take_finished_system_meeting_jobs(&mut self) -> Vec<FinishedSystemMeetingJob> {
@@ -1198,6 +1257,8 @@ impl AppBackend {
             self.active_secondary_microphone_sample_rate = Some(sample_rate);
             self.secondary_microphone_warning = used_fallback_device
                 .then(|| format!("Secondary microphone {device_name} is unavailable"));
+            let source_key = self.microphone_source_key_for_slot(slot);
+            self.clear_suppressed_live_chunks_for_source(&source_key);
             self.secondary_capture = Some(CaptureController::new(CaptureControllerConfig {
                 save_root: self.save_root_path(),
                 settings: self.settings.clone(),
@@ -1221,6 +1282,8 @@ impl AppBackend {
         self.active_microphone_id = Some(device_id.clone());
         self.active_microphone_label = Some(device_name.clone());
         self.active_microphone_sample_rate = Some(sample_rate);
+        let source_key = self.microphone_source_key_for_slot(slot);
+        self.clear_suppressed_live_chunks_for_source(&source_key);
         self.microphone_warning = if used_fallback_device {
             Some(format!(
                 "Pinned microphone {} is unavailable; using {device_name}",
@@ -1311,6 +1374,7 @@ impl AppBackend {
         if self.microphone_mixer.is_none() {
             let merged_device_id = self.merged_microphone_device_id();
             let merged_device_name = self.merged_microphone_device_name();
+            self.clear_suppressed_live_chunks_for_source(&format!("microphone:{merged_device_id}"));
             let mode = if self.settings.priority_microphone_inputs {
                 MicrophoneMixMode::Priority
             } else {
@@ -2951,15 +3015,9 @@ impl AppBackend {
                 MicrophoneSlot::Secondary => 1,
             })
             .cloned();
-        let (active_device_id, active_device_label) = match slot {
-            MicrophoneSlot::Primary => (
-                self.active_microphone_id.as_ref(),
-                self.active_microphone_label.as_ref(),
-            ),
-            MicrophoneSlot::Secondary => (
-                self.active_secondary_microphone_id.as_ref(),
-                self.active_secondary_microphone_label.as_ref(),
-            ),
+        let active_device_label = match slot {
+            MicrophoneSlot::Primary => self.active_microphone_label.as_ref(),
+            MicrophoneSlot::Secondary => self.active_secondary_microphone_label.as_ref(),
         };
         let source_label = active_device_label
             .cloned()
@@ -2971,14 +3029,44 @@ impl AppBackend {
                     "Secondary".to_string()
                 }
             });
-        let source_key = format!(
+        let source_key = self.microphone_source_key_for_slot(slot);
+        self.handle_microphone_capture_events(events, source_key, source_label, Some(slot));
+    }
+
+    fn microphone_source_key_for_slot(&self, slot: MicrophoneSlot) -> String {
+        let configured = self.settings.capture_microphones.get(match slot {
+            MicrophoneSlot::Primary => 0,
+            MicrophoneSlot::Secondary => 1,
+        });
+        let active_device_id = match slot {
+            MicrophoneSlot::Primary => self.active_microphone_id.as_deref(),
+            MicrophoneSlot::Secondary => self.active_secondary_microphone_id.as_deref(),
+        };
+        format!(
             "microphone:{}",
             active_device_id
-                .map(String::as_str)
-                .or_else(|| configured.as_ref().map(|entry| entry.id.as_str()))
+                .or_else(|| configured.map(|entry| entry.id.as_str()))
                 .unwrap_or(slot.as_str())
-        );
-        self.handle_microphone_capture_events(events, source_key, source_label, Some(slot));
+        )
+    }
+
+    fn live_chunk_is_suppressed_for_dictation(&mut self, source_key: &str, chunk_id: u64) -> bool {
+        let key = (source_key.to_string(), chunk_id);
+        if self.live_transcription_suspended_for_dictation {
+            self.dictation_suppressed_live_chunks.insert(key.clone());
+        }
+        self.dictation_suppressed_live_chunks.contains(&key)
+    }
+
+    fn clear_suppressed_live_chunks_for_source(&mut self, source_key: &str) {
+        self.dictation_suppressed_live_chunks
+            .retain(|(candidate, _)| candidate != source_key);
+    }
+
+    fn finish_live_chunk_suppression(&mut self, source_key: &str, chunk_id: u64) -> bool {
+        self.dictation_suppressed_live_chunks
+            .remove(&(source_key.to_string(), chunk_id))
+            || self.live_transcription_suspended_for_dictation
     }
 
     fn handle_merged_capture_events(&mut self, events: Vec<CaptureControllerEvent>) {
@@ -3002,14 +3090,16 @@ impl AppBackend {
                     started_at,
                 } => {
                     eprintln!("[wakenote] capture: ChunkStarted chunk_id={chunk_id}");
-                    self.emit_live_event(LiveTranscriptEvent::Started {
-                        source_key: source_key.clone(),
-                        source_label: source_label.clone(),
-                        microphone_slot,
-                        chunk_id,
-                        started_at,
-                        overlay_position: self.settings.effective_floating_overlay_position(),
-                    });
+                    if !self.live_chunk_is_suppressed_for_dictation(&source_key, chunk_id) {
+                        self.emit_live_event(LiveTranscriptEvent::Started {
+                            source_key: source_key.clone(),
+                            source_label: source_label.clone(),
+                            microphone_slot,
+                            chunk_id,
+                            started_at,
+                            overlay_position: self.settings.effective_floating_overlay_position(),
+                        });
+                    }
                 }
                 CaptureControllerEvent::LiveSamplesReady {
                     chunk_id,
@@ -3020,24 +3110,40 @@ impl AppBackend {
                         "[wakenote] capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
                         samples.len()
                     );
-                    self.emit_live_event(LiveTranscriptEvent::SamplesReady {
-                        source_key: source_key.clone(),
-                        source_label: source_label.clone(),
-                        microphone_slot,
-                        chunk_id,
-                        model_id: self.settings.selected_model.clone(),
-                        language: self.settings.transcription_language,
-                        suppress_low_confidence_transcripts: self
-                            .settings
-                            .suppress_low_confidence_transcripts,
-                        sample_rate,
-                        samples,
-                    });
+                    if !self.live_chunk_is_suppressed_for_dictation(&source_key, chunk_id) {
+                        self.emit_live_event(LiveTranscriptEvent::SamplesReady {
+                            source_key: source_key.clone(),
+                            source_label: source_label.clone(),
+                            microphone_slot,
+                            chunk_id,
+                            model_id: self.settings.selected_model.clone(),
+                            language: self.settings.transcription_language,
+                            suppress_low_confidence_transcripts: self
+                                .settings
+                                .suppress_low_confidence_transcripts,
+                            sample_rate,
+                            samples,
+                        });
+                    }
                 }
                 CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } => {
-                    let model_id = self.transcription_model_for_completed_chunk(&chunk);
+                    let suppressed = self.finish_live_chunk_suppression(&source_key, chunk_id);
+                    let model_id = if suppressed {
+                        if let Err(error) = TranscriptionSidecar::mark_not_requested(&chunk) {
+                            append_debug_log_nonblocking(
+                                self.save_root_path(),
+                                format!(
+                                    "[dictation] failed to suppress overlapping VOR transcription path={} error={error}",
+                                    chunk.audio_path.display()
+                                ),
+                            );
+                        }
+                        None
+                    } else {
+                        self.transcription_model_for_completed_chunk(&chunk)
+                    };
                     eprintln!(
-                        "[wakenote] capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
+                        "[wakenote] capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?} dictation_suppressed={suppressed}",
                         chunk.audio_path.display(),
                         model_id
                     );
@@ -3062,7 +3168,7 @@ impl AppBackend {
                         model_id: model_id.clone(),
                         audio_path: chunk.audio_path.clone(),
                         overlay_position: self.settings.effective_floating_overlay_position(),
-                        will_transcribe: self.should_process_transcriptions(),
+                        will_transcribe: model_id.is_some(),
                     });
                 }
             }
