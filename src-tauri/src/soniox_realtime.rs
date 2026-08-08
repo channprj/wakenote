@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{WebSocketStream, connect_async};
 
 use crate::cloud_realtime::{
     RealtimePartial, RealtimePartialCallback, RealtimeSamplesRequest, RealtimeStoredResult,
@@ -184,11 +185,11 @@ async fn manager_loop(
 
 async fn connection_loop(
     request: RealtimeSamplesRequest,
-    mut commands: mpsc::UnboundedReceiver<ConnectionCommand>,
+    commands: mpsc::UnboundedReceiver<ConnectionCommand>,
     on_partial: RealtimePartialCallback,
     shared_failure: Arc<Mutex<Option<TranscriptionFailure>>>,
 ) {
-    let Some(api_key) = request.credentials.soniox_api_key() else {
+    let Some(api_key) = request.credentials.soniox_api_key().map(str::to_string) else {
         store_shared_failure(
             &shared_failure,
             local_failure(
@@ -202,6 +203,27 @@ async fn connection_loop(
         store_shared_failure(&shared_failure, transport_failure());
         return;
     };
+    run_connected_session(
+        socket,
+        request,
+        commands,
+        on_partial,
+        shared_failure,
+        &api_key,
+    )
+    .await;
+}
+
+async fn run_connected_session<S>(
+    socket: WebSocketStream<S>,
+    request: RealtimeSamplesRequest,
+    mut commands: mpsc::UnboundedReceiver<ConnectionCommand>,
+    on_partial: RealtimePartialCallback,
+    shared_failure: Arc<Mutex<Option<TranscriptionFailure>>>,
+    api_key: &str,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let (mut writer, mut reader) = socket.split();
     let configuration = configuration_message(
         api_key,
@@ -222,11 +244,12 @@ async fn connection_loop(
     let mut committed_path: Option<PathBuf> = None;
     let mut committed_audio_duration_ms = 0;
     let mut completion_deadline: Option<Instant> = None;
+    let mut command_channel_open = true;
     loop {
         let deadline =
             completion_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
         tokio::select! {
-            command = commands.recv() => match command {
+            command = commands.recv(), if command_channel_open => match command {
                 Some(ConnectionCommand::Append(audio)) => {
                     if writer.send(Message::Binary(audio.into())).await.is_err() {
                         finish_with_failure(&shared_failure, &mut committed_path, transport_failure());
@@ -242,9 +265,16 @@ async fn connection_loop(
                         return;
                     }
                 }
-                Some(ConnectionCommand::Close) | None => {
+                Some(ConnectionCommand::Close) => {
                     let _ = writer.close().await;
                     return;
+                }
+                None => {
+                    command_channel_open = false;
+                    if committed_path.is_none() {
+                        let _ = writer.close().await;
+                        return;
+                    }
                 }
             },
             message = reader.next() => {
@@ -574,6 +604,9 @@ fn finish_with_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::duplex;
+    use tokio::time::sleep;
+    use tokio_tungstenite::tungstenite::protocol::Role;
 
     #[test]
     fn soniox_realtime_uses_documented_empty_text_end_frame() {
@@ -722,5 +755,79 @@ mod tests {
                 .category,
             FailureCategory::InvalidResponse
         );
+    }
+
+    #[tokio::test]
+    async fn soniox_realtime_waits_for_finished_after_commit_sender_closes() {
+        let audio_path = PathBuf::from("/tmp/wakenote-soniox-closed-command-channel.wav");
+        let _ = realtime_result_store().try_take(&audio_path);
+        let (client_io, server_io) = duplex(1_048_576);
+        let client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
+        let mut server = WebSocketStream::from_raw_socket(server_io, Role::Server, None).await;
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        command_tx
+            .send(ConnectionCommand::Append(vec![0, 0]))
+            .expect("append command");
+        command_tx
+            .send(ConnectionCommand::Commit {
+                audio_path: audio_path.clone(),
+                audio_duration_ms: 20,
+            })
+            .expect("commit command");
+        drop(command_tx);
+
+        let request = RealtimeSamplesRequest {
+            source_key: "microphone:test".into(),
+            source_label: "Test microphone".into(),
+            microphone_slot: None,
+            chunk_id: 1,
+            model_id: SONIOX_REALTIME_MODEL_ID.into(),
+            language: crate::settings::TranscriptionLanguage::Ko,
+            dictionary: crate::dictionary::DictionaryContext::default(),
+            sample_rate: 16_000,
+            samples: Arc::new(vec![0.0]),
+            credentials: crate::cloud_transcription::TranscriptionCredentials::default(),
+        };
+        let shared_failure = Arc::new(Mutex::new(None));
+        let client_task = tokio::spawn(run_connected_session(
+            client,
+            request,
+            command_rx,
+            Arc::new(|_| {}),
+            shared_failure,
+            "secret",
+        ));
+        let server_task = tokio::spawn(async move {
+            let Some(Ok(Message::Text(configuration))) = server.next().await else {
+                panic!("configuration message")
+            };
+            assert_eq!(
+                serde_json::from_str::<Value>(&configuration).expect("configuration")["model"],
+                SONIOX_REALTIME_MODEL
+            );
+            assert!(matches!(server.next().await, Some(Ok(Message::Binary(_)))));
+            assert!(matches!(
+                server.next().await,
+                Some(Ok(Message::Text(message))) if message.is_empty()
+            ));
+            sleep(Duration::from_millis(20)).await;
+            server
+                .send(Message::Text(
+                    json!({ "tokens": [], "finished": true }).to_string().into(),
+                ))
+                .await
+                .expect("finished response");
+        });
+
+        let (client_result, server_result) = tokio::join!(client_task, server_task);
+        client_result.expect("client task");
+        server_result.expect("server task");
+        let Some(RealtimeStoredResult::Completed(result)) =
+            realtime_result_store().try_take(&audio_path)
+        else {
+            panic!("completed result after provider finished")
+        };
+        assert_eq!(result.requested_model_id, SONIOX_REALTIME_MODEL_ID);
+        assert_eq!(result.usage.map(|usage| usage.audio_duration_ms), Some(20));
     }
 }

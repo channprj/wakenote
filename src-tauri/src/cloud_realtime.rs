@@ -61,6 +61,12 @@ impl RealtimeResultStore {
             ))
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn try_take(&self, audio_path: &Path) -> Option<RealtimeStoredResult> {
+        let (lock, _) = &*self.inner;
+        lock.lock().ok()?.remove(audio_path)
+    }
 }
 
 pub fn realtime_result_store() -> &'static RealtimeResultStore {
