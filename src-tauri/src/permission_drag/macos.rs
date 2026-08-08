@@ -26,7 +26,7 @@ use core_graphics::{
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSFloatingWindowLevel, NSFont, NSImageView, NSPanel,
-    NSScreen, NSTextField, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
+    NSScreen, NSTextField, NSView, NSWindow, NSWindowButton, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use tauri::AppHandle;
@@ -38,7 +38,7 @@ use crate::permissions::{PermissionGrantStatus, permission_snapshot};
 
 const SHELF_WIDTH: f64 = 360.0;
 const SHELF_HEIGHT: f64 = 112.0;
-const SETTINGS_DISCOVERY_ATTEMPTS: usize = 40;
+const SETTINGS_DISCOVERY_ATTEMPTS: usize = 20;
 const SETTINGS_DISCOVERY_INTERVAL: Duration = Duration::from_millis(250);
 const MONITOR_INTERVAL: Duration = Duration::from_millis(400);
 const MAIN_THREAD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -66,6 +66,11 @@ define_class!(
     struct DragShelfView;
 
     impl DragShelfView {
+        #[unsafe(method(hitTest:))]
+        fn hit_test(&self, _point: NSPoint) -> *mut NSView {
+            self as *const Self as *mut NSView
+        }
+
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
             #[allow(deprecated)]
@@ -139,10 +144,11 @@ fn monitor_permission_shelf(
     let Some(bounds) = initial_bounds else {
         return;
     };
-    if !present_on_main_thread(&app, request_id, target, bundle_path, bounds) {
+    if !present_on_main_thread(&app, request_id, bundle_path, bounds) {
         return;
     }
 
+    let mut missing_polls = 0;
     loop {
         thread::sleep(MONITOR_INTERVAL);
         if request_is_stale(request_id) || permission_is_granted(target) {
@@ -151,9 +157,14 @@ fn monitor_permission_shelf(
         }
 
         let Some(bounds) = system_settings_window_bounds() else {
-            schedule_close(&app, Some(request_id));
-            return;
+            missing_polls += 1;
+            if missing_polls >= 3 {
+                schedule_close(&app, Some(request_id));
+                return;
+            }
+            continue;
         };
+        missing_polls = 0;
         if !reposition_on_main_thread(&app, request_id, bounds) {
             return;
         }
@@ -176,7 +187,6 @@ fn permission_is_granted(target: PermissionDragTarget) -> bool {
 fn present_on_main_thread(
     app: &AppHandle,
     request_id: u64,
-    target: PermissionDragTarget,
     bundle_path: PathBuf,
     system_settings: CGRect,
 ) -> bool {
@@ -192,7 +202,7 @@ fn present_on_main_thread(
                 return;
             };
 
-            let state = build_shelf(request_id, target, &bundle_path, system_settings, mtm);
+            let state = build_shelf(request_id, &bundle_path, system_settings, mtm);
             let shown = state.is_some();
             SHELF_STATE.with(|slot| {
                 let previous = std::mem::replace(&mut *slot.borrow_mut(), state);
@@ -275,7 +285,6 @@ fn schedule_close_replaced_shelf(app: &AppHandle, active_request_id: u64) {
 
 fn build_shelf(
     request_id: u64,
-    target: PermissionDragTarget,
     bundle_path: &Path,
     system_settings: CGRect,
     mtm: MainThreadMarker,
@@ -302,16 +311,18 @@ fn build_shelf(
     panel.setHidesOnDeactivate(false);
     panel.setLevel(NSFloatingWindowLevel);
     panel.setTitle(&NSString::from_str("Add WakeNote"));
+    if let Some(close_button) = panel.standardWindowButton(NSWindowButton::CloseButton) {
+        let close_label = NSString::from_str("Close permission helper");
+        unsafe {
+            let _: () = msg_send![&*close_button, setAccessibilityLabel: &*close_label];
+        }
+    }
 
     let content = panel.contentView()?;
     let path = NSString::from_str(&bundle_path.to_string_lossy());
-    let drag_view = DragShelfView::new(
-        NSRect::new(NSPoint::new(14.0, 8.0), NSSize::new(72.0, 68.0)),
-        path.clone(),
-        mtm,
-    );
+    let drag_view = DragShelfView::new(content.bounds(), path.clone(), mtm);
     drag_view.setToolTip(Some(&NSString::from_str(
-        "Drag WakeNote into the open permission list",
+        "Drag WakeNote into the list above",
     )));
 
     let icon = NSWorkspace::sharedWorkspace().iconForFile(&path);
@@ -323,8 +334,7 @@ fn build_shelf(
     ));
     drag_view.addSubview(&icon_view);
 
-    let heading =
-        NSTextField::labelWithString(&NSString::from_str("Drag WakeNote into the list"), mtm);
+    let heading = NSTextField::labelWithString(&NSString::from_str("WakeNote"), mtm);
     heading.setFrame(NSRect::new(
         NSPoint::new(98.0, 47.0),
         NSSize::new(244.0, 20.0),
@@ -332,15 +342,10 @@ fn build_shelf(
     heading.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
     heading.setTextColor(Some(&NSColor::labelColor()));
 
-    let detail = match target {
-        PermissionDragTarget::Accessibility => {
-            "Accessibility is open. Drop the app icon, then enable its switch."
-        }
-        PermissionDragTarget::ScreenRecording => {
-            "Screen & System Audio Recording is open. Drop the app icon, then enable its switch."
-        }
-    };
-    let instructions = NSTextField::wrappingLabelWithString(&NSString::from_str(detail), mtm);
+    let instructions = NSTextField::wrappingLabelWithString(
+        &NSString::from_str("Drag WakeNote into the list above"),
+        mtm,
+    );
     instructions.setFrame(NSRect::new(
         NSPoint::new(98.0, 8.0),
         NSSize::new(244.0, 38.0),
@@ -348,9 +353,9 @@ fn build_shelf(
     instructions.setFont(Some(&NSFont::systemFontOfSize(11.0)));
     instructions.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
+    drag_view.addSubview(&heading);
+    drag_view.addSubview(&instructions);
     content.addSubview(&drag_view);
-    content.addSubview(&heading);
-    content.addSubview(&instructions);
     position_panel(&panel, system_settings, mtm);
     panel.orderFrontRegardless();
 

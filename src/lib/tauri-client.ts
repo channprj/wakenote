@@ -42,6 +42,7 @@ import type {
   UploadedAudio,
   AudioWaveform,
   AppPermissions,
+  PermissionDragTarget,
   RecognizedSourceInfo,
   SourceCaptureStatus,
   SourcePayload,
@@ -1453,6 +1454,25 @@ export async function openScreenRecordingSettings(): Promise<AppSnapshot> {
 
   await invoke("open_screen_recording_settings");
   return loadSnapshot();
+}
+
+async function openPermissionDragShelf(
+  target: PermissionDragTarget,
+): Promise<AppSnapshot> {
+  if (!isTauriRuntime()) {
+    return loadSnapshot();
+  }
+
+  await invoke<AppPermissions>("open_permission_drag_shelf", { target });
+  return loadSnapshot();
+}
+
+export function openAccessibilityPermissionAssistant(): Promise<AppSnapshot> {
+  return openPermissionDragShelf("accessibility");
+}
+
+export function openScreenRecordingPermissionAssistant(): Promise<AppSnapshot> {
+  return openPermissionDragShelf("screen_recording");
 }
 
 // Mirrors the Rust built-in recognized-source list so browser/mock dev keeps

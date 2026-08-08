@@ -32,6 +32,36 @@ const actions: SettingsActions = {
 };
 
 describe("AudioSettings", () => {
+  it("offers the System Settings drag flow for app-list permissions", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.system_audio_enabled = true;
+    snapshot.permissions.accessibility.status = "not_determined";
+    snapshot.permissions.accessibility.can_request = true;
+    snapshot.permissions.accessibility.can_open_settings = true;
+    snapshot.permissions.screen_recording.status = "not_determined";
+    snapshot.permissions.screen_recording.can_request = false;
+    snapshot.permissions.screen_recording.can_open_settings = true;
+
+    const markup = renderToStaticMarkup(
+      <AudioSettings snapshot={snapshot} actions={actions} />,
+    );
+
+    expect(markup).not.toContain("Allow Accessibility");
+    expect(markup).toContain("Open System Settings");
+  });
+
+  it("keeps microphone authorization on its native request action", () => {
+    const snapshot = mockSnapshot();
+    snapshot.permissions.microphone.status = "not_determined";
+    snapshot.permissions.microphone.can_request = true;
+
+    const markup = renderToStaticMarkup(
+      <AudioSettings snapshot={snapshot} actions={actions} />,
+    );
+
+    expect(markup).toContain("Allow Microphone");
+  });
+
   it("keeps configured microphones visible during a transient enumeration fallback", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.selected_microphone = "input-primary";

@@ -142,6 +142,97 @@ function makeActions(): SettingsActions {
 }
 
 describe("SettingsPage interactions", () => {
+  it("routes app-list permissions to System Settings and keeps Microphone native", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.system_audio_enabled = true;
+    snapshot.permissions.accessibility = {
+      status: "not_determined",
+      label: "Needs access",
+      detail: "WakeNote needs Accessibility access.",
+      can_request: true,
+      can_open_settings: true,
+    };
+    snapshot.permissions.microphone = {
+      status: "not_determined",
+      label: "Not requested",
+      detail: "WakeNote needs microphone access.",
+      can_request: true,
+      can_open_settings: false,
+    };
+    snapshot.permissions.screen_recording = {
+      status: "not_determined",
+      label: "Needs access",
+      detail: "WakeNote needs Screen Recording access.",
+      can_request: false,
+      can_open_settings: true,
+    };
+
+    const view = render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    function permissionRow(label: string): HTMLElement {
+      const row = screen
+        .getByText(label)
+        .closest<HTMLElement>('[role="group"]');
+      if (!row) {
+        throw new Error(`${label} permission row not found`);
+      }
+      return row;
+    }
+
+    await user.click(
+      within(permissionRow("Accessibility Permission")).getByRole("button", {
+        name: "Open System Settings",
+      }),
+    );
+    await user.click(
+      within(permissionRow("Microphone Permission")).getByRole("button", {
+        name: "Allow Microphone",
+      }),
+    );
+    await user.click(
+      within(permissionRow("Screen Recording Permission")).getByRole("button", {
+        name: "Open System Settings",
+      }),
+    );
+
+    expect(actions.onRequestAccessibilityPermission).toHaveBeenCalledOnce();
+    expect(actions.onRequestMicrophonePermission).toHaveBeenCalledOnce();
+    expect(actions.onRequestScreenRecordingPermission).toHaveBeenCalledOnce();
+
+    snapshot.permissions.accessibility.status = "granted";
+    snapshot.permissions.microphone.status = "granted";
+    snapshot.permissions.screen_recording.status = "granted";
+    view.rerender(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    expect(
+      within(permissionRow("Accessibility Permission")).queryByRole("button"),
+    ).toBeNull();
+    expect(
+      within(permissionRow("Microphone Permission")).queryByRole("button"),
+    ).toBeNull();
+    expect(
+      within(permissionRow("Screen Recording Permission")).queryByRole(
+        "button",
+      ),
+    ).toBeNull();
+  });
+
   it("connects the selected settings tab to an existing tab panel", () => {
     render(
       <SettingsPage

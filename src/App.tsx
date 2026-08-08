@@ -36,15 +36,13 @@ import {
   loadDictationState,
   loadSnapshot,
   markAllActivityRead,
+  openAccessibilityPermissionAssistant,
   openTranscriptFolder,
-  requestAccessibilityPermission,
-  openAccessibilityPermissionSettings,
   requestMicrophonePermission,
   openMicrophonePermissionSettings,
-  requestScreenRecordingPermission,
   pressedModifierShortcut,
   resumeDictationShortcut,
-  openScreenRecordingSettings,
+  openScreenRecordingPermissionAssistant,
   openDictionaryFile,
   processNextTranscription,
   previewSubtitle,
@@ -631,11 +629,7 @@ export default function App() {
           onOpenDictionaryFile: () => void runAction(openDictionaryFile),
           onReloadDictionaryFile: () => void runAction(reloadDictionaryFile),
           onRequestAccessibilityPermission: () =>
-            void runAction(
-              snapshot.permissions.accessibility.can_request
-                ? requestAccessibilityPermission
-                : openAccessibilityPermissionSettings,
-            ),
+            void runAction(openAccessibilityPermissionAssistant),
           onRequestMicrophonePermission: () =>
             void runAction(
               snapshot.permissions.microphone.can_request
@@ -643,11 +637,7 @@ export default function App() {
                 : openMicrophonePermissionSettings,
             ),
           onRequestScreenRecordingPermission: () =>
-            void runAction(
-              snapshot.permissions.screen_recording.can_request
-                ? requestScreenRecordingPermission
-                : openScreenRecordingSettings,
-            ),
+            void runAction(openScreenRecordingPermissionAssistant),
           onVerifyModel: (modelId) =>
             void runAction(() => verifyModel(modelId)),
           onDownloadModel: (modelId) =>

@@ -224,6 +224,8 @@ function mockInvoke(command: string) {
       });
     case "permission_snapshot":
       return Promise.resolve(defaultPermissions());
+    case "open_permission_drag_shelf":
+      return Promise.resolve(defaultPermissions());
     case "recent_transcripts":
       return Promise.resolve([
         {
@@ -328,6 +330,25 @@ describe("tauri runtime client snapshots", () => {
     });
     expect(mocks.invoke).toHaveBeenCalledWith("dictation_state");
     expect(mocks.invoke).toHaveBeenCalledWith("cancel_dictation");
+  });
+
+  it("routes supported app-list permissions through the native drag shelf", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const {
+      openAccessibilityPermissionAssistant,
+      openScreenRecordingPermissionAssistant,
+    } = await import("./tauri-client");
+
+    await openAccessibilityPermissionAssistant();
+    await openScreenRecordingPermissionAssistant();
+
+    expect(mocks.invoke).toHaveBeenCalledWith("open_permission_drag_shelf", {
+      target: "accessibility",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("open_permission_drag_shelf", {
+      target: "screen_recording",
+    });
   });
 
   it("previews subtitle settings through the native overlay command", async () => {

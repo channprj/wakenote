@@ -39,6 +39,12 @@ The primary routes are defined in `src/lib/navigation.ts`:
 
 Commands cover settings, credentials, permissions, models, queue actions, capture, transcript indexes, reports, costs, source capture, and meetings. Events carry high-frequency or asynchronous updates such as live transcript partials, report runs, meeting progress, source detection, audio merge progress, and cost snapshots.
 
+### Permission drag shelf
+
+`permission_drag.rs` exposes a closed `PermissionDragTarget` boundary for Accessibility and Screen & System Audio Recording. The `open_permission_drag_shelf` Tauri command accepts only that enum, opens the corresponding System Settings deep link, and returns the existing permission snapshot shape. Browser development treats both assistant actions as no-ops, while Microphone keeps its native request path.
+
+On macOS, `permission_drag/macos.rs` validates the running `.app` ancestor before publishing it as a native file drag. A main-thread AppKit controller owns one non-activating `NSPanel`; Window Server metadata locates and tracks System Settings without requiring Accessibility access. Generation tokens cancel stale trackers, and the panel tears down on a grant, either window closing, replacement, or process exit. System Settings performs the actual drop and remains the only component that changes TCC state.
+
 ### Audio capture and recording
 
 | Module | Responsibility |

@@ -727,6 +727,8 @@ export interface AppPermissions {
   screen_recording: PermissionState;
 }
 
+export type PermissionDragTarget = "accessibility" | "screen_recording";
+
 export interface LevelSnapshot {
   current_dbfs: number;
   peak_dbfs: number;

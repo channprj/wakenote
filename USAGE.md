@@ -89,6 +89,12 @@ pnpm dmg:downloads
 
 The initial defaults are `~/Documents/WakeNote`, `whisper-medium`, Korean transcription, M4A at 96 kbps, and automatic live input on launch.
 
+### Grant app-list permissions
+
+Accessibility and Screen & System Audio Recording use an app-list workflow. In **Settings › Audio**, press **Open System Settings** for either permission. WakeNote opens the matching Privacy & Security pane and places a small native shelf beside the System Settings window. Drag the WakeNote icon from the shelf into the open list, then enable its switch. macOS remains the authority that adds and grants the permission; WakeNote does not edit the TCC database.
+
+The shelf follows System Settings and closes when the permission is granted, System Settings closes, or you close the helper. Microphone permission continues to use the standard macOS request prompt. The drag shelf is available only when WakeNote is running from an installed `.app` bundle; a direct development executable still opens the correct settings pane but cannot provide an application drag item.
+
 ### Workspace
 
 | Screen | Use it for |

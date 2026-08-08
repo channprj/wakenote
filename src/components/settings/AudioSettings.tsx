@@ -78,11 +78,10 @@ export function AudioSettings({
           actionLabel={
             accessibilityPermission.status === "granted"
               ? null
-              : accessibilityPermission.can_request
-                ? "Allow Accessibility"
-                : accessibilityPermission.can_open_settings
-                  ? "Open System Settings"
-                  : null
+              : accessibilityPermission.can_open_settings ||
+                  accessibilityPermission.can_request
+                ? "Open System Settings"
+                : null
           }
           onAction={actions.onRequestAccessibilityPermission}
         />

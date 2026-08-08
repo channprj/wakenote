@@ -82,6 +82,7 @@ use wakenote::overlay_caption::{
     OVERLAY_CAPTION_HIDDEN_EVENT, OVERLAY_CAPTION_UPDATED_EVENT, OverlayCaptionRuntime,
     OverlayCaptionSnapshot, OverlayCaptionSource,
 };
+use wakenote::permission_drag::{self, PermissionDragTarget};
 use wakenote::permissions::{self, AppPermissions};
 use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
@@ -3435,6 +3436,15 @@ async fn request_screen_recording_permission() -> Result<AppPermissions, String>
 #[tauri::command]
 fn open_screen_recording_settings() -> Result<(), String> {
     permissions::open_screen_recording_permission_settings()
+}
+
+#[tauri::command]
+fn open_permission_drag_shelf(
+    app: AppHandle,
+    target: PermissionDragTarget,
+) -> Result<AppPermissions, String> {
+    permission_drag::show_permission_drag_shelf(&app, target)?;
+    Ok(permissions::permission_snapshot())
 }
 
 #[tauri::command]
@@ -7785,6 +7795,7 @@ fn main() {
             open_microphone_permission_settings,
             request_screen_recording_permission,
             open_screen_recording_settings,
+            open_permission_drag_shelf,
             recent_transcripts,
             transcript_days,
             transcripts_for_day,
