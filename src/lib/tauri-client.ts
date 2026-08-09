@@ -565,12 +565,16 @@ export async function reloadDictionaryFile(): Promise<AppSnapshot> {
   return loadSnapshot();
 }
 
-export async function loadPermissions(): Promise<AppPermissions> {
+export async function loadPermissionSnapshot(): Promise<AppPermissions> {
   if (!isTauriRuntime()) {
     return permissionSnapshotFromBrowser();
   }
 
   return invoke<AppPermissions>("permission_snapshot");
+}
+
+export function loadPermissions(): Promise<AppPermissions> {
+  return loadPermissionSnapshot();
 }
 
 export async function loadRecentTranscripts(

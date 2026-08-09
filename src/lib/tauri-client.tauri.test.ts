@@ -351,6 +351,20 @@ describe("tauri runtime client snapshots", () => {
     });
   });
 
+  it("loads a fresh permission snapshot without requesting access", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { loadPermissionSnapshot } = await import("./tauri-client");
+
+    await expect(loadPermissionSnapshot()).resolves.toEqual(
+      defaultPermissions(),
+    );
+    expect(mocks.invoke).toHaveBeenCalledWith("permission_snapshot");
+    expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
+      "request_microphone_permission",
+    );
+  });
+
   it("previews subtitle settings through the native overlay command", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.invoke.mockImplementation(mockInvoke);
