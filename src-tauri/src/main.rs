@@ -10429,7 +10429,10 @@ mod tests {
 
     #[test]
     fn launch_auto_start_uses_retry_delays_only_when_enabled() {
-        let settings = AppSettings::default();
+        let settings = AppSettings {
+            permission_onboarding_seen: true,
+            ..AppSettings::default()
+        };
 
         assert_eq!(
             launch_auto_start_retry_delay_secs(&settings),
@@ -10439,6 +10442,7 @@ mod tests {
         assert!(
             launch_auto_start_retry_delay_secs(&AppSettings {
                 start_live_input_on_launch: false,
+                permission_onboarding_seen: true,
                 ..AppSettings::default()
             })
             .is_empty()
@@ -10446,6 +10450,7 @@ mod tests {
         assert!(
             launch_auto_start_retry_delay_secs(&AppSettings {
                 recording_enabled: false,
+                permission_onboarding_seen: true,
                 ..AppSettings::default()
             })
             .is_empty()
@@ -10453,6 +10458,7 @@ mod tests {
         assert!(
             launch_auto_start_retry_delay_secs(&AppSettings {
                 pause_all: true,
+                permission_onboarding_seen: true,
                 ..AppSettings::default()
             })
             .is_empty()
