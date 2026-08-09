@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::caption_layout::balanced_caption_text;
+use crate::caption_layout::{CaptionPageUpdate, StableCaptionPager};
 use crate::settings::{FloatingOverlayCaptionStyle, FloatingOverlayPosition};
 
 pub const OVERLAY_CAPTION_UPDATED_EVENT: &str = "overlay-caption-updated";
@@ -52,6 +52,7 @@ pub struct OverlayCaptionRuntime {
     audio_path: Option<String>,
     raw_text: String,
     text: String,
+    pager: StableCaptionPager,
     position: FloatingOverlayPosition,
     style: FloatingOverlayCaptionStyle,
     hide_at: Option<Instant>,
@@ -69,6 +70,7 @@ impl Default for OverlayCaptionRuntime {
             audio_path: None,
             raw_text: String::new(),
             text: String::new(),
+            pager: StableCaptionPager::default(),
             position: FloatingOverlayPosition::Off,
             style: default_overlay_caption_style(),
             hide_at: None,
@@ -129,6 +131,7 @@ impl OverlayCaptionRuntime {
         self.audio_path = None;
         self.raw_text.clear();
         self.text.clear();
+        self.pager.clear();
         self.position = position;
         self.style = style;
         self.hide_at = None;
@@ -199,8 +202,10 @@ impl OverlayCaptionRuntime {
             return false;
         }
 
-        if self.source != source || self.chunk_id != Some(chunk_id) {
+        let source_or_chunk_changed = self.source != source || self.chunk_id != Some(chunk_id);
+        if source_or_chunk_changed {
             self.generation = self.generation.saturating_add(1);
+            self.pager.clear();
         }
         self.visible = true;
         self.source = source;
@@ -209,7 +214,10 @@ impl OverlayCaptionRuntime {
         self.position = position;
         self.style = style;
         self.raw_text = text;
-        self.refresh_display_text();
+        let update = self.refresh_display_text();
+        if update.page_turned {
+            self.generation = self.generation.saturating_add(1);
+        }
         self.hide_at = Some(now + self.final_hold_duration());
         true
     }
@@ -345,8 +353,10 @@ impl OverlayCaptionRuntime {
         }
 
         let next_chunk_id = chunk_id.or((self.source == source).then_some(self.chunk_id).flatten());
-        if self.source != source || self.chunk_id != next_chunk_id {
+        let source_or_chunk_changed = self.source != source || self.chunk_id != next_chunk_id;
+        if source_or_chunk_changed {
             self.generation = self.generation.saturating_add(1);
+            self.pager.clear();
         }
         self.visible = true;
         self.source = source;
@@ -356,7 +366,10 @@ impl OverlayCaptionRuntime {
         self.position = position;
         self.style = style;
         self.raw_text = text;
-        self.refresh_display_text();
+        let update = self.refresh_display_text();
+        if update.page_turned {
+            self.generation = self.generation.saturating_add(1);
+        }
         self.hide_at = Some(Instant::now() + self.final_hold_duration());
         true
     }
@@ -384,6 +397,7 @@ impl OverlayCaptionRuntime {
         self.audio_path = None;
         self.raw_text.clear();
         self.text.clear();
+        self.pager.clear();
         self.position = FloatingOverlayPosition::Off;
         self.hide_at = None;
     }
@@ -417,7 +431,10 @@ impl OverlayCaptionRuntime {
 
     pub fn set_style(&mut self, style: FloatingOverlayCaptionStyle) {
         self.style = style;
-        self.refresh_display_text();
+        let update = self.refresh_display_text();
+        if update.page_turned {
+            self.generation = self.generation.saturating_add(1);
+        }
         if self.hide_at.is_some() {
             self.hide_at = Some(Instant::now() + self.final_hold_duration());
         }
@@ -441,8 +458,10 @@ impl OverlayCaptionRuntime {
         adaptive_caption_hold(&self.raw_text, self.style.duration_seconds)
     }
 
-    fn refresh_display_text(&mut self) {
-        self.text = balanced_caption_text(&self.raw_text, &self.style);
+    fn refresh_display_text(&mut self) -> CaptionPageUpdate {
+        let update = self.pager.update(&self.raw_text, &self.style);
+        self.text.clone_from(&update.text);
+        update
     }
 
     fn source_can_replace(&self, incoming: OverlayCaptionSource) -> bool {
@@ -487,9 +506,20 @@ fn default_overlay_caption_style() -> FloatingOverlayCaptionStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::caption_layout::MAX_CAPTION_LINES;
 
     fn style() -> FloatingOverlayCaptionStyle {
         default_overlay_caption_style()
+    }
+
+    fn compact_style() -> FloatingOverlayCaptionStyle {
+        let mut style = style();
+        style.max_width_px = 160;
+        style
+    }
+
+    fn text_for_rows(rows: usize) -> String {
+        (0..rows * 5).map(|_| "가").collect::<Vec<_>>().join(" ")
     }
 
     #[test]
@@ -531,38 +561,100 @@ mod tests {
 
         let final_text = "나".repeat(160);
         assert!(runtime.show_final(Some(7), PathBuf::from("/tmp/chunk.wav"), &final_text,));
-        assert_eq!(runtime.snapshot().generation, generation);
+        assert_eq!(runtime.snapshot().generation, generation + 1);
         assert_eq!(runtime.raw_text, final_text);
         assert_eq!(runtime.snapshot().final_hold_ms, Some(20_000));
     }
 
     #[test]
-    fn growing_partial_rebalances_from_raw_text_without_retaining_old_breaks() {
+    fn page_turn_increments_generation_once_but_normal_growth_does_not() {
         let mut runtime = OverlayCaptionRuntime::default();
-        let mut compact_style = style();
-        compact_style.max_width_px = 160;
+        let style = compact_style();
         runtime.show_partial(
             7,
-            "alpha beta. gamma delta",
+            text_for_rows(2),
             FloatingOverlayPosition::Top,
-            compact_style.clone(),
+            style.clone(),
         );
-        assert!(runtime.snapshot().text.contains('\n'));
+        let stable_generation = runtime.snapshot().generation;
 
-        let grown = "alpha beta. gamma delta epsilon zeta";
+        let three_rows = text_for_rows(3);
+        runtime.show_partial(7, &three_rows, FloatingOverlayPosition::Top, style.clone());
+        assert_eq!(runtime.snapshot().generation, stable_generation);
+
         runtime.show_partial(
             7,
-            grown,
+            format!("{three_rows} 새페이지"),
             FloatingOverlayPosition::Top,
-            compact_style.clone(),
+            style,
         );
+        assert_eq!(runtime.snapshot().generation, stable_generation + 1);
+        assert!(runtime.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
+    }
 
-        assert_eq!(runtime.raw_text, grown);
-        assert!(!runtime.raw_text.contains('\n'));
-        assert_eq!(
-            runtime.snapshot().text,
-            balanced_caption_text(grown, &compact_style)
+    #[test]
+    fn color_only_style_change_keeps_page_while_width_change_resets_it() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let initial_style = compact_style();
+        runtime.show_partial(
+            7,
+            text_for_rows(3),
+            FloatingOverlayPosition::Top,
+            initial_style.clone(),
         );
+        let generation = runtime.snapshot().generation;
+        let anchors = runtime.snapshot().text.clone();
+
+        let mut color = initial_style;
+        color.text_color = "#12abef".to_string();
+        runtime.set_style(color.clone());
+        assert_eq!(runtime.snapshot().generation, generation);
+        assert_eq!(runtime.snapshot().text, anchors);
+
+        let mut narrower = color;
+        narrower.max_width_px /= 2;
+        runtime.set_style(narrower);
+        assert_eq!(runtime.snapshot().generation, generation + 1);
+        assert!(runtime.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn live_and_dictation_use_the_same_page_limit_and_long_raw_text_is_retained() {
+        let style = compact_style();
+        let long_token = "https://example.com/one/very/long/unbroken/path";
+        let mut live = OverlayCaptionRuntime::default();
+        live.show_partial(7, long_token, FloatingOverlayPosition::Top, style.clone());
+        assert_eq!(live.raw_text, long_token);
+        assert!(live.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
+
+        let mut dictation = OverlayCaptionRuntime::default();
+        assert!(dictation.show_partial_for_source(
+            OverlayCaptionSource::Dictation,
+            7,
+            long_token,
+            FloatingOverlayPosition::Top,
+            style,
+        ));
+        assert_eq!(dictation.raw_text, long_token);
+        assert!(dictation.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn final_update_keeps_valid_page_or_performs_one_atomic_reset() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = compact_style();
+        runtime.show_partial(7, text_for_rows(3), FloatingOverlayPosition::Top, style);
+        let generation = runtime.snapshot().generation;
+        assert!(runtime.show_final(
+            Some(7),
+            PathBuf::from("/tmp/chunk.wav"),
+            format!("{} 최종", text_for_rows(3)),
+        ));
+        assert!(
+            runtime.snapshot().generation == generation
+                || runtime.snapshot().generation == generation + 1
+        );
+        assert!(runtime.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
     }
 
     #[test]
