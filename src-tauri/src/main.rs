@@ -5044,6 +5044,45 @@ fn start_live_capture(
         live_state.inner(),
         transcription_state.inner().clone(),
     )
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveCaptureStartError {
+    MicrophonePermission(PermissionGrantStatus),
+    Runtime(String),
+}
+
+impl std::fmt::Display for LiveCaptureStartError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MicrophonePermission(status) => write!(
+                formatter,
+                "Microphone permission is required to start Live Input (status: {status:?}). Open WakeNote Settings > Audio to continue."
+            ),
+            Self::Runtime(error) => formatter.write_str(error),
+        }
+    }
+}
+
+impl From<String> for LiveCaptureStartError {
+    fn from(error: String) -> Self {
+        Self::Runtime(error)
+    }
+}
+
+fn live_capture_permission_result(
+    status: PermissionGrantStatus,
+) -> Result<(), LiveCaptureStartError> {
+    if status == PermissionGrantStatus::Granted {
+        Ok(())
+    } else {
+        Err(LiveCaptureStartError::MicrophonePermission(status))
+    }
+}
+
+fn launch_auto_start_should_retry(error: &LiveCaptureStartError) -> bool {
+    !matches!(error, LiveCaptureStartError::MicrophonePermission(_))
 }
 
 fn start_live_capture_runtime(
@@ -5051,15 +5090,18 @@ fn start_live_capture_runtime(
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
-) -> Result<AppStatus, String> {
+) -> Result<AppStatus, LiveCaptureStartError> {
     let settings = {
-        let backend = backend_state.lock().map_err(|error| error.to_string())?;
+        let backend = backend_state
+            .lock()
+            .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?;
         let settings = backend.settings();
         if settings.pause_all || !settings.recording_enabled {
             return Ok(backend.app_status());
         }
         settings
     };
+    live_capture_permission_result(permissions::permission_snapshot().microphone.status)?;
 
     let desired_slots = settings
         .capture_microphones
@@ -5069,7 +5111,7 @@ fn start_live_capture_runtime(
         .collect::<Vec<_>>();
     let active_slots = live_state
         .lock()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?
         .active_slots();
     for slot in active_slots {
         let keep = desired_slots.iter().any(|(desired_slot, entry)| {
@@ -5087,7 +5129,7 @@ fn start_live_capture_runtime(
     for (slot, entry) in desired_slots {
         let healthy = live_state
             .lock()
-            .map_err(|error| error.to_string())?
+            .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?
             .diagnostic(slot)
             .is_some_and(|diagnostic| diagnostic.running && diagnostic.runtime_error.is_none());
         if healthy {
@@ -5095,7 +5137,7 @@ fn start_live_capture_runtime(
         }
         if live_state
             .lock()
-            .map_err(|error| error.to_string())?
+            .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?
             .is_running(slot)
         {
             stop_live_capture_slot_runtime(backend_state, live_state, slot)?;
@@ -5108,7 +5150,9 @@ fn start_live_capture_runtime(
             slot,
             entry.clone(),
         ) {
-            let mut backend = backend_state.lock().map_err(|lock| lock.to_string())?;
+            let mut backend = backend_state
+                .lock()
+                .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?;
             backend.capture_slot_start_failed(
                 slot,
                 format!("{} microphone unavailable: {error}", slot.as_str()),
@@ -5145,7 +5189,9 @@ fn start_live_capture_runtime(
             )
         })
         .unwrap_or((0, None));
-    let backend = backend_state.lock().map_err(|error| error.to_string())?;
+    let backend = backend_state
+        .lock()
+        .map_err(|error| LiveCaptureStartError::Runtime(error.to_string()))?;
     let runtime_error = (!backend.app_status().live_input_active)
         .then_some(runtime_error)
         .flatten();
@@ -7407,7 +7453,8 @@ fn apply_live_capture_runtime_action(
 ) -> Result<(), String> {
     match action {
         LiveCaptureRuntimeAction::Start => {
-            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)
+                .map_err(|error| error.to_string())?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Stop => {
@@ -7416,11 +7463,13 @@ fn apply_live_capture_runtime_action(
         }
         LiveCaptureRuntimeAction::Restart => {
             stop_live_capture_runtime(app, backend_state, live_state)?;
-            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)
+                .map_err(|error| error.to_string())?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Reconcile => {
-            start_live_capture_runtime(app, backend_state, live_state, transcription_state)?;
+            start_live_capture_runtime(app, backend_state, live_state, transcription_state)
+                .map_err(|error| error.to_string())?;
             Ok(())
         }
         LiveCaptureRuntimeAction::Unchanged => Ok(()),
@@ -8053,6 +8102,12 @@ fn main() {
                                 eprintln!(
                                     "[capture] launch auto-start attempt failed: {error}"
                                 );
+                                if !launch_auto_start_should_retry(&error) {
+                                    eprintln!(
+                                        "[capture] launch auto-start stopped because Microphone permission is unavailable"
+                                    );
+                                    break;
+                                }
                             }
                         }
                     }
@@ -10402,6 +10457,34 @@ mod tests {
             })
             .is_empty()
         );
+    }
+
+    #[test]
+    fn live_capture_permission_allows_only_a_granted_microphone() {
+        assert_eq!(
+            live_capture_permission_result(PermissionGrantStatus::Granted),
+            Ok(())
+        );
+
+        for status in [
+            PermissionGrantStatus::Unknown,
+            PermissionGrantStatus::NotDetermined,
+            PermissionGrantStatus::Denied,
+            PermissionGrantStatus::Restricted,
+            PermissionGrantStatus::Unsupported,
+        ] {
+            let error = live_capture_permission_result(status).expect_err("unavailable");
+            assert_eq!(error, LiveCaptureStartError::MicrophonePermission(status));
+            assert!(!launch_auto_start_should_retry(&error));
+            assert!(error.to_string().contains("WakeNote Settings > Audio"));
+        }
+    }
+
+    #[test]
+    fn launch_auto_start_retries_non_permission_capture_failures() {
+        assert!(launch_auto_start_should_retry(
+            &LiveCaptureStartError::Runtime("device warming up".to_string())
+        ));
     }
 
     #[test]
