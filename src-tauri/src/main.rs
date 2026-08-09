@@ -817,6 +817,33 @@ fn subtitle_preview_is_active(state: &AtomicU64) -> bool {
     state.load(Ordering::SeqCst) & 1 == 1
 }
 
+fn caption_snapshot_for_publication(
+    requested: OverlayCaptionSnapshot,
+    current: Option<OverlayCaptionSnapshot>,
+) -> OverlayCaptionSnapshot {
+    if requested.source == OverlayCaptionSource::Preview {
+        requested
+    } else {
+        current.unwrap_or(requested)
+    }
+}
+
+fn current_caption_snapshot(app: &AppHandle) -> Option<OverlayCaptionSnapshot> {
+    app.try_state::<OverlayCaptionState>()
+        .and_then(|state| state.lock().ok().map(|runtime| runtime.snapshot()))
+}
+
+fn latest_caption_snapshot_for_publication(
+    app: &AppHandle,
+    requested: OverlayCaptionSnapshot,
+) -> OverlayCaptionSnapshot {
+    if requested.source == OverlayCaptionSource::Preview {
+        requested
+    } else {
+        caption_snapshot_for_publication(requested, current_caption_snapshot(app))
+    }
+}
+
 fn publish_overlay_caption_snapshot(
     app: &AppHandle,
     snapshot: OverlayCaptionSnapshot,
@@ -824,7 +851,7 @@ fn publish_overlay_caption_snapshot(
 ) {
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        let mut snapshot = snapshot;
+        let mut snapshot = latest_caption_snapshot_for_publication(&app_for_task, snapshot);
         let needs_caption_layout = snapshot.visible
             && !snapshot.text.is_empty()
             && !matches!(snapshot.position, FloatingOverlayPosition::Off);
@@ -852,6 +879,8 @@ fn publish_overlay_caption_snapshot(
             );
             snapshot = runtime.snapshot();
         }
+
+        snapshot = latest_caption_snapshot_for_publication(&app_for_task, snapshot);
 
         let preview_protects_visible_window = !snapshot.visible
             && app_for_task
@@ -8547,6 +8576,31 @@ mod tests {
         assert!(subtitle_preview_is_active(&state));
         assert!(finish_subtitle_preview(&state, second));
         assert!(!subtitle_preview_is_active(&state));
+    }
+
+    #[test]
+    fn stale_hidden_caption_publication_selects_the_current_visible_react_payload() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = AppSettings::default().floating_overlay_caption_style();
+        runtime.show_partial(
+            7,
+            "older caption",
+            FloatingOverlayPosition::Top,
+            style.clone(),
+        );
+        runtime.hide();
+        let stale_hidden = runtime.snapshot();
+
+        runtime.show_partial(8, "newer caption", FloatingOverlayPosition::Top, style);
+        let current_visible = runtime.snapshot();
+        let published =
+            caption_snapshot_for_publication(stale_hidden.clone(), Some(current_visible.clone()));
+
+        assert_eq!(published, current_visible);
+        assert!(published.visible);
+        assert_eq!(published.text, "newer caption");
+        assert!(!runtime.hide_if_generation(stale_hidden.generation));
+        assert_eq!(runtime.snapshot(), current_visible);
     }
 
     fn dictionary_entry(id: &str, term: &str, aliases: &[&str]) -> DictionaryEntry {
