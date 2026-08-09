@@ -108,10 +108,15 @@ impl AppPersistence {
     }
 
     pub fn load_settings(&self) -> Result<Option<AppSettings>, PersistenceError> {
-        let Some(patch) = read_json_if_exists::<SettingsPatch>(&self.settings_path())? else {
+        let Some(value) = read_json_if_exists::<serde_json::Value>(&self.settings_path())? else {
             return Ok(None);
         };
+        let legacy_permission_onboarding = value.get("permission_onboarding_seen").is_none();
+        let patch = serde_json::from_value::<SettingsPatch>(value)?;
         let mut settings = AppSettings::default();
+        if legacy_permission_onboarding {
+            settings.permission_onboarding_seen = true;
+        }
         settings.apply_patch(patch);
         Ok(Some(settings))
     }

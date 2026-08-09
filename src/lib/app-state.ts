@@ -175,6 +175,7 @@ export function defaultSettings(): AppSettings {
     voice_auto_level_enabled: true,
     launch_at_login: false,
     start_live_input_on_launch: true,
+    permission_onboarding_seen: true,
     input_monitoring_enabled: false,
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,

@@ -218,6 +218,7 @@ fn default_settings_match_prd_mvp_defaults() {
     assert!(settings.show_dock_icon);
     assert!(settings.show_tray_icon);
     assert!(settings.start_live_input_on_launch);
+    assert!(!settings.permission_onboarding_seen);
     assert_eq!(settings.theme_mode, ThemeMode::Dark);
     assert_eq!(settings.theme_primary_color, "#000");
     assert_eq!(settings.openrouter_model, "z-ai/glm-5.2");
@@ -268,6 +269,18 @@ fn settings_patch_updates_start_live_input_on_launch() {
     });
 
     assert!(!settings.start_live_input_on_launch);
+}
+
+#[test]
+fn settings_patch_marks_permission_onboarding_seen() {
+    let mut settings = AppSettings::default();
+
+    settings.apply_patch(SettingsPatch {
+        permission_onboarding_seen: Some(true),
+        ..SettingsPatch::default()
+    });
+
+    assert!(settings.permission_onboarding_seen);
 }
 
 #[test]
@@ -962,17 +975,24 @@ fn live_capture_should_run_only_when_recording_is_enabled_and_not_paused() {
 
 #[test]
 fn live_capture_should_start_on_launch_respects_auto_start_toggle() {
-    assert!(live_capture_should_start_on_launch(&AppSettings::default()));
+    assert!(!live_capture_should_start_on_launch(&AppSettings::default()));
+    assert!(live_capture_should_start_on_launch(&AppSettings {
+        permission_onboarding_seen: true,
+        ..AppSettings::default()
+    }));
     assert!(!live_capture_should_start_on_launch(&AppSettings {
         start_live_input_on_launch: false,
+        permission_onboarding_seen: true,
         ..AppSettings::default()
     }));
     assert!(!live_capture_should_start_on_launch(&AppSettings {
         recording_enabled: false,
+        permission_onboarding_seen: true,
         ..AppSettings::default()
     }));
     assert!(!live_capture_should_start_on_launch(&AppSettings {
         pause_all: true,
+        permission_onboarding_seen: true,
         ..AppSettings::default()
     }));
 }

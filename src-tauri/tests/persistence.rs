@@ -27,6 +27,7 @@ fn persistence_round_trips_settings_json() {
             aliases: vec![" wake note ".to_string()],
             enabled: true,
         }]),
+        permission_onboarding_seen: Some(true),
         ..SettingsPatch::default()
     });
 
@@ -45,6 +46,7 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.dictionary[0].term, "WakeNote");
     assert_eq!(loaded.dictionary[0].aliases, vec!["wake note"]);
     assert!(loaded.save_root_confirmed);
+    assert!(loaded.permission_onboarding_seen);
 }
 
 #[test]
@@ -202,6 +204,7 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
     assert_eq!(loaded.max_chunk_ms, 180_000);
     assert_eq!(loaded.selected_model, "whisper-medium");
     assert!(loaded.start_live_input_on_launch);
+    assert!(loaded.permission_onboarding_seen);
     assert!(loaded.suppress_low_confidence_transcripts);
     assert_eq!(loaded.theme_mode, ThemeMode::Dark);
     assert_eq!(loaded.theme_primary_color, "#000");

@@ -434,6 +434,8 @@ pub struct AppSettings {
     pub voice_auto_level_enabled: bool,
     pub launch_at_login: bool,
     pub start_live_input_on_launch: bool,
+    #[serde(default = "default_true")]
+    pub permission_onboarding_seen: bool,
     #[serde(default)]
     pub input_monitoring_enabled: bool,
     #[serde(default)]
@@ -566,6 +568,7 @@ pub struct SettingsPatch {
     pub voice_auto_level_enabled: Option<bool>,
     pub launch_at_login: Option<bool>,
     pub start_live_input_on_launch: Option<bool>,
+    pub permission_onboarding_seen: Option<bool>,
     pub input_monitoring_enabled: Option<bool>,
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
@@ -800,7 +803,9 @@ pub fn live_capture_should_run(settings: &AppSettings) -> bool {
 }
 
 pub fn live_capture_should_start_on_launch(settings: &AppSettings) -> bool {
-    settings.start_live_input_on_launch && live_capture_should_run(settings)
+    settings.permission_onboarding_seen
+        && settings.start_live_input_on_launch
+        && live_capture_should_run(settings)
 }
 
 /// Whether detection should auto-prompt for a recognized source. A user override
@@ -1223,6 +1228,9 @@ impl AppSettings {
         if let Some(value) = patch.start_live_input_on_launch {
             self.start_live_input_on_launch = value;
         }
+        if let Some(value) = patch.permission_onboarding_seen {
+            self.permission_onboarding_seen = value;
+        }
         if let Some(value) = patch.input_monitoring_enabled {
             self.input_monitoring_enabled = value;
         }
@@ -1447,6 +1455,7 @@ impl Default for AppSettings {
             voice_auto_level_enabled: true,
             launch_at_login: false,
             start_live_input_on_launch: true,
+            permission_onboarding_seen: false,
             input_monitoring_enabled: false,
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
@@ -2130,6 +2139,7 @@ mod tests {
         }"##;
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
+        assert!(settings.permission_onboarding_seen);
         assert_eq!(settings.audio_bitrate_kbps, 96);
         assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
