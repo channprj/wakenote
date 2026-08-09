@@ -35,6 +35,7 @@ import {
   loadRecentTranscripts,
   loadDictationState,
   loadSnapshot,
+  isTauriRuntime,
   markAllActivityRead,
   openAccessibilityPermissionAssistant,
   openTranscriptFolder,
@@ -75,6 +76,7 @@ import type {
   AppSettings,
   DictationStatePayload,
 } from "./lib/types";
+import { permissionOnboardingNeedsGuidance } from "./lib/permission-guidance";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
 const launchAutoStartPollWindowMs = 130_000;
@@ -144,6 +146,8 @@ export default function App() {
   const launchAutoStartPollUntilMs = useRef(
     Date.now() + launchAutoStartPollWindowMs,
   );
+  const permissionOnboardingHandled = useRef(false);
+  const launchAutoStartSuppressed = useRef(false);
   const transcriptDispatch = useRef((event: TranscriptEvent) => {
     setTranscriptLog((entries) => reduceTranscriptLog(entries, event));
   });
@@ -154,10 +158,35 @@ export default function App() {
     try {
       const next = await loadSnapshot();
       setSnapshot((current) => preserveRecentTranscripts(current, next));
+      await handlePermissionOnboarding(next);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handlePermissionOnboarding(next: AppSnapshot) {
+    if (!isTauriRuntime() || permissionOnboardingHandled.current) {
+      return;
+    }
+    permissionOnboardingHandled.current = true;
+    if (next.settings.permission_onboarding_seen) {
+      return;
+    }
+
+    launchAutoStartSuppressed.current = true;
+    if (permissionOnboardingNeedsGuidance(next.permissions)) {
+      openSettings("audio");
+    }
+
+    try {
+      const persisted = await saveSettingsPatch({
+        permission_onboarding_seen: true,
+      });
+      setSnapshot((current) => preserveRecentTranscripts(current, persisted));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
@@ -403,6 +432,8 @@ export default function App() {
   }, [dictationState.state]);
 
   const launchAutoStartPending =
+    !launchAutoStartSuppressed.current &&
+    snapshot.settings.permission_onboarding_seen &&
     snapshot.settings.start_live_input_on_launch &&
     snapshot.settings.recording_enabled &&
     !snapshot.settings.pause_all &&

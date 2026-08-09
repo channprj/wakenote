@@ -23,6 +23,20 @@ const FEATURE_PERMISSIONS = {
   readonly PermissionKind[]
 >;
 
+const ONBOARDING_PERMISSIONS: readonly PermissionKind[] = [
+  "accessibility",
+  "microphone",
+  "screen_recording",
+];
+
+export function permissionOnboardingNeedsGuidance(
+  permissions: AppPermissions,
+): boolean {
+  return ONBOARDING_PERMISSIONS.some(
+    (permission) => permissions[permission].status !== "granted",
+  );
+}
+
 export function requiredPermissions(
   feature: PermissionFeature,
 ): readonly PermissionKind[] {

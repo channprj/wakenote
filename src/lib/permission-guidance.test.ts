@@ -3,6 +3,7 @@ import { defaultPermissions } from "./app-state";
 import type { PermissionGrantStatus } from "./types";
 import {
   missingPermissions,
+  permissionOnboardingNeedsGuidance,
   requiredPermissions,
   type PermissionFeature,
   type PermissionKind,
@@ -19,6 +20,19 @@ const EXPECTED_REQUIREMENTS: ReadonlyArray<
 ];
 
 describe("permission guidance", () => {
+  it("guides onboarding when any supported permission is unavailable", () => {
+    expect(permissionOnboardingNeedsGuidance(defaultPermissions())).toBe(false);
+    for (const permission of [
+      "accessibility",
+      "microphone",
+      "screen_recording",
+    ] as const) {
+      const permissions = defaultPermissions();
+      permissions[permission].status = "unknown";
+      expect(permissionOnboardingNeedsGuidance(permissions)).toBe(true);
+    }
+  });
+
   it("maps each explicit action to its closed permission requirements", () => {
     for (const [feature, permissions] of EXPECTED_REQUIREMENTS) {
       expect(requiredPermissions(feature)).toEqual(permissions);
