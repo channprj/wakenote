@@ -115,6 +115,7 @@ function directSettingsCards(grid: HTMLElement): HTMLElement[] {
 function makeActions(): SettingsActions {
   return {
     onPatch: vi.fn(),
+    onPermissionRequired: vi.fn().mockResolvedValue(true),
     onPreviewSubtitle: vi.fn(),
     onSetMicrophoneInputVolume: vi.fn(),
     onSuspendDictationShortcut: vi.fn(),

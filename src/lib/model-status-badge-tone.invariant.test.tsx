@@ -61,6 +61,7 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
       snapshot={snapshot}
       actions={{
         onPatch: () => {},
+        onPermissionRequired: async () => true,
         onPreviewSubtitle: () => {},
         onSetMicrophoneInputVolume: () => {},
         onSuspendDictationShortcut: () => {},

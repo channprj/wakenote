@@ -108,23 +108,21 @@ export function AudioSettings({
             actions.onPatch({ system_audio_enabled })
           }
         />
-        {settings.system_audio_enabled ? (
-          <PermissionSetting
-            label="Screen Recording Permission"
-            status={screenRecordingPermission.label}
-            detail={screenRecordingPermission.detail}
-            actionLabel={
-              screenRecordingPermission.status === "granted"
-                ? null
-                : screenRecordingPermission.can_request
-                  ? "Allow Screen Recording"
-                  : screenRecordingPermission.can_open_settings
-                    ? "Open System Settings"
-                    : null
-            }
-            onAction={actions.onRequestScreenRecordingPermission}
-          />
-        ) : null}
+        <PermissionSetting
+          label="Screen Recording Permission"
+          status={screenRecordingPermission.label}
+          detail={screenRecordingPermission.detail}
+          actionLabel={
+            screenRecordingPermission.status === "granted"
+              ? null
+              : screenRecordingPermission.can_request
+                ? "Allow Screen Recording"
+                : screenRecordingPermission.can_open_settings
+                  ? "Open System Settings"
+                  : null
+          }
+          onAction={actions.onRequestScreenRecordingPermission}
+        />
       </SettingsCard>
 
       {settings.system_audio_enabled ? (
@@ -132,7 +130,13 @@ export function AudioSettings({
           title="Recognized system sources"
           description="Live detection and built-in source capture."
         >
-          <SystemAudioSettings settings={settings} onPatch={actions.onPatch} />
+          <SystemAudioSettings
+            settings={settings}
+            onPatch={actions.onPatch}
+            onPermissionRequired={() =>
+              actions.onPermissionRequired("resume_source")
+            }
+          />
         </SettingsCard>
       ) : null}
 

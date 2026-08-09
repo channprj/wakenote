@@ -6,6 +6,7 @@ import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
   onPatch: vi.fn(),
+  onPermissionRequired: vi.fn().mockResolvedValue(true),
   onPreviewSubtitle: vi.fn(),
   onSetMicrophoneInputVolume: vi.fn(),
   onSuspendDictationShortcut: vi.fn(),
@@ -32,6 +33,17 @@ const actions: SettingsActions = {
 };
 
 describe("AudioSettings", () => {
+  it("always shows Screen Recording permission guidance", () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.system_audio_enabled = false;
+
+    const markup = renderToStaticMarkup(
+      <AudioSettings snapshot={snapshot} actions={actions} />,
+    );
+
+    expect(markup).toContain("Screen Recording Permission");
+  });
+
   it("offers the System Settings drag flow for app-list permissions", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.system_audio_enabled = true;

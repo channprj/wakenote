@@ -23,6 +23,7 @@ import { useListVisibility } from "../hooks/use-list-visibility";
 import { subscribeMeetingEvents } from "../lib/meeting-event-subscriptions";
 import { projectListItems } from "../lib/list-visibility";
 import { isMeetingActive } from "../lib/meeting-progress";
+import type { PermissionFeature } from "../lib/permission-guidance";
 import type {
   ListVisibilityTarget,
   ManualMeetingRecordingStatus,
@@ -44,7 +45,11 @@ function meetingVisibilityTarget(
   };
 }
 
-export function MeetingTranscriptionPanel() {
+export function MeetingTranscriptionPanel({
+  onPermissionRequired,
+}: {
+  onPermissionRequired: (feature: PermissionFeature) => Promise<boolean>;
+}) {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [progressById, setProgressById] = useState<Record<string, MeetingProgressPayload>>({});
@@ -213,6 +218,9 @@ export function MeetingTranscriptionPanel() {
   }, [manualRecording.state, refreshManualRecording]);
 
   const onStartManualRecording = useCallback(async () => {
+    if (!(await onPermissionRequired("manual_meeting"))) {
+      return;
+    }
     setManualRecordingBusy(true);
     setError(null);
     try {
@@ -222,7 +230,7 @@ export function MeetingTranscriptionPanel() {
     } finally {
       setManualRecordingBusy(false);
     }
-  }, []);
+  }, [onPermissionRequired]);
 
   const onStopManualRecording = useCallback(async () => {
     setManualRecordingBusy(true);

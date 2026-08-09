@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   loadSnapshot: vi.fn<() => Promise<AppSnapshot>>(),
   loadRecentTranscripts: vi.fn().mockResolvedValue([]),
   loadDictationState: vi.fn().mockResolvedValue({ state: "idle", error: null }),
+  loadPermissionSnapshot: vi.fn(),
   saveSettingsPatch: vi.fn(),
   startLiveCapture: vi.fn(),
   listen: vi.fn().mockResolvedValue(() => {}),
@@ -22,6 +23,7 @@ vi.mock("./lib/tauri-client", async (importOriginal) => {
     loadSnapshot: mocks.loadSnapshot,
     loadRecentTranscripts: mocks.loadRecentTranscripts,
     loadDictationState: mocks.loadDictationState,
+    loadPermissionSnapshot: mocks.loadPermissionSnapshot,
     saveSettingsPatch: mocks.saveSettingsPatch,
     startLiveCapture: mocks.startLiveCapture,
   };
@@ -83,6 +85,7 @@ beforeEach(() => {
   mocks.loadDictationState.mockResolvedValue({ state: "idle", error: null });
   mocks.listen.mockResolvedValue(() => {});
   mocks.loadSnapshot.mockReset();
+  mocks.loadPermissionSnapshot.mockReset();
   mocks.saveSettingsPatch.mockReset();
   mocks.startLiveCapture.mockReset();
 });
@@ -154,5 +157,41 @@ describe("permission onboarding", () => {
 
     expect(screen.getByText("Capture", { selector: "h1" })).toBeTruthy();
     expect(mocks.saveSettingsPatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("explicit action permission guidance", () => {
+  it("routes a denied live-input start to Audio without starting capture", async () => {
+    const user = userEvent.setup();
+    const snapshot = nativeSnapshot(true, "microphone");
+    mocks.loadSnapshot.mockResolvedValue(snapshot);
+    mocks.loadPermissionSnapshot.mockResolvedValue(snapshot.permissions);
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Start Input" }));
+
+    expect(
+      (await screen.findByRole("tab", { name: "Audio" })).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+    expect(mocks.loadPermissionSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.startLiveCapture).not.toHaveBeenCalled();
+  });
+
+  it("starts live input after a fresh permission snapshot grants access", async () => {
+    const user = userEvent.setup();
+    const snapshot = nativeSnapshot(true, null);
+    mocks.loadSnapshot.mockResolvedValue(snapshot);
+    mocks.loadPermissionSnapshot.mockResolvedValue(snapshot.permissions);
+    mocks.startLiveCapture.mockResolvedValue(snapshot);
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Start Input" }));
+
+    await waitFor(() => expect(mocks.startLiveCapture).toHaveBeenCalledOnce());
+    expect(mocks.loadPermissionSnapshot).toHaveBeenCalledOnce();
   });
 });

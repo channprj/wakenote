@@ -34,6 +34,7 @@ import {
   enqueueBacklog,
   loadRecentTranscripts,
   loadDictationState,
+  loadPermissionSnapshot,
   loadSnapshot,
   isTauriRuntime,
   markAllActivityRead,
@@ -76,7 +77,11 @@ import type {
   AppSettings,
   DictationStatePayload,
 } from "./lib/types";
-import { permissionOnboardingNeedsGuidance } from "./lib/permission-guidance";
+import {
+  missingPermissions,
+  permissionOnboardingNeedsGuidance,
+  type PermissionFeature,
+} from "./lib/permission-guidance";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
 
 const launchAutoStartPollWindowMs = 130_000;
@@ -490,6 +495,36 @@ export default function App() {
     }
   }
 
+  async function ensurePermission(feature: PermissionFeature) {
+    setBusy(true);
+    setError(null);
+    try {
+      const permissions = await loadPermissionSnapshot();
+      setSnapshot((current) => ({ ...current, permissions }));
+      if (missingPermissions(feature, permissions).length > 0) {
+        openSettings("audio");
+        return false;
+      }
+      return true;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      openSettings("audio");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPermissionAction(
+    feature: PermissionFeature,
+    action: () => Promise<AppSnapshot>,
+  ) {
+    if (!(await ensurePermission(feature))) {
+      return false;
+    }
+    return runAction(action);
+  }
+
   async function moveActivityJobsToTrash(ids: number[]): Promise<number[]> {
     setBusy(true);
     setError(null);
@@ -557,7 +592,9 @@ export default function App() {
         activityAttention={activityAttention.attention}
         transcriptEntries={transcriptEntries}
         busy={busy}
-        onStart={() => void runAction(startLiveCapture)}
+        onStart={() =>
+          void runPermissionAction("live_input", startLiveCapture)
+        }
         onStop={() => void runAction(stopLiveCapture)}
         onRefresh={() => void refresh()}
         onPatch={(patch) => void patchSettings(patch)}
@@ -571,7 +608,7 @@ export default function App() {
         title="Meetings"
         description="Import, monitor, resume, and review long meeting recordings."
       >
-        <MeetingTranscriptionPanel />
+        <MeetingTranscriptionPanel onPermissionRequired={ensurePermission} />
       </WorkspacePage>
     ),
     transcripts: (
@@ -646,6 +683,7 @@ export default function App() {
         snapshot={snapshot}
         actions={{
           onPatch: patchSettings,
+          onPermissionRequired: ensurePermission,
           onPreviewSubtitle: (patch) => previewSubtitle(patch),
           onSetMicrophoneInputVolume: (deviceId, volumePercent) =>
             void runAction(() =>

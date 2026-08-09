@@ -1,7 +1,9 @@
 import type { AppSettings } from "@/lib/types";
+import type { PermissionFeature } from "@/lib/permission-guidance";
 
 export interface SettingsActions {
   onPatch: (patch: Partial<AppSettings>) => void | Promise<void>;
+  onPermissionRequired: (feature: PermissionFeature) => Promise<boolean>;
   onPreviewSubtitle: (patch: Partial<AppSettings>) => void | Promise<void>;
   onSetMicrophoneInputVolume: (
     deviceId: string,

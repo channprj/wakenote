@@ -10,6 +10,7 @@ import type { SettingsActions } from "./types";
 
 const actions: SettingsActions = {
   onPatch: vi.fn(),
+  onPermissionRequired: vi.fn().mockResolvedValue(true),
   onPreviewSubtitle: vi.fn(),
   onSetMicrophoneInputVolume: vi.fn(),
   onSuspendDictationShortcut: vi.fn(),

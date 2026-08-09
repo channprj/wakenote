@@ -45,9 +45,11 @@ const BUILTIN_SOURCES: ReadonlyArray<RecognizedSourceInfo> = [
 export function SystemAudioSettings({
   settings,
   onPatch,
+  onPermissionRequired,
 }: {
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => void;
+  onPermissionRequired: () => Promise<boolean>;
 }) {
   const fallbackSources = useMemo(() => recognizedSourcesFromSettings(settings), [settings]);
   const [sources, setSources] = useState<RecognizedSourceInfo[]>(fallbackSources);
@@ -124,6 +126,13 @@ export function SystemAudioSettings({
     [settings.source_auto_prompt, onPatch],
   );
 
+  const resumeDetectedSource = useCallback(async () => {
+    if (!detected || !(await onPermissionRequired())) {
+      return;
+    }
+    await startSourceCapture(detected.source_id);
+  }, [detected, onPermissionRequired]);
+
   return (
     <div className="system-audio-settings">
       {detected ? (
@@ -146,7 +155,7 @@ export function SystemAudioSettings({
             <Button
               type="button"
               size="sm"
-              onClick={() => void startSourceCapture(detected.source_id)}
+              onClick={() => void resumeDetectedSource()}
             >
               Resume capture
             </Button>
