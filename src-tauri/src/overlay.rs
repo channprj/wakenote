@@ -997,17 +997,33 @@ mod tests {
     #[test]
     fn short_korean_caption_reserves_a_physical_one_row_content_width() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let style = caption_style();
-        let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &style);
-        let content_width = size.0
-            - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL
-            - style.padding_horizontal_px as f64 * 2.0
-            - style.border_width_px as f64 * 2.0;
 
-        // Four Korean glyphs occupy one em each and the inter-word space uses
-        // the layout metric of 0.58em at the configured 24px font size.
-        assert!(content_width >= 109.0, "content width was {content_width}");
-        assert!(size.0 < style.max_width_px as f64 / 2.0);
+        for font_size_px in [24, 48] {
+            let mut style = caption_style();
+            style.font_size_px = font_size_px;
+            let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &style);
+            let clamped_font_size = (font_size_px as f64).clamp(10.0, 48.0);
+            // Four Korean glyphs occupy one em each and the inter-word space
+            // uses the layout metric of 0.58em.
+            let expected_content_width = 4.58 * clamped_font_size;
+            let expected_outer_width = (expected_content_width
+                + style.padding_horizontal_px as f64 * 2.0
+                + style.border_width_px as f64 * 2.0
+                + OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL)
+                .ceil();
+            let content_width = size.0
+                - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL
+                - style.padding_horizontal_px as f64 * 2.0
+                - style.border_width_px as f64 * 2.0;
+            let effective_max_width = caption_effective_max_width_for_monitor(monitor, &style);
+
+            assert_eq!(size.0, expected_outer_width);
+            assert!(
+                content_width >= expected_content_width,
+                "{font_size_px}px content width was {content_width}"
+            );
+            assert!(size.0 < effective_max_width + OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL);
+        }
     }
 
     #[test]
