@@ -3,13 +3,59 @@ use wakenote::recorder::{
     ChunkMetadata, ChunkSource, Recorder, RecordingRequest, TranscriptionSidecar,
     TranscriptionStatus,
 };
-use wakenote::settings::{AppSettings, AudioFormat};
+use wakenote::settings::{AppSettings, AudioFormat, CaptureMicrophoneEntry};
 
 fn wav_settings() -> AppSettings {
     AppSettings {
         audio_format: AudioFormat::Wav,
         ..AppSettings::default()
     }
+}
+
+#[test]
+fn explicit_microphone_inputs_override_configured_capture_devices() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let primary = CaptureMicrophoneEntry {
+        id: "primary".to_string(),
+        label: "Wired".to_string(),
+        core_audio_uid: None,
+    };
+    let secondary = CaptureMicrophoneEntry {
+        id: "secondary".to_string(),
+        label: "Wireless".to_string(),
+        core_audio_uid: None,
+    };
+    let settings = AppSettings {
+        audio_format: AudioFormat::Wav,
+        capture_microphones: vec![primary, secondary.clone()],
+        ..AppSettings::default()
+    };
+    let timestamp = Utc.with_ymd_and_hms(2026, 8, 10, 4, 30, 0).unwrap();
+    let actual_inputs = [secondary];
+
+    let chunk = Recorder::write_chunk(RecordingRequest {
+        save_root: tmp.path(),
+        settings: &settings,
+        samples: &[0.0, 0.1, -0.1, 0.0],
+        sample_rate: 16_000,
+        started_at: timestamp,
+        ended_at: timestamp + chrono::Duration::milliseconds(500),
+        device_id: "secondary",
+        device_name: "Wireless",
+        used_fallback_device: false,
+        transcription_enabled: false,
+        app_version: "0.260809.1",
+        live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: Some("dictation"),
+        microphone_inputs: Some(&actual_inputs),
+    })
+    .expect("record explicit input");
+
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(chunk.metadata_path).expect("metadata bytes"))
+            .expect("metadata json");
+    assert_eq!(metadata.microphone_inputs, actual_inputs);
 }
 
 #[test]
@@ -40,6 +86,7 @@ fn recorder_writes_m4a_with_native_encoder_bridge() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record m4a chunk");
 
@@ -87,6 +134,7 @@ fn recorder_writes_mp3_with_ffmpeg_encoder() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record mp3 chunk");
 
@@ -125,6 +173,7 @@ fn recorder_writes_wav_and_metadata_without_txt_when_transcription_is_off() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record chunk");
 
@@ -173,6 +222,7 @@ fn transcription_sidecar_writes_txt_and_updates_metadata_on_success() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record chunk");
 
@@ -216,6 +266,7 @@ fn transcription_sidecar_writes_error_without_removing_audio() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record chunk");
 
@@ -254,6 +305,7 @@ fn transcription_sidecar_discards_late_cancelled_output_and_preserves_audio() {
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: None,
+        microphone_inputs: None,
     })
     .expect("record chunk");
     TranscriptionSidecar::write_success_with_provenance(

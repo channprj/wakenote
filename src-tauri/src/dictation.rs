@@ -10,7 +10,10 @@ use tauri_plugin_global_shortcut::Shortcut;
 use crate::dictionary::DictionaryContext;
 use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
 use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
-use crate::settings::{AppSettings, SettingsPatch, TranscriptionLanguage, expand_user_path};
+use crate::settings::{
+    AppSettings, CaptureMicrophoneEntry, MicrophoneSlot, SettingsPatch, TranscriptionLanguage,
+    expand_user_path,
+};
 use crate::transcription::{
     Transcriber, TranscriptionExecution, TranscriptionRequest, resample_linear,
     should_skip_low_signal_audio,
@@ -211,12 +214,19 @@ impl ModifierShortcutRuntime {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DictationMicrophoneInput {
+    pub slot: MicrophoneSlot,
+    pub device: CaptureMicrophoneEntry,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictationRecording {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
+    pub microphone_inputs: Vec<DictationMicrophoneInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,6 +241,7 @@ pub struct DictationRuntime<B: AudioInputBackend> {
     last_press: Option<Instant>,
     samples: Arc<Mutex<Vec<f32>>>,
     sample_rate: Option<u32>,
+    microphone_inputs: Vec<DictationMicrophoneInput>,
     started_at: Option<DateTime<Utc>>,
     next_recording_id: u64,
     active_recording_id: Option<u64>,
@@ -245,6 +256,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             last_press: None,
             samples: Arc::new(Mutex::new(Vec::new())),
             sample_rate: None,
+            microphone_inputs: Vec::new(),
             started_at: None,
             next_recording_id: 1,
             active_recording_id: None,
@@ -329,10 +341,22 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             .sample_rate
             .filter(|sample_rate| *sample_rate > 0)
             .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
+        let input = DictationMicrophoneInput {
+            slot: MicrophoneSlot::Primary,
+            device: CaptureMicrophoneEntry {
+                id: config.device_id.clone(),
+                label: config
+                    .label_hint
+                    .clone()
+                    .unwrap_or_else(|| config.device_id.clone()),
+                core_audio_uid: config.core_audio_uid.clone(),
+            },
+        };
         self.samples
             .lock()
             .map_err(|error| error.to_string())?
             .clear();
+        self.microphone_inputs.clear();
         let callback_samples = self.samples.clone();
         self.capture
             .start(config, move |frame| {
@@ -347,12 +371,14 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.next_recording_id = self.next_recording_id.saturating_add(1);
         self.active_recording_id = Some(recording_id);
         self.sample_rate = Some(sample_rate);
+        self.microphone_inputs = vec![input];
         self.started_at = Some(Utc::now());
         Ok(recording_id)
     }
 
     pub fn start_recording_with_processor<P, F>(
         &mut self,
+        input: DictationMicrophoneInput,
         config: AudioInputConfig,
         processor: P,
         mut on_frame: F,
@@ -372,6 +398,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
             .lock()
             .map_err(|error| error.to_string())?
             .clear();
+        self.microphone_inputs.clear();
         let callback_samples = self.samples.clone();
         self.capture
             .start_processed(config, processor, move |frame| {
@@ -386,6 +413,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.next_recording_id = self.next_recording_id.saturating_add(1);
         self.active_recording_id = Some(recording_id);
         self.sample_rate = Some(sample_rate);
+        self.microphone_inputs = vec![input];
         self.started_at = Some(Utc::now());
         Ok(recording_id)
     }
@@ -413,11 +441,13 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 )
         });
         let samples = std::mem::take(&mut *self.samples.lock().map_err(|error| error.to_string())?);
+        let microphone_inputs = std::mem::take(&mut self.microphone_inputs);
         Ok(DictationRecording {
             samples,
             sample_rate,
             started_at,
             ended_at,
+            microphone_inputs,
         })
     }
 
@@ -438,6 +468,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.capture.stop();
         self.stage = DictationStage::Idle;
         self.sample_rate = None;
+        self.microphone_inputs.clear();
         self.started_at = None;
         self.active_recording_id = None;
         if let Ok(mut samples) = self.samples.lock() {
@@ -489,6 +520,7 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
         self.capture.stop();
         self.stage = DictationStage::Error;
         self.sample_rate = None;
+        self.microphone_inputs.clear();
         self.started_at = None;
         self.active_recording_id = None;
         if let Ok(mut samples) = self.samples.lock() {
@@ -671,11 +703,27 @@ pub fn prepare_dictation_audio(
 pub fn archive_dictation_recording(
     recording: &DictationRecording,
     settings: &AppSettings,
-    device_id: &str,
-    device_name: &str,
-    used_fallback_device: bool,
     app_version: &str,
 ) -> Result<RecordedChunk, String> {
+    let mut actual_inputs = recording.microphone_inputs.clone();
+    actual_inputs.sort_by_key(|input| input.slot);
+    let devices = actual_inputs
+        .iter()
+        .map(|input| input.device.clone())
+        .collect::<Vec<_>>();
+    if devices.is_empty() {
+        return Err("dictation recording has no captured microphone".to_string());
+    }
+    let device_id = devices
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>()
+        .join("+");
+    let device_name = devices
+        .iter()
+        .map(|entry| entry.label.as_str())
+        .collect::<Vec<_>>()
+        .join(" + ");
     let save_root = expand_user_path(&settings.save_root);
     let mut archive_settings = settings.clone();
     archive_settings.selected_model = settings.effective_dictation_model().to_string();
@@ -686,14 +734,15 @@ pub fn archive_dictation_recording(
         sample_rate: recording.sample_rate,
         started_at: recording.started_at,
         ended_at: recording.ended_at,
-        device_id,
-        device_name,
-        used_fallback_device,
+        device_id: &device_id,
+        device_name: &device_name,
+        used_fallback_device: false,
         transcription_enabled: true,
         app_version,
         live_capture_chunk_id: None,
         source: ChunkSource::Microphone,
         source_label: Some("dictation"),
+        microphone_inputs: Some(&devices),
     })
     .map_err(|error| error.to_string())
 }

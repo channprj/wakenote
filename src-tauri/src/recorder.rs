@@ -102,6 +102,7 @@ pub struct RecordingRequest<'a> {
     pub live_capture_chunk_id: Option<u64>,
     pub source: ChunkSource,
     pub source_label: Option<&'a str>,
+    pub microphone_inputs: Option<&'a [CaptureMicrophoneEntry]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +181,18 @@ impl Recorder {
             }
         }
 
+        let microphone_inputs = request
+            .microphone_inputs
+            .map(<[CaptureMicrophoneEntry]>::to_vec)
+            .unwrap_or_else(|| {
+                if request.source == ChunkSource::Microphone
+                    && matches!(request.source_label, Some("mic-merged" | "mic-priority"))
+                {
+                    request.settings.capture_microphones.clone()
+                } else {
+                    Vec::new()
+                }
+            });
         let metadata = ChunkMetadata {
             model_id: request.settings.selected_model.clone(),
             requested_model_id: None,
@@ -213,13 +226,7 @@ impl Recorder {
                 request.source,
                 request.source_label,
             ),
-            microphone_inputs: if request.source == ChunkSource::Microphone
-                && matches!(request.source_label, Some("mic-merged" | "mic-priority"))
-            {
-                request.settings.capture_microphones.clone()
-            } else {
-                Vec::new()
-            },
+            microphone_inputs,
             transcribed_at: None,
             transcript_text: None,
         };

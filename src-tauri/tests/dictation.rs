@@ -3,12 +3,13 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use wakenote::dictation::{
-    DictationAction, DictationProcessOutcome, DictationRecording, DictationRuntime,
-    DictationShortcutEvent, DictationStage, ModifierShortcut, ModifierShortcutRuntime,
-    ShortcutRegistrationChange, archive_dictation_recording, candidate_dictation_settings,
-    modifier_shortcut, prepare_dictation_audio, shortcut_registration_change,
-    transcribe_and_type_dictation_recording, transcribe_dictation_recording,
-    transcribe_dictation_recording_execution, validate_dictation_shortcut,
+    DictationAction, DictationMicrophoneInput, DictationProcessOutcome, DictationRecording,
+    DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
+    ModifierShortcutRuntime, ShortcutRegistrationChange, archive_dictation_recording,
+    candidate_dictation_settings, modifier_shortcut, prepare_dictation_audio,
+    shortcut_registration_change, transcribe_and_type_dictation_recording,
+    transcribe_dictation_recording, transcribe_dictation_recording_execution,
+    validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
 use wakenote::live_capture::{
@@ -16,7 +17,8 @@ use wakenote::live_capture::{
 };
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
-    AppSettings, AudioFormat, DictionaryEntry, SettingsPatch, TranscriptionLanguage,
+    AppSettings, AudioFormat, CaptureMicrophoneEntry, DictionaryEntry, MicrophoneSlot,
+    SettingsPatch, TranscriptionLanguage,
 };
 use wakenote::transcription::{
     Transcriber, TranscriptionError, TranscriptionExecution, TranscriptionRequest,
@@ -25,6 +27,17 @@ use wakenote::transcription::{
 use wakenote::voice_leveling::AudioFrameProcessor;
 
 struct ScalingProcessor(f32);
+
+fn dictation_input(slot: MicrophoneSlot, id: &str, label: &str) -> DictationMicrophoneInput {
+    DictationMicrophoneInput {
+        slot,
+        device: CaptureMicrophoneEntry {
+            id: id.to_string(),
+            label: label.to_string(),
+            core_audio_uid: None,
+        },
+    }
+}
 
 impl AudioFrameProcessor for ScalingProcessor {
     fn process(&mut self, mut frame: AudioFrame) -> Vec<AudioFrame> {
@@ -386,6 +399,7 @@ fn dictation_records_processed_microphone_samples() {
     );
     runtime
         .start_recording_with_processor(
+            dictation_input(MicrophoneSlot::Primary, "fake", "Fake microphone"),
             AudioInputConfig {
                 device_id: "fake".to_string(),
                 sample_rate: Some(48_000),
@@ -646,6 +660,7 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
         sample_rate: 48_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
     };
 
     let text = transcribe_dictation_recording(
@@ -692,6 +707,7 @@ fn dictation_transcription_applies_the_shared_dictionary() {
         sample_rate: 16_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
     };
     let transcriber = OrderedFakeTranscriber {
         events: Arc::new(Mutex::new(Vec::new())),
@@ -727,6 +743,7 @@ fn dictation_transcription_preserves_usage_while_applying_the_dictionary() {
         sample_rate: 16_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
     };
 
     let execution = transcribe_dictation_recording_execution(
@@ -757,6 +774,7 @@ fn dictation_types_only_after_transcription_returns() {
         sample_rate: 48_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
     };
 
     let outcome = transcribe_and_type_dictation_recording(
@@ -797,6 +815,7 @@ fn quiet_dictation_never_calls_the_text_sink() {
         sample_rate: 48_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
     };
 
     let outcome = transcribe_and_type_dictation_recording(
@@ -821,6 +840,11 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
         sample_rate: 16_000,
         started_at,
         ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(
+            MicrophoneSlot::Primary,
+            "input-0-boya-cm40",
+            "BOYA CM40",
+        )],
     };
     let settings = AppSettings {
         save_root: tmp.path().to_string_lossy().into_owned(),
@@ -830,15 +854,8 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
         ..AppSettings::default()
     };
 
-    let chunk = archive_dictation_recording(
-        &recording,
-        &settings,
-        "input-0-boya-cm40",
-        "BOYA CM40",
-        false,
-        "0.260730.1",
-    )
-    .expect("dictation archive");
+    let chunk = archive_dictation_recording(&recording, &settings, "0.260730.1")
+        .expect("dictation archive");
 
     assert!(chunk.audio_path.exists());
     assert!(
@@ -858,10 +875,55 @@ fn dictation_archive_persists_audio_and_recoverable_transcript_metadata() {
     assert_eq!(metadata.source_label.as_deref(), Some("dictation"));
     assert_eq!(metadata.device_id, "input-0-boya-cm40");
     assert_eq!(metadata.device_name, "BOYA CM40");
+    assert_eq!(metadata.microphone_inputs.len(), 1);
     assert_eq!(metadata.model_id, "whisper-small");
     assert_eq!(metadata.transcription_status, TranscriptionStatus::Queued);
     assert_eq!(metadata.started_at, recording.started_at);
     assert_eq!(metadata.ended_at, recording.ended_at);
+}
+
+#[test]
+fn dictation_archive_persists_only_started_microphones_in_slot_order() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let started_at = Utc::now();
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![
+            dictation_input(MicrophoneSlot::Secondary, "secondary", "Wireless"),
+            dictation_input(MicrophoneSlot::Primary, "primary", "Wired"),
+        ],
+    };
+    let settings = AppSettings {
+        save_root: tmp.path().to_string_lossy().into_owned(),
+        audio_format: AudioFormat::Wav,
+        capture_microphones: vec![
+            dictation_input(MicrophoneSlot::Primary, "primary", "Wired").device,
+            dictation_input(MicrophoneSlot::Secondary, "secondary", "Wireless").device,
+        ],
+        ..AppSettings::default()
+    };
+
+    let chunk = archive_dictation_recording(&recording, &settings, "0.260809.1")
+        .expect("dictation archive");
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(chunk.metadata_path).expect("metadata"))
+            .expect("valid metadata");
+
+    assert_eq!(metadata.source_label.as_deref(), Some("dictation"));
+    assert_eq!(metadata.microphone_slot, None);
+    assert_eq!(metadata.device_id, "primary+secondary");
+    assert_eq!(metadata.device_name, "Wired + Wireless");
+    assert_eq!(
+        metadata
+            .microphone_inputs
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["primary", "secondary"],
+    );
 }
 
 #[test]

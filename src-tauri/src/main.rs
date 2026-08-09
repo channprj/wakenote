@@ -41,12 +41,13 @@ use wakenote::commands::{
 };
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
-    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction, DictationRecording,
-    DictationRuntime, DictationShortcutEvent, DictationStage, DictationStatePayload,
-    ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey, ShortcutRegistrationChange,
-    archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
-    normalize_dictation_patch, shortcut_registration_change,
-    transcribe_dictation_recording_execution, validate_dictation_shortcut,
+    DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
+    DictationMicrophoneInput, DictationRecording, DictationRuntime, DictationShortcutEvent,
+    DictationStage, DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime,
+    PhysicalModifierKey, ShortcutRegistrationChange, archive_dictation_recording,
+    candidate_dictation_settings, modifier_shortcut, normalize_dictation_patch,
+    shortcut_registration_change, transcribe_dictation_recording_execution,
+    validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
 use wakenote::dictionary_file::{
@@ -2128,15 +2129,6 @@ fn process_dictation_recording(
 ) {
     let started = Instant::now();
     let dictation_model = settings.effective_dictation_model().to_string();
-    let microphone = settings
-        .capture_microphones
-        .first()
-        .cloned()
-        .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
-            id: settings.selected_microphone.clone(),
-            label: settings.selected_microphone_label.clone(),
-            core_audio_uid: None,
-        });
     let (credentials, models) = match app.try_state::<BackendState>() {
         Some(state) => match state.lock() {
             Ok(backend) => match backend.transcription_credentials() {
@@ -2205,14 +2197,8 @@ fn process_dictation_recording(
         "openai-gpt-live-transcribe" | "soniox-realtime-v5"
     ) {
         let archive_started = Instant::now();
-        let archive_result = archive_dictation_recording(
-            &recording,
-            &settings,
-            &microphone.id,
-            &microphone.label,
-            false,
-            env!("CARGO_PKG_VERSION"),
-        );
+        let archive_result =
+            archive_dictation_recording(&recording, &settings, env!("CARGO_PKG_VERSION"));
         let archive_elapsed = archive_started.elapsed();
         let transcription_started = Instant::now();
         let result = match &archive_result {
@@ -2270,14 +2256,10 @@ fn process_dictation_recording(
             let archive_started = Instant::now();
             let recording_for_archive = &recording;
             let settings_for_archive = &settings;
-            let microphone_for_archive = &microphone;
             let archive_task = scope.spawn(move || {
                 let result = archive_dictation_recording(
                     recording_for_archive,
                     settings_for_archive,
-                    &microphone_for_archive.id,
-                    &microphone_for_archive.label,
-                    false,
                     env!("CARGO_PKG_VERSION"),
                 );
                 (result, archive_started.elapsed())
@@ -2609,6 +2591,10 @@ fn handle_dictation_shortcut_event(
                 label: resolved.device_name.clone(),
                 core_audio_uid: resolved.core_audio_uid.clone(),
             };
+            let dictation_input = DictationMicrophoneInput {
+                slot: MicrophoneSlot::Primary,
+                device: configured_microphone.clone(),
+            };
             let callback_app = app.clone();
             let callback_throttle =
                 Arc::new(Mutex::new(Instant::now() - OVERLAY_LEVEL_EMIT_INTERVAL));
@@ -2637,6 +2623,7 @@ fn handle_dictation_shortcut_event(
                 .lock()
                 .map_err(|error| error.to_string())?
                 .start_recording_with_processor(
+                    dictation_input,
                     AudioInputConfig {
                         device_id: resolved.device_id,
                         sample_rate: Some(resolved.sample_rate),

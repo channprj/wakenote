@@ -452,6 +452,7 @@ impl CaptureProcessor {
             live_capture_chunk_id: chunk_id,
             source: self.config.source,
             source_label: self.config.source_label.as_deref(),
+            microphone_inputs: None,
         })?;
 
         self.completed_chunks.push(chunk.clone());
