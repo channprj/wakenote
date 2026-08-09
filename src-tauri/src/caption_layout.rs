@@ -17,16 +17,17 @@ struct CaptionLayoutSignature {
     font_size_px: u32,
     padding_horizontal_px: u32,
     border_width_px: u32,
-    max_width_px: u32,
+    effective_max_width_milli_px: u64,
 }
 
-impl From<&FloatingOverlayCaptionStyle> for CaptionLayoutSignature {
-    fn from(style: &FloatingOverlayCaptionStyle) -> Self {
+impl CaptionLayoutSignature {
+    fn new(style: &FloatingOverlayCaptionStyle, effective_max_width_px: f64) -> Self {
         Self {
             font_size_px: style.font_size_px,
             padding_horizontal_px: style.padding_horizontal_px,
             border_width_px: style.border_width_px,
-            max_width_px: style.max_width_px,
+            effective_max_width_milli_px: (effective_max_width_px.max(1.0) * 1_000.0).round()
+                as u64,
         }
     }
 }
@@ -64,6 +65,15 @@ pub struct StableCaptionPager {
 
 impl StableCaptionPager {
     pub fn update(&mut self, raw: &str, style: &FloatingOverlayCaptionStyle) -> CaptionPageUpdate {
+        self.update_for_max_width(raw, style, style.max_width_px as f64)
+    }
+
+    pub fn update_for_max_width(
+        &mut self,
+        raw: &str,
+        style: &FloatingOverlayCaptionStyle,
+        effective_max_width_px: f64,
+    ) -> CaptionPageUpdate {
         let normalized = normalize(raw);
         if normalized.is_empty() {
             self.clear();
@@ -73,7 +83,8 @@ impl StableCaptionPager {
             };
         }
 
-        let signature = CaptionLayoutSignature::from(style);
+        let effective_max_width_px = effective_max_width_px.max(1.0);
+        let signature = CaptionLayoutSignature::new(style, effective_max_width_px);
         if self.normalized == normalized && self.signature.as_ref() == Some(&signature) {
             return CaptionPageUpdate {
                 text: self.text.clone(),
@@ -81,7 +92,7 @@ impl StableCaptionPager {
             };
         }
 
-        let capacity = caption_line_capacity(style);
+        let capacity = caption_line_capacity_for_width(style, effective_max_width_px);
         let new_units = display_units(&normalized, capacity);
         let mut page_turned = false;
 
@@ -101,6 +112,8 @@ impl StableCaptionPager {
             let old_changed_end = self.units.len() - suffix;
             let new_changed_end = new_units.len() - suffix;
             let delta = new_units.len() as isize - self.units.len() as isize;
+            let radical_replacement =
+                prefix == 0 && suffix == 0 && (!self.line_ends.is_empty() || self.page_start > 0);
 
             if self.page_start >= old_changed_end {
                 self.page_start = shifted_index(self.page_start, delta);
@@ -109,39 +122,43 @@ impl StableCaptionPager {
                     .iter()
                     .map(|&end| shifted_index(end, delta))
                     .collect();
+            } else if radical_replacement {
+                self.page_start = 0;
+                self.line_ends.clear();
+                page_turned = !self.text.is_empty();
             } else if prefix < self.page_start || old_changed_end > self.page_start {
                 let retained = self
                     .line_ends
                     .iter()
                     .copied()
-                    .filter_map(|end| {
+                    .map(|end| {
                         if end <= prefix {
-                            Some(end)
+                            end
                         } else if end >= old_changed_end {
-                            Some(shifted_index(end, delta))
+                            shifted_index(end, delta)
                         } else {
-                            None
+                            remap_changed_anchor(end, prefix, old_changed_end, new_changed_end)
                         }
                     })
                     .collect::<Vec<_>>();
-                if retained.len() != self.line_ends.len() || prefix == 0 {
-                    page_turned |= !self.text.is_empty() && prefix == 0 && self.page_start > 0;
-                }
                 self.line_ends = retained;
-                if prefix == 0 {
-                    self.page_start = 0;
-                }
             }
 
             self.page_start = self.page_start.min(new_units.len());
-            self.line_ends.retain(|&end| {
-                end > self.page_start && end <= new_changed_end.max(prefix).max(new_units.len())
-            });
+            self.line_ends
+                .retain(|&end| end > self.page_start && end < new_units.len());
+            self.line_ends.dedup();
         }
 
         self.units = new_units;
         self.normalized = normalized;
         self.signature = Some(signature);
+
+        if self.page_start >= self.units.len() {
+            self.page_start = 0;
+            self.line_ends.clear();
+            page_turned = !self.text.is_empty();
+        }
 
         if let Some(reset_start) = self.first_overflowing_anchor(capacity) {
             self.page_start = reset_start;
@@ -339,6 +356,17 @@ fn shifted_index(index: usize, delta: isize) -> usize {
     index.saturating_add_signed(delta)
 }
 
+fn remap_changed_anchor(
+    old_anchor: usize,
+    prefix: usize,
+    old_changed_end: usize,
+    new_changed_end: usize,
+) -> usize {
+    let old_span = old_changed_end.saturating_sub(prefix).max(1);
+    let new_span = new_changed_end.saturating_sub(prefix);
+    prefix + (old_anchor.saturating_sub(prefix) * new_span) / old_span
+}
+
 fn units_width(units: &[DisplayUnit]) -> f64 {
     units
         .iter()
@@ -476,6 +504,65 @@ mod tests {
         let corrected = pager.update("completely different corrected transcript", &style);
         assert!(corrected.text.contains("transcript"));
         assert!(corrected.text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn retraction_behind_the_active_page_repaginates_before_the_next_append() {
+        let style = compact_style();
+        let mut pager = StableCaptionPager::default();
+        let four_rows = text_for_rows(&style, 4);
+        assert!(pager.update(&four_rows, &style).page_turned);
+
+        let retracted = text_for_rows(&style, 2);
+        let after_retraction = pager.update(&retracted, &style);
+        assert!(after_retraction.page_turned);
+        assert!(!after_retraction.text.is_empty());
+
+        let after_append = pager.update(&format!("{retracted} 가"), &style);
+        assert!(!after_append.text.is_empty());
+        assert!(after_append.text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn effective_width_paginates_ordinary_and_oversized_content_before_native_clipping() {
+        let style = crate::settings::AppSettings::default().floating_overlay_caption_style();
+        let narrow_width = 110.0;
+        let ordinary = (0..40).map(|_| "가").collect::<Vec<_>>().join(" ");
+        let mut pager = StableCaptionPager::default();
+        let ordinary_page = pager.update_for_max_width(&ordinary, &style, narrow_width);
+        assert!(ordinary_page.page_turned);
+        assert!(ordinary_page.text.lines().count() <= MAX_CAPTION_LINES);
+
+        let mut oversized = StableCaptionPager::default();
+        let oversized_page = oversized.update_for_max_width(
+            "https://example.com/one/very/long/unbroken/path/with/more/segments",
+            &style,
+            narrow_width,
+        );
+        assert!(oversized_page.page_turned);
+        assert!(oversized_page.text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn cross_boundary_corrections_preserve_valid_slots_and_reset_radical_replacements_once() {
+        let style = compact_style();
+        let source = text_for_rows(&style, 3);
+        let mut words = source.split(' ').collect::<Vec<_>>();
+        words[5] = "나";
+        words[6] = "다";
+        let corrected = words.join(" ");
+
+        let mut pager = StableCaptionPager::default();
+        let before = pager.update(&source, &style);
+        let correction = pager.update(&corrected, &style);
+        assert_eq!(correction.text.lines().count(), before.text.lines().count());
+        assert!(!correction.page_turned);
+
+        let inserted = format!("가 {corrected}");
+        assert!(pager.update(&inserted, &style).page_turned);
+
+        let replacement = text_for_rows(&style, 3).replace('가', "나");
+        assert!(pager.update(&replacement, &style).page_turned);
     }
 
     #[test]

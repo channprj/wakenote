@@ -53,6 +53,7 @@ pub struct OverlayCaptionRuntime {
     raw_text: String,
     text: String,
     pager: StableCaptionPager,
+    effective_max_width_px: Option<f64>,
     position: FloatingOverlayPosition,
     style: FloatingOverlayCaptionStyle,
     hide_at: Option<Instant>,
@@ -71,6 +72,7 @@ impl Default for OverlayCaptionRuntime {
             raw_text: String::new(),
             text: String::new(),
             pager: StableCaptionPager::default(),
+            effective_max_width_px: None,
             position: FloatingOverlayPosition::Off,
             style: default_overlay_caption_style(),
             hide_at: None,
@@ -440,6 +442,18 @@ impl OverlayCaptionRuntime {
         }
     }
 
+    pub fn set_effective_max_width(&mut self, effective_max_width_px: Option<f64>) {
+        let normalized = effective_max_width_px.map(|width| width.max(1.0));
+        if self.effective_max_width_px == normalized {
+            return;
+        }
+        self.effective_max_width_px = normalized;
+        let update = self.refresh_display_text();
+        if update.page_turned {
+            self.generation = self.generation.saturating_add(1);
+        }
+    }
+
     pub fn due_hide_generation(&self, now: Instant) -> Option<u64> {
         self.hide_at
             .filter(|hide_at| *hide_at <= now)
@@ -459,7 +473,12 @@ impl OverlayCaptionRuntime {
     }
 
     fn refresh_display_text(&mut self) -> CaptionPageUpdate {
-        let update = self.pager.update(&self.raw_text, &self.style);
+        let update = self.pager.update_for_max_width(
+            &self.raw_text,
+            &self.style,
+            self.effective_max_width_px
+                .unwrap_or(self.style.max_width_px as f64),
+        );
         self.text.clone_from(&update.text);
         update
     }
@@ -698,6 +717,50 @@ mod tests {
         runtime.show_partial(8, "새 청크", FloatingOverlayPosition::Top, style);
         assert_eq!(runtime.snapshot().text, "새 청크");
         assert_eq!(runtime.raw_text, "새 청크");
+    }
+
+    #[test]
+    fn runtime_retraction_and_radical_first_page_replacement_turn_once_without_sticking() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = compact_style();
+        let four_rows = text_for_rows(4);
+        runtime.show_partial(7, &four_rows, FloatingOverlayPosition::Top, style.clone());
+        let page_generation = runtime.snapshot().generation;
+
+        let retracted = text_for_rows(2);
+        runtime.show_partial(7, &retracted, FloatingOverlayPosition::Top, style.clone());
+        assert_eq!(runtime.snapshot().generation, page_generation + 1);
+        assert!(!runtime.snapshot().text.is_empty());
+        runtime.show_partial(
+            7,
+            format!("{retracted} 가"),
+            FloatingOverlayPosition::Top,
+            style.clone(),
+        );
+        assert!(!runtime.snapshot().text.is_empty());
+
+        let before_replacement = runtime.snapshot().generation;
+        runtime.show_partial(
+            7,
+            text_for_rows(3).replace('가', "나"),
+            FloatingOverlayPosition::Top,
+            style,
+        );
+        assert_eq!(runtime.snapshot().generation, before_replacement + 1);
+    }
+
+    #[test]
+    fn effective_target_width_repages_before_native_fourth_row() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = style();
+        runtime.set_effective_max_width(Some(110.0));
+        runtime.show_partial(
+            7,
+            (0..40).map(|_| "가").collect::<Vec<_>>().join(" "),
+            FloatingOverlayPosition::Top,
+            style,
+        );
+        assert!(runtime.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
     }
 
     #[test]

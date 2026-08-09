@@ -822,6 +822,20 @@ fn publish_overlay_caption_snapshot(
     snapshot: OverlayCaptionSnapshot,
     context: &'static str,
 ) {
+    let snapshot = if snapshot.source == OverlayCaptionSource::Preview {
+        snapshot
+    } else if let Some(width) = overlay::effective_caption_max_width(app, &snapshot.style) {
+        app.try_state::<OverlayCaptionState>()
+            .and_then(|state| {
+                state.lock().ok().map(|mut runtime| {
+                    runtime.set_effective_max_width(Some(width));
+                    runtime.snapshot()
+                })
+            })
+            .unwrap_or(snapshot)
+    } else {
+        snapshot
+    };
     let preview_protects_visible_window = !snapshot.visible
         && app
             .try_state::<SubtitlePreviewState>()
@@ -1257,7 +1271,13 @@ fn preview_subtitle(
     let preview_raw_text = "Subtitle preview · 자막 미리보기";
     let preview_hold = adaptive_caption_hold(preview_raw_text, style.duration_seconds);
     let mut pager = StableCaptionPager::default();
-    let preview_text = pager.update(preview_raw_text, &style).text;
+    let preview_text = pager
+        .update_for_max_width(
+            preview_raw_text,
+            &style,
+            overlay::effective_caption_max_width(&app, &style).unwrap_or(style.max_width_px as f64),
+        )
+        .text;
     let preview_token = begin_subtitle_preview(preview_state.inner());
     let preview = OverlayCaptionSnapshot {
         generation: preview_token,

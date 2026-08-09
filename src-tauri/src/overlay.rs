@@ -280,6 +280,18 @@ pub fn show_caption_overlay(
     Ok(())
 }
 
+pub fn effective_caption_max_width(
+    app: &AppHandle,
+    style: &FloatingOverlayCaptionStyle,
+) -> Option<f64> {
+    if app.get_webview_window(OVERLAY_LABEL).is_none() {
+        create_overlay_window(app).ok()?;
+    }
+    let window = app.get_webview_window(OVERLAY_LABEL)?;
+    monitor_with_cursor(&window)
+        .map(|monitor| caption_effective_max_width_for_monitor(monitor, style))
+}
+
 pub fn emit_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
     let payload = OverlayLevelPayload { levels };
     if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
@@ -563,8 +575,6 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let available_window_width = (monitor_logical_w - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
     let available_window_height =
         (monitor_logical_h - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
-    let available_caption_width =
-        (available_window_width - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL).max(1.0);
     let available_caption_height =
         (available_window_height - OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL).max(1.0);
 
@@ -572,11 +582,10 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let padding_horizontal = style.padding_horizontal_px as f64;
     let padding_vertical = style.padding_vertical_px as f64;
     let border = style.border_width_px as f64;
-    let requested_max_width = style.max_width_px as f64;
     let requested_min_height = style.min_height_px.min(style.max_height_px) as f64;
     let requested_max_height = style.min_height_px.max(style.max_height_px) as f64;
 
-    let effective_max_width = requested_max_width.min(available_caption_width);
+    let effective_max_width = caption_effective_max_width_for_monitor(monitor, style);
     let line_capacity = caption_line_capacity_for_width(style, effective_max_width);
     let line_metrics = caption_line_metrics(text, line_capacity);
     let average_char_width = font_size * 0.56;
@@ -607,6 +616,22 @@ pub(crate) fn caption_overlay_size_for_monitor(
             .ceil()
             .min(available_window_height),
     )
+}
+
+pub(crate) fn caption_effective_max_width_for_monitor(
+    monitor: MonitorRect,
+    style: &FloatingOverlayCaptionStyle,
+) -> f64 {
+    let scale = if monitor.scale_factor > 0.0 {
+        monitor.scale_factor
+    } else {
+        1.0
+    };
+    let monitor_logical_w = monitor.size_physical.0 as f64 / scale;
+    let available_window_width = (monitor_logical_w - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0).max(1.0);
+    let available_caption_width =
+        (available_window_width - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL).max(1.0);
+    (style.max_width_px as f64).min(available_caption_width)
 }
 
 pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
@@ -648,7 +673,7 @@ pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::caption_layout::MAX_CAPTION_LINES;
+    use crate::caption_layout::{MAX_CAPTION_LINES, StableCaptionPager};
 
     #[test]
     fn visible_dictation_payloads_carry_the_selected_style() {
@@ -877,6 +902,34 @@ mod tests {
             + style.padding_vertical_px as f64 * 2.0
             + style.border_width_px as f64 * 2.0;
         assert!(narrow.1 <= three_row_box.ceil() + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL);
+    }
+
+    #[test]
+    fn narrow_monitor_width_pages_ordinary_and_oversized_caption_content_before_sizing() {
+        let monitor = rect((0, 0), (200, 1080), 1.0);
+        let style = caption_style();
+        let effective_width = caption_effective_max_width_for_monitor(monitor, &style);
+        assert!(effective_width < style.max_width_px as f64);
+
+        let mut ordinary = StableCaptionPager::default();
+        let ordinary_page = ordinary.update_for_max_width(
+            &(0..40).map(|_| "가").collect::<Vec<_>>().join(" "),
+            &style,
+            effective_width,
+        );
+        assert!(ordinary_page.page_turned);
+        assert!(ordinary_page.text.lines().count() <= MAX_CAPTION_LINES);
+        let ordinary_size = caption_overlay_size_for_monitor(monitor, &ordinary_page.text, &style);
+        assert!(ordinary_size.1 <= 3.0 * style.font_size_px as f64 * 1.25 + 64.0);
+
+        let mut oversized = StableCaptionPager::default();
+        let oversized_page = oversized.update_for_max_width(
+            "https://example.com/one/very/long/unbroken/path/with/more/segments",
+            &style,
+            effective_width,
+        );
+        assert!(oversized_page.page_turned);
+        assert!(oversized_page.text.lines().count() <= MAX_CAPTION_LINES);
     }
 
     #[test]
