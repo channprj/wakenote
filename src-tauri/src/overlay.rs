@@ -101,6 +101,12 @@ pub struct MonitorRect {
     pub scale_factor: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaptionLayoutContext {
+    pub target_monitor: MonitorRect,
+    pub effective_max_width_px: f64,
+}
+
 #[derive(Serialize, Clone)]
 struct OverlayStatePayload {
     state: OverlayState,
@@ -248,6 +254,7 @@ pub fn show_caption_overlay(
     position: FloatingOverlayPosition,
     text: &str,
     style: &FloatingOverlayCaptionStyle,
+    target_monitor: Option<MonitorRect>,
 ) -> tauri::Result<()> {
     if matches!(position, FloatingOverlayPosition::Off) || text.trim().is_empty() {
         return hide_overlay(app);
@@ -260,7 +267,7 @@ pub fn show_caption_overlay(
         return Ok(());
     };
 
-    if let Some(rect) = monitor_with_cursor(&window) {
+    if let Some(rect) = target_monitor {
         let Some(anchor) = overlay_anchor(position) else {
             return hide_overlay(app);
         };
@@ -280,16 +287,17 @@ pub fn show_caption_overlay(
     Ok(())
 }
 
-pub fn effective_caption_max_width(
+/// Resolves the monitor that must be reused for caption pagination and native sizing.
+/// Call this from the main thread immediately before showing the caption overlay.
+pub fn resolve_caption_layout_context(
     app: &AppHandle,
     style: &FloatingOverlayCaptionStyle,
-) -> Option<f64> {
+) -> Option<CaptionLayoutContext> {
     if app.get_webview_window(OVERLAY_LABEL).is_none() {
         create_overlay_window(app).ok()?;
     }
     let window = app.get_webview_window(OVERLAY_LABEL)?;
-    monitor_with_cursor(&window)
-        .map(|monitor| caption_effective_max_width_for_monitor(monitor, style))
+    monitor_with_cursor(&window).map(|monitor| caption_layout_context_for_monitor(monitor, style))
 }
 
 pub fn emit_waveform_levels(app: &AppHandle, levels: Vec<f32>) {
@@ -634,6 +642,16 @@ pub(crate) fn caption_effective_max_width_for_monitor(
     (style.max_width_px as f64).min(available_caption_width)
 }
 
+pub fn caption_layout_context_for_monitor(
+    target_monitor: MonitorRect,
+    style: &FloatingOverlayCaptionStyle,
+) -> CaptionLayoutContext {
+    CaptionLayoutContext {
+        target_monitor,
+        effective_max_width_px: caption_effective_max_width_for_monitor(target_monitor, style),
+    }
+}
+
 pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
     if count == 0 {
         return Vec::new();
@@ -674,6 +692,7 @@ pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
 mod tests {
     use super::*;
     use crate::caption_layout::{MAX_CAPTION_LINES, StableCaptionPager};
+    use crate::overlay_caption::OverlayCaptionRuntime;
 
     #[test]
     fn visible_dictation_payloads_carry_the_selected_style() {
@@ -930,6 +949,41 @@ mod tests {
         );
         assert!(oversized_page.page_turned);
         assert!(oversized_page.text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn one_resolved_monitor_context_drives_paging_sizing_and_one_generation_reset_per_change() {
+        let style = caption_style();
+        let narrow = rect((1920, 0), (200, 1080), 1.0);
+        let wide = rect((0, 0), (1920, 1080), 1.0);
+        let narrow_context = caption_layout_context_for_monitor(narrow, &style);
+        assert_eq!(narrow_context.target_monitor, narrow);
+
+        let mut pager = StableCaptionPager::default();
+        let page = pager.update_for_max_width(
+            &(0..40).map(|_| "가").collect::<Vec<_>>().join(" "),
+            &style,
+            narrow_context.effective_max_width_px,
+        );
+        let size =
+            caption_overlay_size_for_monitor(narrow_context.target_monitor, &page.text, &style);
+        let position =
+            calculate_caption_position(narrow_context.target_monitor, OverlayAnchor::Top, size);
+        assert!(page.text.lines().count() <= MAX_CAPTION_LINES);
+        assert!(size.0 <= narrow_context.effective_max_width_px + 24.0);
+        assert!(position.x >= narrow.origin_physical.0 as f64);
+
+        let mut runtime = OverlayCaptionRuntime::default();
+        runtime.show_partial(7, "caption", FloatingOverlayPosition::Top, style.clone());
+        let initial_generation = runtime.snapshot().generation;
+        runtime.set_effective_max_width(Some(narrow_context.effective_max_width_px));
+        assert_eq!(runtime.snapshot().generation, initial_generation + 1);
+        runtime.set_effective_max_width(Some(narrow_context.effective_max_width_px));
+        assert_eq!(runtime.snapshot().generation, initial_generation + 1);
+
+        let wide_context = caption_layout_context_for_monitor(wide, &style);
+        runtime.set_effective_max_width(Some(wide_context.effective_max_width_px));
+        assert_eq!(runtime.snapshot().generation, initial_generation + 2);
     }
 
     #[test]

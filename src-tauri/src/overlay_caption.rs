@@ -750,6 +750,20 @@ mod tests {
     }
 
     #[test]
+    fn runtime_one_line_complete_replacement_advances_generation_once() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = compact_style();
+        runtime.show_partial(7, "first", FloatingOverlayPosition::Top, style.clone());
+        let first_generation = runtime.snapshot().generation;
+
+        runtime.show_partial(7, "second", FloatingOverlayPosition::Top, style.clone());
+        assert_eq!(runtime.snapshot().generation, first_generation + 1);
+
+        runtime.show_partial(7, "second", FloatingOverlayPosition::Top, style);
+        assert_eq!(runtime.snapshot().generation, first_generation + 1);
+    }
+
+    #[test]
     fn effective_target_width_repages_before_native_fourth_row() {
         let mut runtime = OverlayCaptionRuntime::default();
         let style = style();

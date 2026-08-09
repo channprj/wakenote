@@ -822,37 +822,56 @@ fn publish_overlay_caption_snapshot(
     snapshot: OverlayCaptionSnapshot,
     context: &'static str,
 ) {
-    let snapshot = if snapshot.source == OverlayCaptionSource::Preview {
-        snapshot
-    } else if let Some(width) = overlay::effective_caption_max_width(app, &snapshot.style) {
-        app.try_state::<OverlayCaptionState>()
-            .and_then(|state| {
-                state.lock().ok().map(|mut runtime| {
-                    runtime.set_effective_max_width(Some(width));
-                    runtime.snapshot()
-                })
-            })
-            .unwrap_or(snapshot)
-    } else {
-        snapshot
-    };
-    let preview_protects_visible_window = !snapshot.visible
-        && app
-            .try_state::<SubtitlePreviewState>()
-            .is_some_and(|state| subtitle_preview_is_active(state.inner()));
-    if preview_protects_visible_window {
-        return;
-    }
-    let expiry = app.try_state::<OverlayCaptionState>().and_then(|state| {
-        let runtime_state = state.inner().clone();
-        let generation = runtime_state
-            .lock()
-            .ok()
-            .and_then(|mut runtime| runtime.take_expiry_generation_to_schedule());
-        generation.map(|generation| (runtime_state, generation))
-    });
     let app_for_task = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
+        let mut snapshot = snapshot;
+        let needs_caption_layout = snapshot.visible
+            && !snapshot.text.is_empty()
+            && !matches!(snapshot.position, FloatingOverlayPosition::Off);
+        let layout_context = needs_caption_layout
+            .then(|| overlay::resolve_caption_layout_context(&app_for_task, &snapshot.style))
+            .flatten();
+
+        if needs_caption_layout && snapshot.source == OverlayCaptionSource::Preview {
+            let mut pager = StableCaptionPager::default();
+            snapshot.text = pager
+                .update_for_max_width(
+                    &snapshot.text,
+                    &snapshot.style,
+                    layout_context
+                        .map(|context| context.effective_max_width_px)
+                        .unwrap_or(snapshot.style.max_width_px as f64),
+                )
+                .text;
+        } else if needs_caption_layout
+            && let Some(state) = app_for_task.try_state::<OverlayCaptionState>()
+            && let Ok(mut runtime) = state.lock()
+        {
+            runtime.set_effective_max_width(
+                layout_context.map(|context| context.effective_max_width_px),
+            );
+            snapshot = runtime.snapshot();
+        }
+
+        let preview_protects_visible_window = !snapshot.visible
+            && app_for_task
+                .try_state::<SubtitlePreviewState>()
+                .is_some_and(|state| subtitle_preview_is_active(state.inner()));
+        if preview_protects_visible_window {
+            return;
+        }
+
+        let expiry = app_for_task.try_state::<OverlayCaptionState>().and_then(|state| {
+            let runtime_state = state.inner().clone();
+            let generation = runtime_state
+                .lock()
+                .ok()
+                .and_then(|mut runtime| runtime.take_expiry_generation_to_schedule());
+            generation.map(|generation| (runtime_state, generation))
+        });
+        if let Some((runtime_state, generation)) = expiry {
+            schedule_overlay_caption_hide(app_for_task.clone(), runtime_state, generation);
+        }
         let is_visible = snapshot.visible
             && !snapshot.text.is_empty()
             && !matches!(snapshot.position, FloatingOverlayPosition::Off);
@@ -880,6 +899,7 @@ fn publish_overlay_caption_snapshot(
                 snapshot.position,
                 &snapshot.text,
                 &snapshot.style,
+                layout_context.map(|context| context.target_monitor),
             ) {
                 eprintln!("[overlay-caption] {context} show failed: {error}");
                 if let Err(hide_error) = overlay::hide_overlay(&app_for_task) {
@@ -911,9 +931,6 @@ fn publish_overlay_caption_snapshot(
                 "[overlay-caption] {context} cleanup after schedule failure failed: {hide_error}"
             );
         }
-    }
-    if let Some((runtime_state, generation)) = expiry {
-        schedule_overlay_caption_hide(app.clone(), runtime_state, generation);
     }
 }
 
@@ -1270,14 +1287,6 @@ fn preview_subtitle(
     let style = settings.floating_overlay_caption_style();
     let preview_raw_text = "Subtitle preview · 자막 미리보기";
     let preview_hold = adaptive_caption_hold(preview_raw_text, style.duration_seconds);
-    let mut pager = StableCaptionPager::default();
-    let preview_text = pager
-        .update_for_max_width(
-            preview_raw_text,
-            &style,
-            overlay::effective_caption_max_width(&app, &style).unwrap_or(style.max_width_px as f64),
-        )
-        .text;
     let preview_token = begin_subtitle_preview(preview_state.inner());
     let preview = OverlayCaptionSnapshot {
         generation: preview_token,
@@ -1286,7 +1295,7 @@ fn preview_subtitle(
         phase: wakenote::overlay_caption::OverlayCaptionPhase::Partial,
         chunk_id: None,
         audio_path: None,
-        text: preview_text,
+        text: preview_raw_text.to_string(),
         position,
         final_hold_ms: Some(preview_hold.as_millis() as u64),
         style,

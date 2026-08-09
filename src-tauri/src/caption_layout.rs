@@ -112,8 +112,7 @@ impl StableCaptionPager {
             let old_changed_end = self.units.len() - suffix;
             let new_changed_end = new_units.len() - suffix;
             let delta = new_units.len() as isize - self.units.len() as isize;
-            let radical_replacement =
-                prefix == 0 && suffix == 0 && (!self.line_ends.is_empty() || self.page_start > 0);
+            let radical_replacement = prefix == 0 && suffix == 0 && !self.normalized.is_empty();
 
             if self.page_start >= old_changed_end {
                 self.page_start = shifted_index(self.page_start, delta);
@@ -504,6 +503,17 @@ mod tests {
         let corrected = pager.update("completely different corrected transcript", &style);
         assert!(corrected.text.contains("transcript"));
         assert!(corrected.text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn one_line_complete_replacement_turns_once_without_affecting_empty_or_identical_updates() {
+        let style = compact_style();
+        let mut pager = StableCaptionPager::default();
+
+        assert!(!pager.update("", &style).page_turned);
+        assert!(!pager.update("first", &style).page_turned);
+        assert!(pager.update("second", &style).page_turned);
+        assert!(!pager.update("second", &style).page_turned);
     }
 
     #[test]
