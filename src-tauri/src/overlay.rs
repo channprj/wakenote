@@ -596,10 +596,10 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let effective_max_width = caption_effective_max_width_for_monitor(monitor, style);
     let line_capacity = caption_line_capacity_for_width(style, effective_max_width);
     let line_metrics = caption_line_metrics(text, line_capacity);
-    let average_char_width = font_size * 0.56;
-    let desired_caption_width = line_metrics.widest_line_width * average_char_width
-        + padding_horizontal * 2.0
-        + border * 2.0;
+    // Caption line metrics are already normalized to em units: Korean glyphs
+    // occupy one em and ASCII glyphs use their narrower weighted width.
+    let desired_caption_width =
+        line_metrics.widest_line_width * font_size + padding_horizontal * 2.0 + border * 2.0;
     let caption_width = desired_caption_width.min(effective_max_width).max(1.0);
     let visible_line_count = line_metrics.line_count.min(MAX_CAPTION_LINES);
     let text_height = visible_line_count as f64 * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
@@ -860,7 +860,7 @@ mod tests {
             &style,
         );
 
-        assert_eq!(short.0, 124.0);
+        assert_eq!(short.0, 172.0);
         assert_eq!(short.1, 76.0);
         assert!(long.1 > short.1);
         assert!(long.1 <= 1080.0 - OVERLAY_SCREEN_MARGIN_LOGICAL * 2.0);
@@ -991,7 +991,23 @@ mod tests {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
         let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &caption_style());
 
-        assert_eq!(size, (124.0, 76.0));
+        assert_eq!(size, (172.0, 76.0));
+    }
+
+    #[test]
+    fn short_korean_caption_reserves_a_physical_one_row_content_width() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let style = caption_style();
+        let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &style);
+        let content_width = size.0
+            - OVERLAY_CAPTION_HORIZONTAL_WINDOW_INSET_LOGICAL
+            - style.padding_horizontal_px as f64 * 2.0
+            - style.border_width_px as f64 * 2.0;
+
+        // Four Korean glyphs occupy one em each and the inter-word space uses
+        // the layout metric of 0.58em at the configured 24px font size.
+        assert!(content_width >= 109.0, "content width was {content_width}");
+        assert!(size.0 < style.max_width_px as f64 / 2.0);
     }
 
     #[test]
@@ -1012,7 +1028,7 @@ mod tests {
         padded.border_width_px = 4;
         let padded_size = caption_overlay_size_for_monitor(monitor, "abc", &padded);
 
-        assert_eq!(compact_size, (48.0, 46.0));
+        assert_eq!(compact_size, (66.0, 46.0));
         assert!(padded_size.0 > compact_size.0);
         assert!(padded_size.1 > compact_size.1);
         assert!(padded_size.0 <= 344.0);
