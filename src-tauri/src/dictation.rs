@@ -9,8 +9,8 @@ use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
 use crate::dictionary::DictionaryContext;
-use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
-use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer};
+use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig};
+use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer, MultiCaptureRuntime};
 use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
 use crate::settings::{
     AppSettings, CaptureMicrophoneEntry, MicrophoneSlot, SettingsPatch, TranscriptionLanguage,
@@ -337,35 +337,57 @@ pub enum DictationProcessOutcome {
     NoSpeech,
 }
 
-pub struct DictationRuntime<B: AudioInputBackend> {
-    capture: LiveCaptureRuntime<B>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictationCaptureResult {
+    pub operation_id: u64,
+    pub settings: AppSettings,
+    pub recording: DictationRecording,
+    pub failures: Vec<DictationSlotFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DictationCaptureHealth {
+    Healthy,
+    Degraded {
+        active_slots: Vec<MicrophoneSlot>,
+        failures: Vec<DictationSlotFailure>,
+    },
+    Exhausted(Box<DictationCaptureResult>),
+}
+
+pub struct DictationRuntime<B: AudioInputBackend + Default> {
+    capture: MultiCaptureRuntime<B>,
+    mix_session: Option<Arc<Mutex<DictationMixSession>>>,
     stage: DictationStage,
     last_press: Option<Instant>,
     samples: Arc<Mutex<Vec<f32>>>,
-    sample_rate: Option<u32>,
-    microphone_inputs: Vec<DictationMicrophoneInput>,
+    settings_snapshot: Option<AppSettings>,
     started_at: Option<DateTime<Utc>>,
     next_recording_id: u64,
     active_recording_id: Option<u64>,
+    capture_claimed: bool,
     stop_cue_armed: bool,
 }
 
-impl<B: AudioInputBackend> DictationRuntime<B> {
-    pub fn new(backend: B) -> Self {
+impl<B: AudioInputBackend + Default> Default for DictationRuntime<B> {
+    fn default() -> Self {
         Self {
-            capture: LiveCaptureRuntime::new(backend),
+            capture: MultiCaptureRuntime::default(),
+            mix_session: None,
             stage: DictationStage::Idle,
             last_press: None,
             samples: Arc::new(Mutex::new(Vec::new())),
-            sample_rate: None,
-            microphone_inputs: Vec::new(),
+            settings_snapshot: None,
             started_at: None,
             next_recording_id: 1,
             active_recording_id: None,
+            capture_claimed: false,
             stop_cue_armed: false,
         }
     }
+}
 
+impl<B: AudioInputBackend + Default> DictationRuntime<B> {
     pub fn handle_press_at(&mut self, now: Instant) -> DictationAction {
         if self
             .last_press
@@ -436,13 +458,6 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
     where
         F: FnMut(&AudioFrame) + Send + 'static,
     {
-        if self.stage != DictationStage::Recording {
-            return Err("dictation is not ready to record".to_string());
-        }
-        let sample_rate = config
-            .sample_rate
-            .filter(|sample_rate| *sample_rate > 0)
-            .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
         let input = DictationMicrophoneInput {
             slot: MicrophoneSlot::Primary,
             device: CaptureMicrophoneEntry {
@@ -454,81 +469,316 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                 core_audio_uid: config.core_audio_uid.clone(),
             },
         };
-        self.samples
-            .lock()
-            .map_err(|error| error.to_string())?
-            .clear();
-        self.microphone_inputs.clear();
-        let callback_samples = self.samples.clone();
-        self.capture
-            .start(config, move |frame| {
-                if let Ok(mut samples) = callback_samples.lock() {
-                    samples.extend_from_slice(&frame.samples);
-                }
-                on_frame(&frame);
+        let operation_id = self.begin_recording(
+            AppSettings::default(),
+            Utc::now(),
+            [MicrophoneSlot::Primary],
+        )?;
+        if let Err(error) =
+            self.start_slot_with_frame_handler(operation_id, input, config, move |frame| {
+                on_frame(frame)
             })
-            .map_err(|error| error.to_string())?;
-
-        let recording_id = self.next_recording_id;
-        self.next_recording_id = self.next_recording_id.saturating_add(1);
-        self.active_recording_id = Some(recording_id);
-        self.sample_rate = Some(sample_rate);
-        self.microphone_inputs = vec![input];
-        self.started_at = Some(Utc::now());
-        Ok(recording_id)
+        {
+            self.mark_slot_start_failed(operation_id, MicrophoneSlot::Primary, error.clone());
+            return Err(error);
+        }
+        Ok(operation_id)
     }
 
     pub fn start_recording_with_processor<P, F>(
         &mut self,
+        settings: AppSettings,
         input: DictationMicrophoneInput,
         config: AudioInputConfig,
         processor: P,
-        mut on_frame: F,
+        on_frame: F,
     ) -> Result<u64, String>
     where
         P: AudioFrameProcessor + 'static,
         F: FnMut(&AudioFrame) + Send + 'static,
     {
+        let slot = input.slot;
+        let operation_id = self.begin_recording(settings, Utc::now(), [slot])?;
+        if let Err(error) =
+            self.start_slot_with_processor(operation_id, input, config, processor, on_frame)
+        {
+            self.mark_slot_start_failed(operation_id, slot, error.clone());
+            return Err(error);
+        }
+        Ok(operation_id)
+    }
+
+    pub fn begin_recording(
+        &mut self,
+        settings: AppSettings,
+        base_time: DateTime<Utc>,
+        expected_slots: impl IntoIterator<Item = MicrophoneSlot>,
+    ) -> Result<u64, String> {
         if self.stage != DictationStage::Recording {
             return Err("dictation is not ready to record".to_string());
+        }
+        if self.active_recording_id.is_some() {
+            return Err("dictation capture is already active".to_string());
+        }
+        let expected_slots = expected_slots.into_iter().collect::<Vec<_>>();
+        if expected_slots.is_empty() {
+            return Err("dictation requires at least one microphone slot".to_string());
+        }
+        self.capture.stop_all();
+        self.samples
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
+        let operation_id = self.next_recording_id;
+        self.next_recording_id = self.next_recording_id.saturating_add(1);
+        self.mix_session = Some(Arc::new(Mutex::new(DictationMixSession::new(
+            base_time,
+            16_000,
+            expected_slots,
+        ))));
+        self.settings_snapshot = Some(settings);
+        self.started_at = Some(base_time);
+        self.active_recording_id = Some(operation_id);
+        self.capture_claimed = false;
+        Ok(operation_id)
+    }
+
+    fn start_slot_with_frame_handler<F>(
+        &mut self,
+        operation_id: u64,
+        input: DictationMicrophoneInput,
+        config: AudioInputConfig,
+        mut on_frame: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&AudioFrame) + Send + 'static,
+    {
+        if !self.capture_is_open(operation_id) {
+            return Err("dictation operation is unavailable".to_string());
         }
         let sample_rate = config
             .sample_rate
             .filter(|sample_rate| *sample_rate > 0)
             .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
-        self.samples
-            .lock()
-            .map_err(|error| error.to_string())?
-            .clear();
-        self.microphone_inputs.clear();
-        let callback_samples = self.samples.clone();
+        let slot = input.slot;
+        let mix_session = self
+            .mix_session
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "dictation mix session is unavailable".to_string())?;
+        let samples = self.samples.clone();
         self.capture
-            .start_processed(config, processor, move |frame| {
-                if let Ok(mut samples) = callback_samples.lock() {
-                    samples.extend_from_slice(&frame.samples);
+            .start_slot(slot, config, move |frame| {
+                let mixed = mix_session
+                    .lock()
+                    .map(|mut session| session.push_frame(slot, sample_rate, frame))
+                    .unwrap_or_default();
+                for frame in mixed {
+                    if let Ok(mut samples) = samples.lock() {
+                        samples.extend_from_slice(&frame.samples);
+                    }
+                    on_frame(&frame);
                 }
-                on_frame(&frame);
             })
             .map_err(|error| error.to_string())?;
-
-        let recording_id = self.next_recording_id;
-        self.next_recording_id = self.next_recording_id.saturating_add(1);
-        self.active_recording_id = Some(recording_id);
-        self.sample_rate = Some(sample_rate);
-        self.microphone_inputs = vec![input];
-        self.started_at = Some(Utc::now());
-        Ok(recording_id)
+        self.mark_slot_started(operation_id, input)
     }
 
-    pub fn stop_recording(&mut self) -> Result<DictationRecording, String> {
+    pub fn start_slot_with_processor<P, F>(
+        &mut self,
+        operation_id: u64,
+        input: DictationMicrophoneInput,
+        config: AudioInputConfig,
+        processor: P,
+        mut on_frame: F,
+    ) -> Result<(), String>
+    where
+        P: AudioFrameProcessor + 'static,
+        F: FnMut(&AudioFrame) + Send + 'static,
+    {
+        if !self.capture_is_open(operation_id) {
+            return Err("dictation operation is unavailable".to_string());
+        }
+        let sample_rate = config
+            .sample_rate
+            .filter(|sample_rate| *sample_rate > 0)
+            .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
+        let slot = input.slot;
+        let mix_session = self
+            .mix_session
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "dictation mix session is unavailable".to_string())?;
+        let samples = self.samples.clone();
+        self.capture
+            .start_slot_processed(slot, config, processor, move |frame| {
+                let mixed = mix_session
+                    .lock()
+                    .map(|mut session| session.push_frame(slot, sample_rate, frame))
+                    .unwrap_or_default();
+                for frame in mixed {
+                    if let Ok(mut samples) = samples.lock() {
+                        samples.extend_from_slice(&frame.samples);
+                    }
+                    on_frame(&frame);
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        self.mark_slot_started(operation_id, input)
+    }
+
+    fn mark_slot_started(
+        &mut self,
+        operation_id: u64,
+        input: DictationMicrophoneInput,
+    ) -> Result<(), String> {
+        if !self.capture_is_open(operation_id) {
+            return Err("dictation operation is unavailable".to_string());
+        }
+        self.mix_session
+            .as_ref()
+            .ok_or_else(|| "dictation mix session is unavailable".to_string())?
+            .lock()
+            .map_err(|error| error.to_string())?
+            .mark_started(input);
+        Ok(())
+    }
+
+    pub fn mark_slot_start_failed(
+        &mut self,
+        operation_id: u64,
+        slot: MicrophoneSlot,
+        error: String,
+    ) -> bool {
+        if !self.capture_is_open(operation_id) {
+            return false;
+        }
+        self.capture.stop_slot(slot);
+        let Some(session) = self.mix_session.as_ref() else {
+            return false;
+        };
+        let Ok(mut session) = session.lock() else {
+            return false;
+        };
+        let drained = session.mark_failed(slot, error);
+        drop(session);
+        self.append_frames(drained);
+        true
+    }
+
+    pub fn active_slots(&self, operation_id: u64) -> Vec<MicrophoneSlot> {
+        if !self.capture_is_open(operation_id) {
+            return Vec::new();
+        }
+        self.mix_session
+            .as_ref()
+            .and_then(|session| session.lock().ok().map(|session| session.active_slots()))
+            .unwrap_or_default()
+    }
+
+    pub fn poll_capture_health(&mut self, operation_id: u64) -> Option<DictationCaptureHealth> {
+        if !self.capture_is_open(operation_id) {
+            return None;
+        }
+        let known_failures = self
+            .mix_session
+            .as_ref()?
+            .lock()
+            .ok()?
+            .failures()
+            .into_iter()
+            .map(|failure| failure.slot)
+            .collect::<BTreeSet<_>>();
+        let new_failures = self
+            .capture
+            .diagnostics()
+            .into_iter()
+            .filter_map(|diagnostic| {
+                (!known_failures.contains(&diagnostic.slot))
+                    .then_some((diagnostic.slot, diagnostic.runtime_error?))
+            })
+            .collect::<Vec<_>>();
+        if new_failures.is_empty() {
+            return Some(DictationCaptureHealth::Healthy);
+        }
+        for (slot, error) in new_failures {
+            self.mark_slot_start_failed(operation_id, slot, error);
+        }
+        let active_slots = self.active_slots(operation_id);
+        let failures = self.mix_session.as_ref()?.lock().ok()?.failures();
+        if active_slots.is_empty() {
+            self.stage = DictationStage::Transcribing;
+            self.take_capture_result(operation_id, DictationStage::Transcribing)
+                .and_then(Result::ok)
+                .map(Box::new)
+                .map(DictationCaptureHealth::Exhausted)
+        } else {
+            Some(DictationCaptureHealth::Degraded {
+                active_slots,
+                failures,
+            })
+        }
+    }
+
+    pub fn stop_recording(&mut self) -> Result<DictationCaptureResult, String> {
         if self.stage != DictationStage::Transcribing {
             return Err("dictation is not ready to transcribe".to_string());
         }
-        self.capture.stop();
-        let sample_rate = self
-            .sample_rate
-            .take()
-            .ok_or_else(|| "dictation sample rate is unavailable".to_string())?;
+        let operation_id = self
+            .active_recording_id
+            .ok_or_else(|| "dictation operation is unavailable".to_string())?;
+        self.take_capture_result(operation_id, DictationStage::Transcribing)
+            .ok_or_else(|| "dictation capture was already finalized".to_string())?
+    }
+
+    pub fn stop_if_recording(
+        &mut self,
+        operation_id: u64,
+    ) -> Option<Result<DictationCaptureResult, String>> {
+        if self.stage != DictationStage::Recording
+            || self.active_recording_id != Some(operation_id)
+            || self.capture_claimed
+        {
+            return None;
+        }
+        self.stop_cue_armed = false;
+        self.stage = DictationStage::Transcribing;
+        self.take_capture_result(operation_id, DictationStage::Transcribing)
+    }
+
+    fn take_capture_result(
+        &mut self,
+        operation_id: u64,
+        next_stage: DictationStage,
+    ) -> Option<Result<DictationCaptureResult, String>> {
+        if self.active_recording_id != Some(operation_id) || self.capture_claimed {
+            return None;
+        }
+        self.capture_claimed = true;
+        self.stage = next_stage;
+        self.capture.stop_all();
+        let session = match self.mix_session.take() {
+            Some(session) => session,
+            None => return Some(Err("dictation mix session is unavailable".to_string())),
+        };
+        let (tail, microphone_inputs, failures) = match session.lock() {
+            Ok(mut session) => (
+                session.finish(),
+                session.started_inputs(),
+                session.failures(),
+            ),
+            Err(error) => return Some(Err(error.to_string())),
+        };
+        self.append_frames(tail);
+        Some(self.build_capture_result(operation_id, microphone_inputs, failures))
+    }
+
+    fn build_capture_result(
+        &mut self,
+        operation_id: u64,
+        microphone_inputs: Vec<DictationMicrophoneInput>,
+        failures: Vec<DictationSlotFailure>,
+    ) -> Result<DictationCaptureResult, String> {
         let ended_at = Utc::now();
         let started_at = self.started_at.take().unwrap_or_else(|| {
             ended_at
@@ -539,43 +789,47 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
                         .map(|samples| samples.len())
                         .unwrap_or_default() as i64
                         * 1_000)
-                        / i64::from(sample_rate),
+                        / 16_000,
                 )
         });
         let samples = std::mem::take(&mut *self.samples.lock().map_err(|error| error.to_string())?);
-        let microphone_inputs = std::mem::take(&mut self.microphone_inputs);
-        Ok(DictationRecording {
-            samples,
-            sample_rate,
-            started_at,
-            ended_at,
-            microphone_inputs,
+        let settings = self
+            .settings_snapshot
+            .clone()
+            .ok_or_else(|| "dictation settings snapshot is unavailable".to_string())?;
+        Ok(DictationCaptureResult {
+            operation_id,
+            settings,
+            recording: DictationRecording {
+                samples,
+                sample_rate: 16_000,
+                started_at,
+                ended_at,
+                microphone_inputs,
+            },
+            failures,
         })
     }
 
-    pub fn stop_if_recording(
-        &mut self,
-        recording_id: u64,
-    ) -> Option<Result<DictationRecording, String>> {
-        if self.stage != DictationStage::Recording || self.active_recording_id != Some(recording_id)
-        {
-            return None;
+    fn append_frames(&self, frames: Vec<AudioFrame>) {
+        if let Ok(mut samples) = self.samples.lock() {
+            for frame in frames {
+                samples.extend_from_slice(&frame.samples);
+            }
         }
-        self.stop_cue_armed = false;
-        self.stage = DictationStage::Transcribing;
-        Some(self.stop_recording())
+    }
+
+    fn capture_is_open(&self, operation_id: u64) -> bool {
+        self.active_recording_id == Some(operation_id)
+            && self.stage == DictationStage::Recording
+            && !self.capture_claimed
     }
 
     pub fn finish(&mut self) {
-        self.capture.stop();
+        self.capture.stop_all();
         self.stage = DictationStage::Idle;
-        self.sample_rate = None;
-        self.microphone_inputs.clear();
-        self.started_at = None;
-        self.active_recording_id = None;
-        if let Ok(mut samples) = self.samples.lock() {
-            samples.clear();
-        }
+        self.stop_cue_armed = false;
+        self.clear_capture_state();
     }
 
     pub fn current_operation_id(&self) -> Option<u64> {
@@ -619,12 +873,17 @@ impl<B: AudioInputBackend> DictationRuntime<B> {
     }
 
     pub fn fail(&mut self) {
-        self.capture.stop();
+        self.capture.stop_all();
         self.stage = DictationStage::Error;
-        self.sample_rate = None;
-        self.microphone_inputs.clear();
+        self.clear_capture_state();
+    }
+
+    fn clear_capture_state(&mut self) {
+        self.mix_session = None;
+        self.settings_snapshot = None;
         self.started_at = None;
         self.active_recording_id = None;
+        self.capture_claimed = false;
         if let Ok(mut samples) = self.samples.lock() {
             samples.clear();
         }

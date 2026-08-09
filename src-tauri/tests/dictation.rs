@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{TimeZone, Utc};
 use wakenote::dictation::{
-    DictationAction, DictationMicrophoneInput, DictationMixSession, DictationProcessOutcome,
-    DictationRecording, DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
-    ModifierShortcutRuntime, ShortcutRegistrationChange, archive_dictation_recording,
-    candidate_dictation_settings, modifier_shortcut, prepare_dictation_audio,
-    shortcut_registration_change, transcribe_and_type_dictation_recording,
+    DictationAction, DictationCaptureHealth, DictationMicrophoneInput, DictationMixSession,
+    DictationProcessOutcome, DictationRecording, DictationRuntime, DictationShortcutEvent,
+    DictationStage, ModifierShortcut, ModifierShortcutRuntime, ShortcutRegistrationChange,
+    archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
+    prepare_dictation_audio, shortcut_registration_change, transcribe_and_type_dictation_recording,
     transcribe_dictation_recording, transcribe_dictation_recording_execution,
     validate_dictation_shortcut,
 };
@@ -36,6 +38,16 @@ fn dictation_input(slot: MicrophoneSlot, id: &str, label: &str) -> DictationMicr
             label: label.to_string(),
             core_audio_uid: None,
         },
+    }
+}
+
+fn dual_settings() -> AppSettings {
+    AppSettings {
+        capture_microphones: vec![
+            dictation_input(MicrophoneSlot::Primary, "primary", "Wired").device,
+            dictation_input(MicrophoneSlot::Secondary, "secondary", "Wireless").device,
+        ],
+        ..AppSettings::default()
     }
 }
 
@@ -245,13 +257,72 @@ impl AudioFrameProcessor for ScalingProcessor {
     fn reset(&mut self) {}
 }
 
-struct FakeInput {
+#[derive(Default)]
+struct ScriptedDictationInput;
+
+struct InputScript {
     frames: Vec<AudioFrame>,
+    start_error: Option<String>,
+    runtime_error: Arc<Mutex<Option<String>>>,
 }
 
-struct FakeStream;
+static INPUT_SCRIPTS: OnceLock<Mutex<HashMap<String, InputScript>>> = OnceLock::new();
+static NEXT_INPUT_ID: AtomicU64 = AtomicU64::new(1);
 
-impl AudioStreamHandle for FakeStream {}
+#[derive(Clone)]
+struct InputControl {
+    runtime_error: Arc<Mutex<Option<String>>>,
+}
+
+impl InputControl {
+    fn fail(&self, error: &str) {
+        *self.runtime_error.lock().expect("runtime error") = Some(error.to_string());
+    }
+}
+
+struct ScriptedStream {
+    runtime_error: Arc<Mutex<Option<String>>>,
+}
+
+impl AudioStreamHandle for ScriptedStream {
+    fn runtime_error(&self) -> Option<String> {
+        self.runtime_error.lock().ok()?.clone()
+    }
+}
+
+fn unique_input_id(prefix: &str) -> String {
+    format!("{prefix}-{}", NEXT_INPUT_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn config(device_id: &str, sample_rate: u32) -> AudioInputConfig {
+    AudioInputConfig {
+        device_id: device_id.to_string(),
+        sample_rate: Some(sample_rate),
+        label_hint: Some(device_id.to_string()),
+        core_audio_uid: None,
+    }
+}
+
+fn register_input_script(
+    device_id: &str,
+    frames: Vec<AudioFrame>,
+    start_error: Option<&str>,
+) -> InputControl {
+    let runtime_error = Arc::new(Mutex::new(None));
+    INPUT_SCRIPTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("input scripts")
+        .insert(
+            device_id.to_string(),
+            InputScript {
+                frames,
+                start_error: start_error.map(str::to_string),
+                runtime_error: runtime_error.clone(),
+            },
+        );
+    InputControl { runtime_error }
+}
 
 #[derive(Clone)]
 struct OrderedFakeTranscriber {
@@ -313,16 +384,32 @@ impl Transcriber for FakeTranscriber {
     }
 }
 
-impl AudioInputBackend for FakeInput {
+impl AudioInputBackend for ScriptedDictationInput {
     fn start(
         &mut self,
-        _config: AudioInputConfig,
+        config: AudioInputConfig,
         on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
     ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
-        for frame in self.frames.drain(..) {
+        let mut script = INPUT_SCRIPTS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?
+            .remove(&config.device_id)
+            .ok_or_else(|| {
+                LiveCaptureError::Cpal(format!(
+                    "missing scripted Dictation input {}",
+                    config.device_id
+                ))
+            })?;
+        if let Some(error) = script.start_error.take() {
+            return Err(LiveCaptureError::Cpal(error));
+        }
+        for frame in script.frames.drain(..) {
             on_frame(frame);
         }
-        Ok(Box::new(FakeStream))
+        Ok(Box::new(ScriptedStream {
+            runtime_error: script.runtime_error,
+        }))
     }
 }
 
@@ -550,7 +637,7 @@ fn backend_parses_every_main_key_emitted_by_the_frontend_capture_helper() {
 
 #[test]
 fn hold_to_talk_stops_only_on_release() {
-    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
 
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
@@ -581,26 +668,26 @@ fn hold_to_talk_stops_only_on_release() {
 
 #[test]
 fn dictation_records_processed_microphone_samples() {
-    let mut runtime = DictationRuntime::new(FakeInput {
-        frames: vec![AudioFrame {
+    let device_id = unique_input_id("processed");
+    register_input_script(
+        &device_id,
+        vec![AudioFrame {
             samples: vec![0.2, -0.2],
             duration_ms: 10,
             captured_at: Utc::now(),
         }],
-    });
+        None,
+    );
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
     runtime
         .start_recording_with_processor(
-            dictation_input(MicrophoneSlot::Primary, "fake", "Fake microphone"),
-            AudioInputConfig {
-                device_id: "fake".to_string(),
-                sample_rate: Some(48_000),
-                label_hint: None,
-                core_audio_uid: None,
-            },
+            AppSettings::default(),
+            dictation_input(MicrophoneSlot::Primary, &device_id, "Fake microphone"),
+            config(&device_id, 16_000),
             ScalingProcessor(2.0),
             |_| {},
         )
@@ -611,25 +698,26 @@ fn dictation_records_processed_microphone_samples() {
     );
 
     assert_eq!(
-        runtime.stop_recording().expect("recording stops").samples,
+        runtime
+            .stop_recording()
+            .expect("recording stops")
+            .recording
+            .samples,
         vec![0.4, -0.4]
     );
 }
 
 #[test]
 fn cancelling_recording_releases_capture_and_allows_the_next_dictation() {
-    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    let first_device_id = unique_input_id("cancel-first");
+    register_input_script(&first_device_id, Vec::new(), None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
     let first_id = runtime
-        .start_recording(AudioInputConfig {
-            device_id: "fake".to_string(),
-            sample_rate: Some(16_000),
-            label_hint: None,
-            core_audio_uid: None,
-        })
+        .start_recording(config(&first_device_id, 16_000))
         .expect("first capture starts");
 
     assert!(runtime.cancel_active());
@@ -640,28 +728,22 @@ fn cancelling_recording_releases_capture_and_allows_the_next_dictation() {
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
+    let second_device_id = unique_input_id("cancel-second");
+    register_input_script(&second_device_id, Vec::new(), None);
     let second_id = runtime
-        .start_recording(AudioInputConfig {
-            device_id: "fake".to_string(),
-            sample_rate: Some(16_000),
-            label_hint: None,
-            core_audio_uid: None,
-        })
+        .start_recording(config(&second_device_id, 16_000))
         .expect("second capture starts");
     assert!(second_id > first_id);
 }
 
 #[test]
 fn cancelling_transcription_invalidates_late_completion() {
-    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    let device_id = unique_input_id("cancel-transcription");
+    register_input_script(&device_id, Vec::new(), None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
     let operation_id = runtime
-        .start_recording(AudioInputConfig {
-            device_id: "fake".to_string(),
-            sample_rate: Some(16_000),
-            label_hint: None,
-            core_audio_uid: None,
-        })
+        .start_recording(config(&device_id, 16_000))
         .expect("capture starts");
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Released),
@@ -677,7 +759,7 @@ fn cancelling_transcription_invalidates_late_completion() {
 
 #[test]
 fn hold_to_talk_plays_stop_cue_after_capture_start_failure() {
-    let mut runtime = DictationRuntime::new(FakeInput { frames: Vec::new() });
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
 
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
@@ -704,21 +786,16 @@ fn dedicated_capture_collects_frames_until_stopped() {
         duration_ms: 1_000,
         captured_at: Utc::now(),
     };
-    let mut runtime = DictationRuntime::new(FakeInput {
-        frames: vec![frame],
-    });
+    let device_id = unique_input_id("dedicated");
+    register_input_script(&device_id, vec![frame], None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
 
     let recording_id = runtime
-        .start_recording(AudioInputConfig {
-            device_id: "fake".to_string(),
-            sample_rate: Some(16_000),
-            label_hint: Some("Fake microphone".to_string()),
-            core_audio_uid: None,
-        })
+        .start_recording(config(&device_id, 16_000))
         .expect("capture starts");
     assert!(recording_id > 0);
 
@@ -726,7 +803,7 @@ fn dedicated_capture_collects_frames_until_stopped() {
         runtime.handle_shortcut_event(DictationShortcutEvent::Released),
         DictationAction::StopAndTranscribe
     );
-    let recording = runtime.stop_recording().expect("capture stops");
+    let recording = runtime.stop_recording().expect("capture stops").recording;
     assert_eq!(recording.sample_rate, 16_000);
     assert_eq!(recording.samples, vec![0.25; 16_000]);
 }
@@ -735,29 +812,25 @@ fn dedicated_capture_collects_frames_until_stopped() {
 fn dictation_capture_forwards_each_frame_for_global_feedback() {
     let observed = Arc::new(Mutex::new(Vec::new()));
     let observed_for_callback = observed.clone();
-    let mut runtime = DictationRuntime::new(FakeInput {
-        frames: vec![AudioFrame {
+    let device_id = unique_input_id("feedback");
+    register_input_script(
+        &device_id,
+        vec![AudioFrame {
             samples: vec![0.25; 16_000],
             duration_ms: 1_000,
             captured_at: Utc::now(),
         }],
-    });
+        None,
+    );
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
     runtime
-        .start_recording_with_frame_handler(
-            AudioInputConfig {
-                device_id: "fake".to_string(),
-                sample_rate: Some(16_000),
-                label_hint: None,
-                core_audio_uid: None,
-            },
-            move |frame| {
-                observed_for_callback
-                    .lock()
-                    .expect("observed")
-                    .push(frame.samples.len());
-            },
-        )
+        .start_recording_with_frame_handler(config(&device_id, 16_000), move |frame| {
+            observed_for_callback
+                .lock()
+                .expect("observed")
+                .push(frame.samples.len());
+        })
         .expect("capture starts");
     runtime.handle_shortcut_event(DictationShortcutEvent::Released);
     runtime.stop_recording().expect("capture stops");
@@ -811,20 +884,15 @@ fn automatic_stop_only_finishes_the_matching_recording() {
         duration_ms: 1_000,
         captured_at: Utc::now(),
     };
-    let mut runtime = DictationRuntime::new(FakeInput {
-        frames: vec![frame],
-    });
+    let device_id = unique_input_id("automatic-stop");
+    register_input_script(&device_id, vec![frame], None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
         DictationAction::StartRecording
     );
     let recording_id = runtime
-        .start_recording(AudioInputConfig {
-            device_id: "fake".to_string(),
-            sample_rate: Some(16_000),
-            label_hint: None,
-            core_audio_uid: None,
-        })
+        .start_recording(config(&device_id, 16_000))
         .expect("capture starts");
 
     assert_eq!(runtime.stop_if_recording(recording_id + 1), None);
@@ -834,12 +902,181 @@ fn automatic_stop_only_finishes_the_matching_recording() {
         .stop_if_recording(recording_id)
         .expect("matching recording stops")
         .expect("capture result");
-    assert_eq!(recording.samples.len(), 16_000);
+    assert_eq!(recording.recording.samples.len(), 16_000);
     assert_eq!(runtime.stage(), DictationStage::Transcribing);
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Released),
         DictationAction::Ignore
     );
+}
+
+#[test]
+fn dictation_runtime_returns_one_recording_from_two_priority_slots() {
+    let primary_id = unique_input_id("dual-primary");
+    let secondary_id = unique_input_id("dual-secondary");
+    register_input_script(&primary_id, vec![frame(vec![0.36; 4_800], 100, 100)], None);
+    register_input_script(
+        &secondary_id,
+        vec![frame(vec![0.08; 4_410], 100, 100)],
+        None,
+    );
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
+        DictationAction::StartRecording,
+    );
+    let operation_id = runtime
+        .begin_recording(
+            dual_settings(),
+            chrono::DateTime::<Utc>::UNIX_EPOCH,
+            [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        )
+        .expect("begin recording");
+    runtime
+        .start_slot_with_processor(
+            operation_id,
+            dictation_input(MicrophoneSlot::Primary, &primary_id, "Wired"),
+            config(&primary_id, 48_000),
+            ScalingProcessor(1.0),
+            |_| {},
+        )
+        .expect("Primary starts");
+    runtime
+        .start_slot_with_processor(
+            operation_id,
+            dictation_input(MicrophoneSlot::Secondary, &secondary_id, "Wireless"),
+            config(&secondary_id, 44_100),
+            ScalingProcessor(1.0),
+            |_| {},
+        )
+        .expect("Secondary starts");
+
+    runtime.handle_shortcut_event(DictationShortcutEvent::Released);
+    let result = runtime.stop_recording().expect("one completed capture");
+
+    assert_eq!(result.operation_id, operation_id);
+    assert_eq!(result.recording.sample_rate, 16_000);
+    assert_eq!(result.recording.microphone_inputs.len(), 2);
+    assert_eq!(result.settings.capture_microphones.len(), 2);
+}
+
+#[test]
+fn dictation_runtime_allows_only_secondary_to_start() {
+    let primary_id = unique_input_id("failed-primary");
+    let secondary_id = unique_input_id("surviving-secondary");
+    register_input_script(&primary_id, Vec::new(), Some("Primary disconnected"));
+    register_input_script(&secondary_id, Vec::new(), None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+    runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
+    let operation_id = runtime
+        .begin_recording(
+            dual_settings(),
+            chrono::DateTime::<Utc>::UNIX_EPOCH,
+            [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        )
+        .expect("begin recording");
+
+    assert!(
+        runtime
+            .start_slot_with_processor(
+                operation_id,
+                dictation_input(MicrophoneSlot::Primary, &primary_id, "Wired"),
+                config(&primary_id, 48_000),
+                ScalingProcessor(1.0),
+                |_| {},
+            )
+            .is_err()
+    );
+    assert!(runtime.mark_slot_start_failed(
+        operation_id,
+        MicrophoneSlot::Primary,
+        "Primary disconnected".to_string(),
+    ));
+    runtime
+        .start_slot_with_processor(
+            operation_id,
+            dictation_input(MicrophoneSlot::Secondary, &secondary_id, "Wireless"),
+            config(&secondary_id, 48_000),
+            ScalingProcessor(1.0),
+            |_| {},
+        )
+        .expect("Secondary starts");
+
+    assert_eq!(
+        runtime.active_slots(operation_id),
+        vec![MicrophoneSlot::Secondary]
+    );
+}
+
+#[test]
+fn dictation_runtime_claims_a_capture_result_once() {
+    let device_id = unique_input_id("claim-once");
+    register_input_script(&device_id, Vec::new(), None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+    runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
+    let operation_id = runtime
+        .begin_recording(
+            AppSettings::default(),
+            chrono::DateTime::<Utc>::UNIX_EPOCH,
+            [MicrophoneSlot::Primary],
+        )
+        .expect("begin recording");
+    runtime
+        .start_slot_with_processor(
+            operation_id,
+            dictation_input(MicrophoneSlot::Primary, &device_id, "Wired"),
+            config(&device_id, 48_000),
+            ScalingProcessor(1.0),
+            |_| {},
+        )
+        .expect("Primary starts");
+
+    assert!(runtime.stop_if_recording(operation_id).is_some());
+    assert!(runtime.stop_if_recording(operation_id).is_none());
+    assert!(runtime.is_operation_active(operation_id));
+}
+
+#[test]
+fn dictation_runtime_reports_degraded_then_exhausted_health() {
+    let primary_id = unique_input_id("health-primary");
+    let secondary_id = unique_input_id("health-secondary");
+    let primary_control = register_input_script(&primary_id, Vec::new(), None);
+    let secondary_control = register_input_script(&secondary_id, Vec::new(), None);
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+    runtime.handle_shortcut_event(DictationShortcutEvent::Pressed);
+    let operation_id = runtime
+        .begin_recording(
+            dual_settings(),
+            chrono::DateTime::<Utc>::UNIX_EPOCH,
+            [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        )
+        .expect("begin recording");
+    for (slot, device_id, label) in [
+        (MicrophoneSlot::Primary, primary_id.as_str(), "Wired"),
+        (MicrophoneSlot::Secondary, secondary_id.as_str(), "Wireless"),
+    ] {
+        runtime
+            .start_slot_with_processor(
+                operation_id,
+                dictation_input(slot, device_id, label),
+                config(device_id, 48_000),
+                ScalingProcessor(1.0),
+                |_| {},
+            )
+            .expect("slot starts");
+    }
+
+    secondary_control.fail("secondary disconnected");
+    let first = runtime
+        .poll_capture_health(operation_id)
+        .expect("health result");
+    assert!(matches!(first, DictationCaptureHealth::Degraded { .. }));
+    primary_control.fail("primary disconnected");
+    let second = runtime
+        .poll_capture_health(operation_id)
+        .expect("health result");
+    assert!(matches!(second, DictationCaptureHealth::Exhausted(_)));
+    assert!(runtime.poll_capture_health(operation_id).is_none());
 }
 
 #[test]

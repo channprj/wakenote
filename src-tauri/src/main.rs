@@ -662,7 +662,7 @@ enum DictationCaptionUpdate {
     Final { audio_path: PathBuf, text: String },
 }
 
-fn apply_dictation_caption_update<B: AudioInputBackend>(
+fn apply_dictation_caption_update<B: AudioInputBackend + Default>(
     dictation_state: &Arc<Mutex<DictationRuntime<B>>>,
     caption_state: &OverlayCaptionState,
     operation_id: u64,
@@ -2478,7 +2478,7 @@ fn schedule_accessibility_request_for_dictation(settings: &AppSettings) {
     });
 }
 
-async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings: AppSettings) {
+async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64) {
     tokio::time::sleep(DICTATION_MAX_RECORDING_DURATION).await;
     let Some(state) = app.try_state::<DictationState>() else {
         return;
@@ -2488,11 +2488,11 @@ async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings:
             .stop_if_recording(recording_id)
             .map(|result| (result, runtime.payload(None)))
     });
-    let Some((recording, payload)) = stopped else {
+    let Some((result, payload)) = stopped else {
         return;
     };
-    let recording = match recording {
-        Ok(recording) => recording,
+    let result = match result {
+        Ok(result) => result,
         Err(error) => {
             finish_dictation(&app, Some(error));
             return;
@@ -2505,10 +2505,13 @@ async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64, settings:
         Some("Transcribing…".to_string()),
     );
     refresh_tray_from_backend(&app);
-    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop, &settings);
-    if let Err(error) =
-        spawn_dictation_processing_task(app.clone(), recording_id, settings, recording)
-    {
+    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop, &result.settings);
+    if let Err(error) = spawn_dictation_processing_task(
+        app.clone(),
+        recording_id,
+        result.settings,
+        result.recording,
+    ) {
         show_dictation_operation_error(&app, recording_id, error);
     }
 }
@@ -2623,6 +2626,7 @@ fn handle_dictation_shortcut_event(
                 .lock()
                 .map_err(|error| error.to_string())?
                 .start_recording_with_processor(
+                    settings.clone(),
                     dictation_input,
                     AudioInputConfig {
                         device_id: resolved.device_id,
@@ -2648,25 +2652,25 @@ fn handle_dictation_shortcut_event(
             );
             let app_for_limit = app.clone();
             tauri::async_runtime::spawn(async move {
-                stop_dictation_after_limit(app_for_limit, recording_id, settings).await;
+                stop_dictation_after_limit(app_for_limit, recording_id).await;
             });
             Ok(())
         }
         DictationAction::StopAndTranscribe => {
-            let (operation_id, recording, payload) = {
+            let (operation_id, result, payload) = {
                 let mut runtime = state.lock().map_err(|error| error.to_string())?;
                 let operation_id = runtime
                     .current_operation_id()
                     .ok_or_else(|| "dictation operation is unavailable".to_string())?;
-                let recording = runtime.stop_recording()?;
+                let result = runtime.stop_recording()?;
                 let payload = runtime.payload(None);
-                (operation_id, recording, payload)
+                (operation_id, result, payload)
             };
             log_dictation_runtime(
                 app,
                 format!(
                     "[dictation] capture=stopped samples={}",
-                    recording.samples.len()
+                    result.recording.samples.len()
                 ),
             );
             emit_dictation_state(app, payload);
@@ -2676,8 +2680,13 @@ fn handle_dictation_shortcut_event(
                 Some("Transcribing…".to_string()),
             );
             refresh_tray_from_backend(app);
-            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &settings);
-            spawn_dictation_processing_task(app.clone(), operation_id, settings, recording)?;
+            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &result.settings);
+            spawn_dictation_processing_task(
+                app.clone(),
+                operation_id,
+                result.settings,
+                result.recording,
+            )?;
             Ok(())
         }
     }
@@ -7614,7 +7623,7 @@ fn main() {
             let input_monitor_state: InputMonitorState =
                 Arc::new(Mutex::new(InputMonitorRuntime::new()));
             let dictation_state: DictationState =
-                Arc::new(Mutex::new(DictationRuntime::new(CpalAudioInput)));
+                Arc::new(Mutex::new(DictationRuntime::default()));
             let modifier_shortcut_state: ModifierShortcutState =
                 Arc::new(Mutex::new(ModifierShortcutRuntime::default()));
             let dictation_shortcut_dispatcher =
@@ -8406,6 +8415,7 @@ mod tests {
 
     impl AudioStreamHandle for CaptionTestStream {}
 
+    #[derive(Default)]
     struct CaptionTestInput;
 
     impl wakenote::live_capture::AudioInputBackend for CaptionTestInput {
@@ -8420,7 +8430,7 @@ mod tests {
 
     fn active_caption_test_dictation_state() -> (Arc<Mutex<DictationRuntime<CaptionTestInput>>>, u64)
     {
-        let mut runtime = DictationRuntime::new(CaptionTestInput);
+        let mut runtime = DictationRuntime::<CaptionTestInput>::default();
         assert_eq!(
             runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
             DictationAction::StartRecording
