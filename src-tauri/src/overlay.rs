@@ -1,7 +1,9 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager};
 
-use crate::caption_layout::{caption_line_capacity_for_width, caption_line_metrics};
+use crate::caption_layout::{
+    MAX_CAPTION_LINES, caption_line_capacity_for_width, caption_line_metrics,
+};
 use crate::commands::TrayState;
 use crate::settings::{
     DictationBubblePosition, DictationOverlayStyle, FloatingOverlayCaptionStyle,
@@ -582,10 +584,15 @@ pub(crate) fn caption_overlay_size_for_monitor(
         + padding_horizontal * 2.0
         + border * 2.0;
     let caption_width = desired_caption_width.min(effective_max_width).max(1.0);
-    let text_height =
-        line_metrics.line_count as f64 * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
+    let visible_line_count = line_metrics.line_count.min(MAX_CAPTION_LINES);
+    let text_height = visible_line_count as f64 * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO;
     let desired_caption_height = text_height + padding_vertical * 2.0 + border * 2.0;
-    let effective_max_height = requested_max_height.min(available_caption_height);
+    let three_row_height = MAX_CAPTION_LINES as f64 * font_size * OVERLAY_CAPTION_LINE_HEIGHT_RATIO
+        + padding_vertical * 2.0
+        + border * 2.0;
+    let effective_max_height = requested_max_height
+        .min(available_caption_height)
+        .min(three_row_height);
     let effective_min_height = requested_min_height.min(effective_max_height);
     let caption_height = desired_caption_height
         .max(effective_min_height)
@@ -641,6 +648,7 @@ pub fn waveform_levels_from_samples(samples: &[f32], count: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::caption_layout::MAX_CAPTION_LINES;
 
     #[test]
     fn visible_dictation_payloads_carry_the_selected_style() {
@@ -815,12 +823,28 @@ mod tests {
     }
 
     #[test]
-    fn caption_overlay_height_keeps_breathing_room_for_four_lines() {
+    fn caption_overlay_height_never_exceeds_three_text_rows() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let four_line_caption = "a".repeat(280);
-        let size = caption_overlay_size_for_monitor(monitor, &four_line_caption, &caption_style());
+        let style = caption_style();
+        let three = caption_overlay_size_for_monitor(monitor, "one\ntwo\nthree", &style);
+        let four = caption_overlay_size_for_monitor(monitor, "one\ntwo\nthree\nfour", &style);
 
-        assert!(size.1 >= 166.0, "caption height was {}", size.1);
+        assert_eq!(four.1, three.1);
+    }
+
+    #[test]
+    fn configured_minimum_height_cannot_override_three_row_safety_cap() {
+        let monitor = rect((0, 0), (1920, 1080), 1.0);
+        let mut style = caption_style();
+        style.min_height_px = 1_000;
+        style.max_height_px = 1_000;
+
+        let size = caption_overlay_size_for_monitor(monitor, "one\ntwo\nthree\nfour", &style);
+        let three_row_box = style.font_size_px as f64 * 1.25 * MAX_CAPTION_LINES as f64
+            + style.padding_vertical_px as f64 * 2.0
+            + style.border_width_px as f64 * 2.0;
+
+        assert!(size.1 <= three_row_box.ceil() + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL);
     }
 
     #[test]
@@ -840,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_monitor_adds_emergency_rows_for_an_explicit_line() {
+    fn narrow_monitor_emergency_measurement_stops_at_three_rows() {
         let style = caption_style();
         let text = "가".repeat(40);
         let wide = caption_overlay_size_for_monitor(rect((0, 0), (1920, 1080), 1.0), &text, &style);
@@ -849,6 +873,10 @@ mod tests {
 
         assert!(narrow.0 < wide.0);
         assert!(narrow.1 > wide.1);
+        let three_row_box = style.font_size_px as f64 * 1.25 * MAX_CAPTION_LINES as f64
+            + style.padding_vertical_px as f64 * 2.0
+            + style.border_width_px as f64 * 2.0;
+        assert!(narrow.1 <= three_row_box.ceil() + OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL);
     }
 
     #[test]

@@ -257,7 +257,9 @@ export function OverlayContent({
     captionVisible && caption.source === "dictation";
   const captionContent = captionVisible ? (
     <div
+      key={`${caption.source}-${caption.generation}`}
       className="overlay-caption"
+      data-generation={caption.generation}
       data-source={caption.source}
       data-status={caption.phase}
       data-animation={caption.style.animation}

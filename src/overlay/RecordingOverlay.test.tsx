@@ -1,4 +1,6 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
+import { render as renderDom } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   OverlayContent,
@@ -103,6 +105,42 @@ describe("caption overlay content", () => {
     );
 
     expect(markup).toContain('data-source="dictation"');
+  });
+
+  it("remounts only when a caption page generation changes", () => {
+    const { container, rerender } = renderDom(
+      <OverlayContent
+        caption={caption({ generation: 4, visible: true, text: "first" })}
+        dictation={hiddenDictation}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+    const initial = container.querySelector(".overlay-caption");
+
+    rerender(
+      <OverlayContent
+        caption={caption({
+          generation: 4,
+          visible: true,
+          text: "first revised",
+        })}
+        dictation={hiddenDictation}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+    expect(container.querySelector(".overlay-caption")).toBe(initial);
+
+    rerender(
+      <OverlayContent
+        caption={caption({ generation: 5, visible: true, text: "new page" })}
+        dictation={hiddenDictation}
+        levels={[]}
+        elapsedSeconds={0}
+      />,
+    );
+    expect(container.querySelector(".overlay-caption")).not.toBe(initial);
   });
 
   it("does not add visible status labels around final caption text", () => {

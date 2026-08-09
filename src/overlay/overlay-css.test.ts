@@ -12,20 +12,15 @@ function ruleBody(selector: string): string {
 }
 
 describe("overlay caption css", () => {
-  it("does not clamp or ellipsize long caption text", () => {
+  it("keeps paged captions within a three-row safety boundary", () => {
+    const rule = ruleBody(".overlay-caption__text");
+    expect(rule).toContain("white-space: pre-line");
+    expect(rule).toContain("word-break: keep-all");
+    expect(rule).toContain("overflow-wrap: anywhere");
+    expect(rule).toContain("max-height: calc(1.25em * 3)");
+    expect(rule).toContain("overflow: hidden");
+    expect(rule).not.toContain("text-overflow: ellipsis");
     expect(css).not.toContain("-webkit-line-clamp");
-    expect(css).not.toMatch(
-      /\.overlay-caption__text\s*\{[^}]*overflow:\s*hidden/,
-    );
-    expect(css).toMatch(
-      /\.overlay-caption__text\s*\{[^}]*white-space:\s*pre-line/,
-    );
-    expect(css).toMatch(
-      /\.overlay-caption__text\s*\{[^}]*word-break:\s*keep-all/,
-    );
-    expect(css).toMatch(
-      /\.overlay-caption__text\s*\{[^}]*overflow-wrap:\s*anywhere/,
-    );
   });
 
   it("lets short captions shrink to content while enforcing the configured maximum width", () => {
