@@ -79,7 +79,9 @@ import type {
 } from "./lib/types";
 import {
   missingPermissions,
+  PERMISSION_GUIDANCE_EVENT,
   permissionOnboardingNeedsGuidance,
+  type NativePermissionGuidancePayload,
   type PermissionFeature,
 } from "./lib/permission-guidance";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
@@ -387,6 +389,33 @@ export default function App() {
         unlistenDictation();
       } else {
         unlisteners.push(unlistenDictation);
+      }
+      const unlistenPermissionGuidance =
+        await listen<NativePermissionGuidancePayload>(
+          PERMISSION_GUIDANCE_EVENT,
+          async () => {
+            if (cancelled) {
+              return;
+            }
+            openSettings("audio");
+            try {
+              const { getCurrentWindow } = await import(
+                "@tauri-apps/api/window"
+              );
+              const currentWindow = getCurrentWindow();
+              await currentWindow.show();
+              await currentWindow.setFocus();
+            } catch (caught) {
+              setError(
+                caught instanceof Error ? caught.message : String(caught),
+              );
+            }
+          },
+        );
+      if (cancelled) {
+        unlistenPermissionGuidance();
+      } else {
+        unlisteners.push(unlistenPermissionGuidance);
       }
       // eslint-disable-next-line no-console
       console.log("[wakenote FE] live transcription listeners registered");

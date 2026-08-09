@@ -73,6 +73,25 @@ pub fn type_text_into_focused_cursor_with_clipboard(
     type_text_into_focused_cursor_platform(text, clipboard_after_input)
 }
 
+pub fn type_dictation_text_into_focused_cursor_with_clipboard(
+    text: &str,
+    clipboard_after_input: ClipboardAfterInput,
+) -> Result<(), String> {
+    if !should_type_transcript_text(text) {
+        return Ok(());
+    }
+
+    type_dictation_text_into_focused_cursor_platform(text, clipboard_after_input)
+}
+
+pub fn copy_dictation_text_to_clipboard(text: &str) -> Result<(), String> {
+    if !should_type_transcript_text(text) {
+        return Ok(());
+    }
+
+    copy_dictation_text_to_clipboard_platform(text)
+}
+
 trait TextInputBackend {
     fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String>;
     fn can_type(&self) -> bool;
@@ -107,6 +126,38 @@ fn input_text_with_backend(
             backend.type_text(text)
         }
     }
+}
+
+fn input_text_without_access_request_with_backend(
+    text: &str,
+    clipboard_after_input: ClipboardAfterInput,
+    backend: &mut impl TextInputBackend,
+) -> Result<(), String> {
+    match clipboard_after_input {
+        ClipboardAfterInput::KeepInputText => {
+            backend.copy_to_clipboard(text)?;
+            if !backend.can_type() {
+                return Err(accessibility_permission_error().to_string());
+            }
+        }
+        ClipboardAfterInput::PreservePrevious => {
+            if !backend.can_type() {
+                backend.copy_to_clipboard(text)?;
+                return Err(accessibility_permission_error().to_string());
+            }
+        }
+    }
+    backend.type_text(text)
+}
+
+fn copy_dictation_text_with_backend(
+    text: &str,
+    backend: &mut impl TextInputBackend,
+) -> Result<(), String> {
+    if !should_type_transcript_text(text) {
+        return Ok(());
+    }
+    backend.copy_to_clipboard(text)
 }
 
 #[cfg(target_os = "macos")]
@@ -157,12 +208,34 @@ fn type_text_into_focused_cursor_platform(
     text: &str,
     clipboard_after_input: ClipboardAfterInput,
 ) -> Result<(), String> {
+    with_mac_text_input(|backend| input_text_with_backend(text, clipboard_after_input, backend))
+}
+
+#[cfg(target_os = "macos")]
+fn type_dictation_text_into_focused_cursor_platform(
+    text: &str,
+    clipboard_after_input: ClipboardAfterInput,
+) -> Result<(), String> {
+    with_mac_text_input(|backend| {
+        input_text_without_access_request_with_backend(text, clipboard_after_input, backend)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn with_mac_text_input<T>(
+    operation: impl FnOnce(&mut MacTextInputBackend) -> Result<T, String>,
+) -> Result<T, String> {
     static TEXT_INPUT: OnceLock<Mutex<()>> = OnceLock::new();
     let _operation = TEXT_INPUT
         .get_or_init(|| Mutex::new(()))
         .lock()
         .map_err(|error| format!("Could not lock the native text input: {error}"))?;
-    input_text_with_backend(text, clipboard_after_input, &mut MacTextInputBackend)
+    operation(&mut MacTextInputBackend)
+}
+
+#[cfg(target_os = "macos")]
+fn copy_dictation_text_to_clipboard_platform(text: &str) -> Result<(), String> {
+    with_mac_text_input(|backend| copy_dictation_text_with_backend(text, backend))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -171,6 +244,19 @@ fn type_text_into_focused_cursor_platform(
     _clipboard_after_input: ClipboardAfterInput,
 ) -> Result<(), String> {
     Err("automatic transcript input is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn type_dictation_text_into_focused_cursor_platform(
+    _text: &str,
+    _clipboard_after_input: ClipboardAfterInput,
+) -> Result<(), String> {
+    Err("automatic transcript input is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_dictation_text_to_clipboard_platform(_text: &str) -> Result<(), String> {
+    Err("copying Dictation text is only supported on macOS".to_string())
 }
 
 pub fn accessibility_permission_error() -> &'static str {
@@ -304,6 +390,57 @@ mod tests {
         assert_eq!(error, accessibility_permission_error());
         assert!(error.contains("copied"));
         assert!(error.contains("clipboard"));
+    }
+
+    #[test]
+    fn clipboard_only_fallback_never_requests_type_access() {
+        let mut backend = RecordingTextInputBackend::default();
+
+        copy_dictation_text_with_backend("clipboard fallback", &mut backend)
+            .expect("clipboard fallback");
+
+        assert_eq!(backend.events, ["copy:clipboard fallback"]);
+        assert_eq!(backend.clipboard, "clipboard fallback");
+        assert!(!backend.can_type);
+    }
+
+    #[test]
+    fn dictation_input_never_requests_access_when_the_preflight_changes() {
+        let mut backend = RecordingTextInputBackend {
+            grant_after_request: true,
+            ..Default::default()
+        };
+
+        let error = input_text_without_access_request_with_backend(
+            "clipboard fallback",
+            ClipboardAfterInput::KeepInputText,
+            &mut backend,
+        )
+        .expect_err("access changed after preflight");
+
+        assert_eq!(backend.events, ["copy:clipboard fallback"]);
+        assert_eq!(backend.clipboard, "clipboard fallback");
+        assert_eq!(error, accessibility_permission_error());
+    }
+
+    #[test]
+    fn dictation_preserve_mode_falls_back_to_clipboard_without_requesting_access() {
+        let mut backend = RecordingTextInputBackend {
+            clipboard: "previous clipboard".to_string(),
+            grant_after_request: true,
+            ..Default::default()
+        };
+
+        let error = input_text_without_access_request_with_backend(
+            "clipboard fallback",
+            ClipboardAfterInput::PreservePrevious,
+            &mut backend,
+        )
+        .expect_err("access changed after preflight");
+
+        assert_eq!(backend.events, ["copy:clipboard fallback"]);
+        assert_eq!(backend.clipboard, "clipboard fallback");
+        assert_eq!(error, accessibility_permission_error());
     }
 
     #[test]

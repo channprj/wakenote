@@ -2,6 +2,44 @@ use std::{path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
+pub const PERMISSION_GUIDANCE_EVENT: &str = "permission-guidance-required";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGuidanceFeature {
+    DictationRecording,
+    DictationInsertion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionGuidanceKind {
+    Accessibility,
+    Microphone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionGuidancePayload {
+    pub feature: PermissionGuidanceFeature,
+    pub permission: PermissionGuidanceKind,
+}
+
+impl PermissionGuidancePayload {
+    pub const fn dictation_recording() -> Self {
+        Self {
+            feature: PermissionGuidanceFeature::DictationRecording,
+            permission: PermissionGuidanceKind::Microphone,
+        }
+    }
+
+    pub const fn dictation_insertion() -> Self {
+        Self {
+            feature: PermissionGuidanceFeature::DictationInsertion,
+            permission: PermissionGuidanceKind::Accessibility,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionGrantStatus {
@@ -440,6 +478,24 @@ fn request_screen_recording_access() -> PermissionGrantStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_guidance_payloads_serialize_closed_identifiers() {
+        assert_eq!(
+            serde_json::to_value(PermissionGuidancePayload::dictation_recording()).unwrap(),
+            serde_json::json!({
+                "feature": "dictation_recording",
+                "permission": "microphone",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(PermissionGuidancePayload::dictation_insertion()).unwrap(),
+            serde_json::json!({
+                "feature": "dictation_insertion",
+                "permission": "accessibility",
+            })
+        );
+    }
 
     #[test]
     fn screen_recording_granted_state_is_not_requestable() {

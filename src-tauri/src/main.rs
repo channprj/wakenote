@@ -86,7 +86,10 @@ use wakenote::overlay_caption::{
     OverlayCaptionSnapshot, OverlayCaptionSource, adaptive_caption_hold,
 };
 use wakenote::permission_drag::{self, PermissionDragTarget};
-use wakenote::permissions::{self, AppPermissions};
+use wakenote::permissions::{
+    self, AppPermissions, PERMISSION_GUIDANCE_EVENT, PermissionGrantStatus,
+    PermissionGuidancePayload,
+};
 use wakenote::persistence::{ListVisibilityState, SetListVisibilityRequest};
 use wakenote::queue::QueueSnapshot;
 use wakenote::recorder::{ChunkMetadata, TranscriptionSidecar};
@@ -1425,6 +1428,12 @@ fn emit_dictation_state(app: &AppHandle, payload: DictationStatePayload) {
     let _ = app.emit(DICTATION_STATE_EVENT, payload);
 }
 
+fn emit_permission_guidance(app: &AppHandle, payload: PermissionGuidancePayload) {
+    if let Err(error) = app.emit(PERMISSION_GUIDANCE_EVENT, payload) {
+        eprintln!("[permissions] could not emit guidance: {error}");
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DictationCue {
     Start,
@@ -1882,10 +1891,23 @@ fn type_dictation_text_on_main_thread(
         let clipboard_after_input = wakenote::text_input::dictation_clipboard_after_input(
             settings.dictation_copy_to_clipboard,
         );
-        if let Err(error) = wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
-            &text,
-            clipboard_after_input,
+        if let Some(payload) = dictation_insertion_permission_guidance(
+            permissions::permission_snapshot().accessibility.status,
         ) {
+            let error = match wakenote::text_input::copy_dictation_text_to_clipboard(&text) {
+                Ok(()) => wakenote::text_input::accessibility_permission_error().to_string(),
+                Err(error) => error,
+            };
+            emit_permission_guidance(&app_for_task, payload);
+            show_dictation_operation_error(&app_for_task, operation_id, error);
+            return;
+        }
+        if let Err(error) =
+            wakenote::text_input::type_dictation_text_into_focused_cursor_with_clipboard(
+                &text,
+                clipboard_after_input,
+            )
+        {
             show_dictation_operation_error(&app_for_task, operation_id, error);
             return;
         }
@@ -2439,44 +2461,21 @@ fn preload_dictation_model(app: &AppHandle, settings: &AppSettings) {
     }
 }
 
-fn should_request_accessibility_for_dictation(
-    dictation_enabled: bool,
-    status: wakenote::permissions::PermissionGrantStatus,
-) -> bool {
-    dictation_enabled
-        && matches!(
-            status,
-            wakenote::permissions::PermissionGrantStatus::NotDetermined
-                | wakenote::permissions::PermissionGrantStatus::Denied
-                | wakenote::permissions::PermissionGrantStatus::Unknown
-        )
+fn dictation_recording_permission_guidance(
+    event: DictationShortcutEvent,
+    stage: DictationStage,
+    status: PermissionGrantStatus,
+) -> Option<PermissionGuidancePayload> {
+    (event == DictationShortcutEvent::Pressed
+        && stage == DictationStage::Idle
+        && status != PermissionGrantStatus::Granted)
+        .then(PermissionGuidancePayload::dictation_recording)
 }
 
-fn schedule_accessibility_request_for_dictation(settings: &AppSettings) {
-    let status = permissions::permission_snapshot().accessibility.status;
-    if !should_request_accessibility_for_dictation(settings.dictation_enabled, status) {
-        return;
-    }
-
-    let settings_for_log = settings.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(750)).await;
-        match tauri::async_runtime::spawn_blocking(permissions::request_accessibility_permission)
-            .await
-        {
-            Ok(snapshot) => append_runtime_debug_log(
-                &settings_for_log,
-                format!(
-                    "[dictation] accessibility_request status={:?}",
-                    snapshot.accessibility.status
-                ),
-            ),
-            Err(error) => append_runtime_debug_log(
-                &settings_for_log,
-                format!("[dictation] accessibility_request failed: {error}"),
-            ),
-        }
-    });
+fn dictation_insertion_permission_guidance(
+    status: PermissionGrantStatus,
+) -> Option<PermissionGuidancePayload> {
+    (status != PermissionGrantStatus::Granted).then(PermissionGuidancePayload::dictation_insertion)
 }
 
 struct ResolvedDictationInput {
@@ -2887,6 +2886,15 @@ fn handle_dictation_shortcut_event(
     let state = app
         .try_state::<DictationState>()
         .ok_or_else(|| "dictation runtime is unavailable".to_string())?;
+    let stage = state.lock().map_err(|error| error.to_string())?.stage();
+    if let Some(payload) = dictation_recording_permission_guidance(
+        event,
+        stage,
+        permissions::permission_snapshot().microphone.status,
+    ) {
+        emit_permission_guidance(app, payload);
+        return Ok(());
+    }
     let action = {
         let mut runtime = state.lock().map_err(|error| error.to_string())?;
         runtime.handle_shortcut_event(event)
@@ -7957,7 +7965,6 @@ fn main() {
                 backend_state.clone(),
                 live_transcriber_state.clone(),
             );
-            schedule_accessibility_request_for_dictation(&initial_settings_for_runtime);
             spawn_mic_recovery_watchdog(
                 app.handle().clone(),
                 backend_state.clone(),
@@ -9485,25 +9492,49 @@ mod tests {
     }
 
     #[test]
-    fn enabled_dictation_requests_missing_accessibility_at_launch() {
-        use wakenote::permissions::PermissionGrantStatus;
-
-        assert!(should_request_accessibility_for_dictation(
-            true,
-            PermissionGrantStatus::NotDetermined,
-        ));
-        assert!(should_request_accessibility_for_dictation(
-            true,
+    fn dictation_permission_guidance_blocks_only_the_relevant_boundaries() {
+        let recording = dictation_recording_permission_guidance(
+            DictationShortcutEvent::Pressed,
+            DictationStage::Idle,
             PermissionGrantStatus::Denied,
-        ));
-        assert!(!should_request_accessibility_for_dictation(
-            true,
-            PermissionGrantStatus::Granted,
-        ));
-        assert!(!should_request_accessibility_for_dictation(
-            false,
-            PermissionGrantStatus::NotDetermined,
-        ));
+        );
+        assert_eq!(
+            recording,
+            Some(PermissionGuidancePayload::dictation_recording())
+        );
+        assert_eq!(
+            dictation_recording_permission_guidance(
+                DictationShortcutEvent::Pressed,
+                DictationStage::Idle,
+                PermissionGrantStatus::Granted,
+            ),
+            None
+        );
+        assert_eq!(
+            dictation_recording_permission_guidance(
+                DictationShortcutEvent::Released,
+                DictationStage::Idle,
+                PermissionGrantStatus::Denied,
+            ),
+            None
+        );
+        assert_eq!(
+            dictation_recording_permission_guidance(
+                DictationShortcutEvent::Pressed,
+                DictationStage::Recording,
+                PermissionGrantStatus::Denied,
+            ),
+            None
+        );
+
+        assert_eq!(
+            dictation_insertion_permission_guidance(PermissionGrantStatus::Restricted),
+            Some(PermissionGuidancePayload::dictation_insertion())
+        );
+        assert_eq!(
+            dictation_insertion_permission_guidance(PermissionGrantStatus::Granted),
+            None
+        );
     }
 
     struct FakeSystemAudioStream;

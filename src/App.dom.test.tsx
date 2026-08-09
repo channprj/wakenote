@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "./lib/app-state";
@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   saveSettingsPatch: vi.fn(),
   startLiveCapture: vi.fn(),
   listen: vi.fn().mockResolvedValue(() => {}),
+  showMainWindow: vi.fn(),
+  focusMainWindow: vi.fn(),
 }));
 
 vi.mock("./lib/tauri-client", async (importOriginal) => {
@@ -30,6 +32,12 @@ vi.mock("./lib/tauri-client", async (importOriginal) => {
 });
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    show: mocks.showMainWindow,
+    setFocus: mocks.focusMainWindow,
+  }),
+}));
 
 import App from "./App";
 
@@ -88,6 +96,8 @@ beforeEach(() => {
   mocks.loadPermissionSnapshot.mockReset();
   mocks.saveSettingsPatch.mockReset();
   mocks.startLiveCapture.mockReset();
+  mocks.showMainWindow.mockReset();
+  mocks.focusMainWindow.mockReset();
 });
 
 afterEach(() => {
@@ -193,5 +203,40 @@ describe("explicit action permission guidance", () => {
 
     await waitFor(() => expect(mocks.startLiveCapture).toHaveBeenCalledOnce());
     expect(mocks.loadPermissionSnapshot).toHaveBeenCalledOnce();
+  });
+});
+
+describe("native permission guidance", () => {
+  it("shows WakeNote and selects Audio for a typed Dictation event", async () => {
+    let guidanceHandler:
+      | ((event: { payload: unknown }) => void | Promise<void>)
+      | undefined;
+    mocks.listen.mockImplementation(async (eventName, handler) => {
+      if (eventName === "permission-guidance-required") {
+        guidanceHandler = handler;
+      }
+      return () => {};
+    });
+    mocks.loadSnapshot.mockResolvedValue(nativeSnapshot(true, null));
+
+    render(<App />);
+
+    await waitFor(() => expect(guidanceHandler).toBeTypeOf("function"));
+    await act(async () => {
+      await guidanceHandler?.({
+        payload: {
+          feature: "dictation_recording",
+          permission: "microphone",
+        },
+      });
+    });
+
+    expect(
+      screen.getByRole("tab", { name: "Audio" }).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
+    expect(mocks.showMainWindow).toHaveBeenCalledOnce();
+    expect(mocks.focusMainWindow).toHaveBeenCalledOnce();
   });
 });

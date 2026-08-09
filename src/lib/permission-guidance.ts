@@ -12,6 +12,16 @@ export type PermissionFeature =
   | "dictation_insertion"
   | "resume_source";
 
+export const PERMISSION_GUIDANCE_EVENT = "permission-guidance-required";
+
+export interface NativePermissionGuidancePayload {
+  feature: Extract<
+    PermissionFeature,
+    "dictation_recording" | "dictation_insertion"
+  >;
+  permission: Extract<PermissionKind, "accessibility" | "microphone">;
+}
+
 const FEATURE_PERMISSIONS = {
   live_input: ["microphone"],
   manual_meeting: ["microphone", "screen_recording"],
