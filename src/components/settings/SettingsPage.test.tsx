@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "@/lib/app-state";
 import type { AppSnapshot } from "@/lib/types";
 import type { SettingsSection } from "@/lib/navigation";
+import { dictationMicrophoneSummary } from "./DictationSettings";
 import { SettingsPage } from "./SettingsPage";
 import { SettingsGrid } from "./settings-controls";
 import type { SettingsActions } from "./types";
@@ -48,6 +49,23 @@ function renderSection(
   );
 }
 
+describe("Dictation microphone summary", () => {
+  it("distinguishes one Primary from automatic two-input priority", () => {
+    expect(
+      dictationMicrophoneSummary([{ id: "wired", label: "Wired" }]),
+    ).toEqual({ label: "Primary only", description: "Wired" });
+    expect(
+      dictationMicrophoneSummary([
+        { id: "wired", label: "Wired" },
+        { id: "wireless", label: "Wireless" },
+      ]),
+    ).toEqual({
+      label: "Automatic priority",
+      description: "Wired + Wireless",
+    });
+  });
+});
+
 describe("SettingsPage ownership", () => {
   it("keeps application and window behavior in General", () => {
     const markup = renderSection("general");
@@ -89,13 +107,24 @@ describe("SettingsPage ownership", () => {
   });
 
   it("keeps shortcut dictation in its own settings section", () => {
-    const markup = renderSection("dictation");
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "input-1-wired", label: "Wired" },
+      { id: "input-2-wireless", label: "Wireless" },
+    ];
+    const markup = renderSection("dictation", snapshot);
 
     expect(markup).toContain("Shortcut dictation");
     expect(markup).toContain("Enable shortcut dictation");
     expect(markup).toContain("Dictation shortcut");
     expect(markup).toContain("Dictation language");
     expect(markup).toContain("Dictation model");
+    expect(markup).toContain("Dictation microphones");
+    expect(markup).toContain("Automatic priority");
+    expect(markup).toContain("Wired + Wireless");
+    expect(markup).toContain(
+      "Uses the Primary and optional Secondary selected in Audio",
+    );
     expect(markup).toContain("Copy result to clipboard");
     expect(markup).toContain("Remove trailing space");
     expect(markup).toContain("Start sound");

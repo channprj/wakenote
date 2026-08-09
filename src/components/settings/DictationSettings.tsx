@@ -12,6 +12,7 @@ import {
 } from "@/lib/dictation-shortcut";
 import { groupModelsByLocation, modelSupportsContext } from "@/lib/models";
 import type {
+  AppSettings,
   AppSnapshot,
   DictationBubblePosition,
   DictationCueSound,
@@ -73,6 +74,18 @@ const DICTATION_BUBBLE_POSITIONS = [
 
 const DEFAULT_DICTATION_MODEL = "__default__";
 const USABLE_MODEL_STATUSES = new Set(["ready", "installed", "unloaded"]);
+
+export function dictationMicrophoneSummary(
+  inputs: AppSettings["capture_microphones"],
+) {
+  const devices = inputs.slice(0, 2);
+  return {
+    label: devices.length > 1 ? "Automatic priority" : "Primary only",
+    description:
+      devices.map((device) => device.label).join(" + ") ||
+      "No microphone selected",
+  };
+}
 
 function isPhysicalModifierShortcut(shortcut: string): boolean {
   return /^(?:left|right)(?:ctrl|alt|shift|cmd)$/.test(shortcut);
@@ -251,6 +264,9 @@ export function DictationSettings({
       })),
     ),
   ];
+  const microphoneSummary = dictationMicrophoneSummary(
+    settings.capture_microphones,
+  );
 
   return (
     <SettingsGrid maxColumns={2}>
@@ -326,6 +342,26 @@ export function DictationSettings({
             })
           }
         />
+        <Field orientation="responsive" className="settings-row">
+          <FieldContent>
+            <FieldLabel>Dictation microphones</FieldLabel>
+            <FieldDescription>
+              Uses the Primary and optional Secondary selected in Audio, then
+              automatically keeps the cleanest signal.
+            </FieldDescription>
+          </FieldContent>
+          <div
+            aria-label="Dictation microphone mode"
+            className="flex max-w-56 flex-col gap-0.5 @md/field-group:items-end @md/field-group:text-right"
+          >
+            <strong className="text-[length:var(--text-label)] leading-[var(--leading-label)] font-medium">
+              {microphoneSummary.label}
+            </strong>
+            <span className="overflow-wrap-anywhere text-[length:var(--text-caption)] leading-[var(--leading-caption)] text-muted-foreground">
+              {microphoneSummary.description}
+            </span>
+          </div>
+        </Field>
         <SettingSwitch
           label="Copy result to clipboard"
           description={

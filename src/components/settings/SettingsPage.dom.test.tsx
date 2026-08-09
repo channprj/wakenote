@@ -298,6 +298,29 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({ dictation_enabled: true });
   });
 
+  it("shows the Audio microphone priority as read-only Dictation context", () => {
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "input-1-wired", label: "Wired" },
+      { id: "input-2-wireless", label: "Wireless" },
+    ];
+
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+
+    const summary = screen.getByLabelText("Dictation microphone mode");
+    expect(summary.textContent).toContain("Automatic priority");
+    expect(summary.textContent).toContain("Wired + Wireless");
+    expect(actions.onPatch).not.toHaveBeenCalled();
+  });
+
   it("patches independent Dictation feedback and model preferences", async () => {
     const user = userEvent.setup();
     const actions = makeActions();
