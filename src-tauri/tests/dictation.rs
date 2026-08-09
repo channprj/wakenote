@@ -912,14 +912,22 @@ fn automatic_stop_only_finishes_the_matching_recording() {
 
 #[test]
 fn dictation_runtime_returns_one_recording_from_two_priority_slots() {
+    let tmp = tempfile::tempdir().expect("tempdir");
     let primary_id = unique_input_id("dual-primary");
     let secondary_id = unique_input_id("dual-secondary");
-    register_input_script(&primary_id, vec![frame(vec![0.36; 4_800], 100, 100)], None);
     register_input_script(
-        &secondary_id,
-        vec![frame(vec![0.08; 4_410], 100, 100)],
+        &primary_id,
+        vec![frame(vec![0.36; 48_000], 1_000, 1_000)],
         None,
     );
+    register_input_script(
+        &secondary_id,
+        vec![frame(vec![0.08; 44_100], 1_000, 1_000)],
+        None,
+    );
+    let mut settings = dual_settings();
+    settings.save_root = tmp.path().to_string_lossy().into_owned();
+    settings.audio_format = AudioFormat::Wav;
     let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
     assert_eq!(
         runtime.handle_shortcut_event(DictationShortcutEvent::Pressed),
@@ -927,7 +935,7 @@ fn dictation_runtime_returns_one_recording_from_two_priority_slots() {
     );
     let operation_id = runtime
         .begin_recording(
-            dual_settings(),
+            settings,
             chrono::DateTime::<Utc>::UNIX_EPOCH,
             [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
         )
@@ -958,6 +966,43 @@ fn dictation_runtime_returns_one_recording_from_two_priority_slots() {
     assert_eq!(result.recording.sample_rate, 16_000);
     assert_eq!(result.recording.microphone_inputs.len(), 2);
     assert_eq!(result.settings.capture_microphones.len(), 2);
+
+    let archived = archive_dictation_recording(&result.recording, &result.settings, "0.260809.1")
+        .expect("one archive");
+    assert!(archived.audio_path.exists());
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink_events = events.clone();
+    let outcome = transcribe_and_type_dictation_recording(
+        &result.recording,
+        "whisper-medium",
+        TranscriptionLanguage::Auto,
+        &DictionaryContext::default(),
+        OrderedFakeTranscriber {
+            events: events.clone(),
+            text: "one transcript".to_string(),
+        },
+        move |text| {
+            sink_events
+                .lock()
+                .expect("events")
+                .push(format!("typed:{text}"));
+            Ok(())
+        },
+    )
+    .expect("operation succeeds");
+
+    assert_eq!(
+        outcome,
+        DictationProcessOutcome::Typed("one transcript".to_string())
+    );
+    assert_eq!(
+        *events.lock().expect("events"),
+        vec![
+            "transcribed".to_string(),
+            "typed:one transcript".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -1077,6 +1122,11 @@ fn dictation_runtime_reports_degraded_then_exhausted_health() {
         .expect("health result");
     assert!(matches!(second, DictationCaptureHealth::Exhausted(_)));
     assert!(runtime.poll_capture_health(operation_id).is_none());
+    assert_eq!(
+        runtime.handle_shortcut_event(DictationShortcutEvent::Released),
+        DictationAction::Ignore,
+        "health exhaustion must disarm the duplicate stop cue",
+    );
 }
 
 #[test]

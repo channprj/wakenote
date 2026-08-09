@@ -42,10 +42,11 @@ use wakenote::commands::{
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
-    DictationMicrophoneInput, DictationRecording, DictationRuntime, DictationShortcutEvent,
-    DictationStage, DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime,
-    PhysicalModifierKey, ShortcutRegistrationChange, archive_dictation_recording,
-    candidate_dictation_settings, modifier_shortcut, normalize_dictation_patch,
+    DictationCaptureHealth, DictationCaptureResult, DictationMicrophoneInput, DictationRecording,
+    DictationRuntime, DictationShortcutEvent, DictationSlotFailure, DictationStage,
+    DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey,
+    ShortcutRegistrationChange, archive_dictation_recording, candidate_dictation_settings,
+    modifier_shortcut, normalize_dictation_patch, prepare_dictation_audio,
     shortcut_registration_change, transcribe_dictation_recording_execution,
     validate_dictation_shortcut,
 };
@@ -2478,41 +2479,390 @@ fn schedule_accessibility_request_for_dictation(settings: &AppSettings) {
     });
 }
 
-async fn stop_dictation_after_limit(app: AppHandle, recording_id: u64) {
-    tokio::time::sleep(DICTATION_MAX_RECORDING_DURATION).await;
-    let Some(state) = app.try_state::<DictationState>() else {
-        return;
+struct ResolvedDictationInput {
+    input: DictationMicrophoneInput,
+    config: AudioInputConfig,
+}
+
+struct DictationStartResolution {
+    ready: Vec<ResolvedDictationInput>,
+    failures: Vec<DictationSlotFailure>,
+}
+
+fn resolve_dictation_inputs_with<F>(
+    settings: &AppSettings,
+    mut resolver: F,
+) -> DictationStartResolution
+where
+    F: FnMut(&CaptureMicrophoneEntry) -> Result<ResolvedCpalInputDevice, String>,
+{
+    let configured = if settings.capture_microphones.is_empty() {
+        vec![CaptureMicrophoneEntry {
+            id: settings.selected_microphone.clone(),
+            label: settings.selected_microphone_label.clone(),
+            core_audio_uid: None,
+        }]
+    } else {
+        settings
+            .capture_microphones
+            .iter()
+            .take(2)
+            .cloned()
+            .collect()
     };
-    let stopped = state.lock().ok().and_then(|mut runtime| {
-        runtime
-            .stop_if_recording(recording_id)
-            .map(|result| (result, runtime.payload(None)))
-    });
-    let Some((result, payload)) = stopped else {
-        return;
+    let mut resolution = DictationStartResolution {
+        ready: Vec::new(),
+        failures: Vec::new(),
     };
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => {
-            finish_dictation(&app, Some(error));
-            return;
+    for (index, configured_input) in configured.iter().enumerate() {
+        let Some(slot) = MicrophoneSlot::from_index(index) else {
+            continue;
+        };
+        match resolver(configured_input) {
+            Ok(resolved) if resolved.used_fallback_device => {
+                resolution.failures.push(DictationSlotFailure {
+                    slot,
+                    error: format!(
+                        "{} is disconnected; dictation is waiting for the same device",
+                        configured_input.label
+                    ),
+                });
+            }
+            Ok(resolved) => {
+                let input = DictationMicrophoneInput {
+                    slot,
+                    device: CaptureMicrophoneEntry {
+                        id: resolved.device_id.clone(),
+                        label: resolved.device_name.clone(),
+                        core_audio_uid: resolved.core_audio_uid.clone(),
+                    },
+                };
+                resolution.ready.push(ResolvedDictationInput {
+                    config: AudioInputConfig {
+                        device_id: resolved.device_id,
+                        sample_rate: Some(resolved.sample_rate),
+                        label_hint: (!resolved.device_name.is_empty())
+                            .then_some(resolved.device_name),
+                        core_audio_uid: resolved.core_audio_uid,
+                    },
+                    input,
+                });
+            }
+            Err(error) => resolution
+                .failures
+                .push(DictationSlotFailure { slot, error }),
         }
+    }
+    resolution
+}
+
+fn resolve_dictation_inputs(settings: &AppSettings) -> DictationStartResolution {
+    resolve_dictation_inputs_with(settings, |input| {
+        resolve_capture_device_with_timeout(
+            input.id.clone(),
+            (!input.label.is_empty()).then_some(input.label.clone()),
+            input.core_audio_uid.clone(),
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+fn dictation_slot_label(slot: MicrophoneSlot) -> &'static str {
+    match slot {
+        MicrophoneSlot::Primary => "Primary",
+        MicrophoneSlot::Secondary => "Secondary",
+    }
+}
+
+fn dictation_start_error(failures: &[DictationSlotFailure]) -> String {
+    if failures.is_empty() {
+        return "No Dictation microphone is available".to_string();
+    }
+    failures
+        .iter()
+        .map(|failure| format!("{}: {}", dictation_slot_label(failure.slot), failure.error))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn dictation_listening_message(active_slots: &[MicrophoneSlot]) -> Result<String, String> {
+    match active_slots {
+        [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] => Ok("Listening…".to_string()),
+        [MicrophoneSlot::Primary] => Ok("Listening · Primary only".to_string()),
+        [MicrophoneSlot::Secondary] => Ok("Listening · Secondary only".to_string()),
+        _ => Err("Dictation did not start a microphone".to_string()),
+    }
+}
+
+fn show_dictation_degraded(
+    app: &AppHandle,
+    active_slots: &[MicrophoneSlot],
+    failures: &[DictationSlotFailure],
+) {
+    for failure in failures {
+        log_dictation_runtime(
+            app,
+            format!(
+                "[dictation] slot={} state=failed error={}",
+                failure.slot.as_str(),
+                failure.error,
+            ),
+        );
+    }
+    let Ok(message) = dictation_listening_message(active_slots) else {
+        return;
     };
-    emit_dictation_state(&app, payload);
     show_dictation_overlay(
-        &app,
+        app,
+        overlay::DictationOverlayState::Recording,
+        Some(message),
+    );
+}
+
+fn start_dictation_capture(
+    app: &AppHandle,
+    state: &DictationState,
+    settings: AppSettings,
+) -> Result<u64, String> {
+    let resolution = resolve_dictation_inputs(&settings);
+    if resolution.ready.is_empty() {
+        return Err(dictation_start_error(&resolution.failures));
+    }
+    let operation_id = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .begin_recording(
+            settings.clone(),
+            Utc::now(),
+            resolution.ready.iter().map(|input| input.input.slot),
+        )?;
+    let mut failures = resolution.failures;
+    {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        for failure in &failures {
+            runtime.mark_slot_start_failed(operation_id, failure.slot, failure.error.clone());
+        }
+    }
+
+    let callback_throttle = Arc::new(Mutex::new(Instant::now() - OVERLAY_LEVEL_EMIT_INTERVAL));
+    let voice_leveling_policy = app
+        .try_state::<VoiceLevelingPolicy>()
+        .map(|state| state.inner().clone())
+        .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
+    for resolved in resolution.ready {
+        let slot = resolved.input.slot;
+        let configured_microphone = resolved.input.device.clone();
+        let hardware_control = app
+            .try_state::<MicrophoneLevelState>()
+            .map(|state| state.inner().clone())
+            .and_then(|service| {
+                service
+                    .level_for(&configured_microphone)
+                    .ok()
+                    .filter(|level| level.writable && level.volume_percent.is_some())
+                    .map(|_| {
+                        ServiceHardwareLevelControl::new(service, configured_microphone.clone())
+                    })
+            });
+        let sample_rate = resolved
+            .config
+            .sample_rate
+            .ok_or_else(|| "Dictation microphone sample rate is unavailable".to_string())?;
+        let processor = VoiceAwareMicrophoneProcessor::new(
+            sample_rate,
+            voice_leveling_policy.clone(),
+            hardware_control,
+        );
+        let callback_app = app.clone();
+        let callback_throttle = callback_throttle.clone();
+        let start_result = state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .start_slot_with_processor(
+                operation_id,
+                resolved.input,
+                resolved.config,
+                processor,
+                move |frame| {
+                    if !overlay_level_emit_due(&callback_throttle) {
+                        return;
+                    }
+                    let levels = overlay::waveform_levels_from_samples(
+                        &frame.samples,
+                        overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+                    );
+                    overlay::emit_dictation_waveform_levels(&callback_app, levels);
+                },
+            );
+        if let Err(error) = start_result {
+            let failure = DictationSlotFailure { slot, error };
+            state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .mark_slot_start_failed(operation_id, failure.slot, failure.error.clone());
+            failures.push(failure);
+        }
+    }
+
+    let active_slots = state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_slots(operation_id);
+    if active_slots.is_empty() {
+        return Err(dictation_start_error(&failures));
+    }
+    if failures.is_empty() {
+        show_dictation_overlay(
+            app,
+            overlay::DictationOverlayState::Recording,
+            Some(dictation_listening_message(&active_slots)?),
+        );
+    } else {
+        show_dictation_degraded(app, &active_slots, &failures);
+    }
+    log_dictation_runtime(
+        app,
+        format!(
+            "[dictation] capture=started recording_id={operation_id} slots={}",
+            active_slots
+                .iter()
+                .map(|slot| slot.as_str())
+                .collect::<Vec<_>>()
+                .join("+")
+        ),
+    );
+    Ok(operation_id)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DictationStopCause {
+    ShortcutRelease,
+    DurationLimit,
+}
+
+fn finish_dictation_capture(
+    app: &AppHandle,
+    operation_id: u64,
+    cause: DictationStopCause,
+) -> Result<bool, String> {
+    let Some(state) = app.try_state::<DictationState>() else {
+        return Ok(false);
+    };
+    let claimed = {
+        let mut runtime = state.lock().map_err(|error| error.to_string())?;
+        let result = match cause {
+            DictationStopCause::ShortcutRelease => {
+                if runtime.current_operation_id() != Some(operation_id) {
+                    return Ok(false);
+                }
+                Some(runtime.stop_recording())
+            }
+            DictationStopCause::DurationLimit => runtime.stop_if_recording(operation_id),
+        };
+        result.map(|result| (result, runtime.payload(None)))
+    };
+    let Some((result, payload)) = claimed else {
+        return Ok(false);
+    };
+    let result = result?;
+    log_dictation_runtime(
+        app,
+        format!(
+            "[dictation] capture=stopped cause={} samples={} slots={}",
+            match cause {
+                DictationStopCause::ShortcutRelease => "shortcut_release",
+                DictationStopCause::DurationLimit => "duration_limit",
+            },
+            result.recording.samples.len(),
+            result
+                .recording
+                .microphone_inputs
+                .iter()
+                .map(|input| input.slot.as_str())
+                .collect::<Vec<_>>()
+                .join("+")
+        ),
+    );
+    emit_dictation_state(app, payload);
+    show_dictation_overlay(
+        app,
         overlay::DictationOverlayState::Transcribing,
         Some("Transcribing…".to_string()),
     );
-    refresh_tray_from_backend(&app);
-    play_dictation_cue_nonblocking_on_failure(&app, DictationCue::Stop, &result.settings);
-    if let Err(error) = spawn_dictation_processing_task(
-        app.clone(),
-        recording_id,
-        result.settings,
-        result.recording,
-    ) {
-        show_dictation_operation_error(&app, recording_id, error);
+    refresh_tray_from_backend(app);
+    play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &result.settings);
+    spawn_dictation_processing_task(app.clone(), operation_id, result.settings, result.recording)?;
+    Ok(true)
+}
+
+fn finish_exhausted_dictation(
+    app: &AppHandle,
+    result: DictationCaptureResult,
+) -> Result<(), String> {
+    let error = dictation_start_error(&result.failures);
+    log_dictation_runtime(
+        app,
+        format!("[dictation] capture=partial reason=device_failure error={error}"),
+    );
+    emit_dictation_state(
+        app,
+        DictationStatePayload {
+            state: DictationStage::Transcribing,
+            error: None,
+        },
+    );
+    play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &result.settings);
+    if prepare_dictation_audio(&result.recording.samples, result.recording.sample_rate)?.is_some() {
+        show_dictation_overlay(
+            app,
+            overlay::DictationOverlayState::Transcribing,
+            Some("Transcribing…".to_string()),
+        );
+        refresh_tray_from_backend(app);
+        spawn_dictation_processing_task(
+            app.clone(),
+            result.operation_id,
+            result.settings,
+            result.recording,
+        )
+    } else {
+        show_dictation_operation_error(app, result.operation_id, error);
+        Ok(())
+    }
+}
+
+async fn monitor_dictation_capture_health(app: AppHandle, operation_id: u64) {
+    let mut interval = tokio::time::interval(Duration::from_millis(250));
+    loop {
+        interval.tick().await;
+        let outcome = app
+            .try_state::<DictationState>()
+            .and_then(|state| state.lock().ok()?.poll_capture_health(operation_id));
+        match outcome {
+            None | Some(DictationCaptureHealth::Healthy) => {}
+            Some(DictationCaptureHealth::Degraded {
+                active_slots,
+                failures,
+            }) => show_dictation_degraded(&app, &active_slots, &failures),
+            Some(DictationCaptureHealth::Exhausted(result)) => {
+                if let Err(error) = finish_exhausted_dictation(&app, *result) {
+                    show_dictation_operation_error(&app, operation_id, error);
+                }
+                break;
+            }
+        }
+        if !dictation_operation_is_active(&app, operation_id) {
+            break;
+        }
+    }
+}
+
+async fn stop_dictation_after_limit(app: AppHandle, operation_id: u64) {
+    tokio::time::sleep(DICTATION_MAX_RECORDING_DURATION).await;
+    if let Err(error) =
+        finish_dictation_capture(&app, operation_id, DictationStopCause::DurationLimit)
+    {
+        show_dictation_operation_error(&app, operation_id, error);
     }
 }
 
@@ -2562,131 +2912,28 @@ fn handle_dictation_shortcut_event(
             show_dictation_overlay(
                 app,
                 overlay::DictationOverlayState::Recording,
-                Some("Listening…".to_string()),
+                Some("Starting…".to_string()),
             );
             refresh_tray_from_backend(app);
             play_dictation_cue_nonblocking_on_failure(app, DictationCue::Start, &settings);
-
-            let microphone = settings
-                .capture_microphones
-                .first()
-                .cloned()
-                .unwrap_or_else(|| wakenote::settings::CaptureMicrophoneEntry {
-                    id: settings.selected_microphone.clone(),
-                    label: settings.selected_microphone_label.clone(),
-                    core_audio_uid: None,
-                });
-            let label_hint = (!microphone.label.is_empty()).then_some(microphone.label.clone());
-            let resolved = resolve_capture_device_with_timeout(
-                microphone.id.clone(),
-                label_hint.clone(),
-                microphone.core_audio_uid.clone(),
-            )
-            .map_err(|error| error.to_string())?;
-            if microphone.id != "default" && resolved.used_fallback_device {
-                return Err(format!(
-                    "{} is disconnected; dictation is waiting for the same device",
-                    microphone.label
-                ));
-            }
-            let configured_microphone = CaptureMicrophoneEntry {
-                id: resolved.device_id.clone(),
-                label: resolved.device_name.clone(),
-                core_audio_uid: resolved.core_audio_uid.clone(),
-            };
-            let dictation_input = DictationMicrophoneInput {
-                slot: MicrophoneSlot::Primary,
-                device: configured_microphone.clone(),
-            };
-            let callback_app = app.clone();
-            let callback_throttle =
-                Arc::new(Mutex::new(Instant::now() - OVERLAY_LEVEL_EMIT_INTERVAL));
-            let voice_leveling_policy = app
-                .try_state::<VoiceLevelingPolicy>()
-                .map(|state| state.inner().clone())
-                .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
-            let hardware_control = app
-                .try_state::<MicrophoneLevelState>()
-                .map(|state| state.inner().clone())
-                .and_then(|service| {
-                    service
-                        .level_for(&configured_microphone)
-                        .ok()
-                        .filter(|level| level.writable && level.volume_percent.is_some())
-                        .map(|_| {
-                            ServiceHardwareLevelControl::new(service, configured_microphone.clone())
-                        })
-                });
-            let processor = VoiceAwareMicrophoneProcessor::new(
-                resolved.sample_rate,
-                voice_leveling_policy,
-                hardware_control,
-            );
-            let recording_id = state
-                .lock()
-                .map_err(|error| error.to_string())?
-                .start_recording_with_processor(
-                    settings.clone(),
-                    dictation_input,
-                    AudioInputConfig {
-                        device_id: resolved.device_id,
-                        sample_rate: Some(resolved.sample_rate),
-                        label_hint,
-                        core_audio_uid: resolved.core_audio_uid,
-                    },
-                    processor,
-                    move |frame| {
-                        if !overlay_level_emit_due(&callback_throttle) {
-                            return;
-                        }
-                        let levels = overlay::waveform_levels_from_samples(
-                            &frame.samples,
-                            overlay::OVERLAY_WAVEFORM_BAR_COUNT,
-                        );
-                        overlay::emit_dictation_waveform_levels(&callback_app, levels);
-                    },
-                )?;
-            log_dictation_runtime(
-                app,
-                format!("[dictation] capture=started recording_id={recording_id}"),
-            );
+            let recording_id = start_dictation_capture(app, state.inner(), settings)?;
             let app_for_limit = app.clone();
             tauri::async_runtime::spawn(async move {
                 stop_dictation_after_limit(app_for_limit, recording_id).await;
             });
+            let app_for_health = app.clone();
+            tauri::async_runtime::spawn(async move {
+                monitor_dictation_capture_health(app_for_health, recording_id).await;
+            });
             Ok(())
         }
         DictationAction::StopAndTranscribe => {
-            let (operation_id, result, payload) = {
-                let mut runtime = state.lock().map_err(|error| error.to_string())?;
-                let operation_id = runtime
-                    .current_operation_id()
-                    .ok_or_else(|| "dictation operation is unavailable".to_string())?;
-                let result = runtime.stop_recording()?;
-                let payload = runtime.payload(None);
-                (operation_id, result, payload)
-            };
-            log_dictation_runtime(
-                app,
-                format!(
-                    "[dictation] capture=stopped samples={}",
-                    result.recording.samples.len()
-                ),
-            );
-            emit_dictation_state(app, payload);
-            show_dictation_overlay(
-                app,
-                overlay::DictationOverlayState::Transcribing,
-                Some("Transcribing…".to_string()),
-            );
-            refresh_tray_from_backend(app);
-            play_dictation_cue_nonblocking_on_failure(app, DictationCue::Stop, &result.settings);
-            spawn_dictation_processing_task(
-                app.clone(),
-                operation_id,
-                result.settings,
-                result.recording,
-            )?;
+            let operation_id = state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .current_operation_id()
+                .ok_or_else(|| "dictation operation is unavailable".to_string())?;
+            finish_dictation_capture(app, operation_id, DictationStopCause::ShortcutRelease)?;
             Ok(())
         }
     }
@@ -8426,6 +8673,133 @@ mod tests {
         ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
             Ok(Box::new(CaptionTestStream))
         }
+    }
+
+    fn dictation_resolution_settings() -> AppSettings {
+        AppSettings {
+            capture_microphones: vec![
+                CaptureMicrophoneEntry {
+                    id: "primary".to_string(),
+                    label: "Wired".to_string(),
+                    core_audio_uid: Some("primary-uid".to_string()),
+                },
+                CaptureMicrophoneEntry {
+                    id: "secondary".to_string(),
+                    label: "Wireless".to_string(),
+                    core_audio_uid: Some("secondary-uid".to_string()),
+                },
+            ],
+            ..AppSettings::default()
+        }
+    }
+
+    fn resolved_dictation_device(entry: &CaptureMicrophoneEntry) -> ResolvedCpalInputDevice {
+        ResolvedCpalInputDevice {
+            device_id: entry.id.clone(),
+            device_name: entry.label.clone(),
+            used_fallback_device: false,
+            core_audio_uid: entry.core_audio_uid.clone(),
+            sample_rate: 48_000,
+        }
+    }
+
+    #[test]
+    fn dictation_start_message_matches_the_slots_that_really_started() {
+        assert_eq!(
+            dictation_listening_message(&[MicrophoneSlot::Primary, MicrophoneSlot::Secondary])
+                .as_deref(),
+            Ok("Listening…"),
+        );
+        assert_eq!(
+            dictation_listening_message(&[MicrophoneSlot::Primary]).as_deref(),
+            Ok("Listening · Primary only"),
+        );
+        assert_eq!(
+            dictation_listening_message(&[MicrophoneSlot::Secondary]).as_deref(),
+            Ok("Listening · Secondary only"),
+        );
+        assert!(dictation_listening_message(&[]).is_err());
+    }
+
+    #[test]
+    fn dictation_start_resolution_keeps_ready_secondary_when_primary_fails() {
+        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
+            if entry.id == "primary" {
+                Err("Primary disconnected".to_string())
+            } else {
+                Ok(resolved_dictation_device(entry))
+            }
+        });
+
+        assert_eq!(result.ready.len(), 1);
+        assert_eq!(result.ready[0].input.slot, MicrophoneSlot::Secondary);
+        assert_eq!(result.failures[0].slot, MicrophoneSlot::Primary);
+    }
+
+    #[test]
+    fn dictation_start_resolution_keeps_ready_primary_when_secondary_fails() {
+        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
+            if entry.id == "secondary" {
+                Err("Secondary disconnected".to_string())
+            } else {
+                Ok(resolved_dictation_device(entry))
+            }
+        });
+
+        assert_eq!(result.ready.len(), 1);
+        assert_eq!(result.ready[0].input.slot, MicrophoneSlot::Primary);
+        assert_eq!(result.failures[0].slot, MicrophoneSlot::Secondary);
+    }
+
+    #[test]
+    fn dictation_start_resolution_preserves_slot_order() {
+        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
+            Ok(resolved_dictation_device(entry))
+        });
+
+        assert_eq!(
+            result
+                .ready
+                .iter()
+                .map(|input| input.input.slot)
+                .collect::<Vec<_>>(),
+            vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        );
+    }
+
+    #[test]
+    fn dictation_start_resolution_combines_two_safe_failures() {
+        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
+            Err(format!("{} disconnected", entry.label))
+        });
+
+        assert_eq!(
+            dictation_start_error(&result.failures),
+            "Primary: Wired disconnected; Secondary: Wireless disconnected",
+        );
+    }
+
+    #[test]
+    fn dictation_start_resolution_rejects_fallback_devices() {
+        let result = resolve_dictation_inputs_with(
+            &AppSettings {
+                capture_microphones: vec![CaptureMicrophoneEntry {
+                    id: "primary".to_string(),
+                    label: "Wired".to_string(),
+                    core_audio_uid: Some("primary-uid".to_string()),
+                }],
+                ..AppSettings::default()
+            },
+            |entry| {
+                let mut resolved = resolved_dictation_device(entry);
+                resolved.used_fallback_device = true;
+                Ok(resolved)
+            },
+        );
+
+        assert!(result.ready.is_empty());
+        assert_eq!(result.failures[0].slot, MicrophoneSlot::Primary);
+        assert!(result.failures[0].error.contains("same device"));
     }
 
     fn active_caption_test_dictation_state() -> (Arc<Mutex<DictationRuntime<CaptionTestInput>>>, u64)

@@ -755,6 +755,7 @@ impl<B: AudioInputBackend + Default> DictationRuntime<B> {
             return None;
         }
         self.capture_claimed = true;
+        self.stop_cue_armed = false;
         self.stage = next_stage;
         self.capture.stop_all();
         let session = match self.mix_session.take() {
