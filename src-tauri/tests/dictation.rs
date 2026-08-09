@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use wakenote::dictation::{
-    DictationAction, DictationMicrophoneInput, DictationProcessOutcome, DictationRecording,
-    DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
+    DictationAction, DictationMicrophoneInput, DictationMixSession, DictationProcessOutcome,
+    DictationRecording, DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
     ModifierShortcutRuntime, ShortcutRegistrationChange, archive_dictation_recording,
     candidate_dictation_settings, modifier_shortcut, prepare_dictation_audio,
     shortcut_registration_change, transcribe_and_type_dictation_recording,
@@ -37,6 +37,201 @@ fn dictation_input(slot: MicrophoneSlot, id: &str, label: &str) -> DictationMicr
             core_audio_uid: None,
         },
     }
+}
+
+fn frame(samples: Vec<f32>, duration_ms: u64, captured_at_ms: i64) -> AudioFrame {
+    AudioFrame {
+        samples,
+        duration_ms,
+        captured_at: Utc
+            .timestamp_millis_opt(captured_at_ms)
+            .single()
+            .expect("timestamp"),
+    }
+}
+
+fn flatten_samples(frames: Vec<AudioFrame>) -> Vec<f32> {
+    frames.into_iter().flat_map(|frame| frame.samples).collect()
+}
+
+fn primary_dictation_mix_session(target_rate: u32) -> DictationMixSession {
+    let mut session = DictationMixSession::new(
+        chrono::DateTime::<Utc>::UNIX_EPOCH,
+        target_rate,
+        [MicrophoneSlot::Primary],
+    );
+    session.mark_started(dictation_input(MicrophoneSlot::Primary, "primary", "Wired"));
+    session
+}
+
+fn dual_dictation_mix_session() -> DictationMixSession {
+    let mut session = DictationMixSession::new(
+        chrono::DateTime::<Utc>::UNIX_EPOCH,
+        1_000,
+        [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+    );
+    session.mark_started(dictation_input(MicrophoneSlot::Primary, "primary", "Wired"));
+    session.mark_started(dictation_input(
+        MicrophoneSlot::Secondary,
+        "secondary",
+        "Wireless",
+    ));
+    session
+}
+
+fn push_dictation_pair(
+    session: &mut DictationMixSession,
+    chunk: i64,
+    primary: f32,
+    secondary: f32,
+) -> Vec<f32> {
+    let end = chunk * 100;
+    let mut output = flatten_samples(session.push_frame(
+        MicrophoneSlot::Primary,
+        1_000,
+        frame(vec![primary; 100], 100, end),
+    ));
+    output.extend(flatten_samples(session.push_frame(
+        MicrophoneSlot::Secondary,
+        1_000,
+        frame(vec![secondary; 100], 100, end),
+    )));
+    output
+}
+
+#[test]
+fn dictation_mix_session_switches_to_the_sustained_cleaner_microphone() {
+    let mut session = dual_dictation_mix_session();
+    let mut output = Vec::new();
+    for chunk in 1..=4 {
+        output.extend(push_dictation_pair(&mut session, chunk, 0.36, 0.08));
+    }
+    for chunk in 5..=7 {
+        output.extend(push_dictation_pair(&mut session, chunk, 0.08, 0.36));
+    }
+    output.extend(flatten_samples(session.finish()));
+
+    let tail = &output[output.len() - 20..];
+    assert!(tail.iter().copied().sum::<f32>() / tail.len() as f32 > 0.34);
+    assert!(session.finish().is_empty(), "finish must be idempotent");
+}
+
+#[test]
+fn dictation_mix_session_continues_after_one_slot_fails() {
+    let mut session = dual_dictation_mix_session();
+    session.push_frame(
+        MicrophoneSlot::Primary,
+        1_000,
+        frame(vec![0.6; 100], 100, 100),
+    );
+    let drained = session.mark_failed(
+        MicrophoneSlot::Secondary,
+        "secondary disconnected".to_string(),
+    );
+
+    assert_eq!(flatten_samples(drained), vec![0.6; 100]);
+    assert_eq!(session.active_slots(), vec![MicrophoneSlot::Primary]);
+}
+
+#[test]
+fn dictation_mix_session_resamples_each_slot_to_the_target_rate() {
+    let mut session = primary_dictation_mix_session(16_000);
+    let output = session.push_frame(
+        MicrophoneSlot::Primary,
+        48_000,
+        frame(vec![0.2; 4_800], 100, 100),
+    );
+    assert_eq!(flatten_samples(output).len(), 1_600);
+}
+
+#[test]
+fn dictation_mix_session_orders_actual_inputs_by_slot() {
+    let mut session = DictationMixSession::new(
+        chrono::DateTime::<Utc>::UNIX_EPOCH,
+        1_000,
+        [MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+    );
+    session.mark_started(dictation_input(
+        MicrophoneSlot::Secondary,
+        "secondary",
+        "Wireless",
+    ));
+    session.mark_started(dictation_input(MicrophoneSlot::Primary, "primary", "Wired"));
+
+    assert_eq!(
+        session
+            .started_inputs()
+            .iter()
+            .map(|input| input.device.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["primary", "secondary"],
+    );
+}
+
+#[test]
+fn dictation_mix_session_rejects_a_clipped_secondary() {
+    let mut session = dual_dictation_mix_session();
+    let mut output = Vec::new();
+    for chunk in 1..=8 {
+        let end = chunk * 100;
+        output.extend(flatten_samples(
+            session.push_frame(
+                MicrophoneSlot::Primary,
+                1_000,
+                frame(
+                    (0..100)
+                        .map(|index| if index % 2 == 0 { 0.32 } else { -0.32 })
+                        .collect(),
+                    100,
+                    end,
+                ),
+            ),
+        ));
+        output.extend(flatten_samples(
+            session.push_frame(
+                MicrophoneSlot::Secondary,
+                1_000,
+                frame(
+                    (0..100)
+                        .map(|index| if index % 2 == 0 { 1.0 } else { -1.0 })
+                        .collect(),
+                    100,
+                    end,
+                ),
+            ),
+        ));
+    }
+    output.extend(flatten_samples(session.finish()));
+    let tail_peak = output[output.len() - 200..]
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    assert!(tail_peak < 0.4);
+}
+
+#[test]
+fn dictation_mix_session_orders_failures_and_exhausts_active_slots() {
+    let mut session = dual_dictation_mix_session();
+    session.mark_failed(
+        MicrophoneSlot::Secondary,
+        "secondary disconnected".to_string(),
+    );
+    session.mark_failed(MicrophoneSlot::Primary, "primary disconnected".to_string());
+
+    assert!(session.active_slots().is_empty());
+    assert_eq!(
+        session
+            .failures()
+            .into_iter()
+            .map(|failure| (failure.slot, failure.error))
+            .collect::<Vec<_>>(),
+        vec![
+            (MicrophoneSlot::Primary, "primary disconnected".to_string()),
+            (
+                MicrophoneSlot::Secondary,
+                "secondary disconnected".to_string(),
+            ),
+        ],
+    );
 }
 
 impl AudioFrameProcessor for ScalingProcessor {

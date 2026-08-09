@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,7 @@ use tauri_plugin_global_shortcut::Shortcut;
 
 use crate::dictionary::DictionaryContext;
 use crate::live_capture::{AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureRuntime};
+use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer};
 use crate::recorder::{ChunkSource, RecordedChunk, Recorder, RecordingRequest};
 use crate::settings::{
     AppSettings, CaptureMicrophoneEntry, MicrophoneSlot, SettingsPatch, TranscriptionLanguage,
@@ -218,6 +220,106 @@ impl ModifierShortcutRuntime {
 pub struct DictationMicrophoneInput {
     pub slot: MicrophoneSlot,
     pub device: CaptureMicrophoneEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DictationSlotFailure {
+    pub slot: MicrophoneSlot,
+    pub error: String,
+}
+
+#[derive(Debug)]
+pub struct DictationMixSession {
+    mixer: MicrophoneMixer,
+    active_slots: BTreeSet<MicrophoneSlot>,
+    started_inputs: BTreeMap<MicrophoneSlot, CaptureMicrophoneEntry>,
+    failures: BTreeMap<MicrophoneSlot, String>,
+    finished: bool,
+}
+
+impl DictationMixSession {
+    pub fn new(
+        base_time: DateTime<Utc>,
+        target_sample_rate: u32,
+        expected_slots: impl IntoIterator<Item = MicrophoneSlot>,
+    ) -> Self {
+        Self {
+            mixer: MicrophoneMixer::with_mode(
+                target_sample_rate,
+                base_time,
+                MicrophoneMixMode::Priority,
+            ),
+            active_slots: expected_slots.into_iter().collect(),
+            started_inputs: BTreeMap::new(),
+            failures: BTreeMap::new(),
+            finished: false,
+        }
+    }
+
+    pub fn mark_started(&mut self, input: DictationMicrophoneInput) {
+        if self.finished {
+            return;
+        }
+        self.active_slots.insert(input.slot);
+        self.failures.remove(&input.slot);
+        self.started_inputs.insert(input.slot, input.device);
+    }
+
+    pub fn mark_failed(&mut self, slot: MicrophoneSlot, error: String) -> Vec<AudioFrame> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.active_slots.remove(&slot);
+        self.failures.entry(slot).or_insert(error);
+        let active_slots = self.active_slots();
+        self.mixer.drain(&active_slots)
+    }
+
+    pub fn push_frame(
+        &mut self,
+        slot: MicrophoneSlot,
+        input_sample_rate: u32,
+        frame: AudioFrame,
+    ) -> Vec<AudioFrame> {
+        if self.finished || !self.active_slots.contains(&slot) {
+            return Vec::new();
+        }
+        let active_slots = self.active_slots();
+        self.mixer
+            .push_frame(slot, input_sample_rate, frame, &active_slots)
+    }
+
+    pub fn finish(&mut self) -> Vec<AudioFrame> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.finished = true;
+        self.mixer.flush()
+    }
+
+    pub fn active_slots(&self) -> Vec<MicrophoneSlot> {
+        self.active_slots.iter().copied().collect()
+    }
+
+    pub fn started_inputs(&self) -> Vec<DictationMicrophoneInput> {
+        self.started_inputs
+            .iter()
+            .map(|(slot, device)| DictationMicrophoneInput {
+                slot: *slot,
+                device: device.clone(),
+            })
+            .collect()
+    }
+
+    pub fn failures(&self) -> Vec<DictationSlotFailure> {
+        self.failures
+            .iter()
+            .map(|(slot, error)| DictationSlotFailure {
+                slot: *slot,
+                error: error.clone(),
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
