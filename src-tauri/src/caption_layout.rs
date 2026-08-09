@@ -38,8 +38,8 @@ struct DisplayUnit {
 }
 
 impl DisplayUnit {
-    fn render_into(&self, rendered: &mut String) {
-        if self.leading_space {
+    fn render_into(&self, rendered: &mut String, include_leading_space: bool) {
+        if self.leading_space && include_leading_space {
             rendered.push(' ');
         }
         rendered.push_str(&self.text);
@@ -213,9 +213,6 @@ impl StableCaptionPager {
                 index += 1;
             }
 
-            if index > line_start {
-                self.line_ends.push(index);
-            }
             return page_turned;
         }
     }
@@ -238,8 +235,8 @@ impl StableCaptionPager {
             if !rendered.is_empty() {
                 rendered.push('\n');
             }
-            for unit in &self.units[start..end] {
-                unit.render_into(&mut rendered);
+            for (index, unit) in self.units[start..end].iter().enumerate() {
+                unit.render_into(&mut rendered, start != self.page_start || index != 0);
             }
             start = end;
         }
@@ -409,6 +406,18 @@ mod tests {
     }
 
     #[test]
+    fn fitting_append_stays_on_the_active_unfinished_row() {
+        let style = compact_style();
+        let mut pager = StableCaptionPager::default();
+        pager.update("하나", &style);
+
+        let grown = pager.update("하나 둘", &style);
+
+        assert_eq!(grown.text, "하나 둘");
+        assert!(!grown.page_turned);
+    }
+
+    #[test]
     fn fourth_row_atomically_starts_a_new_page_with_overflow() {
         let style = compact_style();
         let mut pager = StableCaptionPager::default();
@@ -418,7 +427,7 @@ mod tests {
         let overflow_word = "새페이지";
         let after = pager.update(&format!("{three_rows} {overflow_word}"), &style);
         assert!(after.page_turned);
-        assert!(after.text.trim_start().starts_with(overflow_word));
+        assert!(after.text.starts_with(overflow_word));
         assert!(after.text.lines().count() <= MAX_CAPTION_LINES);
         assert!(!after.text.contains(before.text.lines().next().unwrap()));
     }

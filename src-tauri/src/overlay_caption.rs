@@ -519,7 +519,7 @@ mod tests {
     }
 
     fn text_for_rows(rows: usize) -> String {
-        (0..rows * 5).map(|_| "가").collect::<Vec<_>>().join(" ")
+        (0..rows * 6).map(|_| "가").collect::<Vec<_>>().join(" ")
     }
 
     #[test]
@@ -640,21 +640,64 @@ mod tests {
     }
 
     #[test]
-    fn final_update_keeps_valid_page_or_performs_one_atomic_reset() {
+    fn final_update_retains_completed_anchors_without_a_page_turn() {
         let mut runtime = OverlayCaptionRuntime::default();
         let style = compact_style();
-        runtime.show_partial(7, text_for_rows(3), FloatingOverlayPosition::Top, style);
+        let partial = "가 가 가 가 가 가 가";
+        runtime.show_partial(7, partial, FloatingOverlayPosition::Top, style);
         let generation = runtime.snapshot().generation;
+        let first_anchor = runtime.snapshot().text.lines().next().unwrap().to_string();
         assert!(runtime.show_final(
             Some(7),
             PathBuf::from("/tmp/chunk.wav"),
-            format!("{} 최종", text_for_rows(3)),
+            format!("{partial} 가"),
         ));
-        assert!(
-            runtime.snapshot().generation == generation
-                || runtime.snapshot().generation == generation + 1
+        assert_eq!(runtime.snapshot().generation, generation);
+        assert_eq!(
+            runtime.snapshot().text.lines().next(),
+            Some(first_anchor.as_str())
         );
         assert!(runtime.snapshot().text.lines().count() <= MAX_CAPTION_LINES);
+    }
+
+    #[test]
+    fn stale_pre_page_turn_generation_cannot_hide_the_new_page() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = compact_style();
+        let three_rows = text_for_rows(3);
+        runtime.show_partial(7, &three_rows, FloatingOverlayPosition::Top, style.clone());
+        let stale_generation = runtime.snapshot().generation;
+
+        runtime.show_partial(
+            7,
+            format!("{three_rows} 새페이지"),
+            FloatingOverlayPosition::Top,
+            style,
+        );
+
+        assert!(!runtime.hide_if_generation(stale_generation));
+        assert!(runtime.snapshot().visible);
+        assert!(runtime.snapshot().text.starts_with("새페이지"));
+    }
+
+    #[test]
+    fn hide_and_new_chunk_clear_multi_page_state() {
+        let mut runtime = OverlayCaptionRuntime::default();
+        let style = compact_style();
+        let three_rows = text_for_rows(3);
+        runtime.show_partial(7, &three_rows, FloatingOverlayPosition::Top, style.clone());
+        runtime.show_partial(
+            7,
+            format!("{three_rows} 새페이지"),
+            FloatingOverlayPosition::Top,
+            style.clone(),
+        );
+        assert!(runtime.snapshot().text.starts_with("새페이지"));
+
+        runtime.hide();
+        runtime.show_partial(8, "새 청크", FloatingOverlayPosition::Top, style);
+        assert_eq!(runtime.snapshot().text, "새 청크");
+        assert_eq!(runtime.raw_text, "새 청크");
     }
 
     #[test]
