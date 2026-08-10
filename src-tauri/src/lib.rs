@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod audio_analysis;
+pub mod audio_codec;
 pub mod audio_merge;
 pub mod caption_layout;
 pub mod capture;

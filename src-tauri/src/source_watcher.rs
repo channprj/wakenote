@@ -1,5 +1,5 @@
 //! Detection of system-audio sources (Google Meet, YouTube, custom sources …)
-//! from the list of on-screen windows and owning applications.
+//! from the list of shareable windows and owning applications.
 //!
 //! The on-screen window enumeration (via ScreenCaptureKit's `SCShareableContent`)
 //! and the polling timer live in a thin platform wrapper. The decision logic —
@@ -270,6 +270,21 @@ mod tests {
             }
             other => panic!("expected Detected, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn detects_untitled_google_meet_app_window_by_owning_application() {
+        let windows = [window("", "Google Meet", 84)];
+
+        assert!(matches!(
+            compute_source_transition(None, &windows, &sources()),
+            SourceTransition::Detected(DetectedSource {
+                source_id,
+                app_name,
+                pid: 84,
+                ..
+            }) if source_id == "meet" && app_name == "Google Meet"
+        ));
     }
 
     #[test]

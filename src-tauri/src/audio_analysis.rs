@@ -1,11 +1,12 @@
 use std::{
     path::{Path, PathBuf},
-    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::audio_codec::convert_to_pcm_wav;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AudioRange {
@@ -195,24 +196,8 @@ fn decode_audio_for_waveform(path: &Path) -> Result<(Vec<f32>, u32), AudioAnalys
 
 fn decode_native_audio_to_wav(path: &Path) -> Result<(Vec<f32>, u32), AudioAnalysisError> {
     let wav_path = temporary_waveform_path(path);
-    let output = Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("WAVE")
-        .arg("-d")
-        .arg(format!("LEI16@{WAVEFORM_DECODE_SAMPLE_RATE}"))
-        .arg(path)
-        .arg(&wav_path)
-        .output()
-        .map_err(|error| AudioAnalysisError::Decode(error.to_string()))?;
-
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(AudioAnalysisError::Decode(if message.is_empty() {
-            format!("afconvert exited with status {}", output.status)
-        } else {
-            message
-        }));
-    }
+    convert_to_pcm_wav(path, &wav_path, WAVEFORM_DECODE_SAMPLE_RATE, None)
+        .map_err(AudioAnalysisError::Decode)?;
 
     let decoded = read_wav_mono(&wav_path);
     let _ = std::fs::remove_file(&wav_path);

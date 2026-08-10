@@ -1018,8 +1018,11 @@ impl AppBackend {
     }
 
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
-        if model_id == self.settings.selected_model {
-            return Err(format!("cannot delete active model {model_id}"));
+        if model_id == self.settings.selected_model
+            || model_id == self.settings.effective_dictation_model()
+            || model_id == self.settings.effective_meeting_model()
+        {
+            return Err(format!("cannot delete model {model_id} while it is in use"));
         }
 
         let store = self.model_store();
@@ -1922,7 +1925,7 @@ impl AppBackend {
                     &save_root,
                     title,
                     &format!("{title} system audio.m4a"),
-                    &self.settings.selected_model,
+                    self.settings.effective_meeting_model(),
                     self.settings.transcription_language,
                     env!("CARGO_PKG_VERSION"),
                     sample_rate,
@@ -1934,7 +1937,7 @@ impl AppBackend {
                         id: recorder.id().to_string(),
                         save_root,
                         model_directory: expand_user_path(&self.settings.model_directory),
-                        model_id: self.settings.selected_model.clone(),
+                        model_id: self.settings.effective_meeting_model().to_string(),
                         suppress_low_confidence: self.settings.suppress_low_confidence_transcripts,
                     },
                     recorder,

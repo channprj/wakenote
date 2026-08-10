@@ -57,7 +57,7 @@ use wakenote::dictionary_file::{
 use wakenote::input_monitor::InputMonitorRuntime;
 use wakenote::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, AudioStreamHandle, CpalAudioInput,
-    LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice,
+    LiveCaptureError, LiveCaptureRuntime, ResolvedCpalInputDevice, microphone_labels_match,
 };
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
@@ -536,6 +536,7 @@ const EVENT_MEETING_FINISHED: &str = "meeting-finished";
 const EVENT_LLM_REPORT_RUN_UPDATED: &str = "llm-report-run-updated";
 /// How often the watcher re-enumerates windows while the feature is enabled.
 const SOURCE_WATCH_INTERVAL: Duration = Duration::from_secs(5);
+const SOURCE_WATCH_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(60);
 const MAIN_WINDOW_LABEL: &str = "main";
 const MAIN_WINDOW_TITLE: &str = "WakeNote";
 const CLOSE_SETTINGS_WINDOW_MENU_ID: &str = "close-settings-window";
@@ -3459,6 +3460,15 @@ fn stable_microphone_options(
         if devices.iter().any(|device| device.id == configured.id) {
             continue;
         }
+        let same_name_available = devices
+            .iter()
+            .filter(|device| {
+                device.available && microphone_labels_match(&device.label, &configured.label)
+            })
+            .count();
+        if same_name_available == 1 {
+            continue;
+        }
         devices.push(MicrophoneDevice {
             id: configured.id.clone(),
             label: configured.label.clone(),
@@ -4638,7 +4648,7 @@ fn start_manual_meeting_recording(
         &expand_user_path(&settings.save_root),
         &title,
         "Microphone + System Audio",
-        &settings.selected_model,
+        settings.effective_meeting_model(),
         settings.transcription_language,
         env!("CARGO_PKG_VERSION"),
         MANUAL_MEETING_SAMPLE_RATE,
@@ -4850,10 +4860,11 @@ fn spawn_meeting_job(
     meeting_state: MeetingState,
     id: String,
 ) -> Result<(), String> {
-    let job = {
+    let settings = {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
-        meeting_job_spec_from_settings(id, &backend.settings())
+        backend.settings()
     };
+    let job = meeting_job_spec_for_saved_record(id, &settings)?;
     match schedule_and_spawn_meeting_job(app, meeting_state, job, false)? {
         MeetingJobScheduleOutcome::Started => Ok(()),
         MeetingJobScheduleOutcome::Queued | MeetingJobScheduleOutcome::AlreadyScheduled => {
@@ -4862,15 +4873,20 @@ fn spawn_meeting_job(
     }
 }
 
-fn meeting_job_spec_from_settings(id: String, settings: &AppSettings) -> MeetingJobSpec {
-    MeetingJobSpec {
+fn meeting_job_spec_for_saved_record(
+    id: String,
+    settings: &AppSettings,
+) -> Result<MeetingJobSpec, String> {
+    let save_root = expand_user_path(&settings.save_root);
+    let detail = wakenote::meeting::meeting_detail(&save_root, &id)?;
+    Ok(MeetingJobSpec {
         id,
-        save_root: expand_user_path(&settings.save_root),
+        save_root,
         model_directory: expand_user_path(&settings.model_directory),
-        model_id: settings.selected_model.clone(),
+        model_id: detail.record.model_id,
         suppress_low_confidence: settings.suppress_low_confidence_transcripts,
         dictionary: DictionaryContext::from_settings(settings),
-    }
+    })
 }
 
 fn meeting_job_spec_from_finished(
@@ -4895,28 +4911,16 @@ fn list_meetings(state: State<'_, BackendState>) -> Result<Vec<MeetingSummary>, 
 }
 
 #[tauri::command]
-fn import_and_start_meeting(
-    app: AppHandle,
+fn import_meeting_recording(
     state: State<'_, BackendState>,
-    meeting_state: State<'_, MeetingState>,
     source_path: String,
 ) -> Result<MeetingSummary, String> {
-    // Refuse before copying the file if another meeting is already running, so
-    // we never leave an orphaned record that can't start (one GPU context).
-    {
-        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-        if let Some(current) = runtime.current.as_ref() {
-            return Err(format!(
-                "Another meeting ({current}) is being processed. Try again after it finishes."
-            ));
-        }
-    }
     let (save_root, model_id, language) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
         (
             expand_user_path(&settings.save_root),
-            settings.selected_model.clone(),
+            settings.effective_meeting_model().to_string(),
             settings.transcription_language,
         )
     };
@@ -4928,18 +4932,40 @@ fn import_and_start_meeting(
         env!("CARGO_PKG_VERSION"),
         chrono::Local::now(),
     )?;
-    spawn_meeting_job(
-        app,
-        state.inner().clone(),
-        meeting_state.inner().clone(),
-        record.id.clone(),
-    )?;
     Ok(record.summary())
 }
 
 #[tauri::command]
 fn meeting_detail(state: State<'_, BackendState>, id: String) -> Result<MeetingDetail, String> {
     wakenote::meeting::meeting_detail(&meeting_save_root(&state)?, &id)
+}
+
+fn validate_meeting_transcription_request(
+    model: &ModelDescriptor,
+    request: &StartMeetingTranscriptionRequest,
+) -> Result<MeetingTranscriptionRequest, String> {
+    if !model_supports_context(model, TranscriptionContext::Meeting, false)
+        || !model.capabilities.file_transcription
+    {
+        return Err("selected model does not support meeting file transcription".to_string());
+    }
+    if model.offline && !matches!(model.status, ModelStatus::Installed | ModelStatus::Ready) {
+        return Err("selected on-device model is not installed and ready".to_string());
+    }
+    if request.speaker_separation_enabled && !model.capabilities.diarization {
+        return Err("selected model does not support speaker separation".to_string());
+    }
+    let streaming_enabled = match model.capabilities.streaming {
+        StreamingCapability::Required => true,
+        StreamingCapability::Optional => request.streaming_enabled,
+        StreamingCapability::Unsupported => false,
+    };
+    Ok(MeetingTranscriptionRequest {
+        model_id: model.id.clone(),
+        language: request.language,
+        streaming_enabled,
+        speaker_separation_enabled: request.speaker_separation_enabled,
+    })
 }
 
 #[tauri::command]
@@ -4967,32 +4993,8 @@ fn start_meeting_transcription(
             .ok_or_else(|| "selected meeting transcription model was not found".to_string())?;
         (expand_user_path(&backend.settings().save_root), model)
     };
-    if !model_supports_context(&model, TranscriptionContext::Meeting, false)
-        || !model.capabilities.file_transcription
-    {
-        return Err("selected model does not support meeting file transcription".to_string());
-    }
-    if model.offline && !matches!(model.status, ModelStatus::Installed | ModelStatus::Ready) {
-        return Err("selected on-device model is not installed and ready".to_string());
-    }
-    if request.speaker_separation_enabled && !model.capabilities.diarization {
-        return Err("selected model does not support speaker separation".to_string());
-    }
-    let streaming_enabled = match model.capabilities.streaming {
-        StreamingCapability::Required => true,
-        StreamingCapability::Optional => request.streaming_enabled,
-        StreamingCapability::Unsupported => false,
-    };
-    let record = start_recorded_meeting_transcription(
-        &save_root,
-        &id,
-        MeetingTranscriptionRequest {
-            model_id: model.id,
-            language: request.language,
-            streaming_enabled,
-            speaker_separation_enabled: request.speaker_separation_enabled,
-        },
-    )?;
+    let transcription_request = validate_meeting_transcription_request(&model, &request)?;
+    let record = start_recorded_meeting_transcription(&save_root, &id, transcription_request)?;
     spawn_meeting_job(
         app,
         state.inner().clone(),
@@ -6093,6 +6095,39 @@ fn source_watcher_should_enumerate_windows(
         )
 }
 
+fn source_watch_diagnostic_due(last: Option<Instant>, now: Instant) -> bool {
+    last.map(|last| now.duration_since(last) >= SOURCE_WATCH_DIAGNOSTIC_INTERVAL)
+        .unwrap_or(true)
+}
+
+fn redacted_source_window_summary(windows: &[wakenote::source_watcher::WindowSnapshot]) -> String {
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    for window in windows {
+        let app = window.app_name.trim();
+        if app.is_empty() || !seen.insert(app.to_string()) {
+            continue;
+        }
+        let normalized_title = window.title.to_lowercase();
+        let title_shape = if normalized_title.trim().is_empty() {
+            "untitled"
+        } else if normalized_title.contains("meet") || normalized_title.contains("google") {
+            "meet-marker"
+        } else {
+            "other-title"
+        };
+        candidates.push(format!("app={app:?},title={title_shape}"));
+        if candidates.len() == 6 {
+            break;
+        }
+    }
+    format!(
+        "windows={} candidates=[{}]",
+        windows.len(),
+        candidates.join("; ")
+    )
+}
+
 /// Background watcher: while `system_audio_enabled`, poll the on-screen windows
 /// every [`SOURCE_WATCH_INTERVAL`] and react to source transitions. Cheap when
 /// the feature is off (it just re-reads the flag and sleeps). Notifications are
@@ -6110,6 +6145,7 @@ fn spawn_source_watcher(
 ) {
     thread::spawn(move || {
         let mut missing_source_polls = 0;
+        let mut last_source_watch_diagnostic = None;
         loop {
             thread::sleep(SOURCE_WATCH_INTERVAL);
 
@@ -6164,7 +6200,22 @@ fn spawn_source_watcher(
                 continue;
             }
 
-            let windows = enumerate_windows();
+            let now = Instant::now();
+            let windows = match enumerate_windows() {
+                Ok(windows) => windows,
+                Err(error) => {
+                    if source_watch_diagnostic_due(last_source_watch_diagnostic, now) {
+                        append_runtime_debug_log(
+                            &settings,
+                            format!(
+                                "[source-watch] enumerate_error screen_recording_status={screen_recording_status:?} error={error}"
+                            ),
+                        );
+                        last_source_watch_diagnostic = Some(now);
+                    }
+                    continue;
+                }
+            };
             let mut source_defs = source_definitions(&settings);
             for source in &mut source_defs {
                 source.default_auto_prompt = resolve_auto_prompt(&settings, &source.id);
@@ -6193,6 +6244,19 @@ fn spawn_source_watcher(
                     allow_auto_preemption,
                 );
             missing_source_polls = next_missing_source_polls;
+            if previous.is_none()
+                && matches!(&transition, SourceTransition::Unchanged)
+                && source_watch_diagnostic_due(last_source_watch_diagnostic, now)
+            {
+                append_runtime_debug_log(
+                    &settings,
+                    format!(
+                        "[source-watch] no_match screen_recording_status={screen_recording_status:?} {}",
+                        redacted_source_window_summary(&windows)
+                    ),
+                );
+                last_source_watch_diagnostic = Some(now);
+            }
             match transition {
                 SourceTransition::Detected(source) => {
                     if let Ok(mut slot) = detected_source_state.lock() {
@@ -8205,7 +8269,7 @@ fn main() {
             start_manual_meeting_recording,
             stop_manual_meeting_recording,
             list_meetings,
-            import_and_start_meeting,
+            import_meeting_recording,
             meeting_detail,
             start_meeting_transcription,
             cancel_meeting,
@@ -9402,6 +9466,22 @@ mod tests {
     }
 
     #[test]
+    fn source_watcher_diagnostics_retain_app_shape_without_meeting_titles() {
+        let windows = vec![wakenote::source_watcher::WindowSnapshot {
+            title: "Confidential customer weekly sync".into(),
+            app_name: "Google Chrome".into(),
+            pid: 42,
+        }];
+
+        let summary = redacted_source_window_summary(&windows);
+
+        assert!(summary.contains("Google Chrome"));
+        assert!(summary.contains("other-title"));
+        assert!(!summary.contains("Confidential"));
+        assert!(!summary.contains("customer"));
+    }
+
+    #[test]
     fn source_capture_start_decision_blocks_duplicate_starts() {
         let now = Instant::now();
         let starting = SourceCaptureLifecycle::Starting {
@@ -9906,6 +9986,107 @@ mod tests {
     }
 
     #[test]
+    fn meeting_request_validation_rejects_realtime_only_and_unready_models() {
+        let backend = AppBackend::default();
+        let models = backend.model_registry();
+        let realtime = models
+            .iter()
+            .find(|model| model.id == "soniox-realtime-v5")
+            .expect("realtime model");
+        let unready = models
+            .iter()
+            .find(|model| model.id == "whisper-medium")
+            .expect("local model");
+        let request = StartMeetingTranscriptionRequest {
+            model_id: realtime.id.clone(),
+            language: TranscriptionLanguage::Auto,
+            streaming_enabled: true,
+            speaker_separation_enabled: false,
+        };
+
+        assert!(
+            validate_meeting_transcription_request(realtime, &request)
+                .expect_err("realtime-only must fail")
+                .contains("meeting file transcription")
+        );
+        assert!(
+            validate_meeting_transcription_request(
+                unready,
+                &StartMeetingTranscriptionRequest {
+                    model_id: unready.id.clone(),
+                    ..request
+                },
+            )
+            .expect_err("unready local must fail")
+            .contains("installed and ready")
+        );
+    }
+
+    #[test]
+    fn meeting_request_validation_preserves_supported_diarization() {
+        let backend = AppBackend::default();
+        let model = backend
+            .model_registry()
+            .into_iter()
+            .find(|model| model.id == "openai-gpt-4o-transcribe-diarize")
+            .expect("diarization model");
+        let request = StartMeetingTranscriptionRequest {
+            model_id: model.id.clone(),
+            language: TranscriptionLanguage::Ko,
+            streaming_enabled: true,
+            speaker_separation_enabled: true,
+        };
+
+        assert_eq!(
+            validate_meeting_transcription_request(&model, &request),
+            Ok(MeetingTranscriptionRequest {
+                model_id: model.id,
+                language: TranscriptionLanguage::Ko,
+                streaming_enabled: true,
+                speaker_separation_enabled: true,
+            })
+        );
+    }
+
+    #[test]
+    fn saved_meeting_job_uses_its_request_model_not_the_live_model() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("meeting.wav");
+        std::fs::write(&source, b"fake wav").expect("source");
+        let imported = wakenote::meeting::import_meeting(
+            tmp.path(),
+            &source,
+            "soniox-realtime-v5",
+            TranscriptionLanguage::Auto,
+            "test",
+            chrono::Local
+                .with_ymd_and_hms(2026, 8, 10, 12, 0, 0)
+                .unwrap(),
+        )
+        .expect("import");
+        wakenote::meeting::start_recorded_meeting_transcription(
+            tmp.path(),
+            &imported.id,
+            MeetingTranscriptionRequest {
+                model_id: "soniox-async-v5".into(),
+                language: TranscriptionLanguage::Ko,
+                streaming_enabled: false,
+                speaker_separation_enabled: false,
+            },
+        )
+        .expect("configure");
+        let settings = AppSettings {
+            save_root: tmp.path().to_string_lossy().to_string(),
+            selected_model: "soniox-realtime-v5".into(),
+            ..AppSettings::default()
+        };
+
+        let job = meeting_job_spec_for_saved_record(imported.id, &settings).expect("job");
+
+        assert_eq!(job.model_id, "soniox-async-v5");
+    }
+
+    #[test]
     fn queued_meeting_keeps_its_own_capture_configuration() {
         let mut runtime = MeetingRuntime::default();
         let first = MeetingJobSpec {
@@ -9997,6 +10178,19 @@ mod tests {
                 .unwrap(),
         )
         .expect("newer meeting");
+        for id in [&older.id, &newer.id] {
+            wakenote::meeting::start_recorded_meeting_transcription(
+                tmp.path(),
+                id,
+                MeetingTranscriptionRequest {
+                    model_id: "record-model".into(),
+                    language: wakenote::settings::TranscriptionLanguage::Ko,
+                    streaming_enabled: false,
+                    speaker_separation_enabled: false,
+                },
+            )
+            .expect("queue imported meeting");
+        }
         let settings = AppSettings {
             save_root: tmp.path().to_string_lossy().to_string(),
             model_directory: model_dir.to_string_lossy().to_string(),
@@ -10058,7 +10252,30 @@ mod tests {
                 .with_ymd_and_hms(2026, 7, 21, 11, 0, 0)
                 .unwrap(),
         )
+        .and_then(|record| {
+            wakenote::meeting::start_recorded_meeting_transcription(
+                tmp.path(),
+                &record.id,
+                MeetingTranscriptionRequest {
+                    model_id: "record-model".into(),
+                    language: wakenote::settings::TranscriptionLanguage::Ko,
+                    streaming_enabled: false,
+                    speaker_separation_enabled: false,
+                },
+            )
+        })
         .expect("meeting after launch");
+        wakenote::meeting::start_recorded_meeting_transcription(
+            tmp.path(),
+            &before_launch.id,
+            MeetingTranscriptionRequest {
+                model_id: "record-model".into(),
+                language: wakenote::settings::TranscriptionLanguage::Ko,
+                streaming_enabled: false,
+                speaker_separation_enabled: false,
+            },
+        )
+        .expect("queue meeting before launch");
         let settings = AppSettings {
             save_root: tmp.path().to_string_lossy().to_string(),
             model_directory: model_dir.to_string_lossy().to_string(),
@@ -10557,6 +10774,67 @@ mod tests {
         assert!(!devices[1].available);
         assert_eq!(devices[2].id, "input-secondary");
         assert_eq!(devices[2].label, "Desk Mic");
+        assert!(!devices[2].available);
+    }
+
+    #[test]
+    fn stable_microphones_hide_a_stale_duplicate_when_one_same_name_device_is_active() {
+        let settings = AppSettings {
+            capture_microphones: vec![wakenote::settings::CaptureMicrophoneEntry {
+                id: "input-4-boya-cm40".to_string(),
+                label: "BOYA CM40".to_string(),
+                core_audio_uid: Some("uid-stale".to_string()),
+            }],
+            ..AppSettings::default()
+        };
+        let devices = stable_microphone_options(
+            &settings,
+            vec![MicrophoneDevice {
+                id: "input-2-boya-cm40".to_string(),
+                label: "BOYA CM40".to_string(),
+                core_audio_uid: Some("uid-active".to_string()),
+                available: true,
+                fallback: false,
+            }],
+        );
+
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "input-2-boya-cm40");
+        assert!(devices[0].available);
+    }
+
+    #[test]
+    fn stable_microphones_keep_a_stale_entry_when_same_name_rebinding_is_ambiguous() {
+        let settings = AppSettings {
+            capture_microphones: vec![wakenote::settings::CaptureMicrophoneEntry {
+                id: "input-4-boya-cm40".to_string(),
+                label: "BOYA CM40".to_string(),
+                core_audio_uid: Some("uid-stale".to_string()),
+            }],
+            ..AppSettings::default()
+        };
+        let devices = stable_microphone_options(
+            &settings,
+            vec![
+                MicrophoneDevice {
+                    id: "input-1-boya-cm40".to_string(),
+                    label: "BOYA CM40".to_string(),
+                    core_audio_uid: Some("uid-a".to_string()),
+                    available: true,
+                    fallback: false,
+                },
+                MicrophoneDevice {
+                    id: "input-2-boya-cm40".to_string(),
+                    label: "BOYA CM40".to_string(),
+                    core_audio_uid: Some("uid-b".to_string()),
+                    available: true,
+                    fallback: false,
+                },
+            ],
+        );
+
+        assert_eq!(devices.len(), 3);
+        assert_eq!(devices[2].id, "input-4-boya-cm40");
         assert!(!devices[2].available);
     }
 }

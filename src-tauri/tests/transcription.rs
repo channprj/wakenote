@@ -4,7 +4,7 @@ use wakenote::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
 use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
-use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
+use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus, encode_wav_to_m4a};
 use wakenote::settings::{DictionaryEntry, TranscriptionLanguage};
 use wakenote::transcription::{
     DecodedSegmentQuality, RuntimeTranscriber, Transcriber, TranscriptArtifactReason,
@@ -948,25 +948,12 @@ fn whisper_context_parameters_prefer_gpu_on_macos_builds() {
 }
 
 #[test]
-fn m4a_audio_is_decoded_through_native_bridge_for_whisper() {
+fn m4a_audio_is_decoded_through_codec_bridge_for_whisper() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let wav_path = tmp.path().join("source.wav");
     let m4a_path = tmp.path().join("source.m4a");
     write_test_wav(&wav_path);
-    let output = std::process::Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("m4af")
-        .arg("-d")
-        .arg("aac")
-        .arg(&wav_path)
-        .arg(&m4a_path)
-        .output()
-        .expect("afconvert");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    encode_wav_to_m4a(&wav_path, &m4a_path, 96).expect("M4A fixture");
 
     let decoded = decode_audio_for_whisper(&m4a_path).expect("decode m4a");
 
@@ -974,7 +961,7 @@ fn m4a_audio_is_decoded_through_native_bridge_for_whisper() {
 }
 
 #[test]
-fn mp3_audio_is_decoded_through_native_bridge_for_whisper() {
+fn mp3_audio_is_decoded_through_codec_bridge_for_whisper() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let wav_path = tmp.path().join("source.wav");
     let mp3_path = tmp.path().join("source.mp3");

@@ -17,9 +17,9 @@ const BUILTIN_SOURCES: ReadonlyArray<RecognizedSourceInfo> = [
   {
     id: "meet",
     label: "Google Meet",
-    description: "Google Meet or browser tabs with Meet in the title",
+    description: "Google Meet tabs and floating meet.google.com call windows",
     auto_prompt: true,
-    title_patterns: ["google meet", "meet - "],
+    title_patterns: ["google meet", "meet - ", "meet.google.com"],
     custom: false,
   },
   {

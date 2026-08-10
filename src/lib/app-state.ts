@@ -163,6 +163,7 @@ export function defaultSettings(): AppSettings {
     ...RECORDING_DEFAULTS,
     calibration_completed: false,
     selected_model: "whisper-medium",
+    meeting_model: "whisper-medium",
     transcription_options: {
       streaming_enabled: false,
       cost_limit_fallback_enabled: false,

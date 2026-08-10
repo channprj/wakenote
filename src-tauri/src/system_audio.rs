@@ -112,13 +112,29 @@ fn is_related_application(
     false
 }
 
-/// Snapshot of the on-screen windows for source detection. Queries the same
+/// Snapshot of the shareable windows for source detection. Queries the same
 /// `SCShareableContent` the capture path uses; requires Screen Recording
-/// permission to return window titles. Returns an empty vec on non-macOS or on
-/// any query failure (e.g. permission not yet granted) so the watcher polls
-/// safely without surfacing transient errors.
-pub fn enumerate_windows() -> Vec<WindowSnapshot> {
+/// permission to return window titles. Query errors stay distinct from a
+/// successful empty desktop so the watcher can diagnose permission and
+/// ScreenCaptureKit failures without treating them as "no matching source".
+pub fn enumerate_windows() -> Result<Vec<WindowSnapshot>, String> {
     macos::enumerate_windows()
+}
+
+fn window_snapshot_from_metadata(
+    title: Option<&str>,
+    app_name: Option<&str>,
+    pid: i32,
+) -> Option<WindowSnapshot> {
+    let app_name = app_name?.trim();
+    if app_name.is_empty() {
+        return None;
+    }
+    Some(WindowSnapshot {
+        title: title.unwrap_or_default().trim().to_string(),
+        app_name: app_name.to_string(),
+        pid,
+    })
 }
 
 /// Downmix an interleaved multi-channel f32 buffer to mono by averaging the
@@ -163,8 +179,8 @@ mod macos {
         ))
     }
 
-    pub(super) fn enumerate_windows() -> Vec<WindowSnapshot> {
-        Vec::new()
+    pub(super) fn enumerate_windows() -> Result<Vec<WindowSnapshot>, String> {
+        Err("window enumeration is only supported on macOS".to_string())
     }
 }
 
@@ -192,6 +208,7 @@ mod macos {
     use super::{
         AudioFrame, AudioStreamHandle, LiveCaptureError, SystemAudioTarget, WindowSnapshot,
         downmix_interleaved_to_mono, frame_duration_ms, is_related_application,
+        window_snapshot_from_metadata,
     };
 
     const SHAREABLE_CONTENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -357,29 +374,25 @@ mod macos {
         }))
     }
 
-    /// Enumerate the on-screen windows visible to ScreenCaptureKit, reduced to
+    /// Enumerate the shareable windows visible to ScreenCaptureKit, reduced to
     /// the title / owning-app name / owning-app pid the detector needs. Returns
-    /// empty when shareable content cannot be queried (e.g. Screen Recording
-    /// permission not yet granted) so the watcher treats it as "nothing on
-    /// screen" rather than an error.
-    pub(super) fn enumerate_windows() -> Vec<WindowSnapshot> {
-        let Ok(content) = fetch_shareable_content() else {
-            return Vec::new();
-        };
+    /// an error when shareable content cannot be queried (e.g. Screen Recording
+    /// permission not yet granted). Off-screen and minimized call windows stay
+    /// eligible because their application audio can still be active.
+    pub(super) fn enumerate_windows() -> Result<Vec<WindowSnapshot>, String> {
+        let content = fetch_shareable_content().map_err(|error| error.to_string())?;
         let windows = unsafe { content.windows() };
-        windows
+        Ok(windows
             .iter()
-            .filter(|window| unsafe { window.isOnScreen() })
             .filter_map(|window| {
-                let title = unsafe { window.title() }?.to_string();
                 let app = unsafe { window.owningApplication() }?;
-                Some(WindowSnapshot {
-                    title,
-                    app_name: unsafe { app.applicationName() }.to_string(),
-                    pid: unsafe { app.processID() },
+                let title = unsafe { window.title() }.map(|title| title.to_string());
+                let app_name = unsafe { app.applicationName() }.to_string();
+                window_snapshot_from_metadata(title.as_deref(), Some(&app_name), unsafe {
+                    app.processID()
                 })
             })
-            .collect()
+            .collect())
     }
 
     /// Resolve the running applications/displays available to capture.
@@ -668,5 +681,17 @@ mod tests {
             "Spotify",
             "com.spotify.client",
         ));
+    }
+
+    #[test]
+    fn untitled_google_meet_app_window_remains_available_for_source_matching() {
+        assert_eq!(
+            window_snapshot_from_metadata(None, Some("Google Meet"), 42),
+            Some(WindowSnapshot {
+                title: String::new(),
+                app_name: "Google Meet".into(),
+                pid: 42,
+            })
+        );
     }
 }

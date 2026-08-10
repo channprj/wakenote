@@ -637,7 +637,15 @@ export default function App() {
         title="Meetings"
         description="Import, monitor, resume, and review long meeting recordings."
       >
-        <MeetingTranscriptionPanel onPermissionRequired={ensurePermission} />
+        <MeetingTranscriptionPanel
+          onPermissionRequired={ensurePermission}
+          models={snapshot.models}
+          meetingModelId={snapshot.settings.meeting_model}
+          selectedModelId={snapshot.settings.selected_model}
+          onMeetingModelChange={(meeting_model) =>
+            void patchSettings({ meeting_model })
+          }
+        />
       </WorkspacePage>
     ),
     transcripts: (

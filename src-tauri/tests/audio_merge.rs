@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use wakenote::audio_codec::convert_to_pcm_wav;
 use wakenote::audio_merge::{
     AudioMergeStage, MergeAudioInput, MergeAudioRequest, merge_audio_to_m4a,
     validate_and_order_request,
 };
+use wakenote::recorder::encode_wav_to_m4a;
 
 fn write_source(path: &Path) {
     std::fs::write(path, b"audio").expect("source audio");
@@ -195,31 +197,11 @@ fn write_constant_wav(path: &Path, sample: i16) {
 }
 
 fn convert_to_m4a(source: &Path, destination: &Path) {
-    let output = std::process::Command::new("/usr/bin/afconvert")
-        .args(["-f", "m4af", "-d", "aac@44100", "-c", "1", "-b", "96000"])
-        .arg(source)
-        .arg(destination)
-        .output()
-        .expect("run afconvert");
-    assert!(
-        output.status.success(),
-        "afconvert failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    encode_wav_to_m4a(source, destination, 96).expect("encode M4A fixture");
 }
 
 fn decode_m4a_samples(source: &Path, destination: &Path) -> Vec<i16> {
-    let output = std::process::Command::new("/usr/bin/afconvert")
-        .args(["-f", "WAVE", "-d", "LEI16@44100", "-c", "1"])
-        .arg(source)
-        .arg(destination)
-        .output()
-        .expect("decode merged m4a");
-    assert!(
-        output.status.success(),
-        "afconvert decode failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    convert_to_pcm_wav(source, destination, 44_100, Some(1)).expect("decode merged M4A");
     hound::WavReader::open(destination)
         .expect("decoded wav")
         .samples::<i16>()

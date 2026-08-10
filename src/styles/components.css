@@ -1603,6 +1603,17 @@ svg {
   line-height: var(--leading-body);
 }
 
+.meeting-panel__model {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 260px);
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
 .meeting-error {
   display: flex;
   align-items: center;

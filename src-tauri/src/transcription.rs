@@ -13,6 +13,7 @@ use whisper_rs::{
     get_lang_str,
 };
 
+use crate::audio_codec::convert_to_pcm_wav;
 use crate::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use crate::cloud_transcription::{
     CloudTranscriptionClient, CloudTranscriptionError, FailureCategory, TranscriptionCredentials,
@@ -2016,24 +2017,7 @@ fn read_wav_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError
 
 fn read_native_audio_as_whisper_audio(path: &Path) -> Result<Vec<f32>, TranscriptionError> {
     let wav_path = path.with_extension("decode.wav");
-    let output = Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("WAVE")
-        .arg("-d")
-        .arg("LEI16@16000")
-        .arg(path)
-        .arg(&wav_path)
-        .output()
-        .map_err(|error| TranscriptionError::M4a(error.to_string()))?;
-
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(TranscriptionError::M4a(if message.is_empty() {
-            format!("afconvert exited with status {}", output.status)
-        } else {
-            message
-        }));
-    }
+    convert_to_pcm_wav(path, &wav_path, 16_000, None).map_err(TranscriptionError::M4a)?;
 
     let decoded = read_wav_as_whisper_audio(&wav_path);
     let _ = std::fs::remove_file(&wav_path);
@@ -2372,17 +2356,7 @@ mod tests {
         }
         writer.finalize().expect("source wav finalized");
         let audio = tmp.path().join("capture.m4a");
-        let conversion = Command::new("/usr/bin/afconvert")
-            .args(["-f", "m4af", "-d", "aac@44100"])
-            .arg(&source_wav)
-            .arg(&audio)
-            .output()
-            .expect("create m4a fixture");
-        assert!(
-            conversion.status.success(),
-            "{}",
-            String::from_utf8_lossy(&conversion.stderr)
-        );
+        crate::recorder::encode_wav_to_m4a(&source_wav, &audio, 96).expect("create m4a fixture");
 
         let dictionary = DictionaryContext::compile(
             true,

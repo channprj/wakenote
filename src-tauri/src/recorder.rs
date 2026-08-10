@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::audio_codec;
 use crate::settings::{
     AppSettings, AudioFormat, CaptureMicrophoneEntry, MicrophoneSlot, clamp_audio_bitrate_kbps,
 };
@@ -131,7 +131,7 @@ pub enum RecorderError {
     EmptyTranscript,
     #[error("m4a encoding requires the native macOS encoder bridge")]
     M4aRequiresNativeBridge,
-    #[error("native m4a encoder failed: {0}")]
+    #[error("m4a encoder failed: {0}")]
     M4aEncoder(String),
     #[error("native mp3 encoder failed: {0}")]
     Mp3Encoder(String),
@@ -383,46 +383,19 @@ fn write_m4a(
     result
 }
 
-/// Encode a finalized PCM WAV file with the same native AAC/M4A settings used
+/// Encode a finalized PCM WAV file with the same AAC/M4A settings used
 /// by ordinary transcript recordings.
 pub fn encode_wav_to_m4a(
     source_path: &Path,
     destination_path: &Path,
     bitrate_kbps: u32,
 ) -> Result<(), RecorderError> {
-    // Never let a previous partial output masquerade as this attempt's result.
-    let _ = fs::remove_file(destination_path);
-    let bitrate_bps = (clamp_audio_bitrate_kbps(bitrate_kbps) * 1_000).to_string();
-    let output = Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("m4af")
-        .arg("-d")
-        .arg("aac@44100")
-        .arg("-b")
-        .arg(&bitrate_bps)
-        .arg(source_path)
-        .arg(destination_path)
-        .output();
-
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => {
-            let _ = fs::remove_file(destination_path);
-            return Err(error.into());
-        }
-    };
-
-    if !output.status.success() {
-        let _ = fs::remove_file(destination_path);
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RecorderError::M4aEncoder(if message.is_empty() {
-            format!("afconvert exited with status {}", output.status)
-        } else {
-            message
-        }));
-    }
-
-    Ok(())
+    audio_codec::encode_wav_to_m4a(
+        source_path,
+        destination_path,
+        clamp_audio_bitrate_kbps(bitrate_kbps),
+    )
+    .map_err(RecorderError::M4aEncoder)
 }
 
 fn write_mp3(
@@ -434,7 +407,7 @@ fn write_mp3(
     let temp_wav_path = path.with_extension("encoding.wav");
     write_wav(&temp_wav_path, samples, sample_rate)?;
     let bitrate_arg = format!("{}k", clamp_audio_bitrate_kbps(bitrate_kbps));
-    let output = ffmpeg_command()
+    let output = audio_codec::ffmpeg_command()
         .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(&temp_wav_path)
         .args(["-acodec", "libmp3lame", "-b:a"])
@@ -454,21 +427,6 @@ fn write_mp3(
     }
 
     Ok(())
-}
-
-fn ffmpeg_command() -> Command {
-    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"] {
-        if std::path::Path::new(candidate).exists() {
-            return Command::new(candidate);
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let candidate = std::path::PathBuf::from(home).join(".local/bin/ffmpeg");
-        if candidate.exists() {
-            return Command::new(candidate);
-        }
-    }
-    Command::new("ffmpeg")
 }
 
 fn write_metadata(path: &Path, metadata: &ChunkMetadata) -> Result<(), RecorderError> {

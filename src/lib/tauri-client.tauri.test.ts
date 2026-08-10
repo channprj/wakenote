@@ -179,11 +179,13 @@ function mockInvoke(command: string) {
         error: null,
       });
     case "start_meeting_transcription":
+    case "import_meeting_recording":
       return Promise.resolve({
         id: "meeting-1",
         title: "Meeting",
         source_filename: "audio.wav",
-        status: "pending",
+        status:
+          command === "import_meeting_recording" ? "recorded" : "pending",
         duration_ms: 1_000,
         created_at: "2026-08-03T00:00:00Z",
         updated_at: "2026-08-03T00:00:00Z",
@@ -464,6 +466,24 @@ describe("tauri runtime client snapshots", () => {
       id: "meeting-1",
       request,
     });
+  });
+
+  it("imports meeting audio without implicitly starting transcription", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    mocks.open.mockResolvedValue("/tmp/meeting.m4a");
+    const { importMeetingRecording } = await import("./tauri-client");
+
+    const meeting = await importMeetingRecording();
+
+    expect(meeting?.status).toBe("recorded");
+    expect(mocks.invoke).toHaveBeenCalledWith("import_meeting_recording", {
+      sourcePath: "/tmp/meeting.m4a",
+    });
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "start_meeting_transcription",
+      expect.anything(),
+    );
   });
 
   it("loads the local transcription cost dashboard snapshot", async () => {

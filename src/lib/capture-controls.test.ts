@@ -4,6 +4,7 @@ import {
   derivePriorityList,
   inputAvailability,
   normalizeCaptureMicrophones,
+  rebindCaptureMicrophones,
   startLiveCaptureDisabledReason,
   stopLiveCaptureDisabledReason,
 } from "./capture-controls";
@@ -40,6 +41,57 @@ describe("capture controls", () => {
         { id: "wired", label: "Wired" },
       ]),
     ).toEqual([{ id: "default", label: "System Default" }]);
+  });
+
+  it("rebinds a stale BOYA selection to one active same-name device", () => {
+    expect(
+      rebindCaptureMicrophones(
+        [
+          {
+            id: "input-4-boya-cm40",
+            label: "BOYA CM40",
+            core_audio_uid: "uid-stale",
+          },
+        ],
+        [
+          {
+            id: "input-2-boya-cm40",
+            label: "  boya   cm40 ",
+            core_audio_uid: "uid-active",
+            available: true,
+            fallback: false,
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        id: "input-2-boya-cm40",
+        label: "boya   cm40",
+        core_audio_uid: "uid-active",
+      },
+    ]);
+  });
+
+  it("does not guess between two active devices with the same name", () => {
+    expect(
+      rebindCaptureMicrophones(
+        [{ id: "input-4-boya-cm40", label: "BOYA CM40" }],
+        [
+          {
+            id: "input-1-boya-cm40",
+            label: "BOYA CM40",
+            available: true,
+            fallback: false,
+          },
+          {
+            id: "input-2-boya-cm40",
+            label: "BOYA CM40",
+            available: true,
+            fallback: false,
+          },
+        ],
+      ),
+    ).toEqual([{ id: "input-4-boya-cm40", label: "BOYA CM40" }]);
   });
 
   it("allows Start Input when capture and an input are available", () => {
@@ -95,6 +147,37 @@ describe("inputAvailability", () => {
       warning:
         'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
       warningTone: "danger",
+    });
+  });
+
+  it("allows capture through the single active same-name replacement", () => {
+    expect(
+      inputAvailability(
+        {
+          ...settings,
+          capture_microphones: [
+            {
+              id: "input-4-boya-cm40",
+              label: "BOYA CM40",
+              core_audio_uid: "uid-stale",
+            },
+          ],
+        },
+        [
+          {
+            id: "input-2-boya-cm40",
+            label: "BOYA CM40",
+            core_audio_uid: "uid-active",
+            available: true,
+            fallback: false,
+          },
+        ],
+      ),
+    ).toEqual({
+      canStart: true,
+      activeLabel: "BOYA CM40",
+      warning: null,
+      warningTone: null,
     });
   });
 

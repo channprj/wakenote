@@ -1492,8 +1492,8 @@ const BROWSER_RECOGNIZED_SOURCES: ReadonlyArray<{
   {
     id: "meet",
     label: "Google Meet",
-    description: "Google Meet or browser tabs with Meet in the title",
-    titlePatterns: ["google meet", "meet - "],
+    description: "Google Meet tabs and floating meet.google.com call windows",
+    titlePatterns: ["google meet", "meet - ", "meet.google.com"],
     defaultAutoPrompt: true,
     custom: false,
   },
@@ -2623,8 +2623,8 @@ export async function stopManualMeetingRecording(): Promise<ManualMeetingRecordi
   return invoke<ManualMeetingRecordingStatus>("stop_manual_meeting_recording");
 }
 
-/** Open a file picker for a long recording and start batch transcription. */
-export async function importAndStartMeeting(): Promise<MeetingSummary | null> {
+/** Open a file picker and save a meeting recording for explicit configuration. */
+export async function importMeetingRecording(): Promise<MeetingSummary | null> {
   if (!isTauriRuntime()) {
     return null;
   }
@@ -2636,7 +2636,7 @@ export async function importAndStartMeeting(): Promise<MeetingSummary | null> {
   if (typeof selected !== "string") {
     return null;
   }
-  return invoke<MeetingSummary>("import_and_start_meeting", {
+  return invoke<MeetingSummary>("import_meeting_recording", {
     sourcePath: selected,
   });
 }

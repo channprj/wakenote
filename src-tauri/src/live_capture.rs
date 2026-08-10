@@ -534,7 +534,7 @@ fn select_device_with_resolution(
         .input_devices()
         .map_err(|error| LiveCaptureError::Cpal(error.to_string()))?;
     // First pass: exact id match.
-    let mut label_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
+    let mut label_matches: Vec<(cpal::Device, ResolvedInputDevice)> = Vec::new();
     let mut legacy_match: Option<(cpal::Device, ResolvedInputDevice)> = None;
     let label_hint = label_hint.filter(|label| !label.is_empty());
     let core_audio_uid = core_audio_uid.filter(|uid| !uid.is_empty());
@@ -557,9 +557,7 @@ fn select_device_with_resolution(
                     },
                 ));
             }
-            continue;
-        }
-        if stable_id == device_id {
+        } else if stable_id == device_id {
             return Ok((
                 device,
                 ResolvedInputDevice {
@@ -570,11 +568,10 @@ fn select_device_with_resolution(
                 },
             ));
         }
-        if label_match.is_none()
-            && let Some(hint) = label_hint
-            && label == hint
+        if let Some(hint) = label_hint
+            && microphone_labels_match(&label, hint)
         {
-            label_match = Some((
+            label_matches.push((
                 device,
                 ResolvedInputDevice {
                     device_id: stable_id.clone(),
@@ -598,11 +595,13 @@ fn select_device_with_resolution(
         }
     }
 
+    if label_matches.len() == 1 {
+        return Ok(label_matches.pop().expect("one label match"));
+    }
     if core_audio_uid.is_some() {
         return Err(LiveCaptureError::NoInputDevice);
     }
-
-    if let Some(matched) = label_match.or(legacy_match) {
+    if let Some(matched) = legacy_match {
         return Ok(matched);
     }
 
@@ -648,16 +647,20 @@ pub fn resolve_input_device_from_candidates_with_uid(
             .map(|candidate| default_input_resolution(false, candidate.core_audio_uid.clone()));
     }
 
-    if let Some(uid) = core_audio_uid.filter(|uid| !uid.is_empty()) {
-        return candidates
+    let pinned_uid = core_audio_uid.filter(|uid| !uid.is_empty());
+    if let Some(uid) = pinned_uid
+        && let Some(candidate) = candidates
             .iter()
             .find(|candidate| candidate.core_audio_uid.as_deref() == Some(uid))
-            .map(resolved_candidate);
+    {
+        return Some(resolved_candidate(candidate));
     }
 
     // Exact id match wins: the stable id is the precise pin and a different
     // device that happens to share a label must not be selected.
-    if let Some(candidate) = candidates.iter().find(|c| c.id == requested_device_id) {
+    if pinned_uid.is_none()
+        && let Some(candidate) = candidates.iter().find(|c| c.id == requested_device_id)
+    {
         return Some(resolved_candidate(candidate));
     }
 
@@ -669,11 +672,15 @@ pub fn resolve_input_device_from_candidates_with_uid(
     if let Some(label) = label_hint {
         let matches = candidates
             .iter()
-            .filter(|candidate| candidate.label == label)
+            .filter(|candidate| microphone_labels_match(&candidate.label, label))
             .collect::<Vec<_>>();
         if matches.len() == 1 {
             return Some(resolved_candidate(matches[0]));
         }
+    }
+
+    if pinned_uid.is_some() {
+        return None;
     }
 
     // Legacy: callers used to pass a label string as `requested_device_id`.
@@ -694,6 +701,18 @@ fn resolved_candidate(candidate: &CandidateInputDevice) -> ResolvedInputDevice {
         used_fallback_device: false,
         core_audio_uid: candidate.core_audio_uid.clone(),
     }
+}
+
+pub fn microphone_labels_match(left: &str, right: &str) -> bool {
+    normalized_microphone_label(left) == normalized_microphone_label(right)
+}
+
+fn normalized_microphone_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub fn stable_input_device_id(index: usize, label: &str) -> String {

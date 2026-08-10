@@ -6,6 +6,7 @@ import {
   isMeetingActive,
   meetingStatusLabel,
   meetingStatusTone,
+  meetingPhaseLabel,
   progressPercent,
 } from "./meeting-progress";
 
@@ -49,6 +50,13 @@ describe("formatEta", () => {
 });
 
 describe("status presentation", () => {
+  it("labels every long-running meeting phase", () => {
+    expect(meetingPhaseLabel("preparing_audio")).toBe("Preparing audio");
+    expect(meetingPhaseLabel("splitting_audio")).toBe("Splitting audio");
+    expect(meetingPhaseLabel("transcribing")).toBe("Transcribing");
+    expect(meetingPhaseLabel("finalizing")).toBe("Finalizing transcript");
+  });
+
   it("maps labels and tones", () => {
     expect(meetingStatusLabel("recorded")).toBe("Recorded");
     expect(meetingStatusTone("recorded")).toBe("neutral");
@@ -61,7 +69,7 @@ describe("status presentation", () => {
 
   it("classifies active and resumable states", () => {
     expect(isMeetingActive("recorded")).toBe(false);
-    expect(isMeetingActive("pending")).toBe(false);
+    expect(isMeetingActive("pending")).toBe(true);
     expect(isMeetingActive("processing")).toBe(true);
     expect(isMeetingActive("completed")).toBe(false);
     expect(canResumeMeeting("pending")).toBe(true);

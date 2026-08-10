@@ -182,6 +182,7 @@ export interface AppSettings {
   min_chunk_ms: number;
   max_chunk_ms: number;
   selected_model: string;
+  meeting_model: string;
   transcription_options: TranscriptionOptions;
   model_directory: string;
   dictionary_enabled: boolean;
@@ -562,6 +563,12 @@ export type MeetingStatus =
 
 export type MeetingSegmentStatus = "pending" | "completed" | "failed";
 
+export type MeetingPhase =
+  | "preparing_audio"
+  | "splitting_audio"
+  | "transcribing"
+  | "finalizing";
+
 export type ManualMeetingRecordingPhase = "off" | "recording" | "error";
 
 export type ManualMeetingStopReason =
@@ -583,6 +590,7 @@ export interface ManualMeetingRecordingStatus {
 }
 
 export interface MeetingProgress {
+  phase?: MeetingPhase | null;
   segments_total: number;
   segments_done: number;
   processed_ms: number;
@@ -632,6 +640,8 @@ export interface MeetingRecord extends MeetingSummary {
   audio_format: string;
   app_version: string;
   segments: MeetingSegment[];
+  failed_phase?: MeetingPhase | null;
+  failed_segments?: number;
   transcription_request: MeetingTranscriptionRequest | null;
   speaker_turns: SpeakerTurn[];
   api_audio_duration_ms: number;
@@ -666,6 +676,7 @@ export interface MeetingDetail {
 export interface MeetingProgressPayload {
   id: string;
   status: MeetingStatus;
+  phase?: MeetingPhase;
   segments_total: number;
   segments_done: number;
   processed_ms: number;

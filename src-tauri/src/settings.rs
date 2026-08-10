@@ -422,6 +422,11 @@ pub struct AppSettings {
     pub min_chunk_ms: u64,
     pub max_chunk_ms: u64,
     pub selected_model: String,
+    /// Default model for saved meeting transcription. An empty value keeps
+    /// legacy settings compatible by falling back to `selected_model` until a
+    /// meeting-capable model is chosen explicitly.
+    #[serde(default = "default_meeting_model")]
+    pub meeting_model: String,
     #[serde(default)]
     pub transcription_options: TranscriptionOptions,
     pub model_directory: String,
@@ -560,6 +565,7 @@ pub struct SettingsPatch {
     pub min_chunk_ms: Option<u64>,
     pub max_chunk_ms: Option<u64>,
     pub selected_model: Option<String>,
+    pub meeting_model: Option<String>,
     pub transcription_options: Option<TranscriptionOptions>,
     pub model_directory: Option<String>,
     pub dictionary_enabled: Option<bool>,
@@ -654,6 +660,10 @@ pub const fn default_merge_microphone_inputs() -> bool {
 
 pub fn default_dictation_shortcut() -> String {
     "alt+space".to_string()
+}
+
+pub fn default_meeting_model() -> String {
+    "whisper-medium".to_string()
 }
 
 pub const fn default_dictation_language() -> TranscriptionLanguage {
@@ -1200,6 +1210,14 @@ impl AppSettings {
         if let Some(value) = patch.selected_model {
             self.selected_model = value;
         }
+        if let Some(value) = patch.meeting_model {
+            let value = value.trim();
+            self.meeting_model = if value.is_empty() {
+                default_meeting_model()
+            } else {
+                value.to_string()
+            };
+        }
         if let Some(mut value) = patch.transcription_options {
             value.cost_limit_fallback_model_id = value
                 .cost_limit_fallback_model_id
@@ -1447,6 +1465,7 @@ impl Default for AppSettings {
             min_chunk_ms: 800,
             max_chunk_ms: 180_000,
             selected_model: "whisper-medium".to_string(),
+            meeting_model: default_meeting_model(),
             transcription_options: TranscriptionOptions::default(),
             model_directory: "~/Library/Application Support/WakeNote/models".to_string(),
             dictionary_enabled: true,
@@ -1507,6 +1526,15 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    pub fn effective_meeting_model(&self) -> &str {
+        let configured = self.meeting_model.trim();
+        if configured.is_empty() {
+            "whisper-medium"
+        } else {
+            configured
+        }
+    }
+
     pub fn effective_dictation_model(&self) -> &str {
         let configured = self.dictation_model.trim();
         if configured.is_empty() {
@@ -1841,6 +1869,33 @@ mod tests {
     }
 
     #[test]
+    fn meeting_model_defaults_independently_for_legacy_settings() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.meeting_model, "whisper-medium");
+        assert_eq!(settings.effective_meeting_model(), "whisper-medium");
+    }
+
+    #[test]
+    fn meeting_model_patch_is_trimmed_and_independent() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            meeting_model: Some("  soniox-async-v5  ".into()),
+            ..Default::default()
+        });
+
+        assert_eq!(settings.meeting_model, "soniox-async-v5");
+        assert_eq!(settings.selected_model, "whisper-medium");
+        assert_eq!(settings.effective_meeting_model(), "soniox-async-v5");
+
+        settings.apply_patch(SettingsPatch {
+            meeting_model: Some("   ".into()),
+            ..Default::default()
+        });
+        assert_eq!(settings.meeting_model, "whisper-medium");
+        assert_eq!(settings.effective_meeting_model(), "whisper-medium");
+    }
+
+    #[test]
     fn dictation_customization_patch_is_independent_and_trims_model() {
         let mut settings = AppSettings::default();
         settings.apply_patch(SettingsPatch {
@@ -2156,6 +2211,8 @@ mod tests {
             DictationBubblePosition::TopCenter
         );
         assert_eq!(settings.dictation_model, "");
+        assert_eq!(settings.meeting_model, "whisper-medium");
+        assert_eq!(settings.effective_meeting_model(), "whisper-medium");
         assert!(settings.dictation_copy_to_clipboard);
         assert!(!settings.dictation_remove_trailing_space);
         assert!(settings.source_auto_prompt.is_empty());

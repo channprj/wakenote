@@ -74,6 +74,10 @@ describe("app state derivation", () => {
     });
   });
 
+  it("keeps a safe dedicated meeting model independent from live transcription", () => {
+    expect(defaultSettings().meeting_model).toBe("whisper-medium");
+  });
+
   it("maps independent recording/transcription toggles to PRD product modes", () => {
     expect(
       deriveProductMode({

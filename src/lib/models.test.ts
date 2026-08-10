@@ -4,7 +4,9 @@ import {
   availableFallbackModels,
   formatModelLabel,
   groupModelsByLocation,
+  meetingTranscriptionModels,
   normalizeTranscriptionOptions,
+  resolveMeetingModelId,
 } from "./models";
 import type { ModelDescriptor } from "./types";
 
@@ -71,6 +73,28 @@ describe("groupModelsByLocation", () => {
 });
 
 describe("transcription model capabilities", () => {
+  it("resolves the dedicated meeting model without accepting a realtime-only model", () => {
+    const models = mockModels().map((candidate) =>
+      candidate.id === "whisper-medium"
+        ? { ...candidate, status: "ready" as const }
+        : candidate,
+    );
+
+    expect(
+      meetingTranscriptionModels(models).map((candidate) => candidate.id),
+    ).not.toContain("soniox-realtime-v5");
+    expect(
+      resolveMeetingModelId(
+        "soniox-async-v5",
+        "soniox-realtime-v5",
+        models,
+      ),
+    ).toBe("soniox-async-v5");
+    expect(
+      resolveMeetingModelId("", "soniox-realtime-v5", models),
+    ).toBe("whisper-medium");
+  });
+
   it("mirrors the exact OpenAI streaming and diarization matrix", () => {
     const models = mockModels();
     const live = models.find(

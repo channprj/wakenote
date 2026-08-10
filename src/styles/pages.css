@@ -546,9 +546,20 @@
 
 .meeting-progress-row [data-slot="card-content"] {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) auto;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
   align-items: center;
   gap: 10px;
+}
+
+.meeting-progress-row__phase {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--foreground);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: var(--leading-caption);
+  white-space: nowrap;
 }
 
 .meeting-progress-row__meta {

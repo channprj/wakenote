@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
+
+use crate::audio_codec::convert_to_pcm_wav;
+use crate::recorder::encode_wav_to_m4a;
 
 const MIN_INPUTS: usize = 2;
 const MAX_INPUTS: usize = 1_000;
@@ -348,16 +350,7 @@ fn create_work_directory(destination: &Path, operation_id: &str) -> Result<PathB
 }
 
 fn normalize_input(source: &Path, destination: &Path) -> Result<(), String> {
-    let output = Command::new("/usr/bin/afconvert")
-        .args(["-f", "WAVE", "-d", "LEI16@44100", "-c", "1"])
-        .arg(source)
-        .arg(destination)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err("native audio conversion failed".to_string());
-    }
-    Ok(())
+    convert_to_pcm_wav(source, destination, 44_100, Some(1))
 }
 
 fn append_normalized_wav(
@@ -382,16 +375,8 @@ fn append_normalized_wav(
 }
 
 fn encode_m4a(source: &Path, destination: &Path) -> Result<(), String> {
-    let output = Command::new("/usr/bin/afconvert")
-        .args(["-f", "m4af", "-d", "aac@44100", "-c", "1", "-b", "96000"])
-        .arg(source)
-        .arg(destination)
-        .output()
-        .map_err(|error| format!("audio merge encoding could not start: {error}"))?;
-    if !output.status.success() || !destination.is_file() {
-        return Err("audio merge could not encode the M4A destination".to_string());
-    }
-    Ok(())
+    encode_wav_to_m4a(source, destination, 96)
+        .map_err(|error| format!("audio merge could not encode the M4A destination: {error}"))
 }
 
 struct WorkDirectoryGuard(PathBuf);

@@ -83,6 +83,7 @@ function detail(overrides: Partial<MeetingSummary> = {}): MeetingDetail {
 const liveProgress: MeetingProgressPayload = {
   id: "meeting-active",
   status: "processing",
+  phase: "transcribing",
   segments_total: 12,
   segments_done: 2,
   processed_ms: 1_200_000,
@@ -114,6 +115,9 @@ function props(
     },
     manualRecordingBusy: false,
     models: mockModels(),
+    meetingModelId: "",
+    selectedModelId: "whisper-medium",
+    configurationInitiallyOpen: false,
     transcriptionBusy: false,
     error: null,
     visibilityMode: "visible",
@@ -123,6 +127,7 @@ function props(
     visibilityMutating: false,
     visibilityStatus: "",
     onImport: vi.fn(),
+    onMeetingModelChange: vi.fn(),
     onStartManualRecording: vi.fn(),
     onStopManualRecording: vi.fn(),
     onStartTranscription: vi.fn(),
@@ -143,6 +148,52 @@ function props(
 }
 
 describe("MeetingTranscriptionView", () => {
+  it("shows a dedicated meeting default and excludes realtime-only models", async () => {
+    const onMeetingModelChange = vi.fn();
+    const models = mockModels().map((model) =>
+      model.id === "whisper-medium"
+        ? { ...model, status: "ready" as const }
+        : model,
+    );
+    render(
+      <MeetingTranscriptionView
+        {...props({ models, onMeetingModelChange })}
+      />,
+    );
+
+    const selector = screen.getByRole("combobox", {
+      name: "Default meeting transcription model",
+    });
+    expect(selector).toBeTruthy();
+    await userEvent.click(selector);
+    expect(
+      screen.queryByRole("option", { name: /Soniox Realtime/ }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("option", { name: "Soniox · Async V5" }),
+    );
+    expect(onMeetingModelChange).toHaveBeenCalledWith("soniox-async-v5");
+  });
+
+  it("opens configuration immediately after an imported meeting is selected", () => {
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          selected: detail({ status: "recorded" }),
+          configurationInitiallyOpen: true,
+          models: mockModels().map((model) =>
+            model.id === "whisper-medium"
+              ? { ...model, status: "ready" as const }
+              : model,
+          ),
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText("Transcribe saved meeting")).toBeTruthy();
+  });
+
   it("starts and stops a five-hour microphone plus system meeting recording", async () => {
     const onStartManualRecording = vi.fn();
     const onStopManualRecording = vi.fn();
@@ -215,6 +266,7 @@ describe("MeetingTranscriptionView", () => {
     );
 
     expect(markup).toContain("Segment 2/12");
+    expect(markup).toContain("Transcribing");
     expect(markup).toContain("Remaining");
     expect(markup).toContain("현재 회의 내용을 전사");
   });
@@ -271,6 +323,7 @@ describe("MeetingTranscriptionView", () => {
     expect(completed).toContain("Open Folder");
     expect(completed).not.toContain(">Resume<");
     expect(interrupted).toContain("Resume");
+    expect(interrupted).toContain("New transcription");
     expect(interrupted).toContain("Model stopped");
   });
 

@@ -3155,6 +3155,7 @@ fn backend_delete_model_rejects_active_selected_model() {
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_directory.to_string_lossy().to_string()),
         selected_model: Some("ready-local".to_string()),
+        meeting_model: Some("ready-local".to_string()),
         ..SettingsPatch::default()
     });
 
@@ -3162,7 +3163,7 @@ fn backend_delete_model_rejects_active_selected_model() {
         .delete_model("ready-local")
         .expect_err("active model should not be deleted");
 
-    assert_eq!(error, "cannot delete active model ready-local");
+    assert_eq!(error, "cannot delete model ready-local while it is in use");
     assert!(model_path.exists());
     assert_eq!(backend.settings().selected_model, "ready-local");
 }

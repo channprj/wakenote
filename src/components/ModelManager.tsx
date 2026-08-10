@@ -218,7 +218,7 @@ export function modelDeleteDisabledReason(
   isInUse: boolean,
 ): string | null {
   if (isInUse) {
-    return "Cannot delete a model used by transcription or Dictation";
+    return "Cannot delete a model used by transcription, Dictation, or Meetings";
   }
   if (isActiveDownload(model.status)) return "Download in progress";
   if (model.status === "missing") return "Model is not downloaded";
@@ -338,7 +338,8 @@ function ModelGroup({
         {models.map((model) => {
           const selected = settings.selected_model === model.id;
           const usedByDictation = settings.dictation_model.trim() === model.id;
-          const inUse = selected || usedByDictation;
+          const usedByMeetings = settings.meeting_model.trim() === model.id;
+          const inUse = selected || usedByDictation || usedByMeetings;
           const progress = statusProgress(model);
           const actions = modelActionState(model);
           const switchReason = modelSwitchDisabledReason(model, selected);

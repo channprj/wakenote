@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { CircleAlertIcon } from "lucide-react";
 import { LevelMeter } from "@/components/LevelMeter";
 import { SystemAudioSettings } from "@/components/SystemAudioSettings";
@@ -22,6 +23,7 @@ import { calibrationSettingsPatch } from "@/lib/calibration";
 import {
   inputAvailability,
   normalizeCaptureMicrophones,
+  rebindCaptureMicrophones,
 } from "@/lib/capture-controls";
 import {
   RECORDING_FIELD_HELP,
@@ -461,7 +463,15 @@ function MicrophoneSelectors({
   microphones: MicrophoneDevice[];
   onChange: (next: CaptureMicrophoneEntry[]) => void;
 }) {
-  const selected = normalizeCaptureMicrophones(value);
+  const configured = normalizeCaptureMicrophones(value);
+  const selected = rebindCaptureMicrophones(configured, microphones);
+  const configuredKey = JSON.stringify(configured);
+  const selectedKey = JSON.stringify(selected);
+  useEffect(() => {
+    if (configuredKey !== selectedKey) {
+      onChange(selected);
+    }
+  }, [configuredKey, onChange, selected, selectedKey]);
   const primary = selected[0];
   const secondary = selected[1];
   const stableMicrophones = [...microphones];

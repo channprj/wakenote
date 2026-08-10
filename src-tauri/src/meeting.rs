@@ -12,6 +12,7 @@
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -21,6 +22,7 @@ use chrono::{DateTime, Local, Utc};
 use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 
+use crate::audio_codec::convert_to_pcm_wav;
 use crate::cloud_transcription::TranscriptionCredentials;
 use crate::dictionary::DictionaryContext;
 use crate::recorder::encode_wav_to_m4a;
@@ -70,8 +72,19 @@ pub enum MeetingSegmentStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeetingPhase {
+    PreparingAudio,
+    SplittingAudio,
+    Transcribing,
+    Finalizing,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MeetingProgress {
+    #[serde(default)]
+    pub phase: Option<MeetingPhase>,
     pub segments_total: usize,
     pub segments_done: usize,
     pub processed_ms: u64,
@@ -114,6 +127,10 @@ pub struct MeetingRecord {
     pub duration_ms: u64,
     pub status: MeetingStatus,
     pub progress: MeetingProgress,
+    #[serde(default)]
+    pub failed_phase: Option<MeetingPhase>,
+    #[serde(default)]
+    pub failed_segments: usize,
     pub segments: Vec<MeetingSegment>,
     #[serde(default)]
     pub transcription_request: Option<MeetingTranscriptionRequest>,
@@ -254,6 +271,7 @@ pub struct MeetingDetail {
 pub struct MeetingProgressEvent {
     pub id: String,
     pub status: MeetingStatus,
+    pub phase: MeetingPhase,
     pub segments_total: usize,
     pub segments_done: usize,
     pub processed_ms: u64,
@@ -489,26 +507,9 @@ fn hound_io(error: hound::Error) -> std::io::Error {
 }
 
 /// Convert any supported input to a temp 16 kHz signed-16 WAV. Channels are
-/// preserved (downmixed later) to match `transcription.rs`'s afconvert usage.
+/// preserved and downmixed later to match the ordinary transcription decoder.
 fn normalize_to_wav16k(src: &Path, dst: &Path) -> Result<(), String> {
-    let output = Command::new("/usr/bin/afconvert")
-        .arg("-f")
-        .arg("WAVE")
-        .arg("-d")
-        .arg("LEI16@16000")
-        .arg(src)
-        .arg(dst)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(if message.is_empty() {
-        format!("afconvert exited with status {}", output.status)
-    } else {
-        message
-    })
+    convert_to_pcm_wav(src, dst, 16_000, None)
 }
 
 /// Per-frame RMS envelope plus the precise total duration in ms.
@@ -662,6 +663,8 @@ pub fn start_recorded_meeting_capture(
         duration_ms: 0,
         status: MeetingStatus::Pending,
         progress: MeetingProgress::default(),
+        failed_phase: None,
+        failed_segments: 0,
         segments: Vec::new(),
         transcription_request: None,
         speaker_turns: Vec::new(),
@@ -739,17 +742,25 @@ impl MeetingCaptureRecorder {
         fs::remove_dir_all(&self.dir).map_err(|e| e.to_string())
     }
 
-    pub fn finish(mut self) -> Result<MeetingRecord, String> {
+    pub fn finish(self) -> Result<MeetingRecord, String> {
+        self.finish_with_encoder(|source, destination, bitrate_kbps| {
+            encode_wav_to_m4a(source, destination, bitrate_kbps).map_err(|error| error.to_string())
+        })
+    }
+
+    fn finish_with_encoder<F>(mut self, encoder: F) -> Result<MeetingRecord, String>
+    where
+        F: FnOnce(&Path, &Path, u32) -> Result<(), String>,
+    {
         if let Some(writer) = self.writer.take() {
             writer.finalize().map_err(|e| e.to_string())?;
         }
         let capture_path = capture_wav_path(&self.dir);
         let partial_path = partial_m4a_path(&self.dir);
         let final_path = self.dir.join(&self.record.audio_file);
-        if let Err(error) = encode_wav_to_m4a(&capture_path, &partial_path, self.audio_bitrate_kbps)
-        {
+        if let Err(error) = encoder(&capture_path, &partial_path, self.audio_bitrate_kbps) {
             let _ = fs::remove_file(&partial_path);
-            return Err(error.to_string());
+            return Err(error);
         }
         if let Err(error) = fs::rename(&partial_path, &final_path) {
             let _ = fs::remove_file(&partial_path);
@@ -817,8 +828,10 @@ pub fn import_meeting(
         created_at: now,
         updated_at: now,
         duration_ms: 0,
-        status: MeetingStatus::Pending,
+        status: MeetingStatus::Recorded,
         progress: MeetingProgress::default(),
+        failed_phase: None,
+        failed_segments: 0,
         segments: Vec::new(),
         transcription_request: None,
         speaker_turns: Vec::new(),
@@ -894,6 +907,8 @@ pub fn start_recorded_meeting_transcription(
     record.api_unpriced_request_count = 0;
     record.segments.clear();
     record.progress = MeetingProgress::default();
+    record.failed_phase = None;
+    record.failed_segments = 0;
     record.status = MeetingStatus::Pending;
     record.error = None;
     record.touch();
@@ -966,6 +981,12 @@ fn finish_failed(
     error: String,
 ) -> Result<(), String> {
     record.status = MeetingStatus::Failed;
+    record.failed_phase = record.progress.phase;
+    record.failed_segments = record
+        .segments
+        .iter()
+        .filter(|segment| segment.status == MeetingSegmentStatus::Failed)
+        .count();
     record.error = Some(error.clone());
     record.touch();
     let _ = record.save_atomic(record_path);
@@ -975,6 +996,42 @@ fn finish_failed(
         error: Some(error),
     }));
     Ok(())
+}
+
+fn concise_meeting_error(context: &str, error: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 320;
+    let mut redact_next = false;
+    let mut safe_tokens = Vec::new();
+    for token in error.split_whitespace() {
+        if redact_next {
+            safe_tokens.push("[redacted]".to_string());
+            redact_next = false;
+            continue;
+        }
+        let lower = token.to_ascii_lowercase();
+        if lower == "bearer" {
+            safe_tokens.push(token.to_string());
+            redact_next = true;
+        } else if lower.starts_with("api_key=")
+            || lower.starts_with("apikey=")
+            || lower.starts_with("authorization=")
+        {
+            let name = token.split('=').next().unwrap_or("credential");
+            safe_tokens.push(format!("{name}=[redacted]"));
+        } else {
+            safe_tokens.push(token.to_string());
+        }
+    }
+    let mut safe = safe_tokens.join(" ");
+    if safe.chars().count() > MAX_ERROR_CHARS {
+        safe = safe.chars().take(MAX_ERROR_CHARS).collect::<String>();
+        safe.push('…');
+    }
+    if safe.is_empty() {
+        context.to_string()
+    } else {
+        format!("{context}: {safe}")
+    }
 }
 
 fn emit_progress_running(
@@ -993,6 +1050,7 @@ fn emit_progress_running(
     emit(MeetingEvent::Progress(MeetingProgressEvent {
         id: record.id.clone(),
         status: record.status,
+        phase: record.progress.phase.unwrap_or(MeetingPhase::Transcribing),
         segments_total: record.progress.segments_total,
         segments_done: record.progress.segments_done,
         processed_ms: record.progress.processed_ms,
@@ -1034,6 +1092,14 @@ pub fn run_meeting_job(
 
     let model_runtime = model_runtime_for_id(model_directory, &record.model_id);
     let model_path = model_directory.join(format!("{}.bin", record.model_id));
+    record.status = MeetingStatus::Processing;
+    record.error = None;
+    record.failed_phase = None;
+    record.failed_segments = 0;
+    record.progress.phase = Some(MeetingPhase::PreparingAudio);
+    record.touch();
+    let _ = record.save_atomic(&rpath);
+    emit_progress_running(&emit, &record, 0, record.progress.processed_ms);
     if model_runtime == "whisper-rs" && !model_path.exists() {
         return finish_failed(
             &mut record,
@@ -1042,11 +1108,6 @@ pub fn run_meeting_job(
             format!("model file not found: {}", model_path.display()),
         );
     }
-
-    record.status = MeetingStatus::Processing;
-    record.error = None;
-    record.touch();
-    let _ = record.save_atomic(&rpath);
 
     // 1. Normalize to a temp 16 kHz WAV (regenerated on resume, deleted at the end).
     let wav = work_wav_path(&dir);
@@ -1060,6 +1121,15 @@ pub fn run_meeting_job(
     }
 
     // 2. Plan segments (only when fresh — resume keeps the existing plan).
+    record.progress.phase = Some(MeetingPhase::SplittingAudio);
+    record.touch();
+    let _ = record.save_atomic(&rpath);
+    emit_progress_running(
+        &emit,
+        &record,
+        started.elapsed().as_millis() as u64,
+        record.progress.processed_ms,
+    );
     let (frame_rms, total_ms) = match compute_frame_rms(&wav, FRAME_MS) {
         Ok(value) => value,
         Err(error) => {
@@ -1094,6 +1164,7 @@ pub fn run_meeting_job(
             .collect();
     }
     record.recompute_progress();
+    record.progress.phase = Some(MeetingPhase::Transcribing);
     record.touch();
     let _ = record.save_atomic(&rpath);
     let processed_at_start = record.progress.processed_ms;
@@ -1142,10 +1213,9 @@ pub fn run_meeting_job(
 
     let language = record.language;
     let total_ms = record.duration_ms;
-    let mut any_failed = record
-        .segments
-        .iter()
-        .any(|segment| segment.status == MeetingSegmentStatus::Failed);
+    // Failed segments are retried below. Only failures from this run decide the
+    // final status; otherwise a fully successful resume would remain Failed.
+    let mut any_failed = false;
 
     for idx in 0..record.segments.len() {
         if record.segments[idx].status == MeetingSegmentStatus::Completed {
@@ -1172,12 +1242,17 @@ pub fn run_meeting_job(
         let samples = match read_window_samples(&wav, read_lo, end_ms) {
             Ok(samples) => samples,
             Err(error) => {
+                let detail = concise_meeting_error(
+                    &format!("Segment {} audio read failed", idx + 1),
+                    &error.to_string(),
+                );
                 eprintln!(
                     "[wakenote] meeting {}: segment {idx} read failed: {error}",
                     record.id
                 );
                 record.segments[idx].status = MeetingSegmentStatus::Failed;
                 any_failed = true;
+                record.error.get_or_insert(detail);
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
@@ -1218,6 +1293,7 @@ pub fn run_meeting_job(
             emit_cb(MeetingEvent::Progress(MeetingProgressEvent {
                 id: id_cb.clone(),
                 status: MeetingStatus::Processing,
+                phase: MeetingPhase::Transcribing,
                 segments_total: segs_total,
                 segments_done: segs_done,
                 processed_ms: processed,
@@ -1338,12 +1414,17 @@ pub fn run_meeting_job(
                 );
             }
             Err(error) => {
+                let detail = concise_meeting_error(
+                    &format!("Segment {} transcription failed", idx + 1),
+                    &error.to_string(),
+                );
                 eprintln!(
                     "[wakenote] meeting {}: segment {idx} decode failed: {error}",
                     record.id
                 );
                 record.segments[idx].status = MeetingSegmentStatus::Failed;
                 any_failed = true;
+                record.error.get_or_insert(detail);
                 record.recompute_progress();
                 record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
                 record.touch();
@@ -1358,17 +1439,32 @@ pub fn run_meeting_job(
         }
     }
 
+    record.progress.phase = Some(MeetingPhase::Finalizing);
+    record.touch();
+    let _ = record.save_atomic(&rpath);
+    emit_progress_running(
+        &emit,
+        &record,
+        started.elapsed().as_millis() as u64,
+        processed_at_start,
+    );
     let _ = fs::remove_file(&wav);
     record.status = if any_failed {
         MeetingStatus::Failed
     } else {
         MeetingStatus::Completed
     };
-    record.error = if any_failed {
-        Some("Some segments failed to transcribe".to_string())
-    } else {
-        None
-    };
+    record.failed_phase = any_failed.then_some(MeetingPhase::Transcribing);
+    record.failed_segments = record
+        .segments
+        .iter()
+        .filter(|segment| segment.status == MeetingSegmentStatus::Failed)
+        .count();
+    if any_failed && record.error.is_none() {
+        record.error = Some("One or more meeting segments failed to transcribe".to_string());
+    } else if !any_failed {
+        record.error = None;
+    }
     record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
     record.recompute_progress();
     record.touch();
@@ -1448,6 +1544,28 @@ mod tests {
     }
 
     #[test]
+    fn imported_meeting_is_recorded_until_the_user_confirms_transcription() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("planning.wav");
+        fs::write(&source, b"recording").expect("source audio");
+        let timestamp = Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap();
+
+        let record = import_meeting(
+            temp.path(),
+            &source,
+            "whisper-medium",
+            TranscriptionLanguage::Auto,
+            "test",
+            timestamp,
+        )
+        .expect("import meeting");
+
+        assert_eq!(record.status, MeetingStatus::Recorded);
+        assert!(record.transcription_request.is_none());
+        assert_eq!(record.progress, MeetingProgress::default());
+    }
+
+    #[test]
     fn meeting_m4a_failure_preserves_capture_wav_for_recovery() {
         let temp = tempfile::tempdir().expect("tempdir");
         let timestamp = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
@@ -1466,7 +1584,11 @@ mod tests {
         let id = recorder.id().to_string();
         recorder.write_samples(&[0.25]).expect("audio");
 
-        let error = recorder.finish().expect_err("invalid rate must not encode");
+        let error = recorder
+            .finish_with_encoder(|_, _, _| {
+                Err("m4a encoder failed: forced test failure".to_string())
+            })
+            .expect_err("forced encoder failure");
 
         let dir = meeting_dir(temp.path(), &id);
         assert!(error.contains("m4a encoder"), "unexpected error: {error}");
@@ -1621,6 +1743,56 @@ mod tests {
     }
 
     #[test]
+    fn legacy_meeting_progress_and_failure_context_default_safely() {
+        let json = serde_json::to_value(sample_record()).expect("meeting json");
+        let mut legacy = json.as_object().expect("object").clone();
+        legacy
+            .get_mut("progress")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("progress")
+            .remove("phase");
+        legacy.remove("failed_phase");
+        legacy.remove("failed_segments");
+
+        let parsed: MeetingRecord =
+            serde_json::from_value(serde_json::Value::Object(legacy)).expect("legacy meeting");
+
+        assert_eq!(parsed.progress.phase, None);
+        assert_eq!(parsed.failed_phase, None);
+        assert_eq!(parsed.failed_segments, 0);
+    }
+
+    #[test]
+    fn meeting_progress_phase_round_trips_in_events() {
+        let event = MeetingProgressEvent {
+            id: "meeting-1".into(),
+            status: MeetingStatus::Processing,
+            phase: MeetingPhase::SplittingAudio,
+            segments_total: 0,
+            segments_done: 0,
+            processed_ms: 0,
+            duration_ms: 0,
+            elapsed_ms: 250,
+            eta_ms: 0,
+        };
+
+        let value = serde_json::to_value(&event).expect("serialize event");
+        assert_eq!(value["phase"], "splitting_audio");
+    }
+
+    #[test]
+    fn meeting_errors_keep_context_without_persisting_credentials() {
+        let safe = concise_meeting_error(
+            "Segment 3 transcription failed",
+            "HTTP 401 Authorization: Bearer sk-secret-token request denied",
+        );
+
+        assert!(safe.contains("Segment 3 transcription failed"));
+        assert!(safe.contains("request denied"));
+        assert!(!safe.contains("sk-secret-token"));
+    }
+
+    #[test]
     fn reconcile_preserves_pending_jobs_but_marks_processing_jobs_failed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pending_dir = meeting_dir(tmp.path(), "20260614-143000-pending");
@@ -1725,6 +1897,8 @@ mod tests {
             duration_ms: 0,
             status: MeetingStatus::Pending,
             progress: MeetingProgress::default(),
+            failed_phase: None,
+            failed_segments: 0,
             segments: Vec::new(),
             transcription_request: None,
             speaker_turns: Vec::new(),

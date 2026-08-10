@@ -447,6 +447,59 @@ fn input_device_resolution_prefers_uid_after_enumeration_indices_swap() {
 }
 
 #[test]
+fn input_device_resolution_rebinds_a_stale_uid_to_one_active_same_name_device() {
+    let resolved = resolve_input_device_from_candidates_with_uid(
+        "input-4-boya-cm40",
+        Some("BOYA CM40"),
+        Some("uid-stale"),
+        &[
+            CandidateInputDevice {
+                id: "input-0-built-in".to_string(),
+                label: "Built-in Microphone".to_string(),
+                is_default: true,
+                core_audio_uid: Some("uid-built-in".to_string()),
+            },
+            CandidateInputDevice {
+                id: "input-2-boya-cm40".to_string(),
+                label: "  boya   cm40 ".to_string(),
+                is_default: false,
+                core_audio_uid: Some("uid-active".to_string()),
+            },
+        ],
+    )
+    .expect("same-name active device");
+
+    assert_eq!(resolved.device_id, "input-2-boya-cm40");
+    assert_eq!(resolved.core_audio_uid.as_deref(), Some("uid-active"));
+    assert!(!resolved.used_fallback_device);
+}
+
+#[test]
+fn input_device_resolution_does_not_guess_between_same_name_active_devices() {
+    let resolved = resolve_input_device_from_candidates_with_uid(
+        "input-4-boya-cm40",
+        Some("BOYA CM40"),
+        Some("uid-stale"),
+        &[
+            CandidateInputDevice {
+                id: "input-1-boya-cm40".to_string(),
+                label: "BOYA CM40".to_string(),
+                is_default: false,
+                core_audio_uid: Some("uid-a".to_string()),
+            },
+            CandidateInputDevice {
+                id: "input-2-boya-cm40".to_string(),
+                label: "BOYA CM40".to_string(),
+                is_default: false,
+                core_audio_uid: Some("uid-b".to_string()),
+            },
+        ],
+    );
+
+    assert_eq!(resolved, None);
+}
+
+#[test]
 fn input_device_resolution_ignores_empty_label_hint() {
     // An empty label hint must never accidentally match a device whose name
     // is also empty (some virtual devices report a blank name on macOS).

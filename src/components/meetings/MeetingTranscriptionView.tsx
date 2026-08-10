@@ -46,9 +46,13 @@ import {
   formatEta,
   meetingStatusLabel,
   meetingStatusTone,
+  meetingPhaseLabel,
   progressPercent,
 } from "@/lib/meeting-progress";
-import { modelSupportsContext } from "@/lib/models";
+import {
+  meetingTranscriptionModels,
+  resolveMeetingModelId,
+} from "@/lib/models";
 import type {
   MeetingDetail,
   MeetingTranscriptionRequest,
@@ -69,6 +73,9 @@ export interface MeetingTranscriptionViewProps {
   manualRecording: ManualMeetingRecordingStatus;
   manualRecordingBusy: boolean;
   models: ModelDescriptor[];
+  meetingModelId: string;
+  selectedModelId: string;
+  configurationInitiallyOpen: boolean;
   transcriptionBusy: boolean;
   error: string | null;
   visibilityMode: ListVisibilityMode;
@@ -78,6 +85,7 @@ export interface MeetingTranscriptionViewProps {
   visibilityMutating: boolean;
   visibilityStatus: string;
   onImport: () => void;
+  onMeetingModelChange: (modelId: string) => void;
   onStartManualRecording: () => void;
   onStopManualRecording: () => void;
   onStartTranscription: (
@@ -108,6 +116,13 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
       />
     );
   }
+
+  const meetingModels = meetingTranscriptionModels(props.models);
+  const resolvedMeetingModelId = resolveMeetingModelId(
+    props.meetingModelId,
+    props.selectedModelId,
+    props.models,
+  );
 
   return (
     <div data-slot="meeting-transcription-view" className="meeting-panel">
@@ -201,6 +216,24 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
         <span className="meeting-panel__hint">
           Import an existing recording or transcribe a saved meeting when ready
         </span>
+        <label className="meeting-panel__model">
+          <span>Default model</span>
+          <Select
+            value={resolvedMeetingModelId}
+            onValueChange={props.onMeetingModelChange}
+            disabled={meetingModels.length === 0}
+          >
+            <SelectTrigger
+              size="sm"
+              aria-label="Default meeting transcription model"
+            >
+              <SelectValue placeholder="No meeting model ready" />
+            </SelectTrigger>
+            <SelectContent>
+              <ModelSelectGroups models={meetingModels} />
+            </SelectContent>
+          </Select>
+        </label>
       </div>
 
       <ListVisibilityToolbar
@@ -364,6 +397,7 @@ function MeetingProgressRow({
   const segmentsTotal = live?.segments_total ?? meeting.progress.segments_total;
   const elapsed = live?.elapsed_ms ?? meeting.progress.elapsed_ms;
   const remaining = live?.eta_ms ?? 0;
+  const phase = live?.phase ?? meeting.progress.phase;
   const percent = progressPercent(processed, duration);
 
   return (
@@ -404,6 +438,10 @@ function MeetingProgressRow({
         </Button>
       </div>
       <CardContent>
+        <div className="meeting-progress-row__phase">
+          <Loader2Icon aria-hidden="true" className="meeting-spin" />
+          {meetingPhaseLabel(phase)}
+        </div>
         <Progress value={percent} aria-label={`${percent}% complete`} />
         <div className="meeting-progress-row__meta">
           <span>{percent}%</span>
@@ -430,6 +468,9 @@ function MeetingDetailView({
   detail,
   error,
   models,
+  meetingModelId,
+  selectedModelId,
+  configurationInitiallyOpen,
   transcriptionBusy,
   onBack,
   onResume,
@@ -443,21 +484,26 @@ function MeetingDetailView({
 }: MeetingTranscriptionViewProps & { detail: MeetingDetail }) {
   const { record, transcript, audio_path: audioPath } = detail;
   const meetingModels = useMemo(
-    () =>
-      models.filter(
-        (model) =>
-          modelSupportsContext(model, "meeting") &&
-          model.capabilities.file_transcription &&
-          (!model.offline || ["ready", "installed"].includes(model.status)),
-      ),
+    () => meetingTranscriptionModels(models),
     [models],
   );
+  const defaultMeetingModelId = resolveMeetingModelId(
+    meetingModelId,
+    selectedModelId,
+    models,
+  );
+  const persistedModelId = record.transcription_request?.model_id;
+  const preferredModelId =
+    persistedModelId ??
+    (record.status === "recorded" ? defaultMeetingModelId : record.model_id);
   const initialModelId = meetingModels.some(
-    (model) => model.id === record.model_id,
+    (model) => model.id === preferredModelId,
   )
-    ? record.model_id
-    : (meetingModels[0]?.id ?? "");
-  const [dialogOpen, setDialogOpen] = useState(false);
+    ? preferredModelId
+    : defaultMeetingModelId;
+  const [dialogOpen, setDialogOpen] = useState(
+    configurationInitiallyOpen && record.status === "recorded",
+  );
   const [modelId, setModelId] = useState(initialModelId);
   const [language, setLanguage] = useState<TranscriptionLanguage>(
     record.language,
@@ -529,14 +575,27 @@ function MeetingDetailView({
         <Alert variant="destructive">
           <FileAudioIcon />
           <AlertTitle>Meeting transcription interrupted</AlertTitle>
-          <AlertDescription>{error ?? record.error}</AlertDescription>
+          <AlertDescription>
+            {error ?? record.error}
+            {record.failed_phase ? (
+              <span>
+                {" "}
+                Failed while {meetingPhaseLabel(record.failed_phase).toLowerCase()}
+                {record.failed_segments
+                  ? ` · ${record.failed_segments} segment${record.failed_segments === 1 ? "" : "s"}`
+                  : ""}
+              </span>
+            ) : null}
+          </AlertDescription>
         </Alert>
       ) : null}
 
       <div className="meeting-detail__actions">
-        {record.status === "recorded" ? (
+        {["recorded", "failed", "canceled"].includes(record.status) ? (
           <Button type="button" size="sm" onClick={() => setDialogOpen(true)}>
-            Configure transcription
+            {record.status === "recorded"
+              ? "Configure transcription"
+              : "New transcription"}
           </Button>
         ) : null}
         {canResumeMeeting(record.status) ? (

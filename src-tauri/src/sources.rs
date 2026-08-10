@@ -2,7 +2,7 @@
 
 use crate::settings::AppSettings;
 
-/// A system-audio source WakeNote can recognize by window title or app name.
+/// A system-audio source WakeNote can recognize by shareable-window title or app name.
 pub struct RecognizedSource {
     /// Stable id. Doubles as the metadata `source_label` and the audio file slug.
     pub id: &'static str,
@@ -99,7 +99,7 @@ pub fn match_source<'a>(
     window_title: &str,
     sources: &'a [SourceDefinition],
 ) -> Option<&'a SourceDefinition> {
-    let title = window_title.to_lowercase();
+    let title = normalize_source_text(window_title);
     if title.trim().is_empty() {
         return None;
     }
@@ -107,7 +107,7 @@ pub fn match_source<'a>(
         source
             .title_patterns
             .iter()
-            .map(|pattern| pattern.to_lowercase())
+            .map(|pattern| normalize_source_text(pattern))
             .any(|pattern| title.contains(&pattern))
     })
 }
@@ -116,7 +116,7 @@ pub fn match_source<'a>(
 /// Sources are checked in list order, so earlier entries win when a title would
 /// match more than one (e.g. a Meet tab whose title also mentions YouTube).
 pub fn match_recognized_source(window_title: &str) -> Option<&'static RecognizedSource> {
-    let title = window_title.to_lowercase();
+    let title = normalize_source_text(window_title);
     if title.trim().is_empty() {
         return None;
     }
@@ -124,8 +124,26 @@ pub fn match_recognized_source(window_title: &str) -> Option<&'static Recognized
         source
             .title_patterns
             .iter()
-            .any(|pattern| title.contains(pattern))
+            .any(|pattern| title.contains(&normalize_source_text(pattern)))
     })
+}
+
+fn normalize_source_text(value: &str) -> String {
+    let mut normalized_punctuation = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '-' | '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2212}'
+        ) {
+            normalized_punctuation.push_str(" - ");
+        } else {
+            normalized_punctuation.extend(character.to_lowercase());
+        }
+    }
+    normalized_punctuation
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -140,6 +158,14 @@ mod tests {
         );
         assert_eq!(
             match_recognized_source("팀 회의 - Google Meet").map(|s| s.id),
+            Some("meet")
+        );
+        assert_eq!(
+            match_recognized_source("Meet – 주간 회의").map(|s| s.id),
+            Some("meet")
+        );
+        assert_eq!(
+            match_recognized_source("Meet—Product review").map(|s| s.id),
             Some("meet")
         );
     }

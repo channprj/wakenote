@@ -6,7 +6,7 @@
  */
 
 import type { StatusTone } from "./status-summary";
-import type { MeetingStatus } from "./types";
+import type { MeetingPhase, MeetingStatus } from "./types";
 
 /** Overall progress as an integer 0..100, by audio time processed. */
 export function progressPercent(processedMs: number, durationMs: number): number {
@@ -51,6 +51,17 @@ export function formatEta(etaMs: number): string {
   return `about ${seconds}s`;
 }
 
+const PHASE_LABELS: Record<MeetingPhase, string> = {
+  preparing_audio: "Preparing audio",
+  splitting_audio: "Splitting audio",
+  transcribing: "Transcribing",
+  finalizing: "Finalizing transcript",
+};
+
+export function meetingPhaseLabel(phase: MeetingPhase | null | undefined) {
+  return phase ? PHASE_LABELS[phase] : "Waiting to start";
+}
+
 const STATUS_LABELS: Record<MeetingStatus, string> = {
   recorded: "Recorded",
   pending: "Queued",
@@ -78,7 +89,7 @@ export function meetingStatusTone(status: MeetingStatus): StatusTone {
 }
 
 export function isMeetingActive(status: MeetingStatus): boolean {
-  return status === "processing";
+  return status === "pending" || status === "processing";
 }
 
 /** A meeting can be resumed when it stopped before finishing all segments. */

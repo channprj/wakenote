@@ -21,6 +21,7 @@ function renderModel(
   overrides: Partial<ModelDescriptor> = {},
   selectedModel = "other-model",
   dictationModel = "",
+  meetingModel = "",
 ) {
   const model: ModelDescriptor = {
     ...mockModels()[0],
@@ -36,6 +37,7 @@ function renderModel(
         ...defaultSettings(),
         selected_model: selectedModel,
         dictation_model: dictationModel,
+        meeting_model: meetingModel,
       }}
       onPatch={() => {}}
       onVerify={() => {}}
@@ -196,7 +198,17 @@ describe("model manager actions", () => {
 
     expect(isDisabled(buttonTag(markup, "trash-2"))).toBe(true);
     expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
-      "Cannot delete a model used by transcription or Dictation",
+      "Cannot delete a model used by transcription, Dictation, or Meetings",
+    );
+  });
+
+  it("prevents deleting a model reserved for Meetings", () => {
+    const meetingModel = mockModels()[0].id;
+    const markup = renderModel("ready", {}, "other-model", "", meetingModel);
+
+    expect(isDisabled(buttonTag(markup, "trash-2"))).toBe(true);
+    expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
+      "Cannot delete a model used by transcription, Dictation, or Meetings",
     );
   });
 
@@ -588,7 +600,7 @@ describe("model delete disabled reason", () => {
     "blocks deletion of the active selected %s model",
     (status) => {
       expect(modelDeleteDisabledReason({ status }, true)).toBe(
-        "Cannot delete a model used by transcription or Dictation",
+        "Cannot delete a model used by transcription, Dictation, or Meetings",
       );
     },
   );
@@ -661,7 +673,7 @@ describe("disabled-reason titles render on the action buttons", () => {
     const activeId = mockModels()[0].id;
     const markup = renderModel("ready", {}, activeId);
     expect(titleOf(buttonTag(markup, "trash-2"))).toBe(
-      "Cannot delete a model used by transcription or Dictation",
+      "Cannot delete a model used by transcription, Dictation, or Meetings",
     );
   });
 

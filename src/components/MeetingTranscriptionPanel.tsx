@@ -7,10 +7,9 @@ import {
 } from "react";
 import {
   cancelMeeting,
-  importAndStartMeeting,
+  importMeetingRecording,
   isTauriRuntime,
   listMeetings,
-  listTranscriptionModels,
   loadManualMeetingRecordingStatus,
   meetingDetail,
   openTranscriptFolder,
@@ -47,15 +46,23 @@ function meetingVisibilityTarget(
 
 export function MeetingTranscriptionPanel({
   onPermissionRequired,
+  models,
+  meetingModelId,
+  selectedModelId,
+  onMeetingModelChange,
 }: {
   onPermissionRequired: (feature: PermissionFeature) => Promise<boolean>;
+  models: ModelDescriptor[];
+  meetingModelId: string;
+  selectedModelId: string;
+  onMeetingModelChange: (modelId: string) => void;
 }) {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
-  const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [progressById, setProgressById] = useState<Record<string, MeetingProgressPayload>>({});
   const [liveTextById, setLiveTextById] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
+  const [configureOnOpenId, setConfigureOnOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [manualRecordingBusy, setManualRecordingBusy] = useState(false);
   const [transcriptionBusy, setTranscriptionBusy] = useState(false);
@@ -96,12 +103,6 @@ export function MeetingTranscriptionPanel({
     } catch (cause) {
       setError(String(cause));
     }
-  }, []);
-
-  useEffect(() => {
-    void listTranscriptionModels()
-      .then(setModels)
-      .catch((cause) => setError(String(cause)));
   }, []);
 
   const openDetail = useCallback(async (id: string) => {
@@ -270,17 +271,19 @@ export function MeetingTranscriptionPanel({
     setBusy(true);
     setError(null);
     try {
-      const summary = await importAndStartMeeting();
+      const summary = await importMeetingRecording();
       if (summary) {
         setLiveTextById((prev) => ({ ...prev, [summary.id]: "" }));
         await refreshMeetings();
+        setConfigureOnOpenId(summary.id);
+        await openDetail(summary.id);
       }
     } catch (cause) {
       setError(String(cause));
     } finally {
       setBusy(false);
     }
-  }, [refreshMeetings]);
+  }, [openDetail, refreshMeetings]);
 
   const onCancel = useCallback(async (id: string) => {
     try {
@@ -403,6 +406,11 @@ export function MeetingTranscriptionPanel({
       manualRecording={manualRecording}
       manualRecordingBusy={manualRecordingBusy}
       models={models}
+      meetingModelId={meetingModelId}
+      selectedModelId={selectedModelId}
+      configurationInitiallyOpen={
+        selectedId !== null && selectedId === configureOnOpenId
+      }
       transcriptionBusy={transcriptionBusy}
       error={error ?? visibility.error}
       visibilityMode={visibilityMode}
@@ -414,6 +422,7 @@ export function MeetingTranscriptionPanel({
       }
       visibilityStatus={visibility.announcement}
       onImport={() => void onImport()}
+      onMeetingModelChange={onMeetingModelChange}
       onStartManualRecording={() => void onStartManualRecording()}
       onStopManualRecording={() => void onStopManualRecording()}
       onStartTranscription={(id, request) =>
@@ -421,6 +430,7 @@ export function MeetingTranscriptionPanel({
       }
       onOpen={(id) => void openDetail(id)}
       onBack={() => {
+        setConfigureOnOpenId(null);
         setSelectedId(null);
         setDetail(null);
       }}

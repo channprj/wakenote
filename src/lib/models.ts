@@ -46,6 +46,34 @@ export function modelSupportsContext(
   );
 }
 
+export function isMeetingTranscriptionModel(model: ModelDescriptor) {
+  return (
+    modelSupportsContext(model, "meeting") &&
+    model.capabilities.file_transcription &&
+    (!model.offline || model.status === "ready" || model.status === "installed")
+  );
+}
+
+export function meetingTranscriptionModels(models: ModelDescriptor[]) {
+  return models.filter(isMeetingTranscriptionModel);
+}
+
+export function resolveMeetingModelId(
+  configuredModelId: string,
+  legacySelectedModelId: string,
+  models: ModelDescriptor[],
+) {
+  const available = meetingTranscriptionModels(models);
+  const configured = configuredModelId.trim();
+  if (available.some((model) => model.id === configured)) {
+    return configured;
+  }
+  if (available.some((model) => model.id === legacySelectedModelId)) {
+    return legacySelectedModelId;
+  }
+  return available[0]?.id ?? "";
+}
+
 export function isReadyOnDeviceFallback(model: ModelDescriptor) {
   return (
     model.offline &&
