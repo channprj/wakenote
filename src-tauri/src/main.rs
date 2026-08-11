@@ -8584,7 +8584,10 @@ fn setup_tray(
     let recording = CheckMenuItem::with_id(
         app,
         "toggle-recording",
-        "Recording On",
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.recording_text)
+            .unwrap_or("Recording On"),
         true,
         initial_menu
             .as_ref()
@@ -8848,6 +8851,7 @@ fn apply_tray_presentation(
     if let Some(items) = app.try_state::<TrayMenuItems>() {
         let menu = tray_menu_presentation(settings, status);
         let _ = items.recording.set_checked(menu.recording_checked);
+        let _ = items.recording.set_text(menu.recording_text);
         let _ = items.transcription.set_checked(menu.transcription_checked);
         let _ = items.subtitles.set_checked(menu.subtitles_checked);
         let _ = items.pause_all.set_checked(menu.pause_all_checked);

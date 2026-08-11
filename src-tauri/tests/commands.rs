@@ -3616,12 +3616,23 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
     let menu = tray_menu_presentation(&backend.settings(), &backend.app_status());
 
     assert!(menu.recording_checked);
+    assert_eq!(menu.recording_text, "Recording On");
     assert!(!menu.transcription_checked);
     assert!(menu.subtitles_checked);
     assert!(menu.pause_all_checked);
     assert_eq!(menu.active_model_text, "Model: whisper-small");
     assert_eq!(menu.active_microphone_text, "Microphone: USB Mic");
     assert_eq!(menu.threshold_text, "Threshold: -37 dBFS");
+
+    backend.update_settings(SettingsPatch {
+        recording_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+
+    let menu = tray_menu_presentation(&backend.settings(), &backend.app_status());
+
+    assert!(!menu.recording_checked);
+    assert_eq!(menu.recording_text, "Recording Off");
 }
 
 #[test]
