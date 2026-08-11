@@ -49,8 +49,8 @@ export function modelSupportsContext(
 export function isMeetingTranscriptionModel(model: ModelDescriptor) {
   return (
     modelSupportsContext(model, "meeting") &&
-    model.capabilities.file_transcription &&
-    (!model.offline || model.status === "ready" || model.status === "installed")
+    (model.capabilities.file_transcription || model.capabilities.realtime) &&
+    ["ready", "installed", "unloaded"].includes(model.status)
   );
 }
 

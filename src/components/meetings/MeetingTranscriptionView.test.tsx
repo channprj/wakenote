@@ -166,7 +166,7 @@ describe("MeetingTranscriptionView", () => {
     expect(screen.queryByText("Meeting transcription interrupted")).toBeNull();
   });
 
-  it("shows a dedicated meeting default and excludes realtime-only models", async () => {
+  it("shows runnable realtime models in the dedicated meeting selector", async () => {
     const onMeetingModelChange = vi.fn();
     const models = mockModels().map((model) =>
       model.id === "whisper-medium"
@@ -183,8 +183,8 @@ describe("MeetingTranscriptionView", () => {
     expect(selector).toBeTruthy();
     await userEvent.click(selector);
     expect(
-      screen.queryByRole("option", { name: /Soniox Realtime/ }),
-    ).toBeNull();
+      screen.getByRole("option", { name: /Soniox.*Real-time/ }),
+    ).toBeTruthy();
     await userEvent.click(
       screen.getByRole("option", { name: "Soniox · Async V5" }),
     );

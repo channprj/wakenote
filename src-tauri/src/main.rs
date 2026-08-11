@@ -67,7 +67,8 @@ use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
 };
 use wakenote::meeting::{
-    MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingSummary, MeetingTranscriptionRequest,
+    MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingRealtimeReplay,
+    MeetingRealtimeReplayRequest, MeetingSummary, MeetingTranscriptionRequest,
     start_manual_recorded_meeting_capture, start_recorded_meeting_transcription,
 };
 use wakenote::microphone_level::macos::PlatformVolumeBackend;
@@ -4813,26 +4814,28 @@ fn schedule_and_spawn_meeting_job(
         let mut current_cancel = cancel;
         loop {
             let emit = meeting_event_emitter(app.clone());
+            let credentials = app
+                .try_state::<BackendState>()
+                .and_then(|state| {
+                    state.lock().ok().and_then(|backend| {
+                        backend
+                            .transcription_credentials()
+                            .map_err(|error| {
+                                eprintln!("[wakenote] meeting credentials unavailable: {error}");
+                            })
+                            .ok()
+                    })
+                })
+                .unwrap_or_default();
+            let realtime_replay = meeting_realtime_replay(&app);
             if let Err(error) = wakenote::meeting::run_meeting_job(
                 &current_job.save_root,
                 &current_job.model_directory,
                 &current_job.id,
                 current_job.suppress_low_confidence,
                 &current_job.dictionary,
-                app.try_state::<BackendState>()
-                    .and_then(|state| {
-                        state.lock().ok().and_then(|backend| {
-                            backend
-                                .transcription_credentials()
-                                .map_err(|error| {
-                                    eprintln!(
-                                        "[wakenote] meeting credentials unavailable: {error}"
-                                    );
-                                })
-                                .ok()
-                        })
-                    })
-                    .unwrap_or_default(),
+                credentials,
+                realtime_replay,
                 current_cancel,
                 emit,
             ) {
@@ -4859,6 +4862,64 @@ fn schedule_and_spawn_meeting_job(
         }
     });
     Ok(outcome)
+}
+
+fn meeting_realtime_replay(app: &AppHandle) -> Option<MeetingRealtimeReplay> {
+    let openai = app
+        .try_state::<OpenAiRealtimeManager>()
+        .map(|state| state.inner().clone());
+    let soniox = app
+        .try_state::<SonioxRealtimeManager>()
+        .map(|state| state.inner().clone());
+    if openai.is_none() && soniox.is_none() {
+        return None;
+    }
+    let openai_for_submit = openai.clone();
+    let soniox_for_submit = soniox.clone();
+    let submit = Arc::new(move |request: MeetingRealtimeReplayRequest| {
+        let source_key = request.source_key.clone();
+        let chunk_id = request.chunk_id;
+        let audio_path = request.audio_path.clone();
+        let samples_request = RealtimeSamplesRequest {
+            source_key: request.source_key,
+            source_label: request.source_label,
+            microphone_slot: None,
+            chunk_id,
+            model_id: request.model_id.clone(),
+            language: request.language,
+            dictionary: request.dictionary,
+            sample_rate: request.sample_rate,
+            samples: request.samples,
+            credentials: request.credentials,
+        };
+        match request.model_id.as_str() {
+            "openai-gpt-live-transcribe" => {
+                let manager = openai_for_submit
+                    .as_ref()
+                    .ok_or_else(|| "OpenAI realtime manager is unavailable".to_string())?;
+                manager.submit_recorded_samples(samples_request);
+                manager.commit(source_key, chunk_id, audio_path);
+            }
+            "soniox-realtime-v5" => {
+                let manager = soniox_for_submit
+                    .as_ref()
+                    .ok_or_else(|| "Soniox realtime manager is unavailable".to_string())?;
+                manager.submit_recorded_samples(samples_request);
+                manager.commit(source_key, chunk_id, audio_path);
+            }
+            _ => return Err("selected model is not a realtime Meeting model".to_string()),
+        }
+        Ok(())
+    });
+    let close = Arc::new(move |source_key: String| {
+        if let Some(manager) = openai.as_ref() {
+            manager.close_source(source_key.clone());
+        }
+        if let Some(manager) = soniox.as_ref() {
+            manager.close_source(source_key);
+        }
+    });
+    Some(MeetingRealtimeReplay::new(submit, close))
 }
 
 /// Spawn the worker thread for one user-requested meeting. Errors if another
@@ -4937,15 +4998,28 @@ fn meeting_detail(state: State<'_, BackendState>, id: String) -> Result<MeetingD
 
 fn validate_meeting_transcription_request(
     model: &ModelDescriptor,
+    model_directory: &Path,
     request: &StartMeetingTranscriptionRequest,
 ) -> Result<MeetingTranscriptionRequest, String> {
     if !model_supports_context(model, TranscriptionContext::Meeting, false)
-        || !model.capabilities.file_transcription
+        || !(model.capabilities.file_transcription || model.capabilities.realtime)
     {
-        return Err("selected model does not support meeting file transcription".to_string());
+        return Err("selected model does not support saved Meeting transcription".to_string());
     }
-    if model.offline && !matches!(model.status, ModelStatus::Installed | ModelStatus::Ready) {
-        return Err("selected on-device model is not installed and ready".to_string());
+    let runnable = match model.status {
+        ModelStatus::Installed | ModelStatus::Ready => true,
+        ModelStatus::Unloaded if model.offline => ModelStore::new(model_directory)
+            .verify_model(model)
+            .is_ok_and(|status| matches!(status, ModelStatus::Installed | ModelStatus::Ready)),
+        ModelStatus::Unloaded => true,
+        ModelStatus::Missing
+        | ModelStatus::Downloading
+        | ModelStatus::Verifying
+        | ModelStatus::Extracting
+        | ModelStatus::Error => false,
+    };
+    if !runnable {
+        return Err("selected Meeting model is not currently runnable".to_string());
     }
     if request.speaker_separation_enabled && !model.capabilities.diarization {
         return Err("selected model does not support speaker separation".to_string());
@@ -4979,16 +5053,22 @@ fn start_meeting_transcription(
             ));
         }
     }
-    let (save_root, model) = {
+    let (save_root, model_directory, model) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
         let model = backend
             .model_registry()
             .into_iter()
             .find(|model| model.id == request.model_id)
             .ok_or_else(|| "selected meeting transcription model was not found".to_string())?;
-        (expand_user_path(&backend.settings().save_root), model)
+        (
+            expand_user_path(&settings.save_root),
+            expand_user_path(&settings.model_directory),
+            model,
+        )
     };
-    let transcription_request = validate_meeting_transcription_request(&model, &request)?;
+    let transcription_request =
+        validate_meeting_transcription_request(&model, &model_directory, &request)?;
     let record = start_recorded_meeting_transcription(&save_root, &id, transcription_request)?;
     spawn_meeting_job(
         app,
@@ -6536,6 +6616,9 @@ fn kick_transcription_worker_if_needed(
 }
 
 fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial: RealtimePartial) {
+    if partial.source_key.starts_with("meeting:") {
+        return;
+    }
     if partial.source_key != "dictation" && dictation_suppresses_vor_live_transcription(app) {
         return;
     }
@@ -10137,7 +10220,8 @@ mod tests {
     }
 
     #[test]
-    fn meeting_request_validation_rejects_realtime_only_and_unready_models() {
+    fn meeting_request_validation_accepts_realtime_and_artifact_backed_unloaded_models() {
+        let tmp = tempfile::tempdir().expect("tempdir");
         let backend = AppBackend::default();
         let models = backend.model_registry();
         let realtime = models
@@ -10147,7 +10231,8 @@ mod tests {
         let unready = models
             .iter()
             .find(|model| model.id == "whisper-medium")
-            .expect("local model");
+            .expect("local model")
+            .clone();
         let request = StartMeetingTranscriptionRequest {
             model_id: realtime.id.clone(),
             language: TranscriptionLanguage::Auto,
@@ -10155,26 +10240,50 @@ mod tests {
             speaker_separation_enabled: false,
         };
 
-        assert!(
-            validate_meeting_transcription_request(realtime, &request)
-                .expect_err("realtime-only must fail")
-                .contains("meeting file transcription")
+        assert_eq!(
+            validate_meeting_transcription_request(realtime, tmp.path(), &request),
+            Ok(MeetingTranscriptionRequest {
+                model_id: realtime.id.clone(),
+                language: TranscriptionLanguage::Auto,
+                streaming_enabled: true,
+                speaker_separation_enabled: false,
+            })
         );
         assert!(
             validate_meeting_transcription_request(
-                unready,
+                &unready,
+                tmp.path(),
                 &StartMeetingTranscriptionRequest {
                     model_id: unready.id.clone(),
-                    ..request
+                    ..request.clone()
                 },
             )
             .expect_err("unready local must fail")
-            .contains("installed and ready")
+            .contains("not currently runnable")
+        );
+
+        let mut unloaded = unready;
+        unloaded.status = ModelStatus::Unloaded;
+        unloaded.checksum_sha256 = None;
+        std::fs::create_dir_all(tmp.path()).expect("model directory");
+        std::fs::write(tmp.path().join(format!("{}.bin", unloaded.id)), b"artifact")
+            .expect("model artifact");
+        assert!(
+            validate_meeting_transcription_request(
+                &unloaded,
+                tmp.path(),
+                &StartMeetingTranscriptionRequest {
+                    model_id: unloaded.id.clone(),
+                    ..request
+                },
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn meeting_request_validation_preserves_supported_diarization() {
+        let tmp = tempfile::tempdir().expect("tempdir");
         let backend = AppBackend::default();
         let model = backend
             .model_registry()
@@ -10189,7 +10298,7 @@ mod tests {
         };
 
         assert_eq!(
-            validate_meeting_transcription_request(&model, &request),
+            validate_meeting_transcription_request(&model, tmp.path(), &request),
             Ok(MeetingTranscriptionRequest {
                 model_id: model.id,
                 language: TranscriptionLanguage::Ko,

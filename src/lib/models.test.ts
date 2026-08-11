@@ -73,26 +73,38 @@ describe("groupModelsByLocation", () => {
 });
 
 describe("transcription model capabilities", () => {
-  it("resolves the dedicated meeting model without accepting a realtime-only model", () => {
+  it("resolves runnable file, realtime, and unloaded meeting models", () => {
     const models = mockModels().map((candidate) =>
       candidate.id === "whisper-medium"
-        ? { ...candidate, status: "ready" as const }
+        ? { ...candidate, status: "unloaded" as const }
         : candidate,
     );
 
     expect(
       meetingTranscriptionModels(models).map((candidate) => candidate.id),
-    ).not.toContain("soniox-realtime-v5");
-    expect(
-      resolveMeetingModelId(
-        "soniox-async-v5",
+    ).toEqual(
+      expect.arrayContaining([
+        "whisper-medium",
+        "openai-gpt-live-transcribe",
         "soniox-realtime-v5",
-        models,
-      ),
-    ).toBe("soniox-async-v5");
+      ]),
+    );
     expect(
-      resolveMeetingModelId("", "soniox-realtime-v5", models),
-    ).toBe("whisper-medium");
+      resolveMeetingModelId("soniox-async-v5", "soniox-realtime-v5", models),
+    ).toBe("soniox-async-v5");
+    expect(resolveMeetingModelId("", "soniox-realtime-v5", models)).toBe(
+      "soniox-realtime-v5",
+    );
+
+    expect(
+      meetingTranscriptionModels(
+        models.map((candidate) =>
+          candidate.id === "whisper-medium"
+            ? { ...candidate, status: "downloading" as const }
+            : candidate,
+        ),
+      ).map((candidate) => candidate.id),
+    ).not.toContain("whisper-medium");
   });
 
   it("mirrors the exact OpenAI streaming and diarization matrix", () => {
@@ -112,6 +124,7 @@ describe("transcription model capabilities", () => {
       realtime: true,
       streaming: "required",
       diarization: false,
+      selectable_contexts: ["realtime", "dictation", "meeting"],
     });
     expect(file?.capabilities.streaming).toBe("optional");
     expect(diarize?.capabilities).toMatchObject({
@@ -142,7 +155,7 @@ describe("transcription model capabilities", () => {
       file_transcription: false,
       realtime: true,
       streaming: "required",
-      selectable_contexts: ["realtime", "dictation"],
+      selectable_contexts: ["realtime", "dictation", "meeting"],
     });
   });
 

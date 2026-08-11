@@ -23,13 +23,15 @@ use hound::{WavReader, WavSpec, WavWriter};
 use serde::{Deserialize, Serialize};
 
 use crate::audio_codec::convert_to_pcm_wav;
+use crate::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use crate::cloud_transcription::TranscriptionCredentials;
 use crate::dictionary::DictionaryContext;
 use crate::recorder::encode_wav_to_m4a;
 use crate::settings::TranscriptionLanguage;
 use crate::transcription::{
-    DecodedWindow, RuntimeTranscriber, SpeakerTurn, Transcriber, TranscriptionRequest,
-    cached_whisper_context, model_runtime_for_id, transcribe_samples_with_context,
+    DecodedWindow, RuntimeTranscriber, SpeakerTurn, Transcriber, TranscriptionError,
+    TranscriptionRequest, cached_whisper_context, model_runtime_for_id,
+    transcribe_samples_with_context,
 };
 use crate::transcription_cost::estimated_provider_cost_usd;
 
@@ -310,6 +312,43 @@ pub enum MeetingEvent {
 /// Sink for meeting events. `Arc<dyn Fn>` (mirroring `live_transcription`) so the
 /// `'static` whisper progress closure can clone it for in-segment updates.
 pub type MeetingEventCallback = Arc<dyn Fn(MeetingEvent) + Send + Sync>;
+
+#[derive(Clone)]
+pub struct MeetingRealtimeReplay {
+    submit: Arc<dyn Fn(MeetingRealtimeReplayRequest) -> Result<(), String> + Send + Sync>,
+    close: Arc<dyn Fn(String) + Send + Sync>,
+}
+
+impl MeetingRealtimeReplay {
+    pub fn new(
+        submit: Arc<dyn Fn(MeetingRealtimeReplayRequest) -> Result<(), String> + Send + Sync>,
+        close: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Self {
+        Self { submit, close }
+    }
+
+    pub fn submit(&self, request: MeetingRealtimeReplayRequest) -> Result<(), String> {
+        (self.submit)(request)
+    }
+
+    pub fn close_source(&self, source_key: String) {
+        (self.close)(source_key);
+    }
+}
+
+#[derive(Clone)]
+pub struct MeetingRealtimeReplayRequest {
+    pub source_key: String,
+    pub source_label: String,
+    pub chunk_id: u64,
+    pub model_id: String,
+    pub language: TranscriptionLanguage,
+    pub dictionary: DictionaryContext,
+    pub sample_rate: u32,
+    pub samples: Arc<Vec<f32>>,
+    pub credentials: TranscriptionCredentials,
+    pub audio_path: PathBuf,
+}
 
 // ---------------------------------------------------------------------------
 // Paths & ids
@@ -1116,6 +1155,7 @@ pub fn run_meeting_job(
     suppress_low_confidence: bool,
     dictionary: &DictionaryContext,
     credentials: TranscriptionCredentials,
+    realtime_replay: Option<MeetingRealtimeReplay>,
     cancel: Arc<AtomicBool>,
     emit: MeetingEventCallback,
 ) -> Result<(), String> {
@@ -1237,7 +1277,10 @@ pub fn run_meeting_job(
         None
     };
     let runtime_transcriber = if context.is_none() {
-        match RuntimeTranscriber::for_archival_with_credentials(model_directory, credentials) {
+        match RuntimeTranscriber::for_archival_with_credentials(
+            model_directory,
+            credentials.clone(),
+        ) {
             Ok(transcriber) => {
                 Some(transcriber.with_file_streaming(transcription_request.streaming_enabled, None))
             }
@@ -1257,6 +1300,12 @@ pub fn run_meeting_job(
 
     let language = record.language;
     let total_ms = record.duration_ms;
+    let realtime_run_token = Utc::now().timestamp_micros();
+    let realtime_source_key = matches!(
+        model_runtime.as_str(),
+        "openai-realtime" | "soniox-realtime"
+    )
+    .then(|| format!("meeting:{}:{realtime_run_token}", record.id));
     // Failed segments are retried below. Only failures from this run decide the
     // final status; otherwise a fully successful resume would remain Failed.
     let mut any_failed = false;
@@ -1266,6 +1315,11 @@ pub fn run_meeting_job(
             continue;
         }
         if cancel.load(Ordering::Acquire) {
+            if let (Some(replay), Some(source_key)) =
+                (realtime_replay.as_ref(), realtime_source_key.as_ref())
+            {
+                replay.close_source(source_key.clone());
+            }
             let _ = fs::remove_file(&wav);
             record.status = MeetingStatus::Canceled;
             record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
@@ -1347,6 +1401,7 @@ pub fn run_meeting_job(
             }));
         };
 
+        let mut canceled_during_replay = false;
         let decoded = if let Some(context) = context.as_ref() {
             transcribe_samples_with_context(
                 context,
@@ -1358,19 +1413,58 @@ pub fn run_meeting_job(
             )
             .map(|decoded| (decoded, Vec::new(), None))
         } else {
-            let segment_wav = dir.join(format!(".wakenote-segment-{idx}.wav"));
+            let segment_wav = if realtime_source_key.is_some() {
+                dir.join(format!(".wakenote-segment-{realtime_run_token}-{idx}.wav"))
+            } else {
+                dir.join(format!(".wakenote-segment-{idx}.wav"))
+            };
             let result = write_samples_wav16k(&segment_wav, &samples)
-                .map_err(crate::transcription::TranscriptionError::Engine)
+                .map_err(TranscriptionError::Engine)
                 .and_then(|()| {
-                    runtime_transcriber
-                        .as_ref()
-                        .expect("non-Whisper meetings have a runtime transcriber")
-                        .transcribe_execution(TranscriptionRequest {
-                            audio_path: &segment_wav,
-                            model_id: &record.model_id,
-                            language,
-                            dictionary,
-                        })
+                    if let Some(source_key) = realtime_source_key.as_ref() {
+                        let replay = realtime_replay.as_ref().ok_or_else(|| {
+                            TranscriptionError::Engine(
+                                "saved Meeting realtime replay is unavailable".to_string(),
+                            )
+                        })?;
+                        realtime_result_store().discard(&segment_wav);
+                        replay
+                            .submit(MeetingRealtimeReplayRequest {
+                                source_key: source_key.clone(),
+                                source_label: record.title.clone(),
+                                chunk_id: idx as u64 + 1,
+                                model_id: record.model_id.clone(),
+                                language,
+                                dictionary: dictionary.clone(),
+                                sample_rate: 16_000,
+                                samples: Arc::new(samples.clone()),
+                                credentials: credentials.clone(),
+                                audio_path: segment_wav.clone(),
+                            })
+                            .map_err(TranscriptionError::Engine)?;
+                        match realtime_result_store().wait_cancellable(&segment_wav, &cancel) {
+                            Some(RealtimeStoredResult::Completed(execution)) => Ok(execution),
+                            Some(RealtimeStoredResult::Failed(failure)) => {
+                                Err(TranscriptionError::Failure(failure))
+                            }
+                            None => {
+                                canceled_during_replay = true;
+                                Err(TranscriptionError::Engine(
+                                    "saved Meeting realtime replay was canceled".to_string(),
+                                ))
+                            }
+                        }
+                    } else {
+                        runtime_transcriber
+                            .as_ref()
+                            .expect("non-Whisper meetings have a runtime transcriber")
+                            .transcribe_execution(TranscriptionRequest {
+                                audio_path: &segment_wav,
+                                model_id: &record.model_id,
+                                language,
+                                dictionary,
+                            })
+                    }
                 })
                 .map(|mut execution| {
                     let text = dictionary.correct(execution.text.trim());
@@ -1413,6 +1507,25 @@ pub fn run_meeting_job(
             let _ = fs::remove_file(segment_wav);
             result
         };
+
+        if canceled_during_replay {
+            if let (Some(replay), Some(source_key)) =
+                (realtime_replay.as_ref(), realtime_source_key.as_ref())
+            {
+                replay.close_source(source_key.clone());
+            }
+            let _ = fs::remove_file(&wav);
+            record.status = MeetingStatus::Canceled;
+            record.progress.elapsed_ms = started.elapsed().as_millis() as u64;
+            record.touch();
+            let _ = record.save_atomic(&rpath);
+            emit(MeetingEvent::Finished(MeetingFinishedEvent {
+                id: record.id.clone(),
+                status: record.status,
+                error: None,
+            }));
+            return Ok(());
+        }
 
         match decoded {
             Ok((decoded, speaker_turns, usage)) => {
@@ -1483,6 +1596,11 @@ pub fn run_meeting_job(
         }
     }
 
+    if let (Some(replay), Some(source_key)) =
+        (realtime_replay.as_ref(), realtime_source_key.as_ref())
+    {
+        replay.close_source(source_key.clone());
+    }
     record.progress.phase = Some(MeetingPhase::Finalizing);
     record.touch();
     let _ = record.save_atomic(&rpath);
@@ -1584,6 +1702,149 @@ mod tests {
                 .expect("saved record")
                 .status,
             MeetingStatus::Recorded
+        );
+    }
+
+    #[test]
+    fn saved_meeting_realtime_replay_completes_through_the_result_store() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("realtime-source.wav");
+        write_samples_wav16k(&source, &vec![0.2; 16_000]).expect("source wav");
+        let imported = import_meeting(
+            temp.path(),
+            &source,
+            "soniox-realtime-v5",
+            TranscriptionLanguage::Ko,
+            "test",
+            Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap(),
+        )
+        .expect("import meeting");
+        start_recorded_meeting_transcription(
+            temp.path(),
+            &imported.id,
+            MeetingTranscriptionRequest {
+                model_id: "soniox-realtime-v5".into(),
+                language: TranscriptionLanguage::Ko,
+                streaming_enabled: true,
+                speaker_separation_enabled: false,
+            },
+        )
+        .expect("start transcription");
+
+        let submitted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let closed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let submitted_for_replay = submitted.clone();
+        let closed_for_replay = closed.clone();
+        let replay = MeetingRealtimeReplay::new(
+            Arc::new(move |request| {
+                assert!(request.source_key.starts_with("meeting:"));
+                assert_eq!(request.model_id, "soniox-realtime-v5");
+                assert_eq!(request.sample_rate, 16_000);
+                assert_eq!(request.samples.len(), 16_000);
+                submitted_for_replay.fetch_add(1, Ordering::AcqRel);
+                realtime_result_store().publish(
+                    request.audio_path,
+                    RealtimeStoredResult::Completed(crate::transcription::TranscriptionExecution {
+                        text: "회의 전사".into(),
+                        speaker_turns: Vec::new(),
+                        requested_model_id: request.model_id.clone(),
+                        effective_model_id: request.model_id,
+                        fallback_from_model_id: None,
+                        usage: None,
+                        issue: None,
+                    }),
+                );
+                Ok(())
+            }),
+            Arc::new(move |_| {
+                closed_for_replay.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+
+        run_meeting_job(
+            temp.path(),
+            &temp.path().join("models"),
+            &imported.id,
+            false,
+            &DictionaryContext::default(),
+            TranscriptionCredentials::default(),
+            Some(replay),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+        )
+        .expect("realtime meeting job");
+
+        let detail = meeting_detail(temp.path(), &imported.id).expect("meeting detail");
+        assert_eq!(detail.record.status, MeetingStatus::Completed);
+        assert_eq!(detail.transcript, "회의 전사");
+        assert_eq!(submitted.load(Ordering::Acquire), 1);
+        assert_eq!(closed.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn saved_meeting_realtime_replay_cancellation_closes_its_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("realtime-cancel.wav");
+        write_samples_wav16k(&source, &vec![0.2; 16_000]).expect("source wav");
+        let imported = import_meeting(
+            temp.path(),
+            &source,
+            "openai-gpt-live-transcribe",
+            TranscriptionLanguage::Auto,
+            "test",
+            Local.with_ymd_and_hms(2026, 8, 11, 13, 0, 0).unwrap(),
+        )
+        .expect("import meeting");
+        start_recorded_meeting_transcription(
+            temp.path(),
+            &imported.id,
+            MeetingTranscriptionRequest {
+                model_id: "openai-gpt-live-transcribe".into(),
+                language: TranscriptionLanguage::Auto,
+                streaming_enabled: true,
+                speaker_separation_enabled: false,
+            },
+        )
+        .expect("start transcription");
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_on_submit = cancel.clone();
+        let closed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let closed_for_replay = closed.clone();
+        let replay = MeetingRealtimeReplay::new(
+            Arc::new(move |_| {
+                cancel_on_submit.store(true, Ordering::Release);
+                Ok(())
+            }),
+            Arc::new(move |_| {
+                closed_for_replay.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+
+        run_meeting_job(
+            temp.path(),
+            &temp.path().join("models"),
+            &imported.id,
+            false,
+            &DictionaryContext::default(),
+            TranscriptionCredentials::default(),
+            Some(replay),
+            cancel,
+            Arc::new(|_| {}),
+        )
+        .expect("canceled realtime meeting job");
+
+        let detail = meeting_detail(temp.path(), &imported.id).expect("meeting detail");
+        assert_eq!(detail.record.status, MeetingStatus::Canceled);
+        assert_eq!(closed.load(Ordering::Acquire), 1);
+        assert!(
+            fs::read_dir(meeting_dir(temp.path(), &imported.id))
+                .expect("meeting directory")
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".wakenote-segment-"))
         );
     }
 

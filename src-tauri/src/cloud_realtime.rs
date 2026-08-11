@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::cloud_transcription::{FailureCategory, TranscriptionCredentials, TranscriptionFailure};
 use crate::dictionary::DictionaryContext;
@@ -9,6 +10,7 @@ use crate::settings::{MicrophoneSlot, TranscriptionLanguage};
 use crate::transcription::TranscriptionExecution;
 
 const RESULT_WAIT_TIMEOUT: Duration = Duration::from_secs(75);
+const RESULT_CANCEL_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RealtimeStoredResult {
@@ -60,6 +62,55 @@ impl RealtimeResultStore {
                 "Live transcription result is missing",
             ))
         })
+    }
+
+    pub fn wait_cancellable(
+        &self,
+        audio_path: &Path,
+        cancel: &AtomicBool,
+    ) -> Option<RealtimeStoredResult> {
+        let (lock, ready) = &*self.inner;
+        let mut results = match lock.lock() {
+            Ok(results) => results,
+            Err(_) => {
+                return Some(RealtimeStoredResult::Failed(result_store_failure(
+                    FailureCategory::Transport,
+                    "Live transcription result store is unavailable",
+                )));
+            }
+        };
+        let deadline = Instant::now() + RESULT_WAIT_TIMEOUT;
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                results.remove(audio_path);
+                return None;
+            }
+            if let Some(result) = results.remove(audio_path) {
+                return Some(result);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Some(RealtimeStoredResult::Failed(result_store_failure(
+                    FailureCategory::Transport,
+                    "Live transcription timed out",
+                )));
+            }
+            let wait_for = RESULT_CANCEL_POLL.min(deadline.saturating_duration_since(now));
+            let Ok((next_results, _)) = ready.wait_timeout(results, wait_for) else {
+                return Some(RealtimeStoredResult::Failed(result_store_failure(
+                    FailureCategory::Transport,
+                    "Live transcription result wait failed",
+                )));
+            };
+            results = next_results;
+        }
+    }
+
+    pub fn discard(&self, audio_path: &Path) {
+        let (lock, _) = &*self.inner;
+        if let Ok(mut results) = lock.lock() {
+            results.remove(audio_path);
+        }
     }
 
     #[cfg(test)]
@@ -134,5 +185,27 @@ mod tests {
             panic!("completed result")
         };
         assert_eq!(result.text, "hello");
+    }
+
+    #[test]
+    fn realtime_result_store_cancels_and_discards_stale_results() {
+        let store = RealtimeResultStore::default();
+        let path = PathBuf::from("/tmp/wakenote-meeting-segment.wav");
+        let cancel = AtomicBool::new(true);
+
+        store.publish(
+            path.clone(),
+            RealtimeStoredResult::Failed(result_store_failure(
+                FailureCategory::Transport,
+                "completed after cancellation",
+            )),
+        );
+        assert!(store.wait_cancellable(&path, &cancel).is_none());
+        store.publish(
+            path.clone(),
+            RealtimeStoredResult::Failed(result_store_failure(FailureCategory::Transport, "stale")),
+        );
+        store.discard(&path);
+        assert!(store.try_take(&path).is_none());
     }
 }

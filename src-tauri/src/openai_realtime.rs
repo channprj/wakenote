@@ -26,6 +26,7 @@ const REALTIME_SAMPLE_RATE: u32 = 24_000;
 const FINAL_QUIET_PERIOD: Duration = Duration::from_millis(350);
 const PARTIAL_COMPLETION_WAIT: Duration = Duration::from_secs(5);
 const COMMIT_COMPLETION_WAIT: Duration = Duration::from_secs(15);
+const RECORDED_FRAME_MS: usize = 250;
 #[derive(Clone)]
 pub struct OpenAiRealtimeManager {
     tx: mpsc::UnboundedSender<ManagerCommand>,
@@ -40,6 +41,10 @@ impl OpenAiRealtimeManager {
 
     pub fn submit_samples(&self, request: RealtimeSamplesRequest) {
         let _ = self.tx.send(ManagerCommand::Samples(Box::new(request)));
+    }
+
+    pub fn submit_recorded_samples(&self, request: RealtimeSamplesRequest) {
+        let _ = self.tx.send(ManagerCommand::Recorded(Box::new(request)));
     }
 
     pub fn commit(&self, source_key: String, chunk_id: u64, audio_path: PathBuf) {
@@ -57,6 +62,7 @@ impl OpenAiRealtimeManager {
 
 enum ManagerCommand {
     Samples(Box<RealtimeSamplesRequest>),
+    Recorded(Box<RealtimeSamplesRequest>),
     Commit {
         source_key: String,
         chunk_id: u64,
@@ -135,12 +141,47 @@ async fn manager_loop(
                     }
                 }
             }
+            ManagerCommand::Recorded(request) => {
+                let request = *request;
+                if request.model_id != "openai-gpt-live-transcribe" {
+                    continue;
+                }
+                if let Some(previous) = sessions.remove(&request.source_key) {
+                    let _ = previous.tx.send(ConnectionCommand::Close);
+                }
+                let failure = Arc::new(Mutex::new(None));
+                let (tx, command_rx) = mpsc::unbounded_channel();
+                tauri::async_runtime::spawn(connection_loop(
+                    request.clone(),
+                    command_rx,
+                    on_partial.clone(),
+                    failure.clone(),
+                ));
+                let frame_samples = recorded_frame_samples(request.sample_rate);
+                for frame in request.samples.chunks(frame_samples) {
+                    let _ = tx.send(ConnectionCommand::Append(encode_pcm24k(
+                        frame,
+                        request.sample_rate,
+                    )));
+                }
+                sessions.insert(
+                    request.source_key.clone(),
+                    ActiveSession {
+                        chunk_id: request.chunk_id,
+                        model_id: request.model_id,
+                        source_rate: request.sample_rate,
+                        sent_source_samples: request.samples.len(),
+                        tx,
+                        failure,
+                    },
+                );
+            }
             ManagerCommand::Commit {
                 source_key,
                 chunk_id,
                 audio_path,
             } => {
-                let Some(session) = sessions.remove(&source_key) else {
+                let Some(session) = sessions.get(&source_key) else {
                     realtime_result_store().publish(
                         audio_path,
                         RealtimeStoredResult::Failed(local_failure(
@@ -175,6 +216,7 @@ async fn manager_loop(
                         });
                     realtime_result_store()
                         .publish(audio_path, RealtimeStoredResult::Failed(failure));
+                    sessions.remove(&source_key);
                 }
             }
             ManagerCommand::Close(source_key) => {
@@ -507,6 +549,14 @@ fn unseen_samples(samples: &[f32], sent_samples: usize) -> (&[f32], usize) {
     (&samples[sent_samples.min(samples.len())..], samples.len())
 }
 
+fn recorded_frame_samples(sample_rate: u32) -> usize {
+    (sample_rate as usize)
+        .saturating_mul(RECORDED_FRAME_MS)
+        .checked_div(1_000)
+        .unwrap_or_default()
+        .max(1)
+}
+
 fn resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
     if samples.is_empty() || source_rate == 0 || target_rate == 0 {
         return Vec::new();
@@ -677,6 +727,19 @@ mod tests {
         let (unseen, next_sent) = unseen_samples(&cumulative, 4);
         assert_eq!(unseen, &[-1.0, 0.25]);
         assert_eq!(next_sent, cumulative.len());
+
+        let recorded = vec![0.0; 16_001];
+        let frames = recorded
+            .chunks(recorded_frame_samples(16_000))
+            .collect::<Vec<_>>();
+        assert_eq!(recorded_frame_samples(16_000), 4_000);
+        assert_eq!(frames.len(), 5);
+        assert!(frames.iter().all(|frame| frame.len() <= 4_000));
+        assert!(frames.iter().all(|frame| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encode_pcm24k(frame, 16_000))
+                .is_ok_and(|bytes| bytes.len() <= 12_000)
+        }));
     }
 
     #[test]

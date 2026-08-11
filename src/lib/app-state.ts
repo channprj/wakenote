@@ -275,7 +275,7 @@ function mockModelCapabilities(
       diarization: false,
       cost_reporting: "duration_estimate",
       maximum_request_bytes: null,
-      selectable_contexts: ["realtime", "dictation"],
+      selectable_contexts: ["realtime", "dictation", "meeting"],
     };
   }
   if (model.id === "soniox-realtime-v5") {
@@ -286,7 +286,7 @@ function mockModelCapabilities(
       diarization: false,
       cost_reporting: "duration_estimate",
       maximum_request_bytes: null,
-      selectable_contexts: ["realtime", "dictation"],
+      selectable_contexts: ["realtime", "dictation", "meeting"],
     };
   }
   if (model.id === "soniox-async-v5") {

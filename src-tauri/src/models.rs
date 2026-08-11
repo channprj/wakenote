@@ -99,6 +99,7 @@ pub fn capabilities_for_model(
             selectable_contexts: vec![
                 TranscriptionContext::Realtime,
                 TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
             ],
         },
         "soniox-realtime-v5" => ModelCapabilities {
@@ -111,6 +112,7 @@ pub fn capabilities_for_model(
             selectable_contexts: vec![
                 TranscriptionContext::Realtime,
                 TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
             ],
         },
         "openai-gpt-transcribe" => ModelCapabilities {
@@ -1987,6 +1989,7 @@ mod tests {
             vec![
                 TranscriptionContext::Realtime,
                 TranscriptionContext::Dictation,
+                TranscriptionContext::Meeting,
             ]
         );
 
@@ -2019,6 +2022,11 @@ mod tests {
         assert_eq!(
             live.capabilities.cost_reporting,
             CostReportingCapability::DurationEstimate
+        );
+        assert!(
+            live.capabilities
+                .selectable_contexts
+                .contains(&TranscriptionContext::Meeting)
         );
 
         let file = registry
