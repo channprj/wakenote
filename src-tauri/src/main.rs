@@ -29,10 +29,10 @@ use wakenote::caption_layout::StableCaptionPager;
 use wakenote::cloud_realtime::{RealtimePartial, RealtimeSamplesRequest};
 use wakenote::cloud_transcription::TranscriptionCredentials;
 use wakenote::commands::{
-    AppBackend, AppStatus, FinishedSystemMeetingJob, LiveEventHandler, LiveTranscriptEvent,
-    MainWindowCloseAction, MicrophoneDevice, RecentTranscript, StartedTranscriptionJob,
-    TrashActivityJobsResult, TrashTranscriptsResult, TrayMenuPresentation, TrayRuntimePresentation,
-    TrayState, UploadedAudio, live_preview_model_id, main_window_close_action,
+    AppBackend, AppStatus, LiveEventHandler, LiveTranscriptEvent, MainWindowCloseAction,
+    MicrophoneDevice, RecentTranscript, StartedTranscriptionJob, TrashActivityJobsResult,
+    TrashTranscriptsResult, TrayMenuPresentation, TrayRuntimePresentation, TrayState,
+    UploadedAudio, live_preview_model_id, main_window_close_action,
     microphone_devices_from_input_devices, open_containing_folder_request,
     recorded_at_for_audio_path, refresh_transcript_day_index_for_recording_path,
     reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
@@ -144,10 +144,19 @@ type SourceCaptureLifecycleState = Arc<Mutex<SourceCaptureLifecycle>>;
 type DetectedSourceState = Arc<Mutex<Option<DetectedSource>>>;
 /// Source ids the user paused manually while the source remains detected.
 type SourceCapturePauseState = Arc<Mutex<HashSet<String>>>;
+type SourceMeetingMicrophoneLeaseState = Arc<Mutex<Option<SourceMeetingMicrophoneLease>>>;
 /// Tracks the single in-flight long-form meeting job and its cancel flag.
 /// Only one meeting transcribes at a time (one shared GPU context).
 type MeetingState = Arc<Mutex<MeetingRuntime>>;
 type ManualMeetingRecordingState = Arc<Mutex<ManualMeetingRecordingRuntime>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceMeetingMicrophoneLease {
+    source_id: String,
+    generation: u64,
+    auto_started: bool,
+    user_owned: bool,
+}
 type TranscriptionCostState = Arc<Mutex<TranscriptionCostLedger>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type MicrophoneLevelState = Arc<MicrophoneLevelService<PlatformVolumeBackend>>;
@@ -4889,20 +4898,6 @@ fn meeting_job_spec_for_saved_record(
     })
 }
 
-fn meeting_job_spec_from_finished(
-    job: FinishedSystemMeetingJob,
-    settings: &AppSettings,
-) -> MeetingJobSpec {
-    MeetingJobSpec {
-        id: job.id,
-        save_root: job.save_root,
-        model_directory: job.model_directory,
-        model_id: job.model_id,
-        suppress_low_confidence: job.suppress_low_confidence,
-        dictionary: DictionaryContext::from_settings(settings),
-    }
-}
-
 #[tauri::command]
 fn list_meetings(state: State<'_, BackendState>) -> Result<Vec<MeetingSummary>, String> {
     Ok(wakenote::meeting::list_meetings(&meeting_save_root(
@@ -5040,13 +5035,17 @@ fn start_live_capture(
     live_state: State<'_, LiveCaptureState>,
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
-    start_live_capture_runtime(
+    let status = start_live_capture_runtime(
         &app,
         backend_state.inner(),
         live_state.inner(),
         transcription_state.inner().clone(),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    if status.live_input_active {
+        promote_source_meeting_microphone_lease(&app);
+    }
+    Ok(status)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5383,6 +5382,7 @@ fn stop_live_capture(
     transcription_state: State<'_, AutoTranscriptionState>,
 ) -> Result<AppStatus, String> {
     let status = stop_live_capture_runtime(&app, backend_state.inner(), live_state.inner())?;
+    note_source_meeting_microphone_stopped(&app, backend_state.inner());
     kick_transcription_worker_if_needed(
         app,
         backend_state.inner().clone(),
@@ -5419,6 +5419,130 @@ fn stop_live_capture_runtime(
         eprintln!("[overlay] hide failed: {error}");
     }
     Ok(status)
+}
+
+fn source_uses_automatic_meeting_capture(source_id: &str) -> bool {
+    matches!(source_id, "meet" | "zoom")
+}
+
+fn source_meeting_microphone_should_stop(lease: &SourceMeetingMicrophoneLease) -> bool {
+    lease.auto_started && !lease.user_owned
+}
+
+fn primary_live_capture_is_healthy(live_state: &LiveCaptureState) -> bool {
+    live_state
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.diagnostic(MicrophoneSlot::Primary))
+        .is_some_and(|diagnostic| diagnostic.running && diagnostic.runtime_error.is_none())
+}
+
+fn ensure_source_meeting_microphone(
+    app: &AppHandle,
+    source_id: &str,
+    backend_state: &BackendState,
+    transcription_state: AutoTranscriptionState,
+) {
+    if !source_uses_automatic_meeting_capture(source_id) {
+        return;
+    }
+    let Some(live_state) = app.try_state::<LiveCaptureState>() else {
+        return;
+    };
+    let generation = backend_state
+        .lock()
+        .ok()
+        .and_then(|backend| backend.active_system_meeting_generation())
+        .unwrap_or_default();
+    if generation == 0 {
+        return;
+    }
+
+    let was_running = primary_live_capture_is_healthy(live_state.inner());
+    let mut auto_started = false;
+    if !was_running {
+        match start_live_capture_runtime(
+            app,
+            backend_state,
+            live_state.inner(),
+            transcription_state,
+        ) {
+            Ok(_) => {
+                auto_started = primary_live_capture_is_healthy(live_state.inner());
+            }
+            Err(error) => {
+                append_runtime_debug_log(
+                    &backend_state
+                        .lock()
+                        .map(|backend| backend.settings())
+                        .unwrap_or_default(),
+                    format!(
+                        "[meeting-capture] microphone_unavailable source_id={source_id} error={error}"
+                    ),
+                );
+            }
+        }
+    }
+    let microphone_available = primary_live_capture_is_healthy(live_state.inner());
+    if !microphone_available && let Ok(mut backend) = backend_state.lock() {
+        backend.set_system_meeting_capture_warning(
+            "Microphone audio was unavailable; this Meeting contains system audio only",
+        );
+    }
+    if let Some(lease_state) = app.try_state::<SourceMeetingMicrophoneLeaseState>()
+        && let Ok(mut lease) = lease_state.lock()
+    {
+        *lease = Some(SourceMeetingMicrophoneLease {
+            source_id: source_id.to_string(),
+            generation,
+            auto_started,
+            user_owned: was_running,
+        });
+    }
+}
+
+fn promote_source_meeting_microphone_lease(app: &AppHandle) {
+    if let Some(lease_state) = app.try_state::<SourceMeetingMicrophoneLeaseState>()
+        && let Ok(mut lease) = lease_state.lock()
+        && let Some(lease) = lease.as_mut()
+    {
+        lease.auto_started = false;
+        lease.user_owned = true;
+    }
+}
+
+fn note_source_meeting_microphone_stopped(app: &AppHandle, backend_state: &BackendState) {
+    let mut meeting_active = false;
+    if let Some(lease_state) = app.try_state::<SourceMeetingMicrophoneLeaseState>()
+        && let Ok(mut lease) = lease_state.lock()
+        && let Some(lease) = lease.as_mut()
+    {
+        lease.auto_started = false;
+        lease.user_owned = false;
+        meeting_active = true;
+    }
+    if meeting_active && let Ok(mut backend) = backend_state.lock() {
+        backend.set_system_meeting_capture_warning(
+            "Microphone audio stopped during this Meeting; later audio may contain system sound only",
+        );
+    }
+}
+
+fn release_source_meeting_microphone(app: &AppHandle, backend_state: &BackendState) {
+    let lease = app
+        .try_state::<SourceMeetingMicrophoneLeaseState>()
+        .and_then(|state| state.lock().ok().and_then(|mut lease| lease.take()));
+    let Some(lease) = lease else {
+        return;
+    };
+    if !source_meeting_microphone_should_stop(&lease) {
+        return;
+    }
+    if let Some(live_state) = app.try_state::<LiveCaptureState>()
+        && let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner())
+    {
+        eprintln!("[meeting-capture] could not release automatic microphone: {error}");
+    }
 }
 
 #[tauri::command]
@@ -5501,6 +5625,7 @@ fn attempt_source_capture_start(
     system_capture_state: &SystemCaptureState,
     source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
+    frame_generation: &AtomicU64,
     starter: &mut impl SourceCaptureStreamStarter,
     now: Instant,
     screen_recording_status: permissions::PermissionGrantStatus,
@@ -5597,6 +5722,12 @@ fn attempt_source_capture_start(
             );
             return Err(error);
         }
+        frame_generation.store(
+            backend
+                .active_system_meeting_generation()
+                .unwrap_or_default(),
+            Ordering::Release,
+        );
     }
 
     let capture_scope = source_capture_scope(source);
@@ -5674,10 +5805,16 @@ fn start_source_capture_runtime(
     let callback_backend = Arc::clone(backend_state);
     let callback_app = app.clone();
     let callback_transcription = transcription_state.clone();
+    let frame_generation = Arc::new(AtomicU64::new(0));
+    let callback_generation = frame_generation.clone();
     let on_frame = move |frame: AudioFrame| {
         let (should_kick, handler, events, tray_status) =
             if let Ok(mut backend) = callback_backend.lock() {
-                let status = backend.process_system_audio_frame(frame);
+                let generation = callback_generation.load(Ordering::Acquire);
+                let status = backend.process_system_audio_frame_for_generation(
+                    (generation != 0).then_some(generation),
+                    frame,
+                );
                 let should_kick = status
                     .map(|_| backend.should_process_transcriptions())
                     .unwrap_or(false);
@@ -5708,6 +5845,7 @@ fn start_source_capture_runtime(
         system_capture_state,
         source_capture_lifecycle_state,
         Arc::new(on_frame),
+        frame_generation.as_ref(),
         &mut starter,
         Instant::now(),
         screen_recording_status,
@@ -5720,6 +5858,12 @@ fn start_source_capture_runtime(
     };
 
     if result.outcome == SourceCaptureAttemptOutcome::Started {
+        ensure_source_meeting_microphone(
+            app,
+            &source.source_id,
+            backend_state,
+            transcription_state,
+        );
         let _ = app.emit(
             EVENT_SOURCE_CAPTURE_STARTED,
             SourceCapturePayload {
@@ -5776,7 +5920,7 @@ fn stop_source_capture_runtime(
     system_capture_state: &SystemCaptureState,
     source_capture_lifecycle_state: &SourceCaptureLifecycleState,
     detected_source_state: &DetectedSourceState,
-    meeting_state: &MeetingState,
+    _meeting_state: &MeetingState,
 ) -> Result<AppStatus, String> {
     let stopped_source_id = detected_source_state
         .lock()
@@ -5789,14 +5933,18 @@ fn stop_source_capture_runtime(
     }
     // Dropping the handle stops the ScreenCaptureKit stream.
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
-    let (settings, status, meeting_job_actions) = {
+    let (settings, status, finished_meetings) = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
         append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
         let status = backend.stop_system_capture_session()?;
-        let meeting_job_actions = drain_finished_system_meeting_job_actions(&mut backend);
-        (backend.settings(), status, meeting_job_actions)
+        let finished_meetings = backend.take_finished_system_meetings();
+        (backend.settings(), status, finished_meetings)
     };
-    start_finished_system_meeting_jobs(app, meeting_state, meeting_job_actions);
+    let emit_meeting = meeting_event_emitter(app.clone());
+    for payload in finished_meetings {
+        emit_meeting(MeetingEvent::Finished(payload));
+    }
+    release_source_meeting_microphone(app, backend_state);
     update_tray_presentation(app, &settings, &status);
     let payload = detected_source_state
         .lock()
@@ -5841,32 +5989,6 @@ struct StartupDocumentRecovery {
     recovered_llm_runs: Vec<LlmReportRunSnapshot>,
     reconciled_meetings: Vec<MeetingFinishedEvent>,
     meeting_actions: Vec<FinishedSystemMeetingJobAction>,
-}
-
-fn drain_finished_system_meeting_job_actions(
-    backend: &mut AppBackend,
-) -> Vec<FinishedSystemMeetingJobAction> {
-    let jobs = backend.take_finished_system_meeting_jobs();
-    let settings = backend.settings();
-    let transcription_enabled = settings.transcription_enabled;
-    jobs.into_iter()
-        .map(|job| {
-            let job = meeting_job_spec_from_finished(job, &settings);
-            if !transcription_enabled {
-                FinishedSystemMeetingJobAction::Pending {
-                    job,
-                    reason: "transcription_disabled",
-                }
-            } else if !meeting_job_model_is_ready(&job) {
-                FinishedSystemMeetingJobAction::Pending {
-                    job,
-                    reason: "model_not_ready",
-                }
-            } else {
-                FinishedSystemMeetingJobAction::Start(job)
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -7974,6 +8096,8 @@ fn main() {
             let detected_source_state: DetectedSourceState = Arc::new(Mutex::new(None));
             let source_capture_pause_state: SourceCapturePauseState =
                 Arc::new(Mutex::new(HashSet::new()));
+            let source_meeting_microphone_lease_state: SourceMeetingMicrophoneLeaseState =
+                Arc::new(Mutex::new(None));
             let meeting_state: MeetingState = Arc::new(Mutex::new(MeetingRuntime::default()));
             let manual_meeting_recording_state: ManualMeetingRecordingState =
                 Arc::new(Mutex::new(ManualMeetingRecordingRuntime::default()));
@@ -8014,6 +8138,7 @@ fn main() {
             app.manage(source_capture_lifecycle_state.clone());
             app.manage(detected_source_state.clone());
             app.manage(source_capture_pause_state.clone());
+            app.manage(source_meeting_microphone_lease_state);
             app.manage(meeting_state.clone());
             app.manage(manual_meeting_recording_state);
             app.manage(transcription_cost_state);
@@ -9466,6 +9591,34 @@ mod tests {
     }
 
     #[test]
+    fn automatic_meeting_sources_and_microphone_lease_ownership_are_explicit() {
+        assert!(source_uses_automatic_meeting_capture("meet"));
+        assert!(source_uses_automatic_meeting_capture("zoom"));
+        assert!(!source_uses_automatic_meeting_capture("youtube"));
+
+        let automatic = SourceMeetingMicrophoneLease {
+            source_id: "meet".into(),
+            generation: 1,
+            auto_started: true,
+            user_owned: false,
+        };
+        assert!(source_meeting_microphone_should_stop(&automatic));
+        assert!(!source_meeting_microphone_should_stop(
+            &SourceMeetingMicrophoneLease {
+                user_owned: true,
+                ..automatic.clone()
+            }
+        ));
+        assert!(!source_meeting_microphone_should_stop(
+            &SourceMeetingMicrophoneLease {
+                auto_started: false,
+                user_owned: true,
+                ..automatic
+            }
+        ));
+    }
+
+    #[test]
     fn source_watcher_diagnostics_retain_app_shape_without_meeting_titles() {
         let windows = vec![wakenote::source_watcher::WindowSnapshot {
             title: "Confidential customer weekly sync".into(),
@@ -9755,6 +9908,7 @@ mod tests {
             pid: 42,
         };
         let on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync> = Arc::new(|_| {});
+        let frame_generation = AtomicU64::new(0);
         let now = Instant::now();
         let mut starter = FakeSourceCaptureStarter::new(vec![
             Err(LiveCaptureError::Cpal(
@@ -9769,6 +9923,7 @@ mod tests {
             &system_capture_state,
             &lifecycle_state,
             on_frame.clone(),
+            &frame_generation,
             &mut starter,
             now,
             permissions::PermissionGrantStatus::Granted,
@@ -9796,6 +9951,7 @@ mod tests {
             &system_capture_state,
             &lifecycle_state,
             on_frame.clone(),
+            &frame_generation,
             &mut starter,
             now + Duration::from_secs(1),
             permissions::PermissionGrantStatus::Granted,
@@ -9816,6 +9972,7 @@ mod tests {
             &system_capture_state,
             &lifecycle_state,
             on_frame,
+            &frame_generation,
             &mut starter,
             now + Duration::from_secs(2),
             permissions::PermissionGrantStatus::Granted,
@@ -9837,15 +9994,11 @@ mod tests {
     }
 
     #[test]
-    fn finalized_meet_capture_ids_are_collected_once_for_auto_meeting_jobs() {
+    fn finalized_meet_capture_is_recorded_once_without_auto_transcription() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let model_dir = tmp.path().join("models");
-        std::fs::create_dir_all(&model_dir).expect("model dir");
-        std::fs::write(model_dir.join("whisper-medium.bin"), b"fake model").expect("model file");
         let mut backend = AppBackend::default();
         backend.update_settings(SettingsPatch {
             save_root: Some(tmp.path().to_string_lossy().to_string()),
-            model_directory: Some(model_dir.to_string_lossy().to_string()),
             transcription_enabled: Some(true),
             ..SettingsPatch::default()
         });
@@ -9872,21 +10025,25 @@ mod tests {
             .expect("stop meet system capture");
 
         let meetings = wakenote::meeting::list_meetings(tmp.path());
-        let actions = drain_finished_system_meeting_job_actions(&mut backend);
+        let finished = backend.take_finished_system_meetings();
 
-        assert_eq!(actions.len(), 1);
-        let FinishedSystemMeetingJobAction::Start(job) = &actions[0] else {
-            panic!("expected start action");
-        };
-        assert_eq!(job.id, meetings[0].id);
-        assert_eq!(job.save_root, tmp.path());
-        assert_eq!(job.model_directory, model_dir);
-        assert_eq!(job.model_id, "whisper-medium");
-        assert!(drain_finished_system_meeting_job_actions(&mut backend).is_empty());
+        assert_eq!(meetings.len(), 1);
+        assert_eq!(
+            meetings[0].status,
+            wakenote::meeting::MeetingStatus::Recorded
+        );
+        assert_eq!(finished.len(), 1);
+        assert_eq!(finished[0].id, meetings[0].id);
+        assert_eq!(
+            finished[0].status,
+            wakenote::meeting::MeetingStatus::Recorded
+        );
+        assert!(backend.take_finished_system_meetings().is_empty());
+        assert!(pending_meeting_job_actions(&backend.settings()).is_empty());
     }
 
     #[test]
-    fn finalized_meet_capture_ids_wait_when_meeting_model_is_missing() {
+    fn finalized_meet_capture_stays_recorded_when_meeting_model_is_missing() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut backend = AppBackend::default();
         backend.update_settings(SettingsPatch {
@@ -9918,19 +10075,13 @@ mod tests {
             .expect("stop meet system capture");
 
         let meetings = wakenote::meeting::list_meetings(tmp.path());
-        let actions = drain_finished_system_meeting_job_actions(&mut backend);
-
-        assert_eq!(actions.len(), 1);
-        let FinishedSystemMeetingJobAction::Pending { job, reason } = &actions[0] else {
-            panic!("expected pending action");
-        };
-        assert_eq!(job.id, meetings[0].id);
-        assert_eq!(*reason, "model_not_ready");
         assert_eq!(meetings.len(), 1);
         assert_eq!(
             meetings[0].status,
-            wakenote::meeting::MeetingStatus::Pending
+            wakenote::meeting::MeetingStatus::Recorded
         );
+        assert_eq!(backend.take_finished_system_meetings().len(), 1);
+        assert!(pending_meeting_job_actions(&backend.settings()).is_empty());
     }
 
     #[test]

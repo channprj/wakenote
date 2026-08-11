@@ -20,7 +20,10 @@ use crate::debug_log::{append_debug_log, append_debug_log_nonblocking};
 use crate::dictation::DictationStage;
 use crate::dictionary::DictionaryContext;
 use crate::live_capture::AudioFrame;
-use crate::meeting::{MeetingCaptureRecorder, start_recorded_meeting_capture};
+use crate::manual_meeting_capture::{
+    MANUAL_MEETING_SAMPLE_RATE, ManualMeetingFrameSender, ManualMeetingSource, ManualMeetingWriter,
+};
+use crate::meeting::{MeetingFinishedEvent, MeetingStatus, start_manual_recorded_meeting_capture};
 use crate::models::{
     ModelDescriptor, ModelStatus, ModelStore, TranscriptionContext, default_model_registry,
     model_supports_context, validate_model_options,
@@ -297,6 +300,7 @@ pub fn main_window_close_action(window_label: &str) -> MainWindowCloseAction {
 fn system_capture_meeting_title(source_id: &str) -> Option<&'static str> {
     match source_id {
         "meet" => Some("Google Meet"),
+        "zoom" => Some("Zoom"),
         _ => None,
     }
 }
@@ -586,18 +590,13 @@ pub struct MicRecoveryOverride {
     pub label_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FinishedSystemMeetingJob {
-    pub id: String,
-    pub save_root: PathBuf,
-    pub model_directory: PathBuf,
-    pub model_id: String,
-    pub suppress_low_confidence: bool,
-}
-
 struct SystemMeetingCapture {
-    recorder: MeetingCaptureRecorder,
-    job: FinishedSystemMeetingJob,
+    generation: u64,
+    meeting_id: String,
+    writer: ManualMeetingWriter,
+    microphone_sender: ManualMeetingFrameSender,
+    system_sender: ManualMeetingFrameSender,
+    received_audio: bool,
 }
 
 pub struct AppBackend {
@@ -610,7 +609,8 @@ pub struct AppBackend {
     /// but has no level/health monitoring and tags chunks `source = System`.
     system_capture: Option<CaptureController>,
     system_meeting_capture: Option<SystemMeetingCapture>,
-    finished_system_meeting_jobs: Vec<FinishedSystemMeetingJob>,
+    finished_system_meetings: Vec<MeetingFinishedEvent>,
+    next_system_meeting_generation: u64,
     last_system_audio_frame_at: Option<Instant>,
     level_monitor: LevelMonitor,
     secondary_level_monitor: LevelMonitor,
@@ -651,10 +651,7 @@ impl std::fmt::Debug for AppBackend {
                 "system_meeting_capture",
                 &self.system_meeting_capture.is_some(),
             )
-            .field(
-                "finished_system_meeting_jobs",
-                &self.finished_system_meeting_jobs,
-            )
+            .field("finished_system_meetings", &self.finished_system_meetings)
             .field(
                 "last_system_audio_frame_at",
                 &self.last_system_audio_frame_at,
@@ -713,7 +710,8 @@ impl Default for AppBackend {
             microphone_mixer: None,
             system_capture: None,
             system_meeting_capture: None,
-            finished_system_meeting_jobs: Vec::new(),
+            finished_system_meetings: Vec::new(),
+            next_system_meeting_generation: 0,
             last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
             secondary_level_monitor: LevelMonitor::default(),
@@ -758,7 +756,8 @@ impl AppBackend {
             microphone_mixer: None,
             system_capture: None,
             system_meeting_capture: None,
-            finished_system_meeting_jobs: Vec::new(),
+            finished_system_meetings: Vec::new(),
+            next_system_meeting_generation: 0,
             last_system_audio_frame_at: None,
             level_monitor: LevelMonitor::default(),
             secondary_level_monitor: LevelMonitor::default(),
@@ -841,8 +840,20 @@ impl AppBackend {
         active_sources
     }
 
-    pub fn take_finished_system_meeting_jobs(&mut self) -> Vec<FinishedSystemMeetingJob> {
-        std::mem::take(&mut self.finished_system_meeting_jobs)
+    pub fn take_finished_system_meetings(&mut self) -> Vec<MeetingFinishedEvent> {
+        std::mem::take(&mut self.finished_system_meetings)
+    }
+
+    pub fn active_system_meeting_generation(&self) -> Option<u64> {
+        self.system_meeting_capture
+            .as_ref()
+            .map(|capture| capture.generation)
+    }
+
+    pub fn set_system_meeting_capture_warning(&mut self, warning: impl Into<String>) {
+        if let Some(capture) = self.system_meeting_capture.as_ref() {
+            let _ = capture.writer.set_capture_warning(warning);
+        }
     }
 
     pub fn chunk_id_for_audio_path(&self, audio_path: &std::path::Path) -> Option<u64> {
@@ -1808,6 +1819,9 @@ impl AppBackend {
             .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
         self.handle_capture_events(events);
+        if let Some(sample_rate) = self.active_microphone_sample_rate {
+            self.try_send_system_meeting_microphone_frame(frame, sample_rate);
+        }
         Ok(self.app_status())
     }
 
@@ -1873,21 +1887,35 @@ impl AppBackend {
             return Ok(());
         }
         let mut events = Vec::new();
+        let mut meeting_frames = Vec::with_capacity(frames.len());
+        let sample_rate;
         {
             let capture = self
                 .capture
                 .as_mut()
                 .ok_or_else(|| "merged capture session is not running".to_string())?;
+            sample_rate = capture.sample_rate();
             for frame in frames {
                 events.extend(
                     capture
                         .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
                         .map_err(|error| error.to_string())?,
                 );
+                meeting_frames.push(frame);
             }
         }
         self.handle_merged_capture_events(events);
+        for frame in meeting_frames {
+            self.try_send_system_meeting_microphone_frame(frame, sample_rate);
+        }
         Ok(())
+    }
+
+    fn try_send_system_meeting_microphone_frame(&mut self, frame: AudioFrame, sample_rate: u32) {
+        if let Some(capture) = self.system_meeting_capture.as_mut() {
+            capture.microphone_sender.try_send(frame, sample_rate);
+            capture.received_audio = true;
+        }
     }
 
     /// Open a parallel capture session for system-audio frames. Unlike the
@@ -1908,7 +1936,7 @@ impl AppBackend {
             self.handle_system_capture_events(events);
         }
         if let Some(capture) = self.system_meeting_capture.take() {
-            self.finish_system_meeting_capture(capture)?;
+            self.finish_system_meeting_capture(capture);
         }
         append_debug_log_nonblocking(
             self.save_root_path(),
@@ -1918,32 +1946,50 @@ impl AppBackend {
             ),
         );
         self.last_system_audio_frame_at = None;
-        self.system_meeting_capture = system_capture_meeting_title(&source_id)
+        self.next_system_meeting_generation =
+            self.next_system_meeting_generation.wrapping_add(1).max(1);
+        let meeting_generation = self.next_system_meeting_generation;
+        let meeting_capture = system_capture_meeting_title(&source_id)
             .map(|title| -> Result<SystemMeetingCapture, String> {
                 let save_root = self.save_root_path();
-                let recorder = start_recorded_meeting_capture(
+                let recorder = start_manual_recorded_meeting_capture(
                     &save_root,
                     title,
-                    &format!("{title} system audio.m4a"),
+                    "Microphone + System Audio",
                     self.settings.effective_meeting_model(),
                     self.settings.transcription_language,
                     env!("CARGO_PKG_VERSION"),
-                    sample_rate,
+                    MANUAL_MEETING_SAMPLE_RATE,
                     self.settings.audio_bitrate_kbps,
                     base_time.with_timezone(&Local),
                 )?;
+                let meeting_id = recorder.id().to_string();
+                let writer = ManualMeetingWriter::start(recorder, base_time);
+                let microphone_sender = writer.sender(ManualMeetingSource::Microphone);
+                let system_sender = writer.sender(ManualMeetingSource::System);
                 Ok(SystemMeetingCapture {
-                    job: FinishedSystemMeetingJob {
-                        id: recorder.id().to_string(),
-                        save_root,
-                        model_directory: expand_user_path(&self.settings.model_directory),
-                        model_id: self.settings.effective_meeting_model().to_string(),
-                        suppress_low_confidence: self.settings.suppress_low_confidence_transcripts,
-                    },
-                    recorder,
+                    generation: meeting_generation,
+                    meeting_id,
+                    writer,
+                    microphone_sender,
+                    system_sender,
+                    received_audio: false,
                 })
             })
-            .transpose()?;
+            .transpose();
+        self.system_meeting_capture = match meeting_capture {
+            Ok(capture) => capture,
+            Err(error) => {
+                append_debug_log_nonblocking(
+                    self.save_root_path(),
+                    format!(
+                        "[system-capture] meeting_start_failed source_id={} error={}",
+                        source_id, error
+                    ),
+                );
+                None
+            }
+        };
         self.system_capture = Some(CaptureController::new(CaptureControllerConfig {
             save_root: self.save_root_path(),
             settings: self.settings.clone(),
@@ -1964,15 +2010,28 @@ impl AppBackend {
     /// transcription queue without touching the mic level/health monitors or
     /// emitting mic-specific live-capture events.
     pub fn process_system_audio_frame(&mut self, frame: AudioFrame) -> Result<AppStatus, String> {
+        let generation = self.active_system_meeting_generation();
+        self.process_system_audio_frame_for_generation(generation, frame)
+    }
+
+    pub fn process_system_audio_frame_for_generation(
+        &mut self,
+        generation: Option<u64>,
+        frame: AudioFrame,
+    ) -> Result<AppStatus, String> {
         let capture = self
             .system_capture
             .as_mut()
             .ok_or_else(|| "system capture session is not running".to_string())?;
+        let sample_rate = capture.sample_rate();
         let events = capture
             .process_samples_at(&frame.samples, frame.duration_ms, frame.captured_at)
             .map_err(|error| error.to_string())?;
-        if let Some(capture) = self.system_meeting_capture.as_mut() {
-            capture.recorder.write_samples(&frame.samples)?;
+        if let Some(capture) = self.system_meeting_capture.as_mut()
+            && generation == Some(capture.generation)
+        {
+            capture.system_sender.try_send(frame, sample_rate);
+            capture.received_audio = true;
         }
         self.last_system_audio_frame_at = Some(Instant::now());
         self.handle_system_capture_events(events);
@@ -1996,40 +2055,67 @@ impl AppBackend {
         self.system_capture = None;
         self.last_system_audio_frame_at = None;
         if let Some(capture) = self.system_meeting_capture.take() {
-            self.finish_system_meeting_capture(capture)?;
+            self.finish_system_meeting_capture(capture);
         }
         append_debug_log_nonblocking(self.save_root_path(), "[system-capture] stop");
         Ok(self.app_status())
     }
 
-    fn finish_system_meeting_capture(
-        &mut self,
-        capture: SystemMeetingCapture,
-    ) -> Result<(), String> {
-        if capture.recorder.is_empty() {
-            let id = capture.recorder.id().to_string();
-            capture.recorder.discard()?;
+    fn finish_system_meeting_capture(&mut self, capture: SystemMeetingCapture) {
+        let SystemMeetingCapture {
+            meeting_id,
+            writer,
+            received_audio,
+            ..
+        } = capture;
+        if !received_audio {
+            let _ = writer.abort();
             append_debug_log_nonblocking(
                 self.save_root_path(),
                 format!(
                     "[system-capture] meeting_discarded id={} reason=no_audio",
-                    id
+                    meeting_id
                 ),
             );
-            return Ok(());
+            return;
         }
 
-        let record = capture.recorder.finish()?;
-        debug_assert_eq!(capture.job.id, record.id);
-        self.finished_system_meeting_jobs.push(capture.job);
-        append_debug_log_nonblocking(
-            self.save_root_path(),
-            format!(
-                "[system-capture] meeting_recorded id={} duration_ms={}",
-                record.id, record.duration_ms
-            ),
-        );
-        Ok(())
+        if writer.overflowed() {
+            let _ = writer.set_capture_warning(
+                "Some Meeting audio frames were dropped while saving; Live Transcription continued",
+            );
+        }
+        match writer.finish() {
+            Ok(record) => {
+                debug_assert_eq!(meeting_id, record.id);
+                self.finished_system_meetings.push(MeetingFinishedEvent {
+                    id: record.id.clone(),
+                    status: MeetingStatus::Recorded,
+                    error: None,
+                });
+                append_debug_log_nonblocking(
+                    self.save_root_path(),
+                    format!(
+                        "[system-capture] meeting_recorded id={} duration_ms={}",
+                        record.id, record.duration_ms
+                    ),
+                );
+            }
+            Err(error) => {
+                append_debug_log_nonblocking(
+                    self.save_root_path(),
+                    format!(
+                        "[system-capture] meeting_failed id={} error={}",
+                        meeting_id, error
+                    ),
+                );
+                self.finished_system_meetings.push(MeetingFinishedEvent {
+                    id: meeting_id,
+                    status: MeetingStatus::Failed,
+                    error: Some(error),
+                });
+            }
+        }
     }
 
     /// Enqueue completed system chunks into the shared transcription queue,

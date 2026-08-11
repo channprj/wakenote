@@ -633,6 +633,7 @@ export interface MeetingSummary {
   model_id: string;
   language: TranscriptionLanguage;
   error: string | null;
+  capture_warning: string | null;
 }
 
 export interface MeetingRecord extends MeetingSummary {

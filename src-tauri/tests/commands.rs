@@ -3803,34 +3803,177 @@ fn meet_system_capture_writes_continuous_meeting_record_on_stop() {
 
     let meetings = list_meetings(tmp.path());
     assert_eq!(meetings.len(), 1);
-    assert_eq!(meetings[0].status, MeetingStatus::Pending);
-    assert_eq!(meetings[0].duration_ms, 300);
-    assert_eq!(meetings[0].source_filename, "Google Meet system audio.m4a");
-    let finished_jobs = backend.take_finished_system_meeting_jobs();
-    assert_eq!(finished_jobs.len(), 1);
-    assert_eq!(finished_jobs[0].id, meetings[0].id);
-    assert!(backend.take_finished_system_meeting_jobs().is_empty());
+    assert_eq!(meetings[0].status, MeetingStatus::Recorded);
+    assert_eq!(meetings[0].duration_ms, 400);
+    assert_eq!(meetings[0].source_filename, "Microphone + System Audio");
+    let finished = backend.take_finished_system_meetings();
+    assert_eq!(finished.len(), 1);
+    assert_eq!(finished[0].id, meetings[0].id);
+    assert_eq!(finished[0].status, MeetingStatus::Recorded);
+    assert!(backend.take_finished_system_meetings().is_empty());
 
     let detail = meeting_detail(tmp.path(), &meetings[0].id).expect("meeting detail");
     assert_eq!(detail.record.audio_file, "audio.m4a");
     assert_eq!(detail.record.audio_format, "m4a");
     assert_eq!(detail.record.model_id, "whisper-medium");
-    assert_eq!(detail.record.duration_ms, 300);
+    assert_eq!(detail.record.duration_ms, 400);
     assert!(std::path::Path::new(&detail.audio_path).is_file());
 }
 
 #[test]
-fn finished_meet_job_keeps_capture_time_paths_after_settings_change() {
+fn automatic_meeting_capture_accepts_primary_microphone_without_system_frames() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 13, 0, 0).unwrap();
+    backend
+        .start_capture_session_with_device(16_000, base_time, "primary", "Primary", false)
+        .expect("start primary capture");
+    backend
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
+        .expect("start automatic meeting");
+    backend
+        .process_audio_frame(AudioFrame {
+            samples: vec![0.4; 1_600],
+            duration_ms: 100,
+            captured_at: base_time + chrono::Duration::milliseconds(100),
+        })
+        .expect("primary microphone frame");
+    backend
+        .stop_system_capture_session()
+        .expect("stop automatic meeting");
+
+    let meetings = list_meetings(tmp.path());
+    assert_eq!(meetings.len(), 1);
+    assert_eq!(meetings[0].status, MeetingStatus::Recorded);
+    assert_eq!(meetings[0].duration_ms, 200);
+    assert_eq!(backend.take_finished_system_meetings().len(), 1);
+}
+
+#[test]
+fn automatic_meeting_capture_ignores_stale_generation_frames() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 14, 0, 0).unwrap();
+    backend
+        .start_system_capture_session(
+            16_000,
+            base_time,
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
+        .expect("start first meeting");
+    let stale_generation = backend
+        .active_system_meeting_generation()
+        .expect("first generation");
+    backend
+        .stop_system_capture_session()
+        .expect("stop empty first meeting");
+    backend
+        .start_system_capture_session(
+            16_000,
+            base_time + chrono::Duration::seconds(1),
+            "Google Chrome".into(),
+            "meet".into(),
+            "meet".into(),
+        )
+        .expect("start second meeting");
+    let active_generation = backend
+        .active_system_meeting_generation()
+        .expect("second generation");
+    assert_ne!(stale_generation, active_generation);
+
+    backend
+        .process_system_audio_frame_for_generation(
+            Some(stale_generation),
+            AudioFrame {
+                samples: vec![0.8; 1_600],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(1_500),
+            },
+        )
+        .expect("stale live frame remains non-fatal");
+    backend
+        .process_system_audio_frame_for_generation(
+            Some(active_generation),
+            AudioFrame {
+                samples: vec![0.2; 1_600],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(1_000),
+            },
+        )
+        .expect("active meeting frame");
+    backend
+        .stop_system_capture_session()
+        .expect("stop second meeting");
+
+    let meetings = list_meetings(tmp.path());
+    assert_eq!(meetings.len(), 1);
+    assert_eq!(meetings[0].duration_ms, 100);
+}
+
+#[test]
+fn zoom_records_a_meeting_but_youtube_remains_live_only() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        save_root: Some(tmp.path().to_string_lossy().to_string()),
+        transcription_enabled: Some(false),
+        ..SettingsPatch::default()
+    });
+    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 15, 0, 0).unwrap();
+
+    for (source_id, app_name) in [("youtube", "Safari"), ("zoom", "zoom.us")] {
+        backend
+            .start_system_capture_session(
+                16_000,
+                base_time,
+                app_name.into(),
+                source_id.into(),
+                source_id.into(),
+            )
+            .expect("start source capture");
+        backend
+            .process_system_audio_frame(AudioFrame {
+                samples: vec![0.3; 1_600],
+                duration_ms: 100,
+                captured_at: base_time + chrono::Duration::milliseconds(100),
+            })
+            .expect("source frame");
+        backend
+            .stop_system_capture_session()
+            .expect("stop source capture");
+    }
+
+    let meetings = list_meetings(tmp.path());
+    assert_eq!(meetings.len(), 1);
+    assert_eq!(meetings[0].title, "Zoom");
+}
+
+#[test]
+fn finished_meet_record_keeps_capture_time_root_after_settings_change() {
     let first_root = tempfile::tempdir().expect("first root");
     let second_root = tempfile::tempdir().expect("second root");
-    let first_models = first_root.path().join("models");
-    let second_models = second_root.path().join("models");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         save_root: Some(first_root.path().to_string_lossy().to_string()),
-        model_directory: Some(first_models.to_string_lossy().to_string()),
         selected_model: Some("whisper-medium".into()),
-        suppress_low_confidence_transcripts: Some(false),
         ..SettingsPatch::default()
     });
     let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
@@ -3853,20 +3996,16 @@ fn finished_meet_job_keeps_capture_time_paths_after_settings_change() {
 
     backend.update_settings(SettingsPatch {
         save_root: Some(second_root.path().to_string_lossy().to_string()),
-        model_directory: Some(second_models.to_string_lossy().to_string()),
-        suppress_low_confidence_transcripts: Some(true),
         ..SettingsPatch::default()
     });
     backend
         .stop_system_capture_session()
         .expect("stop meet system capture");
 
-    let jobs = backend.take_finished_system_meeting_jobs();
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].save_root, first_root.path());
-    assert_eq!(jobs[0].model_directory, first_models);
-    assert_eq!(jobs[0].model_id, "whisper-medium");
-    assert!(!jobs[0].suppress_low_confidence);
+    let finished = backend.take_finished_system_meetings();
+    assert_eq!(finished.len(), 1);
+    assert_eq!(list_meetings(first_root.path()).len(), 1);
+    assert!(list_meetings(second_root.path()).is_empty());
 }
 
 #[test]
@@ -3895,7 +4034,7 @@ fn meet_system_capture_without_audio_discards_empty_meeting_record_on_stop() {
         .expect("stop empty meet system capture");
 
     assert!(list_meetings(tmp.path()).is_empty());
-    assert!(backend.take_finished_system_meeting_jobs().is_empty());
+    assert!(backend.take_finished_system_meetings().is_empty());
 }
 
 #[test]

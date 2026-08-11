@@ -2667,6 +2667,7 @@ export async function startMeetingTranscription(
       model_id: request.model_id,
       language: request.language,
       error: null,
+      capture_warning: null,
     };
   }
   return invoke<MeetingSummary>("start_meeting_transcription", {

@@ -55,6 +55,7 @@ function meeting(overrides: Partial<MeetingSummary> = {}): MeetingSummary {
     model_id: "whisper-medium",
     language: "ko",
     error: null,
+    capture_warning: null,
     ...overrides,
   };
 }
@@ -148,6 +149,23 @@ function props(
 }
 
 describe("MeetingTranscriptionView", () => {
+  it("shows a non-fatal partial-audio warning on a saved meeting", () => {
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          selected: detail({
+            status: "recorded",
+            capture_warning: "Microphone audio was unavailable",
+          }),
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Partial audio")).toBeTruthy();
+    expect(screen.getByText("Microphone audio was unavailable")).toBeTruthy();
+    expect(screen.queryByText("Meeting transcription interrupted")).toBeNull();
+  });
+
   it("shows a dedicated meeting default and excludes realtime-only models", async () => {
     const onMeetingModelChange = vi.fn();
     const models = mockModels().map((model) =>
@@ -156,9 +174,7 @@ describe("MeetingTranscriptionView", () => {
         : model,
     );
     render(
-      <MeetingTranscriptionView
-        {...props({ models, onMeetingModelChange })}
-      />,
+      <MeetingTranscriptionView {...props({ models, onMeetingModelChange })} />,
     );
 
     const selector = screen.getByRole("combobox", {

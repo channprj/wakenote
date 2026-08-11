@@ -146,6 +146,8 @@ pub struct MeetingRecord {
     pub api_unpriced_request_count: u64,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub capture_warning: Option<String>,
 }
 
 impl MeetingRecord {
@@ -225,6 +227,7 @@ impl MeetingRecord {
             model_id: self.model_id.clone(),
             language: self.language,
             error: self.error.clone(),
+            capture_warning: self.capture_warning.clone(),
         }
     }
 }
@@ -253,6 +256,7 @@ pub struct MeetingSummary {
     pub model_id: String,
     pub language: TranscriptionLanguage,
     pub error: Option<String>,
+    pub capture_warning: Option<String>,
 }
 
 /// Full meeting plus its rendered transcript and absolute audio path.
@@ -673,6 +677,7 @@ pub fn start_recorded_meeting_capture(
         api_request_count: 0,
         api_unpriced_request_count: 0,
         error: None,
+        capture_warning: None,
     };
 
     Ok(MeetingCaptureRecorder {
@@ -721,6 +726,10 @@ impl MeetingCaptureRecorder {
         self.samples_written == 0
     }
 
+    pub fn set_capture_warning(&mut self, warning: impl Into<String>) {
+        self.record.capture_warning = Some(warning.into());
+    }
+
     pub fn write_samples(&mut self, samples: &[f32]) -> Result<(), String> {
         let Some(writer) = self.writer.as_mut() else {
             return Err("meeting capture writer is already finalized".to_string());
@@ -760,11 +769,15 @@ impl MeetingCaptureRecorder {
         let final_path = self.dir.join(&self.record.audio_file);
         if let Err(error) = encoder(&capture_path, &partial_path, self.audio_bitrate_kbps) {
             let _ = fs::remove_file(&partial_path);
-            return Err(error);
+            return self.finish_recovered_wav(format!(
+                "Meeting audio encoding failed; saved recovery WAV instead: {error}"
+            ));
         }
         if let Err(error) = fs::rename(&partial_path, &final_path) {
             let _ = fs::remove_file(&partial_path);
-            return Err(error.to_string());
+            return self.finish_recovered_wav(format!(
+                "Meeting audio finalization failed; saved recovery WAV instead: {error}"
+            ));
         }
         let _ = fs::remove_file(&capture_path);
         self.record.duration_ms =
@@ -773,6 +786,36 @@ impl MeetingCaptureRecorder {
         self.record
             .save_atomic(&record_path(&self.dir))
             .map_err(|e| e.to_string())?;
+        Ok(self.record)
+    }
+
+    pub fn finish_recovered_wav(
+        mut self,
+        warning: impl Into<String>,
+    ) -> Result<MeetingRecord, String> {
+        if let Some(writer) = self.writer.take() {
+            writer.finalize().map_err(|error| error.to_string())?;
+        }
+        let capture_path = capture_wav_path(&self.dir);
+        let recovery_filename = "audio-recovery.wav";
+        let recovery_path = self.dir.join(recovery_filename);
+        let capture_size = fs::metadata(&capture_path)
+            .map_err(|error| format!("meeting recovery audio is unavailable: {error}"))?
+            .len();
+        if self.samples_written == 0 || capture_size <= 44 {
+            return Err("meeting recovery audio is empty".to_string());
+        }
+        fs::rename(&capture_path, &recovery_path)
+            .map_err(|error| format!("could not preserve meeting recovery audio: {error}"))?;
+        self.record.audio_file = recovery_filename.to_string();
+        self.record.audio_format = "wav".to_string();
+        self.record.capture_warning = Some(warning.into());
+        self.record.duration_ms =
+            (self.samples_written as u128 * 1_000 / self.sample_rate as u128) as u64;
+        self.record.updated_at = Utc::now();
+        self.record
+            .save_atomic(&record_path(&self.dir))
+            .map_err(|error| error.to_string())?;
         Ok(self.record)
     }
 }
@@ -840,6 +883,7 @@ pub fn import_meeting(
         api_request_count: 0,
         api_unpriced_request_count: 0,
         error: None,
+        capture_warning: None,
     };
     record
         .save_atomic(&record_path(&dir))
@@ -1584,18 +1628,27 @@ mod tests {
         let id = recorder.id().to_string();
         recorder.write_samples(&[0.25]).expect("audio");
 
-        let error = recorder
+        let record = recorder
             .finish_with_encoder(|_, _, _| {
                 Err("m4a encoder failed: forced test failure".to_string())
             })
-            .expect_err("forced encoder failure");
+            .expect("recovery WAV");
 
         let dir = meeting_dir(temp.path(), &id);
-        assert!(error.contains("m4a encoder"), "unexpected error: {error}");
-        assert!(capture_wav_path(&dir).is_file());
+        assert_eq!(record.status, MeetingStatus::Recorded);
+        assert_eq!(record.audio_file, "audio-recovery.wav");
+        assert_eq!(record.audio_format, "wav");
+        assert!(
+            record
+                .capture_warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("m4a encoder failed"))
+        );
+        assert!(!capture_wav_path(&dir).exists());
+        assert!(dir.join("audio-recovery.wav").is_file());
         assert!(!partial_m4a_path(&dir).exists());
         assert!(!dir.join("audio.m4a").exists());
-        assert!(!record_path(&dir).exists());
+        assert!(record_path(&dir).is_file());
     }
 
     #[test]
@@ -1907,6 +1960,7 @@ mod tests {
             api_request_count: 0,
             api_unpriced_request_count: 0,
             error: None,
+            capture_warning: None,
         }
     }
 

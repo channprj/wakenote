@@ -150,6 +150,7 @@ pub struct ManualMeetingWriter {
 
 enum WriterCommand {
     Frame(ManualMeetingFrame),
+    CaptureWarning(String),
     Finish(mpsc::Sender<Result<MeetingRecord, String>>),
     Abort(mpsc::Sender<Result<(), String>>),
 }
@@ -161,15 +162,22 @@ impl ManualMeetingWriter {
         let join = thread::spawn(move || {
             let mut recorder = Some(recorder);
             let mut mixer = ManualMeetingMixer::new(started_at);
+            let mut writer_error = None;
             while let Ok(command) = rx.recv() {
                 match command {
                     WriterCommand::Frame(frame) => {
                         let mixed = mixer.push(frame);
                         if !mixed.is_empty()
                             && let Some(recorder) = recorder.as_mut()
-                            && recorder.write_samples(&mixed).is_err()
+                            && writer_error.is_none()
+                            && let Err(error) = recorder.write_samples(&mixed)
                         {
-                            break;
+                            writer_error = Some(error);
+                        }
+                    }
+                    WriterCommand::CaptureWarning(warning) => {
+                        if let Some(recorder) = recorder.as_mut() {
+                            recorder.set_capture_warning(warning);
                         }
                     }
                     WriterCommand::Finish(response) => {
@@ -178,8 +186,18 @@ impl ManualMeetingWriter {
                             .ok_or_else(|| "manual meeting recorder is unavailable".to_string())
                             .and_then(|mut recorder| {
                                 let tail = mixer.finish();
-                                recorder.write_samples(&tail)?;
-                                recorder.finish()
+                                if writer_error.is_none()
+                                    && let Err(error) = recorder.write_samples(&tail)
+                                {
+                                    writer_error = Some(error);
+                                }
+                                if let Some(error) = writer_error {
+                                    recorder.finish_recovered_wav(format!(
+                                        "Meeting audio writer failed; saved recovery WAV instead: {error}"
+                                    ))
+                                } else {
+                                    recorder.finish()
+                                }
                             });
                         let _ = response.send(result);
                         break;
@@ -212,6 +230,12 @@ impl ManualMeetingWriter {
 
     pub fn overflowed(&self) -> bool {
         self.overflowed.load(Ordering::Acquire)
+    }
+
+    pub fn set_capture_warning(&self, warning: impl Into<String>) -> Result<(), String> {
+        self.tx
+            .send(WriterCommand::CaptureWarning(warning.into()))
+            .map_err(|_| "manual meeting writer stopped unexpectedly".to_string())
     }
 
     pub fn finish(mut self) -> Result<MeetingRecord, String> {

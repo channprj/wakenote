@@ -580,13 +580,22 @@ function MeetingDetailView({
             {record.failed_phase ? (
               <span>
                 {" "}
-                Failed while {meetingPhaseLabel(record.failed_phase).toLowerCase()}
+                Failed while{" "}
+                {meetingPhaseLabel(record.failed_phase).toLowerCase()}
                 {record.failed_segments
                   ? ` · ${record.failed_segments} segment${record.failed_segments === 1 ? "" : "s"}`
                   : ""}
               </span>
             ) : null}
           </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {record.capture_warning ? (
+        <Alert>
+          <Mic2Icon />
+          <AlertTitle>Partial audio</AlertTitle>
+          <AlertDescription>{record.capture_warning}</AlertDescription>
         </Alert>
       ) : null}
 
