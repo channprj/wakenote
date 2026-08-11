@@ -139,8 +139,9 @@ describe("SettingsPage ownership", () => {
     expect(markup).not.toContain("Press once to record");
   });
 
-  it("keeps external behavior in Integrations and expert controls in Advanced", () => {
+  it("separates integrations, subtitles, and advanced text output", () => {
     const integrations = renderSection("integrations");
+    const subtitles = renderSection("subtitles");
     const advanced = renderSection("advanced");
 
     expect(integrations).toContain("OpenRouter");
@@ -148,21 +149,25 @@ describe("SettingsPage ownership", () => {
     expect(integrations).toContain("OpenAI");
     expect(integrations).toContain("Soniox");
     expect(integrations).toContain("OpenRouter reports");
-    expect(integrations).toContain("Subtitles");
-    expect(integrations).not.toContain("Floating overlay");
-    expect(integrations).toContain("Minimum subtitle duration");
-    expect(integrations).toContain("Subtitle animation");
+    expect(integrations).not.toContain("Show subtitles");
+    expect(integrations).not.toContain("Text output");
+    expect(subtitles).toContain("Show subtitles");
+    expect(subtitles).toContain("Minimum subtitle duration");
+    expect(subtitles).toContain("Subtitle animation");
+    expect(advanced).toContain("Text output");
+    expect(advanced).toContain("Auto-type transcripts into cursor");
     expect(advanced).toContain("VAD gate");
     expect(advanced).not.toContain("OpenRouter");
   });
 
-  it("renders seven compact settings tabs without Library", () => {
+  it("renders eight compact settings tabs without Library", () => {
     const markup = renderSection("general");
 
     for (const label of [
       "General",
       "Audio",
       "Dictation",
+      "Subtitles",
       "Models",
       "Storage",
       "Integrations",
@@ -179,7 +184,8 @@ describe("SettingsPage balanced masonry", () => {
     ["general", "2"],
     ["advanced", "2"],
     ["storage", "3"],
-    ["integrations", "3"],
+    ["integrations", "2"],
+    ["subtitles", "2"],
     ["audio", "3"],
     ["dictation", "2"],
   ] as const)(

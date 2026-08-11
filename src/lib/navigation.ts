@@ -10,6 +10,7 @@ export type SettingsSection =
   | "general"
   | "audio"
   | "dictation"
+  | "subtitles"
   | "models"
   | "storage"
   | "integrations"
@@ -30,6 +31,7 @@ export const SETTINGS_SECTIONS = [
   { id: "general", label: "General" },
   { id: "audio", label: "Audio" },
   { id: "dictation", label: "Dictation" },
+  { id: "subtitles", label: "Subtitles" },
   { id: "models", label: "Models" },
   { id: "storage", label: "Storage" },
   { id: "integrations", label: "Integrations" },

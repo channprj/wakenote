@@ -3608,6 +3608,7 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
         selected_microphone_label: Some("USB Mic".to_string()),
         threshold_dbfs: Some(-37.0),
         transcription_enabled: Some(false),
+        show_floating_overlay: Some(true),
         pause_all: Some(true),
         ..SettingsPatch::default()
     });
@@ -3616,6 +3617,7 @@ fn tray_menu_presentation_reflects_current_settings_and_status() {
 
     assert!(menu.recording_checked);
     assert!(!menu.transcription_checked);
+    assert!(menu.subtitles_checked);
     assert!(menu.pause_all_checked);
     assert_eq!(menu.active_model_text, "Model: whisper-small");
     assert_eq!(menu.active_microphone_text, "Microphone: USB Mic");

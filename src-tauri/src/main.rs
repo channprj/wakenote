@@ -589,6 +589,7 @@ const TRAY_MENU_ORDER: &[&str] = &[
     "separator",
     "toggle-recording",
     "toggle-transcription",
+    "toggle-subtitles",
     "active-model",
     "active-microphone",
     "threshold",
@@ -1136,6 +1137,7 @@ fn recognized_source_infos(settings: &AppSettings) -> Vec<RecognizedSourceInfo> 
 struct TrayMenuItems {
     recording: CheckMenuItem<Wry>,
     transcription: CheckMenuItem<Wry>,
+    subtitles: CheckMenuItem<Wry>,
     active_model: MenuItem<Wry>,
     active_mic: MenuItem<Wry>,
     threshold: MenuItem<Wry>,
@@ -8585,6 +8587,17 @@ fn setup_tray(
             .unwrap_or(true),
         None::<&str>,
     )?;
+    let subtitles = CheckMenuItem::with_id(
+        app,
+        "toggle-subtitles",
+        "Subtitles On",
+        true,
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.subtitles_checked)
+            .unwrap_or(false),
+        None::<&str>,
+    )?;
     let active_model = MenuItem::with_id(
         app,
         "active-model",
@@ -8653,6 +8666,7 @@ fn setup_tray(
             &separator_one,
             &recording,
             &transcription,
+            &subtitles,
             &active_model,
             &active_mic,
             &threshold,
@@ -8697,6 +8711,7 @@ fn setup_tray(
     Ok(TrayMenuItems {
         recording,
         transcription,
+        subtitles,
         active_model,
         active_mic,
         threshold,
@@ -8818,6 +8833,7 @@ fn apply_tray_presentation(
         let menu = tray_menu_presentation(settings, status);
         let _ = items.recording.set_checked(menu.recording_checked);
         let _ = items.transcription.set_checked(menu.transcription_checked);
+        let _ = items.subtitles.set_checked(menu.subtitles_checked);
         let _ = items.pause_all.set_checked(menu.pause_all_checked);
         let _ = items.active_model.set_text(menu.active_model_text);
         let _ = items.active_mic.set_text(menu.active_microphone_text);
@@ -8896,6 +8912,10 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
             transcription_enabled: Some(!settings.transcription_enabled),
             ..SettingsPatch::default()
         }),
+        "toggle-subtitles" => patch_from_tray(app, |settings| SettingsPatch {
+            show_floating_overlay: Some(!settings.show_floating_overlay),
+            ..SettingsPatch::default()
+        }),
         "pause-all" => patch_from_tray(app, |settings| SettingsPatch {
             pause_all: Some(!settings.pause_all),
             ..SettingsPatch::default()
@@ -8952,16 +8972,20 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
     let state = app.state::<BackendState>();
     let live_state = app.state::<LiveCaptureState>();
     let transcription_state = app.state::<AutoTranscriptionState>();
-    let (live_capture_action, handler, events) = if let Ok(mut backend) = state.lock() {
-        let current = backend.settings();
-        let patch = patch(current.clone());
-        let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
-        backend.update_settings(patch);
-        let (handler, events) = live_events_for_dispatch(&mut backend);
-        (live_capture_action, handler, events)
-    } else {
-        return;
-    };
+    let (live_capture_action, handler, events, overlay_settings) =
+        if let Ok(mut backend) = state.lock() {
+            let current = backend.settings();
+            let patch = patch(current.clone());
+            let live_capture_action = live_capture_runtime_action_for_patch(&current, &patch);
+            backend.update_settings(patch);
+            let next = backend.settings();
+            let overlay_settings =
+                overlay_presentation_settings_changed(&current, &next).then_some(next);
+            let (handler, events) = live_events_for_dispatch(&mut backend);
+            (live_capture_action, handler, events, overlay_settings)
+        } else {
+            return;
+        };
     dispatch_live_events(handler, events);
 
     let _ = apply_live_capture_runtime_action(
@@ -8972,6 +8996,9 @@ fn patch_from_tray(app: &tauri::AppHandle, patch: impl FnOnce(AppSettings) -> Se
         live_capture_action,
     );
     let _ = apply_input_monitor_settings(app, state.inner());
+    if let Some(settings) = overlay_settings {
+        apply_overlay_settings_change(app, &settings);
+    }
     let presentation = state
         .lock()
         .map(|backend| (backend.settings(), backend.app_status()))
@@ -10751,6 +10778,7 @@ mod tests {
                 "separator",
                 "toggle-recording",
                 "toggle-transcription",
+                "toggle-subtitles",
                 "active-model",
                 "active-microphone",
                 "threshold",

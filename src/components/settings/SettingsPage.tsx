@@ -10,6 +10,7 @@ import { GeneralSettings } from "./GeneralSettings";
 import { IntegrationsSettings } from "./IntegrationsSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { StorageSettings } from "./StorageSettings";
+import { SubtitlesSettings } from "./SubtitlesSettings";
 import type { SettingsActions } from "./types";
 
 export function SettingsPage({
@@ -37,14 +38,18 @@ export function SettingsPage({
       <PageHeader
         eyebrow="Application"
         title="Settings"
-        description="Configure capture, dictation, models, storage, and integrations."
+        description="Configure capture, dictation, subtitles, models, storage, and integrations."
       />
       <Tabs
         value={section}
         onValueChange={(value) => onSectionChange(value as SettingsSection)}
       >
         <div className="settings-tabs-scroll">
-          <TabsList aria-label="Settings sections" className="max-w-full" variant="line">
+          <TabsList
+            aria-label="Settings sections"
+            className="max-w-full"
+            variant="line"
+          >
             {SETTINGS_SECTIONS.map((item) => (
               <TabsTrigger
                 ref={section === item.id ? activeTabRef : undefined}
@@ -68,7 +73,11 @@ export function SettingsPage({
           data-section={section}
           className="settings-section"
         >
-          <SettingsSectionContent section={section} snapshot={snapshot} actions={actions} />
+          <SettingsSectionContent
+            section={section}
+            snapshot={snapshot}
+            actions={actions}
+          />
         </div>
       </Tabs>
     </div>
@@ -86,11 +95,18 @@ export function SettingsSectionContent({
 }) {
   switch (section) {
     case "general":
-      return <GeneralSettings settings={snapshot.settings} onPatch={actions.onPatch} />;
+      return (
+        <GeneralSettings
+          settings={snapshot.settings}
+          onPatch={actions.onPatch}
+        />
+      );
     case "audio":
       return <AudioSettings snapshot={snapshot} actions={actions} />;
     case "dictation":
       return <DictationSettings snapshot={snapshot} actions={actions} />;
+    case "subtitles":
+      return <SubtitlesSettings snapshot={snapshot} actions={actions} />;
     case "models":
       return <ModelsSettings snapshot={snapshot} actions={actions} />;
     case "storage":
@@ -98,6 +114,11 @@ export function SettingsSectionContent({
     case "integrations":
       return <IntegrationsSettings snapshot={snapshot} actions={actions} />;
     case "advanced":
-      return <AdvancedSettings settings={snapshot.settings} onPatch={actions.onPatch} />;
+      return (
+        <AdvancedSettings
+          settings={snapshot.settings}
+          onPatch={actions.onPatch}
+        />
+      );
   }
 }

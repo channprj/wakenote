@@ -259,6 +259,7 @@ fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {
 pub struct TrayMenuPresentation {
     pub recording_checked: bool,
     pub transcription_checked: bool,
+    pub subtitles_checked: bool,
     pub pause_all_checked: bool,
     pub active_model_text: String,
     pub active_microphone_text: String,
@@ -269,6 +270,7 @@ pub fn tray_menu_presentation(settings: &AppSettings, status: &AppStatus) -> Tra
     TrayMenuPresentation {
         recording_checked: settings.recording_enabled,
         transcription_checked: settings.transcription_enabled,
+        subtitles_checked: settings.show_floating_overlay,
         pause_all_checked: settings.pause_all,
         active_model_text: format!("Model: {}", status.active_model),
         active_microphone_text: format!("Microphone: {}", status.active_microphone),

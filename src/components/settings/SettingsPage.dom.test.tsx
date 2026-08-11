@@ -713,11 +713,11 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({ save_root: "/tmp/notes" });
   });
 
-  it("preserves the auto-type integration patch key", async () => {
+  it("preserves the advanced auto-type patch key", async () => {
     const actions = makeActions();
     render(
       <SettingsPage
-        section="integrations"
+        section="advanced"
         onSectionChange={() => {}}
         snapshot={mockSnapshot()}
         actions={actions}
@@ -873,7 +873,7 @@ describe("SettingsPage interactions", () => {
 
     const view = render(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -892,7 +892,7 @@ describe("SettingsPage interactions", () => {
     snapshot.settings.floating_overlay_background_color = "#ffffff";
     view.rerender(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -933,7 +933,7 @@ describe("SettingsPage interactions", () => {
 
     render(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -1014,7 +1014,7 @@ describe("SettingsPage interactions", () => {
 
     render(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -1039,7 +1039,7 @@ describe("SettingsPage interactions", () => {
 
     render(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={actions}
@@ -1147,7 +1147,7 @@ describe("SettingsPage interactions", () => {
 
     render(
       <SettingsPage
-        section="integrations"
+        section="subtitles"
         onSectionChange={() => {}}
         snapshot={snapshot}
         actions={makeActions()}

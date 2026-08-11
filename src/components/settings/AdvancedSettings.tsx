@@ -12,7 +12,37 @@ export function AdvancedSettings({
 }) {
   return (
     <SettingsGrid maxColumns={2}>
-      <SettingsCard title="Transcript filtering" description="Expert transcript quality controls.">
+      <SettingsCard
+        title="Text output"
+        description="Send completed phrases to the active application."
+      >
+        <SettingSwitch
+          label="Auto-type transcripts into cursor"
+          checked={settings.auto_transcript_input_enabled}
+          description="Paste each completed live transcript at the current cursor."
+          onCheckedChange={(auto_transcript_input_enabled) =>
+            onPatch({ auto_transcript_input_enabled })
+          }
+        />
+        <SettingSwitch
+          label="Add trailing space after auto-type"
+          checked={settings.auto_transcript_input_trailing_space}
+          disabled={!settings.auto_transcript_input_enabled}
+          title={
+            settings.auto_transcript_input_enabled
+              ? "Append one space after each transcript."
+              : "Enable auto-type before adding a trailing space."
+          }
+          onCheckedChange={(auto_transcript_input_trailing_space) =>
+            onPatch({ auto_transcript_input_trailing_space })
+          }
+        />
+      </SettingsCard>
+
+      <SettingsCard
+        title="Transcript filtering"
+        description="Expert transcript quality controls."
+      >
         <SettingSwitch
           label="Hide low-confidence transcripts"
           checked={settings.suppress_low_confidence_transcripts}
@@ -30,7 +60,10 @@ export function AdvancedSettings({
         />
       </SettingsCard>
 
-      <SettingsCard title="Custom system-audio sources" description="Window-title patterns and automatic capture behavior.">
+      <SettingsCard
+        title="Custom system-audio sources"
+        description="Window-title patterns and automatic capture behavior."
+      >
         <CustomSourceSettings settings={settings} onPatch={onPatch} />
       </SettingsCard>
     </SettingsGrid>
