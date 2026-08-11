@@ -216,7 +216,7 @@ describe("app state derivation", () => {
         file_transcription: false,
         realtime: true,
         streaming: "required",
-        selectable_contexts: ["realtime", "dictation"],
+        selectable_contexts: ["realtime", "dictation", "meeting"],
       },
     });
   });

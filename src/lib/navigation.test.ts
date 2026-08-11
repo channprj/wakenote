@@ -19,6 +19,7 @@ describe("navigation", () => {
       "general",
       "audio",
       "dictation",
+      "subtitles",
       "models",
       "storage",
       "integrations",
