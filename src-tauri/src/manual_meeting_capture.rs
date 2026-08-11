@@ -10,6 +10,7 @@ use crate::meeting::{MeetingCaptureRecorder, MeetingRecord};
 pub const MANUAL_MEETING_SAMPLE_RATE: u32 = 16_000;
 const FRAME_QUEUE_CAPACITY: usize = 256;
 const MIX_JITTER_MS: u64 = 250;
+const MISSING_SOURCE_GRACE_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManualMeetingSource {
@@ -114,9 +115,13 @@ impl ManualMeetingMixer {
             furthest
         } else {
             let jitter = MIX_JITTER_MS.saturating_mul(MANUAL_MEETING_SAMPLE_RATE as u64) / 1_000;
+            let missing_source_grace =
+                MISSING_SOURCE_GRACE_MS.saturating_mul(MANUAL_MEETING_SAMPLE_RATE as u64) / 1_000;
             match (self.microphone_end, self.system_end) {
                 (Some(microphone), Some(system)) => microphone.min(system).saturating_sub(jitter),
-                _ => self.cursor,
+                (Some(microphone), None) => microphone.saturating_sub(missing_source_grace),
+                (None, Some(system)) => system.saturating_sub(missing_source_grace),
+                (None, None) => self.cursor,
             }
         };
         let count = threshold
@@ -367,5 +372,25 @@ mod tests {
             samples: vec![0.2; 100],
         });
         assert_eq!(mixer.dropped_late_frames(), 1);
+    }
+
+    #[test]
+    fn manual_meeting_mixer_bounds_a_missing_source_after_the_join_grace() {
+        let started = Utc::now();
+        let mut mixer = ManualMeetingMixer::new(started);
+        let six_seconds = vec![0.25; MANUAL_MEETING_SAMPLE_RATE as usize * 6];
+
+        let committed = mixer.push(ManualMeetingFrame {
+            source: ManualMeetingSource::System,
+            captured_at: started,
+            sample_rate: MANUAL_MEETING_SAMPLE_RATE,
+            samples: six_seconds,
+        });
+
+        assert_eq!(committed.len(), MANUAL_MEETING_SAMPLE_RATE as usize);
+        assert_eq!(
+            mixer.finish().len(),
+            MANUAL_MEETING_SAMPLE_RATE as usize * 5
+        );
     }
 }

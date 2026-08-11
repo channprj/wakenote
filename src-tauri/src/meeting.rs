@@ -804,6 +804,12 @@ impl MeetingCaptureRecorder {
             writer.finalize().map_err(|e| e.to_string())?;
         }
         let capture_path = capture_wav_path(&self.dir);
+        let capture_size = fs::metadata(&capture_path)
+            .map_err(|error| format!("meeting capture audio is unavailable: {error}"))?
+            .len();
+        if self.samples_written == 0 || capture_size <= 44 {
+            return Err("meeting capture audio is empty".to_string());
+        }
         let partial_path = partial_m4a_path(&self.dir);
         let final_path = self.dir.join(&self.record.audio_file);
         if let Err(error) = encoder(&capture_path, &partial_path, self.audio_bitrate_kbps) {
@@ -1910,6 +1916,31 @@ mod tests {
         assert!(!partial_m4a_path(&dir).exists());
         assert!(!dir.join("audio.m4a").exists());
         assert!(record_path(&dir).is_file());
+    }
+
+    #[test]
+    fn empty_manual_meeting_never_invokes_the_encoder_or_publishes_a_recording() {
+        let tmp = tempfile::tempdir().unwrap();
+        let recorder = start_manual_recorded_meeting_capture(
+            tmp.path(),
+            "Empty meeting",
+            "Microphone + System Audio",
+            "whisper-medium",
+            TranscriptionLanguage::Auto,
+            "test",
+            16_000,
+            96,
+            Local::now(),
+        )
+        .unwrap();
+        let meeting_id = recorder.id().to_string();
+
+        let error = recorder
+            .finish_with_encoder(|_, _, _| panic!("empty audio must not reach the encoder"))
+            .unwrap_err();
+
+        assert_eq!(error, "meeting capture audio is empty");
+        assert!(meeting_detail(tmp.path(), &meeting_id).is_err());
     }
 
     #[test]
