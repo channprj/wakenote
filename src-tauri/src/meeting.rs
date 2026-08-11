@@ -1008,6 +1008,24 @@ pub fn start_recorded_meeting_transcription(
     Ok(record)
 }
 
+pub fn cancel_pending_meeting(save_root: &Path, id: &str) -> Result<MeetingRecord, String> {
+    if !is_valid_meeting_id(id) {
+        return Err("invalid meeting id".to_string());
+    }
+    let dir = meeting_dir(save_root, id);
+    let path = record_path(&dir);
+    let mut record = MeetingRecord::load(&path).map_err(|error| error.to_string())?;
+    if record.status != MeetingStatus::Pending {
+        return Err("only a queued meeting can be canceled before processing".to_string());
+    }
+    record.status = MeetingStatus::Canceled;
+    record.touch();
+    record
+        .save_atomic(&path)
+        .map_err(|error| error.to_string())?;
+    Ok(record)
+}
+
 /// Rewrite orphaned `processing` meetings (their worker thread died with the
 /// app) to `failed` so the UI offers Resume. Pending jobs remain pending so the
 /// startup scheduler can resume work that was queued behind another meeting.
@@ -1981,6 +1999,31 @@ mod tests {
         );
         assert!(updated.segments.is_empty());
         assert!(updated.speaker_turns.is_empty());
+    }
+
+    #[test]
+    fn queued_pending_meeting_can_be_canceled_before_processing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = meeting_dir(temp.path(), "20260812-120000-queued");
+        fs::create_dir_all(&dir).expect("meeting dir");
+        let mut record = sample_record();
+        record.id = "20260812-120000-queued".into();
+        record.status = MeetingStatus::Pending;
+        record
+            .save_atomic(&record_path(&dir))
+            .expect("pending meeting");
+
+        let canceled =
+            cancel_pending_meeting(temp.path(), &record.id).expect("cancel queued meeting");
+
+        assert_eq!(canceled.status, MeetingStatus::Canceled);
+        assert_eq!(
+            meeting_detail(temp.path(), &record.id)
+                .expect("saved detail")
+                .record
+                .status,
+            MeetingStatus::Canceled
+        );
     }
 
     #[test]

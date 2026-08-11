@@ -69,7 +69,8 @@ use wakenote::manual_meeting_capture::{
 use wakenote::meeting::{
     MeetingDetail, MeetingEvent, MeetingFinishedEvent, MeetingRealtimeReplay,
     MeetingRealtimeReplayRequest, MeetingSummary, MeetingTranscriptionRequest,
-    start_manual_recorded_meeting_capture, start_recorded_meeting_transcription,
+    cancel_pending_meeting, start_manual_recorded_meeting_capture,
+    start_recorded_meeting_transcription,
 };
 use wakenote::microphone_level::macos::PlatformVolumeBackend;
 use wakenote::microphone_level::{
@@ -259,7 +260,7 @@ struct MeetingRuntime {
     current: Option<String>,
     /// Cancel flag for the current job, checked between segments.
     cancel: Option<Arc<AtomicBool>>,
-    /// Automatic meeting captures waiting for the shared transcription worker.
+    /// Meeting jobs waiting for the shared transcription worker.
     queued: VecDeque<MeetingJobSpec>,
 }
 
@@ -4924,25 +4925,21 @@ fn meeting_realtime_replay(app: &AppHandle) -> Option<MeetingRealtimeReplay> {
     Some(MeetingRealtimeReplay::new(submit, close))
 }
 
-/// Spawn the worker thread for one user-requested meeting. Errors if another
-/// meeting is already processing (one shared GPU context).
-fn spawn_meeting_job(
+/// Schedule one saved meeting on the shared worker, optionally behind the
+/// current job. A started job owns the worker thread that drains queued work.
+fn schedule_saved_meeting_job(
     app: AppHandle,
     backend_state: BackendState,
     meeting_state: MeetingState,
     id: String,
-) -> Result<(), String> {
+    queue_if_busy: bool,
+) -> Result<MeetingJobScheduleOutcome, String> {
     let settings = {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.settings()
     };
     let job = meeting_job_spec_for_saved_record(id, &settings)?;
-    match schedule_and_spawn_meeting_job(app, meeting_state, job, false)? {
-        MeetingJobScheduleOutcome::Started => Ok(()),
-        MeetingJobScheduleOutcome::Queued | MeetingJobScheduleOutcome::AlreadyScheduled => {
-            Err("meeting job could not be started".to_string())
-        }
-    }
+    schedule_and_spawn_meeting_job(app, meeting_state, job, queue_if_busy)
 }
 
 fn meeting_job_spec_for_saved_record(
@@ -5047,14 +5044,6 @@ fn start_meeting_transcription(
     id: String,
     request: StartMeetingTranscriptionRequest,
 ) -> Result<MeetingSummary, String> {
-    {
-        let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-        if let Some(current) = runtime.current.as_ref() {
-            return Err(format!(
-                "Another meeting ({current}) is being processed. Try again after it finishes."
-            ));
-        }
-    }
     let (save_root, model_directory, model) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -5072,23 +5061,46 @@ fn start_meeting_transcription(
     let transcription_request =
         validate_meeting_transcription_request(&model, &model_directory, &request)?;
     let record = start_recorded_meeting_transcription(&save_root, &id, transcription_request)?;
-    spawn_meeting_job(
+    let outcome = schedule_saved_meeting_job(
         app,
         state.inner().clone(),
         meeting_state.inner().clone(),
         record.id.clone(),
+        true,
     )?;
+    if outcome == MeetingJobScheduleOutcome::AlreadyScheduled {
+        return Err("meeting job is already scheduled".to_string());
+    }
     Ok(record.summary())
 }
 
 #[tauri::command]
-fn cancel_meeting(meeting_state: State<'_, MeetingState>, id: String) -> Result<(), String> {
-    let runtime = meeting_state.lock().map_err(|error| error.to_string())?;
-    if runtime.current.as_deref() == Some(id.as_str())
-        && let Some(cancel) = runtime.cancel.as_ref()
-    {
-        cancel.store(true, Ordering::Release);
-    }
+fn cancel_meeting(
+    app: AppHandle,
+    meeting_state: State<'_, MeetingState>,
+    id: String,
+) -> Result<(), String> {
+    let canceled = {
+        let mut runtime = meeting_state.lock().map_err(|error| error.to_string())?;
+        if runtime.current.as_deref() == Some(id.as_str()) {
+            if let Some(cancel) = runtime.cancel.as_ref() {
+                cancel.store(true, Ordering::Release);
+            }
+            return Ok(());
+        }
+        let Some(index) = runtime.queued.iter().position(|job| job.id == id) else {
+            return Ok(());
+        };
+        let job = runtime.queued[index].clone();
+        let record = cancel_pending_meeting(&job.save_root, &id)?;
+        runtime.queued.remove(index);
+        MeetingFinishedEvent {
+            id: record.id,
+            status: record.status,
+            error: None,
+        }
+    };
+    let _ = app.emit(EVENT_MEETING_FINISHED, canceled);
     Ok(())
 }
 
@@ -5100,12 +5112,16 @@ fn resume_meeting(
     id: String,
 ) -> Result<MeetingSummary, String> {
     let save_root = meeting_save_root(&state)?;
-    spawn_meeting_job(
+    let outcome = schedule_saved_meeting_job(
         app,
         state.inner().clone(),
         meeting_state.inner().clone(),
         id.clone(),
+        false,
     )?;
+    if outcome != MeetingJobScheduleOutcome::Started {
+        return Err("meeting job could not be started".to_string());
+    }
     let detail = wakenote::meeting::meeting_detail(&save_root, &id)?;
     Ok(detail.record.summary())
 }

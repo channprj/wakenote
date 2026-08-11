@@ -132,6 +132,7 @@ function props(
     onStartManualRecording: vi.fn(),
     onStopManualRecording: vi.fn(),
     onStartTranscription: vi.fn(),
+    onStartBulkTranscription: vi.fn(),
     onOpen: vi.fn(),
     onBack: vi.fn(),
     onCancel: vi.fn(),
@@ -402,6 +403,81 @@ describe("MeetingTranscriptionView", () => {
         speaker_separation_enabled: true,
       }),
     );
+  });
+
+  it("configures one request for every selected meeting that can start", async () => {
+    const onStartBulkTranscription = vi.fn().mockResolvedValue(true);
+    const models = mockModels().map((model) =>
+      model.id === "whisper-medium"
+        ? { ...model, status: "ready" as const }
+        : model,
+    );
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          past: [
+            meeting({
+              id: "recorded",
+              title: "Recorded sync",
+              status: "recorded",
+            }),
+            meeting({ id: "failed", title: "Failed review", status: "failed" }),
+            meeting({ id: "completed", title: "Completed retro" }),
+          ],
+          models,
+          selectedMeetingIds: ["recorded", "failed", "completed"],
+          onStartBulkTranscription,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("2 ready · 1 skipped")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Transcribe selected" }),
+    );
+    expect(screen.getByText("Transcribe 2 meetings")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start 2 transcriptions" }),
+    );
+
+    expect(onStartBulkTranscription).toHaveBeenCalledWith({
+      model_id: "whisper-medium",
+      language: "auto",
+      streaming_enabled: false,
+      speaker_separation_enabled: false,
+    });
+  });
+
+  it("shows persisted and newly committed text in the active detail workspace", () => {
+    const selected = detail({
+      id: "meeting-active",
+      status: "processing",
+      progress: {
+        segments_total: 12,
+        segments_done: 2,
+        processed_ms: 1_200_000,
+        elapsed_ms: 300_000,
+        phase: "transcribing",
+      },
+    });
+    render(
+      <MeetingTranscriptionView
+        {...props({
+          selected,
+          progressById: { [selected.record.id]: liveProgress },
+          liveTextById: {
+            [selected.record.id]: "방금 확정된 세 번째 문장입니다.",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("17% complete")).toBeTruthy();
+    expect(screen.getByText("Transcribing")).toBeTruthy();
+    expect(screen.getByText(/첫 번째 문장입니다/)).toBeTruthy();
+    const liveRegion = screen.getByRole("log", { name: "Live transcript" });
+    expect(liveRegion.textContent).toContain("방금 확정된 세 번째 문장입니다.");
+    expect(liveRegion.getAttribute("aria-live")).toBe("polite");
   });
 
   it("defaults to Visible and applies one bulk hide action", async () => {

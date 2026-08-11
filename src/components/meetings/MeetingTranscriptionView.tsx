@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  AudioLinesIcon,
   ChevronLeftIcon,
   CopyIcon,
   EyeIcon,
@@ -8,6 +9,7 @@ import {
   FolderOpenIcon,
   Loader2Icon,
   Mic2Icon,
+  RadioIcon,
   RotateCcwIcon,
   SquareIcon,
   UploadIcon,
@@ -15,16 +17,9 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ModelSelectGroups } from "@/components/ModelSelectGroups";
+import { MeetingTranscriptionDialog } from "@/components/meetings/MeetingTranscriptionDialog";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import {
   ListVisibilityToolbar,
@@ -34,19 +29,19 @@ import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
-  SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Switch } from "@/components/ui/switch";
 import {
+  canStartMeetingTranscription,
   canResumeMeeting,
   formatClock,
   formatEta,
   meetingStatusLabel,
   meetingStatusTone,
   meetingPhaseLabel,
+  isMeetingActive,
   progressPercent,
 } from "@/lib/meeting-progress";
 import {
@@ -60,7 +55,6 @@ import type {
   MeetingProgressPayload,
   MeetingSummary,
   ModelDescriptor,
-  TranscriptionLanguage,
 } from "@/lib/types";
 
 export interface MeetingTranscriptionViewProps {
@@ -91,7 +85,10 @@ export interface MeetingTranscriptionViewProps {
   onStartTranscription: (
     id: string,
     request: MeetingTranscriptionRequest,
-  ) => void;
+  ) => Promise<boolean>;
+  onStartBulkTranscription: (
+    request: MeetingTranscriptionRequest,
+  ) => Promise<boolean>;
   onOpen: (id: string) => void;
   onBack: () => void;
   onCancel: (id: string) => void;
@@ -107,6 +104,8 @@ export interface MeetingTranscriptionViewProps {
 }
 
 export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+
   if (props.selected) {
     return (
       <MeetingDetailView
@@ -123,6 +122,15 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
     props.selectedModelId,
     props.models,
   );
+  const selectedMeetingIds = new Set(props.selectedMeetingIds);
+  const selectedMeetings = [...props.active, ...props.past].filter((meeting) =>
+    selectedMeetingIds.has(meeting.id),
+  );
+  const eligibleSelectedMeetings = selectedMeetings.filter((meeting) =>
+    canStartMeetingTranscription(meeting.status),
+  );
+  const skippedSelectedCount =
+    selectedMeetings.length - eligibleSelectedMeetings.length;
 
   return (
     <div data-slot="meeting-transcription-view" className="meeting-panel">
@@ -248,6 +256,51 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
         onSelectAll={props.onSelectAllMeetings}
         onClearSelection={props.onClearMeetingSelection}
         onApplySelection={props.onApplyMeetingSelection}
+      />
+
+      {selectedMeetings.length > 0 ? (
+        <section
+          className="meeting-bulk-actions"
+          aria-label="Selected meeting actions"
+        >
+          <div className="meeting-bulk-actions__copy">
+            <strong>
+              {eligibleSelectedMeetings.length} ready
+              {skippedSelectedCount > 0
+                ? ` · ${skippedSelectedCount} skipped`
+                : ""}
+            </strong>
+            <small>
+              {eligibleSelectedMeetings.length > 0
+                ? "One configuration will be applied to every ready meeting."
+                : "Selected meetings are already active or completed."}
+            </small>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              eligibleSelectedMeetings.length === 0 ||
+              props.transcriptionBusy
+            }
+            onClick={() => setBulkDialogOpen(true)}
+          >
+            <AudioLinesIcon data-icon="inline-start" />
+            Transcribe selected
+          </Button>
+        </section>
+      ) : null}
+
+      <MeetingTranscriptionDialog
+        open={bulkDialogOpen}
+        onOpenChange={setBulkDialogOpen}
+        models={props.models}
+        initialModelId={resolvedMeetingModelId}
+        initialLanguage="auto"
+        targetCount={eligibleSelectedMeetings.length}
+        busy={props.transcriptionBusy}
+        error={props.error}
+        onSubmit={props.onStartBulkTranscription}
       />
 
       {props.error ? (
@@ -472,6 +525,8 @@ function MeetingDetailView({
   selectedModelId,
   configurationInitiallyOpen,
   transcriptionBusy,
+  progressById,
+  liveTextById,
   onBack,
   onResume,
   onCopy,
@@ -504,72 +559,38 @@ function MeetingDetailView({
   const [dialogOpen, setDialogOpen] = useState(
     configurationInitiallyOpen && record.status === "recorded",
   );
-  const [modelId, setModelId] = useState(initialModelId);
-  const [language, setLanguage] = useState<TranscriptionLanguage>(
-    record.language,
-  );
-  const [streamingEnabled, setStreamingEnabled] = useState(false);
-  const [speakerSeparationEnabled, setSpeakerSeparationEnabled] =
-    useState(false);
-  const selectedModel = meetingModels.find((model) => model.id === modelId);
-  const streamingRequired =
-    selectedModel?.capabilities.streaming === "required";
-  const streamingAvailable =
-    selectedModel?.capabilities.streaming === "optional" || streamingRequired;
-  const speakerSeparationAvailable =
-    selectedModel?.capabilities.diarization ?? false;
-
-  const changeModel = (nextModelId: string) => {
-    setModelId(nextModelId);
-    const next = meetingModels.find((model) => model.id === nextModelId);
-    if (next?.capabilities.streaming === "required") {
-      setStreamingEnabled(true);
-    } else if (next?.capabilities.streaming === "unsupported") {
-      setStreamingEnabled(false);
-    }
-    if (!next?.capabilities.diarization) {
-      setSpeakerSeparationEnabled(false);
-    }
-  };
-
-  const submitTranscription = () => {
-    if (!selectedModel) {
-      return;
-    }
-    onStartTranscription(record.id, {
-      model_id: selectedModel.id,
-      language,
-      streaming_enabled: streamingRequired || streamingEnabled,
-      speaker_separation_enabled:
-        speakerSeparationAvailable && speakerSeparationEnabled,
-    });
-    setDialogOpen(false);
-  };
+  const live = progressById[record.id];
+  const active = isMeetingActive(record.status);
+  const processed = live?.processed_ms ?? record.progress.processed_ms;
+  const duration = live?.duration_ms ?? record.duration_ms;
+  const segmentsDone = live?.segments_done ?? record.progress.segments_done;
+  const segmentsTotal = live?.segments_total ?? record.progress.segments_total;
+  const elapsed = live?.elapsed_ms ?? record.progress.elapsed_ms;
+  const remaining = live?.eta_ms ?? 0;
+  const phase = live?.phase ?? record.progress.phase;
+  const percent = progressPercent(processed, duration);
+  const liveText = active ? (liveTextById[record.id]?.trim() ?? "") : "";
+  const combinedTranscript = [transcript.trim(), liveText]
+    .filter(Boolean)
+    .join("\n");
 
   return (
     <div data-slot="meeting-detail" className="meeting-detail">
-      <div className="meeting-detail__head">
+      <header className="meeting-detail__hero">
         <Button type="button" size="sm" variant="ghost" onClick={onBack}>
           <ChevronLeftIcon data-icon="inline-start" />
           Meetings
         </Button>
-        <span className="meeting-detail__title" title={record.title}>
-          {record.title}
-        </span>
+        <div className="meeting-detail__heading">
+          <span className="meeting-detail__eyebrow">Meeting transcript</span>
+          <h2 className="meeting-detail__title" title={record.title}>
+            {record.title}
+          </h2>
+        </div>
         <StatusBadge tone={meetingStatusTone(record.status)}>
           {meetingStatusLabel(record.status)}
         </StatusBadge>
-      </div>
-
-      <div className="meeting-detail__meta">
-        <span>{formatClock(record.duration_ms)}</span>
-        <span title={record.model_id}>{record.model_id}</span>
-        <span>{formatDate(record.created_at)}</span>
-        <span>
-          Segment {record.progress.segments_done}/
-          {record.progress.segments_total}
-        </span>
-      </div>
+      </header>
 
       {error || record.error ? (
         <Alert variant="destructive">
@@ -599,185 +620,179 @@ function MeetingDetailView({
         </Alert>
       ) : null}
 
-      <div className="meeting-detail__actions">
-        {["recorded", "failed", "canceled"].includes(record.status) ? (
-          <Button type="button" size="sm" onClick={() => setDialogOpen(true)}>
-            {record.status === "recorded"
-              ? "Configure transcription"
-              : "New transcription"}
-          </Button>
-        ) : null}
-        {canResumeMeeting(record.status) ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => onResume(record.id)}
-          >
-            <RotateCcwIcon data-icon="inline-start" />
-            Resume
-          </Button>
-        ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={!transcript}
-          onClick={() => onCopy(transcript)}
+      <div className="meeting-detail__workspace" data-active={active}>
+        <aside className="meeting-detail__rail" aria-label="Meeting status">
+          <section className="meeting-detail__progress">
+            <div className="meeting-detail__progress-head">
+              <span>{active ? "Current stage" : "Transcription state"}</span>
+              <strong>
+                {active
+                  ? `Stage · ${meetingPhaseLabel(phase)}`
+                  : meetingStatusLabel(record.status)}
+              </strong>
+            </div>
+            {active ? (
+              <>
+                <strong className="meeting-detail__percent">
+                  {percent}% complete
+                </strong>
+                <Progress
+                  value={percent}
+                  aria-label={`${percent}% complete`}
+                />
+                <div className="meeting-detail__progress-meta">
+                  <span>
+                    Segment {segmentsDone}/{segmentsTotal || "?"}
+                  </span>
+                  <span>Elapsed {formatClock(elapsed)}</span>
+                  <span>Remaining {formatEta(remaining)}</span>
+                </div>
+              </>
+            ) : null}
+          </section>
+
+          <dl className="meeting-detail__facts">
+            <div>
+              <dt>Duration</dt>
+              <dd>{formatClock(record.duration_ms)}</dd>
+            </div>
+            <div>
+              <dt>Recorded</dt>
+              <dd>{formatDate(record.created_at)}</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd title={record.model_id}>{record.model_id}</dd>
+            </div>
+            <div>
+              <dt>Language</dt>
+              <dd>
+                {record.language === "auto" ? "Auto detect" : record.language}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="meeting-detail__actions">
+            {canStartMeetingTranscription(record.status) ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setDialogOpen(true)}
+              >
+                {record.status === "recorded"
+                  ? "Configure transcription"
+                  : "New transcription"}
+              </Button>
+            ) : null}
+            {canResumeMeeting(record.status) ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onResume(record.id)}
+              >
+                <RotateCcwIcon data-icon="inline-start" />
+                Resume
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!combinedTranscript}
+              onClick={() => onCopy(combinedTranscript)}
+            >
+              <CopyIcon data-icon="inline-start" />
+              Copy
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onOpenFolder(audioPath)}
+            >
+              <FolderOpenIcon data-icon="inline-start" />
+              Open Folder
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={visibilityMutating}
+              onClick={() =>
+                onSetMeetingHidden(record.id, visibilityMode === "visible")
+              }
+            >
+              {visibilityMode === "visible" ? (
+                <EyeOffIcon data-icon="inline-start" />
+              ) : (
+                <EyeIcon data-icon="inline-start" />
+              )}
+              {visibilityMode === "visible"
+                ? "Hide from list"
+                : "Restore to list"}
+            </Button>
+          </div>
+        </aside>
+
+        <article
+          className="meeting-detail__transcript"
+          aria-labelledby="meeting-transcript-title"
         >
-          <CopyIcon data-icon="inline-start" />
-          Copy
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => onOpenFolder(audioPath)}
-        >
-          <FolderOpenIcon data-icon="inline-start" />
-          Open Folder
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={visibilityMutating}
-          onClick={() =>
-            onSetMeetingHidden(record.id, visibilityMode === "visible")
-          }
-        >
-          {visibilityMode === "visible" ? (
-            <EyeOffIcon data-icon="inline-start" />
-          ) : (
-            <EyeIcon data-icon="inline-start" />
-          )}
-          {visibilityMode === "visible" ? "Hide from list" : "Restore to list"}
-        </Button>
+          <header className="meeting-detail__transcript-head">
+            <div>
+              <span>Readable record</span>
+              <h3 id="meeting-transcript-title">Transcript</h3>
+            </div>
+            {active ? (
+              <span className="meeting-detail__live-label">
+                <RadioIcon aria-hidden="true" />
+                Updating
+              </span>
+            ) : null}
+          </header>
+          <div className="meeting-detail__document">
+            {transcript ? (
+              <div className="meeting-detail__saved-text">{transcript}</div>
+            ) : !active ? (
+              <em>No transcript content.</em>
+            ) : null}
+            {active ? (
+              <section
+                className="meeting-detail__live-edge"
+                role="log"
+                aria-label="Live transcript"
+                aria-live="polite"
+                aria-relevant="additions text"
+              >
+                <span>
+                  <RadioIcon aria-hidden="true" />
+                  Live edge
+                </span>
+                <p>
+                  {liveText || "Waiting for the first processed segment."}
+                </p>
+              </section>
+            ) : null}
+          </div>
+        </article>
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Transcribe saved meeting</DialogTitle>
-            <DialogDescription>
-              Choose a meeting-capable model. Cloud processing starts only after
-              you confirm this dialog.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="meeting-transcription-options">
-            <label>
-              <span>Model</span>
-              <Select value={modelId} onValueChange={changeModel}>
-                <SelectTrigger
-                  size="sm"
-                  className="w-full"
-                  aria-label="Meeting transcription model"
-                >
-                  <SelectValue placeholder="Choose a model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <ModelSelectGroups models={meetingModels} />
-                </SelectContent>
-              </Select>
-            </label>
-            <label>
-              <span>Language</span>
-              <Select
-                value={language}
-                onValueChange={(value) =>
-                  setLanguage(value as TranscriptionLanguage)
-                }
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full"
-                  aria-label="Meeting transcription language"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">Auto detect</SelectItem>
-                  <SelectItem value="ko">Korean</SelectItem>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="ja">Japanese</SelectItem>
-                  <SelectItem value="zh">Chinese</SelectItem>
-                  <SelectItem value="es">Spanish</SelectItem>
-                  <SelectItem value="fr">French</SelectItem>
-                  <SelectItem value="de">German</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="meeting-transcription-option">
-              <span>
-                <strong>Streaming</strong>
-                <small>
-                  {streamingRequired
-                    ? "Required by this model"
-                    : streamingAvailable
-                      ? "Receive partial results while each part is processed"
-                      : "Not supported by this model"}
-                </small>
-              </span>
-              <Switch
-                size="sm"
-                aria-label="Streaming"
-                checked={streamingRequired || streamingEnabled}
-                disabled={!streamingAvailable || streamingRequired}
-                onCheckedChange={setStreamingEnabled}
-              />
-            </label>
-            <label className="meeting-transcription-option">
-              <span>
-                <strong>Speaker separation</strong>
-                <small>
-                  {speakerSeparationAvailable
-                    ? selectedModel?.offline
-                      ? "Available on this on-device model"
-                      : "Label speaker turns within each processed part"
-                    : "Not supported by this model"}
-                </small>
-              </span>
-              <Switch
-                size="sm"
-                aria-label="Speaker separation"
-                checked={speakerSeparationEnabled}
-                disabled={!speakerSeparationAvailable}
-                onCheckedChange={setSpeakerSeparationEnabled}
-              />
-            </label>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={!selectedModel || transcriptionBusy}
-              onClick={submitTranscription}
-            >
-              {transcriptionBusy ? (
-                <Loader2Icon
-                  data-icon="inline-start"
-                  className="meeting-spin"
-                />
-              ) : null}
-              Start transcription
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MeetingTranscriptionDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        models={models}
+        initialModelId={initialModelId}
+        initialLanguage={record.language}
+        targetCount={1}
+        busy={transcriptionBusy}
+        error={error}
+        onSubmit={(request) => onStartTranscription(record.id, request)}
+      />
 
       <span role="status" aria-live="polite" className="sr-only">
         {visibilityStatus}
       </span>
-
-      <article className="meeting-detail__transcript">
-        {transcript || <em>No transcript content.</em>}
-      </article>
     </div>
   );
 }

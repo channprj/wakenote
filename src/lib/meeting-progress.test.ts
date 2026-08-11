@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canStartMeetingTranscription,
   canResumeMeeting,
   formatClock,
   formatEta,
@@ -77,5 +78,14 @@ describe("status presentation", () => {
     expect(canResumeMeeting("failed")).toBe(true);
     expect(canResumeMeeting("canceled")).toBe(true);
     expect(canResumeMeeting("completed")).toBe(false);
+  });
+
+  it("starts a new transcription only from terminal retryable states", () => {
+    expect(canStartMeetingTranscription("recorded")).toBe(true);
+    expect(canStartMeetingTranscription("failed")).toBe(true);
+    expect(canStartMeetingTranscription("canceled")).toBe(true);
+    expect(canStartMeetingTranscription("pending")).toBe(false);
+    expect(canStartMeetingTranscription("processing")).toBe(false);
+    expect(canStartMeetingTranscription("completed")).toBe(false);
   });
 });

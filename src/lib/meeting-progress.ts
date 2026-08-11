@@ -92,6 +92,11 @@ export function isMeetingActive(status: MeetingStatus): boolean {
   return status === "pending" || status === "processing";
 }
 
+/** A saved meeting can start a new immutable transcription request. */
+export function canStartMeetingTranscription(status: MeetingStatus): boolean {
+  return status === "recorded" || status === "failed" || status === "canceled";
+}
+
 /** A meeting can be resumed when it stopped before finishing all segments. */
 export function canResumeMeeting(status: MeetingStatus): boolean {
   return status === "pending" || status === "failed" || status === "canceled";

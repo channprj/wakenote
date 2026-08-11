@@ -4,8 +4,8 @@
  * The browser mock in `tauri-client.ts` otherwise starts from an empty snapshot,
  * which makes the UI impossible to review or demo: every list is empty, every
  * model is `missing`, and no report exists to read. These fixtures seed a week of
- * captures, finished reports with real Markdown bodies, and one in-flight run so
- * every surface can be seen with content in it.
+ * captures, meetings, finished reports with real Markdown bodies, and one
+ * in-flight run so every surface can be seen with content in it.
  *
  * Seeding is opt-in: only `main.tsx` calls `seedBrowserFixtures`, and only when
  * the app is running outside Tauri. Tests import `tauri-client` directly and are
@@ -14,6 +14,7 @@
 import type {
   LlmReportHistoryDetail,
   LlmReportRunSnapshot,
+  MeetingDetail,
   ModelDescriptor,
   RecentTranscript,
   SettingsPatch,
@@ -26,6 +27,7 @@ export interface DevFixtures {
   transcripts: RecentTranscript[];
   reports: LlmReportHistoryDetail[];
   runs: LlmReportRunSnapshot[];
+  meetings: MeetingDetail[];
   openrouterApiKey: string;
   openaiApiKey: string;
 }
@@ -492,6 +494,118 @@ function progressEvent(
   };
 }
 
+function fixtureMeeting(
+  now: Date,
+  seed: {
+    id: string;
+    title: string;
+    daysAgo: number;
+    hour: number;
+    status: MeetingDetail["record"]["status"];
+    durationMs: number;
+    transcript: string;
+    progress?: MeetingDetail["record"]["progress"];
+    error?: string | null;
+  },
+): MeetingDetail {
+  const createdAt = shiftDays(now, seed.daysAgo);
+  createdAt.setHours(seed.hour, 0, 0, 0);
+  const updatedAt = new Date(createdAt.getTime() + 42 * 60 * 1_000);
+  const sourceFilename = `${seed.id}.m4a`;
+  const configured = seed.status !== "recorded";
+  return {
+    record: {
+      id: seed.id,
+      title: seed.title,
+      source_filename: sourceFilename,
+      status: seed.status,
+      duration_ms: seed.durationMs,
+      created_at: createdAt.toISOString(),
+      updated_at: updatedAt.toISOString(),
+      progress: seed.progress ?? {
+        segments_total: configured ? 12 : 0,
+        segments_done: seed.status === "completed" ? 12 : 0,
+        processed_ms: seed.status === "completed" ? seed.durationMs : 0,
+        elapsed_ms: configured ? 680_000 : 0,
+      },
+      model_id: "whisper-medium",
+      language: "auto",
+      error: seed.error ?? null,
+      capture_warning: null,
+      audio_file: sourceFilename,
+      audio_format: "m4a",
+      app_version: "browser-preview",
+      segments: [],
+      transcription_request: configured
+        ? {
+            model_id: "whisper-medium",
+            language: "auto",
+            streaming_enabled: false,
+            speaker_separation_enabled: false,
+          }
+        : null,
+      speaker_turns: [],
+      api_audio_duration_ms: seed.status === "completed" ? seed.durationMs : 0,
+      api_cost_microusd: 0,
+      api_request_count: configured ? 1 : 0,
+      api_unpriced_request_count: 0,
+    },
+    transcript: seed.transcript,
+    audio_path: `${saveRoot}/meetings/${seed.id}/${sourceFilename}`,
+  };
+}
+
+function fixtureMeetings(now: Date): MeetingDetail[] {
+  return [
+    fixtureMeeting(now, {
+      id: "fixture-meeting-processing",
+      title: "August product strategy review",
+      daysAgo: 0,
+      hour: 14,
+      status: "processing",
+      durationMs: 3_660_000,
+      progress: {
+        phase: "transcribing",
+        segments_total: 12,
+        segments_done: 4,
+        processed_ms: 1_320_000,
+        elapsed_ms: 420_000,
+      },
+      transcript:
+        "The launch window remains the second week of August.\n\nThe team agreed to keep onboarding focused on capture, review, and sharing before adding more automation.",
+    }),
+    fixtureMeeting(now, {
+      id: "fixture-meeting-recorded",
+      title: "Customer interview — onboarding",
+      daysAgo: 1,
+      hour: 11,
+      status: "recorded",
+      durationMs: 2_940_000,
+      transcript: "",
+    }),
+    fixtureMeeting(now, {
+      id: "fixture-meeting-failed",
+      title: "Release readiness retrospective",
+      daysAgo: 2,
+      hour: 16,
+      status: "failed",
+      durationMs: 4_080_000,
+      transcript: "The first half of the retrospective was saved successfully.",
+      error: "The provider connection ended before the next segment started.",
+    }),
+    fixtureMeeting(now, {
+      id: "fixture-meeting-completed",
+      title: "Weekly design sync",
+      daysAgo: 3,
+      hour: 10,
+      status: "completed",
+      durationMs: 3_480_000,
+      transcript:
+        "We reviewed the new meeting workspace and agreed that progress should stay visible beside the transcript.\n\nThe live edge uses amber only while processing so the completed record remains calm and readable.",
+    }),
+  ];
+}
+
 /** Sample content for the browser preview, anchored to `now` so it stays current. */
 export function devFixtures(now: Date = new Date()): DevFixtures {
   const reports = fixtureReports(now);
@@ -512,6 +626,7 @@ export function devFixtures(now: Date = new Date()): DevFixtures {
     transcripts: captureSeeds.map((seed) => transcriptFromSeed(now, seed)),
     reports,
     runs: fixtureRuns(now, reports),
+    meetings: fixtureMeetings(now),
     openrouterApiKey: "sk-or-browser-preview",
     openaiApiKey: "sk-openai-browser-preview",
   };

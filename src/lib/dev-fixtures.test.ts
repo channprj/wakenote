@@ -4,10 +4,12 @@ import { isActiveLlmReportRun } from "./llm-report-runs";
 import {
   listLlmReportHistory,
   listLlmReportRuns,
+  listMeetings,
   loadLlmReportHistoryDetail,
   loadSnapshot,
   loadTranscriptDays,
   loadTranscriptsForDay,
+  meetingDetail,
   seedBrowserFixtures,
 } from "./tauri-client";
 
@@ -110,6 +112,18 @@ describe("dev fixtures", () => {
       settings.selected_model,
     );
   });
+
+  it("includes meetings for bulk and live-detail browser review", () => {
+    const { meetings } = devFixtures(now);
+
+    expect(meetings.map((detail) => detail.record.status)).toEqual(
+      expect.arrayContaining(["recorded", "processing", "completed", "failed"]),
+    );
+    expect(
+      meetings.find((detail) => detail.record.status === "processing")
+        ?.transcript,
+    ).toBeTruthy();
+  });
 });
 
 describe("seedBrowserFixtures", () => {
@@ -143,5 +157,10 @@ describe("seedBrowserFixtures", () => {
 
     const runs = await listLlmReportRuns();
     expect(runs.filter(isActiveLlmReportRun)).toHaveLength(1);
+
+    const meetings = await listMeetings();
+    expect(meetings).toHaveLength(fixtures.meetings.length);
+    const meetingPreview = await meetingDetail(fixtures.meetings[0].record.id);
+    expect(meetingPreview.transcript).toBe(fixtures.meetings[0].transcript);
   });
 });

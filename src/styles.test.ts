@@ -569,6 +569,28 @@ describe("compact overflow safety contract", () => {
     );
   });
 
+  it("lays out meeting detail as a responsive progress rail and live transcript desk", () => {
+    const workspace = cssRule(".meeting-detail__workspace", pagesCss);
+    const document = cssRule(".meeting-detail__document", pagesCss);
+    const liveEdge = cssRule(".meeting-detail__live-edge", pagesCss);
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+
+    expect(pagesCss).toMatch(
+      /\.meeting-detail \{\s+--meeting-live:[^}]+align-content: start;/,
+    );
+    expect(pagesCss).toMatch(
+      /\.meeting-detail__transcript \{\s+max-height: none;[^}]+padding: 0;[^}]+white-space: normal;/,
+    );
+    expect(workspace).toContain(
+      "grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.8fr);",
+    );
+    expect(document).toContain("max-width: 76ch;");
+    expect(liveEdge).toContain("border-left: 2px solid var(--meeting-live);");
+    expect(cssRule(".meeting-detail__workspace", compact)).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+  });
+
   it("keeps rendered report prose on the token-backed reading scale", () => {
     const root = cssRule(":root", tokensCss);
 

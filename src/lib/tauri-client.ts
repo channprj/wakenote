@@ -98,6 +98,7 @@ let browserDictationState: DictationStatePayload = {
 let browserListVisibility = emptyListVisibilityState();
 let browserLlmReportRunSequence = 0;
 const browserLlmReportHistory: LlmReportHistoryDetail[] = [];
+const browserMeetingDetails = new Map<string, MeetingDetail>();
 interface BrowserLlmReportRunRecord {
   snapshot: LlmReportRunSnapshot;
   request: LlmGenerateRequest;
@@ -246,7 +247,7 @@ export async function cancelDictation(): Promise<DictationStatePayload> {
 
 /**
  * Loads sample content into the browser mock so the UI can be reviewed with
- * realistic notes, reports, and an in-flight run.
+ * realistic notes, meetings, reports, and an in-flight run.
  *
  * Opt-in by design: only the browser entrypoint calls this, and only outside
  * Tauri. Tests import this module directly and keep the empty mock state, so
@@ -284,6 +285,10 @@ export function seedBrowserFixtures(fixtures: DevFixtures) {
       // Seeded runs are terminal or paused mid-flight; nothing left to advance.
       nextStage: browserLlmProgressStages.length,
     });
+  }
+  browserMeetingDetails.clear();
+  for (const detail of fixtures.meetings) {
+    browserMeetingDetails.set(detail.record.id, detail);
   }
 }
 
@@ -2559,9 +2564,27 @@ export async function skipJob(id: number): Promise<AppSnapshot> {
 
 // --- Long-form meeting transcription -------------------------------------
 
+function browserMeetingSummary(detail: MeetingDetail): MeetingSummary {
+  const { record } = detail;
+  return {
+    id: record.id,
+    title: record.title,
+    source_filename: record.source_filename,
+    status: record.status,
+    duration_ms: record.duration_ms,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    progress: record.progress,
+    model_id: record.model_id,
+    language: record.language,
+    error: record.error,
+    capture_warning: record.capture_warning,
+  };
+}
+
 export async function listMeetings(): Promise<MeetingSummary[]> {
   if (!isTauriRuntime()) {
-    return [];
+    return [...browserMeetingDetails.values()].map(browserMeetingSummary);
   }
   return invoke<MeetingSummary[]>("list_meetings");
 }
@@ -2642,6 +2665,13 @@ export async function importMeetingRecording(): Promise<MeetingSummary | null> {
 }
 
 export async function meetingDetail(id: string): Promise<MeetingDetail> {
+  if (!isTauriRuntime()) {
+    const detail = browserMeetingDetails.get(id);
+    if (!detail) {
+      throw new Error(`Meeting ${id} was not found.`);
+    }
+    return detail;
+  }
   return invoke<MeetingDetail>("meeting_detail", { id });
 }
 
@@ -2650,30 +2680,72 @@ export async function startMeetingTranscription(
   request: MeetingTranscriptionRequest,
 ): Promise<MeetingSummary> {
   if (!isTauriRuntime()) {
-    return {
-      id,
-      title: "Browser meeting",
-      source_filename: "audio.wav",
-      status: "pending",
-      duration_ms: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      progress: {
-        segments_total: 0,
-        segments_done: 0,
-        processed_ms: 0,
-        elapsed_ms: 0,
+    const detail = browserMeetingDetails.get(id);
+    if (!detail) {
+      throw new Error(`Meeting ${id} was not found.`);
+    }
+    const next: MeetingDetail = {
+      ...detail,
+      transcript: "",
+      record: {
+        ...detail.record,
+        status: "pending",
+        updated_at: new Date().toISOString(),
+        progress: {
+          segments_total: 0,
+          segments_done: 0,
+          processed_ms: 0,
+          elapsed_ms: 0,
+        },
+        model_id: request.model_id,
+        language: request.language,
+        error: null,
+        transcription_request: request,
+        segments: [],
+        speaker_turns: [],
+        api_audio_duration_ms: 0,
+        api_cost_microusd: 0,
+        api_request_count: 0,
+        api_unpriced_request_count: 0,
       },
-      model_id: request.model_id,
-      language: request.language,
-      error: null,
-      capture_warning: null,
     };
+    browserMeetingDetails.set(id, next);
+    return browserMeetingSummary(next);
   }
   return invoke<MeetingSummary>("start_meeting_transcription", {
     id,
     request,
   });
+}
+
+function updateBrowserMeetingStatus(
+  id: string,
+  status: MeetingSummary["status"],
+): MeetingSummary {
+  const detail = browserMeetingDetails.get(id);
+  if (!detail) {
+    throw new Error(`Meeting ${id} was not found.`);
+  }
+  const next: MeetingDetail = {
+    ...detail,
+    record: {
+      ...detail.record,
+      status,
+      updated_at: new Date().toISOString(),
+      progress:
+        status === "processing"
+          ? {
+              phase: "preparing_audio",
+              segments_total: detail.record.progress.segments_total,
+              segments_done: detail.record.progress.segments_done,
+              processed_ms: detail.record.progress.processed_ms,
+              elapsed_ms: detail.record.progress.elapsed_ms,
+            }
+          : detail.record.progress,
+    },
+  };
+  browserMeetingDetails.set(id, next);
+  return browserMeetingSummary(next);
 }
 
 function emptyTranscriptionCostSnapshot(): TranscriptionCostSnapshot {
@@ -2717,11 +2789,15 @@ export async function subscribeTranscriptionCostUpdates(
 
 export async function cancelMeeting(id: string): Promise<void> {
   if (!isTauriRuntime()) {
+    updateBrowserMeetingStatus(id, "canceled");
     return;
   }
   await invoke("cancel_meeting", { id });
 }
 
 export async function resumeMeeting(id: string): Promise<MeetingSummary> {
+  if (!isTauriRuntime()) {
+    return updateBrowserMeetingStatus(id, "processing");
+  }
   return invoke<MeetingSummary>("resume_meeting", { id });
 }

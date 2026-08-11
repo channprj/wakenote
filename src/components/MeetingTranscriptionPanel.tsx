@@ -21,7 +21,10 @@ import {
 import { useListVisibility } from "../hooks/use-list-visibility";
 import { subscribeMeetingEvents } from "../lib/meeting-event-subscriptions";
 import { projectListItems } from "../lib/list-visibility";
-import { isMeetingActive } from "../lib/meeting-progress";
+import {
+  canStartMeetingTranscription,
+  isMeetingActive,
+} from "../lib/meeting-progress";
 import type { PermissionFeature } from "../lib/permission-guidance";
 import type {
   ListVisibilityTarget,
@@ -108,6 +111,14 @@ export function MeetingTranscriptionPanel({
   const openDetail = useCallback(async (id: string) => {
     try {
       const next = await meetingDetail(id);
+      setLiveTextById((prev) => {
+        if (!(id in prev)) {
+          return prev;
+        }
+        const rebased = { ...prev };
+        delete rebased[id];
+        return rebased;
+      });
       setDetail(next);
       setSelectedId(id);
     } catch (cause) {
@@ -138,6 +149,11 @@ export function MeetingTranscriptionPanel({
           },
           onFinished: (payload) => {
             setProgressById((prev) => {
+              const next = { ...prev };
+              delete next[payload.id];
+              return next;
+            });
+            setLiveTextById((prev) => {
               const next = { ...prev };
               delete next[payload.id];
               return next;
@@ -251,15 +267,21 @@ export function MeetingTranscriptionPanel({
   }, [openDetail, refreshMeetings]);
 
   const onStartTranscription = useCallback(
-    async (id: string, request: MeetingTranscriptionRequest) => {
+    async (
+      id: string,
+      request: MeetingTranscriptionRequest,
+    ): Promise<boolean> => {
       setTranscriptionBusy(true);
       setError(null);
+      setLiveTextById((prev) => ({ ...prev, [id]: "" }));
       try {
         await startMeetingTranscription(id, request);
         await refreshMeetings();
         await openDetail(id);
+        return true;
       } catch (cause) {
         setError(String(cause));
+        return false;
       } finally {
         setTranscriptionBusy(false);
       }
@@ -288,10 +310,11 @@ export function MeetingTranscriptionPanel({
   const onCancel = useCallback(async (id: string) => {
     try {
       await cancelMeeting(id);
+      await refreshMeetings();
     } catch (cause) {
       setError(String(cause));
     }
-  }, []);
+  }, [refreshMeetings]);
 
   const onResume = useCallback(
     async (id: string) => {
@@ -332,6 +355,54 @@ export function MeetingTranscriptionPanel({
   );
   const past = displayedMeetings.filter(
     (meeting) => !isMeetingActive(meeting.status),
+  );
+  const eligibleSelectedMeetingIds = displayedMeetings
+    .filter(
+      (meeting) =>
+        selectedMeetingIds.has(meeting.id) &&
+        canStartMeetingTranscription(meeting.status),
+    )
+    .map((meeting) => meeting.id);
+
+  const onStartBulkTranscription = useCallback(
+    async (request: MeetingTranscriptionRequest): Promise<boolean> => {
+      if (eligibleSelectedMeetingIds.length === 0) {
+        setError("No selected meeting can start a new transcription.");
+        return false;
+      }
+      const targetIds = [...eligibleSelectedMeetingIds];
+      setTranscriptionBusy(true);
+      setError(null);
+      setLiveTextById((prev) => {
+        const next = { ...prev };
+        for (const id of targetIds) {
+          next[id] = "";
+        }
+        return next;
+      });
+      try {
+        const failedIds: string[] = [];
+        for (const id of targetIds) {
+          try {
+            await startMeetingTranscription(id, request);
+          } catch {
+            failedIds.push(id);
+          }
+        }
+        await refreshMeetings();
+        setSelectedMeetingIds(new Set(failedIds));
+        if (failedIds.length > 0) {
+          setError(
+            `Could not start ${failedIds.length} of ${targetIds.length} selected meetings.`,
+          );
+          return false;
+        }
+        return true;
+      } finally {
+        setTranscriptionBusy(false);
+      }
+    },
+    [eligibleSelectedMeetingIds, refreshMeetings],
   );
 
   useEffect(() => {
@@ -425,9 +496,8 @@ export function MeetingTranscriptionPanel({
       onMeetingModelChange={onMeetingModelChange}
       onStartManualRecording={() => void onStartManualRecording()}
       onStopManualRecording={() => void onStopManualRecording()}
-      onStartTranscription={(id, request) =>
-        void onStartTranscription(id, request)
-      }
+      onStartTranscription={onStartTranscription}
+      onStartBulkTranscription={onStartBulkTranscription}
       onOpen={(id) => void openDetail(id)}
       onBack={() => {
         setConfigureOnOpenId(null);
