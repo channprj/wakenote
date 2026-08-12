@@ -1,5 +1,5 @@
 import { AlertCircle, Loader2, SparklesIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -62,13 +62,33 @@ export function ReportComposer({
 }) {
   const [kind, setKind] = useState<LlmReportKind>("summary");
   const [selectedDays, setSelectedDays] = useState<Set<string>>(new Set());
+  const wasOpenRef = useRef(false);
+  const selectionEditedRef = useRef(false);
   const orderedDays = useMemo(() => sortDaysDescending(days), [days]);
 
   // Reopening should offer the newest captures, not a stale selection.
   useEffect(() => {
-    if (open) {
-      setSelectedDays(defaultSelectedDays(days));
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
     }
+    if (!wasOpenRef.current) {
+      wasOpenRef.current = true;
+      selectionEditedRef.current = false;
+      setSelectedDays(defaultSelectedDays(days));
+      return;
+    }
+
+    setSelectedDays((current) => {
+      if (!selectionEditedRef.current) {
+        return defaultSelectedDays(days);
+      }
+      const availableDays = new Set(days.map((day) => day.day));
+      const next = new Set(
+        [...current].filter((day) => availableDays.has(day)),
+      );
+      return next.size === current.size ? current : next;
+    });
   }, [open, days]);
 
   const captures = selectedCaptureCount(days, selectedDays);
@@ -145,11 +165,12 @@ export function ReportComposer({
                     <label>
                       <Checkbox
                         checked={selectedDays.has(day.day)}
-                        onCheckedChange={() =>
+                        onCheckedChange={() => {
+                          selectionEditedRef.current = true;
                           setSelectedDays((current) =>
                             toggleDaySelection(current, day.day),
-                          )
-                        }
+                          );
+                        }}
                       />
                       <span>{day.day}</span>
                       <small>

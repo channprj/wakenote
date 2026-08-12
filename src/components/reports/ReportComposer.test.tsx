@@ -37,6 +37,72 @@ function generateButton() {
 afterEach(cleanup);
 
 describe("ReportComposer", () => {
+  it("preserves the edited day selection while captures refresh", async () => {
+    const onGenerate = vi.fn();
+    const props = {
+      hasActiveRun: false,
+      maxIterations: 3,
+      model: "z-ai/glm-5.2",
+      onGenerate,
+      onOpenChange: vi.fn(),
+      open: true,
+      openrouterKeyConfigured: true,
+    };
+    const { rerender } = render(<ReportComposer {...props} days={days} />);
+
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /2026-07-25/ }),
+    );
+    rerender(<ReportComposer {...props} days={[...days]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(onGenerate).toHaveBeenCalledWith("summary", [
+      "2026-07-25",
+      "2026-07-27",
+    ]);
+  });
+
+  it("selects the newest day when captures finish loading", () => {
+    const props = {
+      hasActiveRun: false,
+      maxIterations: 3,
+      model: "z-ai/glm-5.2",
+      onGenerate: vi.fn(),
+      onOpenChange: vi.fn(),
+      open: true,
+      openrouterKeyConfigured: true,
+    };
+    const { rerender } = render(<ReportComposer {...props} days={[]} />);
+
+    rerender(<ReportComposer {...props} days={days} />);
+
+    expect(screen.getByText("4 captures from 2026-07-27")).toBeTruthy();
+  });
+
+  it("starts a fresh default selection when reopened", async () => {
+    const onGenerate = vi.fn();
+    const props = {
+      hasActiveRun: false,
+      maxIterations: 3,
+      model: "z-ai/glm-5.2",
+      onGenerate,
+      onOpenChange: vi.fn(),
+      openrouterKeyConfigured: true,
+    };
+    const { rerender } = render(
+      <ReportComposer {...props} days={days} open />,
+    );
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /2026-07-25/ }),
+    );
+
+    rerender(<ReportComposer {...props} days={days} open={false} />);
+    rerender(<ReportComposer {...props} days={days} open />);
+    await userEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(onGenerate).toHaveBeenCalledWith("summary", ["2026-07-27"]);
+  });
+
   it("offers both report kinds with summary chosen by default", () => {
     renderComposer();
 
