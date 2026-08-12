@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { ModelSelectGroups } from "@/components/ModelSelectGroups";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -73,11 +73,17 @@ export function MeetingTranscriptionDialog({
   const [speakerSeparationEnabled, setSpeakerSeparationEnabled] =
     useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
       return;
     }
+    if (wasOpenRef.current) {
+      return;
+    }
+    wasOpenRef.current = true;
     const initialModel = meetingModels.find(
       (model) => model.id === resolvedInitialModelId,
     );
@@ -103,6 +109,20 @@ export function MeetingTranscriptionDialog({
   const speakerSeparationAvailable =
     selectedModel?.capabilities.diarization ?? false;
   const active = busy || submitting;
+
+  useEffect(() => {
+    if (!open || selectedModel || meetingModels.length === 0) {
+      return;
+    }
+    const fallbackModel =
+      meetingModels.find((model) => model.id === resolvedInitialModelId) ??
+      meetingModels[0];
+    setModelId(fallbackModel.id);
+    setStreamingEnabled(
+      fallbackModel.capabilities.streaming === "required",
+    );
+    setSpeakerSeparationEnabled(false);
+  }, [meetingModels, open, resolvedInitialModelId, selectedModel]);
 
   const changeModel = (nextModelId: string) => {
     setModelId(nextModelId);
@@ -248,7 +268,9 @@ export function MeetingTranscriptionDialog({
             <Switch
               size="sm"
               aria-label="Speaker separation"
-              checked={speakerSeparationEnabled}
+              checked={
+                speakerSeparationAvailable && speakerSeparationEnabled
+              }
               disabled={active || !speakerSeparationAvailable}
               onCheckedChange={setSpeakerSeparationEnabled}
             />

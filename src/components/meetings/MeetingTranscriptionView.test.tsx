@@ -354,7 +354,7 @@ describe("MeetingTranscriptionView", () => {
     render(
       <MeetingTranscriptionView
         {...props({
-          selected: detail({ status: "recorded" }),
+          selected: detail({ status: "recorded", language: "auto" }),
           models,
           onStartTranscription,
         })}
@@ -393,15 +393,24 @@ describe("MeetingTranscriptionView", () => {
       screen.getByRole("switch", { name: "Speaker separation" }),
     );
     await userEvent.click(
+      screen.getByRole("switch", { name: "Streaming" }),
+    );
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Meeting transcription language" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "Korean" }));
+    await userEvent.click(
       screen.getByRole("button", { name: "Start transcription" }),
     );
 
     expect(onStartTranscription).toHaveBeenCalledWith(
       "meeting-1",
-      expect.objectContaining({
+      {
         model_id: "openai-gpt-4o-transcribe-diarize",
+        language: "ko",
+        streaming_enabled: true,
         speaker_separation_enabled: true,
-      }),
+      },
     );
   });
 
