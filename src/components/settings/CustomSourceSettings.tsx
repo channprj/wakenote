@@ -1,5 +1,5 @@
 import { PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -13,8 +13,14 @@ export function CustomSourceSettings({
   onPatch: (patch: Partial<AppSettings>) => void;
 }) {
   const [drafts, setDrafts] = useState(settings.custom_sources);
+  const previousSourcesRef = useRef(settings.custom_sources);
 
   useEffect(() => {
+    const previousSources = previousSourcesRef.current;
+    previousSourcesRef.current = settings.custom_sources;
+    if (customSourcesEqual(previousSources, settings.custom_sources)) {
+      return;
+    }
     setDrafts(settings.custom_sources);
   }, [settings.custom_sources]);
 
@@ -80,6 +86,31 @@ export function CustomSourceSettings({
         Add Source
       </Button>
     </div>
+  );
+}
+
+function customSourcesEqual(
+  left: readonly CustomSourceEntry[],
+  right: readonly CustomSourceEntry[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((source, index) => {
+      const candidate = right[index];
+      if (!candidate) {
+        return false;
+      }
+      return (
+        source.id === candidate.id &&
+        source.label === candidate.label &&
+        source.auto_prompt === candidate.auto_prompt &&
+        source.title_patterns.length === candidate.title_patterns.length &&
+        source.title_patterns.every(
+          (pattern, patternIndex) =>
+            pattern === candidate.title_patterns[patternIndex],
+        )
+      );
+    })
   );
 }
 
