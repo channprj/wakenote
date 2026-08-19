@@ -261,6 +261,8 @@ pub struct TrayMenuPresentation {
     pub recording_text: &'static str,
     pub transcription_checked: bool,
     pub subtitles_checked: bool,
+    pub auto_type_checked: bool,
+    pub auto_type_text: &'static str,
     pub pause_all_checked: bool,
     pub active_model_text: String,
     pub active_microphone_text: String,
@@ -277,6 +279,12 @@ pub fn tray_menu_presentation(settings: &AppSettings, status: &AppStatus) -> Tra
         },
         transcription_checked: settings.transcription_enabled,
         subtitles_checked: settings.show_floating_overlay,
+        auto_type_checked: settings.auto_transcript_input_enabled,
+        auto_type_text: if settings.auto_transcript_input_enabled {
+            "Auto Type On"
+        } else {
+            "Auto Type Off"
+        },
         pause_all_checked: settings.pause_all,
         active_model_text: format!("Model: {}", status.active_model),
         active_microphone_text: format!("Microphone: {}", status.active_microphone),

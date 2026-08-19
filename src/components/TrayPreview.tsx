@@ -1,4 +1,4 @@
-import { AudioWaveform, FolderOpen, Mic, Pause, Settings, Square, XCircle } from "lucide-react";
+import { AudioWaveform, FolderOpen, Mic, Pause, Settings, Square, Type, XCircle } from "lucide-react";
 import { humanizeTrayState } from "../lib/transcript-history";
 import { trayStateBadgeTone } from "../lib/status-summary";
 import { StatusBadge } from "./ui/status-badge";
@@ -48,6 +48,10 @@ export function TrayPreview({
         <button onClick={() => onPatch({ transcription_enabled: !settings.transcription_enabled })}>
           <AudioWaveform />
           Transcription {settings.transcription_enabled ? "On" : "Off"}
+        </button>
+        <button onClick={() => onPatch({ auto_transcript_input_enabled: !settings.auto_transcript_input_enabled })}>
+          <Type />
+          Auto Type {settings.auto_transcript_input_enabled ? "On" : "Off"}
         </button>
         <button onClick={onRevealSaveFolder}>
           <FolderOpen />

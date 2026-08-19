@@ -591,6 +591,7 @@ const TRAY_MENU_ORDER: &[&str] = &[
     "toggle-recording",
     "toggle-transcription",
     "toggle-subtitles",
+    "toggle-auto-type",
     "active-model",
     "active-microphone",
     "threshold",
@@ -1139,6 +1140,7 @@ struct TrayMenuItems {
     recording: CheckMenuItem<Wry>,
     transcription: CheckMenuItem<Wry>,
     subtitles: CheckMenuItem<Wry>,
+    auto_type: CheckMenuItem<Wry>,
     active_model: MenuItem<Wry>,
     active_mic: MenuItem<Wry>,
     threshold: MenuItem<Wry>,
@@ -8617,6 +8619,20 @@ fn setup_tray(
             .unwrap_or(false),
         None::<&str>,
     )?;
+    let auto_type = CheckMenuItem::with_id(
+        app,
+        "toggle-auto-type",
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.auto_type_text)
+            .unwrap_or("Auto Type Off"),
+        true,
+        initial_menu
+            .as_ref()
+            .map(|menu| menu.auto_type_checked)
+            .unwrap_or(false),
+        None::<&str>,
+    )?;
     let active_model = MenuItem::with_id(
         app,
         "active-model",
@@ -8686,6 +8702,7 @@ fn setup_tray(
             &recording,
             &transcription,
             &subtitles,
+            &auto_type,
             &active_model,
             &active_mic,
             &threshold,
@@ -8731,6 +8748,7 @@ fn setup_tray(
         recording,
         transcription,
         subtitles,
+        auto_type,
         active_model,
         active_mic,
         threshold,
@@ -8854,6 +8872,8 @@ fn apply_tray_presentation(
         let _ = items.recording.set_text(menu.recording_text);
         let _ = items.transcription.set_checked(menu.transcription_checked);
         let _ = items.subtitles.set_checked(menu.subtitles_checked);
+        let _ = items.auto_type.set_checked(menu.auto_type_checked);
+        let _ = items.auto_type.set_text(menu.auto_type_text);
         let _ = items.pause_all.set_checked(menu.pause_all_checked);
         let _ = items.active_model.set_text(menu.active_model_text);
         let _ = items.active_mic.set_text(menu.active_microphone_text);
@@ -8934,6 +8954,10 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
         }),
         "toggle-subtitles" => patch_from_tray(app, |settings| SettingsPatch {
             show_floating_overlay: Some(!settings.show_floating_overlay),
+            ..SettingsPatch::default()
+        }),
+        "toggle-auto-type" => patch_from_tray(app, |settings| SettingsPatch {
+            auto_transcript_input_enabled: Some(!settings.auto_transcript_input_enabled),
             ..SettingsPatch::default()
         }),
         "pause-all" => patch_from_tray(app, |settings| SettingsPatch {
@@ -10799,6 +10823,7 @@ mod tests {
                 "toggle-recording",
                 "toggle-transcription",
                 "toggle-subtitles",
+                "toggle-auto-type",
                 "active-model",
                 "active-microphone",
                 "threshold",
