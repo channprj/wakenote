@@ -103,7 +103,7 @@ The shelf follows System Settings and closes when the permission is granted, Sys
 | Meetings | Manual long-form recording, audio import, resumable transcription, and optional speaker separation |
 | Transcripts | Per-day capture history, newest/oldest ordering, 50-item pages, playback, selection, bundle Trash, regeneration, and report creation |
 | Reports | Summary or detailed-report composition, progress, history, and rendered Markdown |
-| Activity | Per-day queue status, newest/oldest ordering, warning/error review, retry, skip, safe running-job cancellation, bulk reprocessing, and Trash actions |
+| Activity | Per-day queue status, an all-dates warning/error review, newest/oldest ordering, retry, skip, safe running-job cancellation, bulk reprocessing, and Trash actions |
 | Settings | General behavior, Audio, Dictation, Models, Storage, Integrations, and Advanced sources |
 
 ### Capture lifecycle
@@ -331,6 +331,8 @@ Changing a presentation option shows the real overlay as a preview. Each edit re
 ### History navigation and Trash
 
 **Transcripts** and **Activity** open newest-first and can switch to oldest-first. Both navigate one local calendar day at a time. Transcripts renders at most 50 filtered rows per page; changing the day, filter, or order returns to the first page and clears stale off-page selection. This bounds browser DOM and audio-control work, while the existing per-day `all.json` remains the disk index rather than a server-style cursor.
+
+Activity's **Warnings & errors**, **Needs attention**, and **Resolved** views review outcomes rather than one day's work, so they gather every match across all dates and hide the date picker. Rows keep a day heading, the header checkbox selects every match across dates and pages, and Move to Trash acts on that whole selection.
 
 Selected Transcript rows can be moved to Trash together. WakeNote stages every exact-stem audio, `.txt`, `.json`, and `.error.txt` sibling, rolls the bundle back if a move fails, then refreshes that day's `all.json`. Activity uses the same bundle transaction. Cancelling a running Activity job is idempotent and suppresses late partial/final writes; deleting one requests cancellation and waits for its worker to exit before moving the bundle and removing the queue record. Trash remains recoverable through macOS Finder.
 

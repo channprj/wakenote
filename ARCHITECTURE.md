@@ -27,7 +27,7 @@ The primary routes are defined in `src/lib/navigation.ts`:
 | Activity | Day-indexed persistent queue, warnings/errors, running cancellation, retry, reprocessing, and recoverable bundle deletion |
 | Settings | General, Audio, Dictation, Models, Storage, Integrations, and Advanced configuration |
 
-`src/lib/app-state.ts` reduces snapshots and events into frontend state. Domain helpers in `src/lib/` keep capability filtering, queue presentation, meeting progress, report composition, and browser mocks out of page components. `DatePagePicker.tsx` supplies the shared local-day navigation used by Transcripts and Activity; each view owns its order, filter, selection, and page-reset semantics.
+`src/lib/app-state.ts` reduces snapshots and events into frontend state. Domain helpers in `src/lib/` keep capability filtering, queue presentation, meeting progress, report composition, and browser mocks out of page components. `DatePagePicker.tsx` supplies the shared local-day navigation used by Transcripts and Activity; each view owns its order, filter, selection, and page-reset semantics. Activity's issue views bypass that day scope so warnings and errors are reviewed and cleared across every date.
 
 ### Subtitle overlay
 
@@ -272,6 +272,8 @@ OpenAI and Soniox protocols have separate adapters and error parsing. They conve
 Resolved Activity outcomes and hidden transcripts, meetings, or reports remain stored. Deletion is explicit and separate from acknowledgement or visibility state. Transcript and Activity deletion operates on exact-stem bundles, moves audio plus `.txt`, `.json`, and `.error.txt` siblings to macOS Trash, rolls back on failure, and rebuilds the affected per-day index. Running Activity deletion also waits for worker acknowledgement so late output cannot recreate the bundle.
 
 Transcripts and Activity both navigate at the existing local-day index boundary and default to newest-first with an oldest-first option. Transcripts limits rendered results to 50 rows per page and resets page-local selection when the day, filter, or order changes. This bounds DOM and audio-control work; `all.json` still loads one day at a time, so the design does not claim backend cursor pagination.
+
+Activity's issue views are the exception: they select on outcome rather than date, so they page over every matching warning and error with day headings, and the existing select-all and bundle Trash actions apply to that whole cross-date set. The queue snapshot is already fully in memory, so this adds no additional disk read.
 
 ### Atomic small-state writes
 
