@@ -1522,6 +1522,7 @@ svg {
 .queue-view-tabs {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--line);
