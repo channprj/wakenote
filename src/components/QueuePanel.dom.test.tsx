@@ -396,6 +396,119 @@ describe("QueuePanel pagination", () => {
     ).toBeNull();
   });
 
+  it("reviews every date's warnings and errors in one list and trashes them together", async () => {
+    const user = userEvent.setup();
+    const onTrash = vi.fn().mockResolvedValue([1, 2, 3, 4]);
+    const { container } = render(
+      <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        queue={{
+          jobs: [
+            {
+              id: 1,
+              audio_path: "/recordings/20260801/120000.wav",
+              model_id: "m",
+              status: "failed",
+            },
+            {
+              id: 2,
+              audio_path: "/recordings/20260803/120000.wav",
+              model_id: "m",
+              status: "cancelled",
+              is_read: true,
+            },
+            {
+              id: 3,
+              audio_path: "/recordings/20260803/130000.wav",
+              model_id: "m",
+              status: "completed",
+              issue: {
+                severity: "warning",
+                code: "no_speech",
+                message: "No speech detected",
+              },
+            },
+            {
+              id: 4,
+              audio_path: "/recordings/20260804/090000.wav",
+              model_id: "m",
+              status: "failed",
+            },
+            {
+              id: 5,
+              audio_path: "/recordings/20260804/100000.wav",
+              model_id: "m",
+              status: "completed",
+            },
+            {
+              id: 6,
+              audio_path: "/recordings/20260804/110000.wav",
+              model_id: "m",
+              status: "pending",
+            },
+          ],
+          pending_count: 1,
+          running_count: 0,
+          failed_count: 2,
+        }}
+        models={[]}
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={() => {}}
+        onSkip={() => {}}
+        onTrash={onTrash}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
+      />,
+    );
+    const panel = within(container);
+    const visiblePaths = () =>
+      Array.from(
+        container.querySelectorAll<HTMLAnchorElement>(
+          '[data-slot="queue-table"] tbody a.truncate',
+        ),
+      ).map((link) => link.title);
+
+    expect(visiblePaths()).toEqual([
+      "/recordings/20260804/110000.wav",
+      "/recordings/20260804/090000.wav",
+    ]);
+
+    await user.click(
+      panel.getByRole("button", { name: "Warnings & errors 4" }),
+    );
+
+    expect(visiblePaths()).toEqual([
+      "/recordings/20260804/090000.wav",
+      "/recordings/20260803/130000.wav",
+      "/recordings/20260803/120000.wav",
+      "/recordings/20260801/120000.wav",
+    ]);
+    expect(
+      container.querySelector('[data-slot="activity-week-picker"]'),
+    ).toBeNull();
+    const dayHeadings = Array.from(
+      container.querySelectorAll(".table-group-row td"),
+    ).map((cell) => cell.textContent?.split(" ·")[0]);
+    expect(dayHeadings).toEqual(["2026-08-04", "2026-08-03", "2026-08-01"]);
+
+    await user.click(
+      panel.getByRole("checkbox", { name: "Select all 4 matching items" }),
+    );
+    expect(panel.getByText("4 selected")).toBeTruthy();
+
+    await user.click(panel.getByRole("button", { name: "Move 4 to Trash" }));
+    await user.click(
+      screen.getByRole("button", { name: "Move bundles to Trash" }),
+    );
+
+    expect(onTrash).toHaveBeenCalledWith([1, 2, 3, 4]);
+  }, 15_000);
+
   it("hides clean completions by default and combines Activity filters", async () => {
     const user = userEvent.setup();
     const { container } = render(

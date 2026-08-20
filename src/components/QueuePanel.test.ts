@@ -138,6 +138,39 @@ describe("Activity issue views", () => {
     ).toEqual([1, 2, 3, 4]);
   });
 
+  it("gathers warnings and errors from every read state into one review list", () => {
+    const mixed: QueueJob[] = [
+      { id: 1, audio_path: "/pending.wav", model_id: "m", status: "pending" },
+      { id: 2, audio_path: "/failed.wav", model_id: "m", status: "failed" },
+      {
+        id: 3,
+        audio_path: "/resolved-cancelled.wav",
+        model_id: "m",
+        status: "cancelled",
+        is_read: true,
+      },
+      { id: 4, audio_path: "/clean.wav", model_id: "m", status: "completed" },
+      {
+        id: 5,
+        audio_path: "/warned.wav",
+        model_id: "m",
+        status: "completed",
+        issue: {
+          severity: "warning",
+          code: "no_speech",
+          message: "No speech detected",
+        },
+      },
+    ];
+
+    expect(filterActivityJobs(mixed, "issues").map((job) => job.id)).toEqual([
+      2, 3, 5,
+    ]);
+    expect(filterActivityJobs(mixed, "all").map((job) => job.id)).toEqual([
+      1, 2, 3, 5,
+    ]);
+  });
+
   it("combines model, Dictation/live type, and status filters", () => {
     const candidates: QueueJob[] = [
       {

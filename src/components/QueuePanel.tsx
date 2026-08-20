@@ -76,7 +76,7 @@ import {
 } from "./DatePagePicker";
 
 export const ACTIVITY_PAGE_SIZE = 50;
-export type ActivityView = "all" | "attention" | "resolved";
+export type ActivityView = "all" | "issues" | "attention" | "resolved";
 export type ActivityKindFilter = "all" | QueueActivityKind;
 export type ActivityStatusFilter = "hide_successful" | "all" | QueueJobStatus;
 
@@ -123,16 +123,22 @@ export function filterActivityJobs(
   view: ActivityView,
   filters: ActivityFilters = DEFAULT_ACTIVITY_FILTERS,
 ): QueueJob[] {
-  const viewedJobs =
-    view === "attention"
-      ? jobs.filter(
-          (job) => isActivityAttentionOutcome(job) && job.is_read !== true,
-        )
-      : view === "resolved"
-        ? jobs.filter(
-            (job) => isActivityAttentionOutcome(job) && job.is_read === true,
-          )
-        : jobs;
+  const viewedJobs = jobs.filter((job) => {
+    if (view === "all") {
+      return true;
+    }
+    if (!isActivityAttentionOutcome(job)) {
+      return false;
+    }
+    if (view === "attention") {
+      return job.is_read !== true;
+    }
+    if (view === "resolved") {
+      return job.is_read === true;
+    }
+    // "issues" keeps every outcome regardless of read state.
+    return true;
+  });
 
   return viewedJobs.filter((job) => {
     if (filters.modelId !== "all" && job.model_id !== filters.modelId) {
@@ -205,6 +211,25 @@ export function activityPage(
 export function activityDayForJob(job: QueueJob, fallbackDay: string): string {
   const day = transcriptDayFromAudioPath(job.audio_path);
   return isYearMonthDayLabel(day) ? day : fallbackDay;
+}
+
+// Keeps the order activityPage already produced and only inserts day headings,
+// so an all-dates page still reads newest-first or oldest-first as chosen.
+function groupActivityJobsByDay(
+  jobs: QueueJob[],
+  fallbackDay: string,
+): Array<{ day: string; entries: QueueJob[] }> {
+  const groups = new Map<string, QueueJob[]>();
+  for (const job of jobs) {
+    const day = activityDayForJob(job, fallbackDay);
+    const entries = groups.get(day);
+    if (entries) {
+      entries.push(job);
+    } else {
+      groups.set(day, [job]);
+    }
+  }
+  return [...groups].map(([day, entries]) => ({ day, entries }));
 }
 
 export function queueJobActionState(status: QueueJobStatus) {
@@ -362,20 +387,31 @@ export function QueuePanel({
     : todayDay;
   const earliestDay =
     [...availableDays].filter(isYearMonthDayLabel).sort()[0] ?? todayDay;
-  const activeDayJobs = filteredJobs.filter(
-    (job) => activityDayForJob(job, todayDay) === effectiveActiveDay,
-  );
+  // Issue views review outcomes rather than a day's work, so they ignore the
+  // date page and gather every matching warning and error instead.
+  const spansAllDays = activityView !== "all";
+  const scopedJobs = spansAllDays
+    ? filteredJobs
+    : filteredJobs.filter(
+        (job) => activityDayForJob(job, todayDay) === effectiveActiveDay,
+      );
   const pagination = activityPage(
-    activeDayJobs,
+    scopedJobs,
     requestedPage,
     ACTIVITY_PAGE_SIZE,
     sortOrder,
   );
-  const groupedJobs = [{ day: effectiveActiveDay, entries: pagination.jobs }];
+  const groupedJobs = spansAllDays
+    ? groupActivityJobsByDay(pagination.jobs, todayDay)
+    : [{ day: effectiveActiveDay, entries: pagination.jobs }];
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const statsBanner = queueStatsBanner(queue);
   const activeAttention = activityAttentionAt(queue.jobs, nowMs);
   const unreadOutcomeCount = countUnreadActivityOutcomes(queue.jobs);
+  const issueOutcomeCount = filterActivityJobs(queue.jobs, "issues", {
+    ...DEFAULT_ACTIVITY_FILTERS,
+    status: "all",
+  }).length;
   const resolvedOutcomeCount = filterActivityJobs(queue.jobs, "resolved", {
     ...DEFAULT_ACTIVITY_FILTERS,
     status: "all",
@@ -402,11 +438,11 @@ export function QueuePanel({
   )
     ? requestedReprocessingModelId
     : preferredModelId;
-  const filteredReprocessableJobs = activeDayJobs.filter(isReprocessableJob);
+  const filteredReprocessableJobs = scopedJobs.filter(isReprocessableJob);
   const filteredReprocessableIds = filteredReprocessableJobs.map(
     (job) => job.id,
   );
-  const filteredSelectableIds = activeDayJobs.map((job) => job.id);
+  const filteredSelectableIds = scopedJobs.map((job) => job.id);
   const selectedIds = filteredSelectableIds.filter((id) =>
     selectedJobIds.has(id),
   );
@@ -427,35 +463,49 @@ export function QueuePanel({
     count: number;
   }> = [
     { id: "all", label: "Visible", count: visibleAllCount },
+    { id: "issues", label: "Warnings & errors", count: issueOutcomeCount },
     { id: "attention", label: "Needs attention", count: unreadOutcomeCount },
     { id: "resolved", label: "Resolved", count: resolvedOutcomeCount },
   ];
-  const emptyCopy =
-    activityView === "attention"
-      ? {
-          title: "No jobs need attention",
-          description:
-            "New warnings, errors, cancelled, or skipped outcomes will appear here.",
-        }
-      : activityView === "resolved"
-        ? {
-            title: "No resolved issues",
-            description:
-              "Outcomes marked as resolved remain available here for review.",
-          }
-        : activeDayJobs.length === 0 && queue.jobs.length > 0
-          ? {
-              title: `No Activity for ${effectiveActiveDay}`,
-              description:
-                filteredJobs.length === 0
-                  ? "Change a model, type, or status filter to show more transcription jobs."
-                  : "Choose another date above to review matching transcription jobs.",
-            }
-          : {
-              title: "No queued transcription jobs",
-              description:
-                "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
-            };
+  const emptyCopy = activityEmptyCopy();
+
+  function activityEmptyCopy(): { title: string; description: string } {
+    if (activityView === "issues") {
+      return {
+        title: "No warnings or errors",
+        description:
+          "Every transcription job on every date finished without an issue.",
+      };
+    }
+    if (activityView === "attention") {
+      return {
+        title: "No jobs need attention",
+        description:
+          "New warnings, errors, cancelled, or skipped outcomes will appear here.",
+      };
+    }
+    if (activityView === "resolved") {
+      return {
+        title: "No resolved issues",
+        description:
+          "Outcomes marked as resolved remain available here for review.",
+      };
+    }
+    if (scopedJobs.length === 0 && queue.jobs.length > 0) {
+      return {
+        title: `No Activity for ${effectiveActiveDay}`,
+        description:
+          filteredJobs.length === 0
+            ? "Change a model, type, or status filter to show more transcription jobs."
+            : "Choose another date above to review matching transcription jobs.",
+      };
+    }
+    return {
+      title: "No queued transcription jobs",
+      description:
+        "Captures queue here automatically when transcription is on. You can also import audio files or scan the save folder for a backlog.",
+    };
+  }
 
   function updateActivityFilters(patch: Partial<ActivityFilters>) {
     setActivityFilters((current) => ({ ...current, ...patch }));
@@ -645,17 +695,19 @@ export function QueuePanel({
           Cancel Current
         </Button>
       </div>
-      <DatePagePicker
-        activeDay={effectiveActiveDay}
-        availableDays={availableDays}
-        todayDay={todayDay}
-        weekStart={effectiveWeekStart}
-        earliestDay={earliestDay}
-        itemLabel="Activity"
-        onSelectDay={handleSelectDay}
-        onPrevWeek={() => setViewWeekStart(addDays(effectiveWeekStart, -7))}
-        onNextWeek={() => setViewWeekStart(addDays(effectiveWeekStart, 7))}
-      />
+      {spansAllDays ? null : (
+        <DatePagePicker
+          activeDay={effectiveActiveDay}
+          availableDays={availableDays}
+          todayDay={todayDay}
+          weekStart={effectiveWeekStart}
+          earliestDay={earliestDay}
+          itemLabel="Activity"
+          onSelectDay={handleSelectDay}
+          onPrevWeek={() => setViewWeekStart(addDays(effectiveWeekStart, -7))}
+          onNextWeek={() => setViewWeekStart(addDays(effectiveWeekStart, 7))}
+        />
+      )}
       <div className="queue-view-bar">
         <div className="queue-view-bar__history">
           <div
@@ -857,8 +909,9 @@ export function QueuePanel({
           </SelectContent>
         </Select>
         <span className="queue-filters__result" aria-live="polite">
-          {activeDayJobs.length} on {effectiveActiveDay} · {filteredJobs.length}{" "}
-          filtered of {queue.jobs.length}
+          {spansAllDays
+            ? `${scopedJobs.length} of ${queue.jobs.length} across all dates`
+            : `${scopedJobs.length} on ${effectiveActiveDay} · ${filteredJobs.length} filtered of ${queue.jobs.length}`}
         </span>
         {!filtersAreDefault ? (
           <Button
@@ -902,7 +955,7 @@ export function QueuePanel({
             </tr>
           </thead>
           <tbody>
-            {activeDayJobs.length === 0 ? (
+            {scopedJobs.length === 0 ? (
               <tr>
                 <td colSpan={5} className="empty-cell">
                   <EmptyState
