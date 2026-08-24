@@ -14,6 +14,7 @@ export interface ListVisibilityToolbarProps {
   totalInMode: number;
   mutating: boolean;
   statusMessage: string;
+  selectionPlacement?: "toolbar" | "external";
   onModeChange(mode: ListVisibilityMode): void;
   onSelectAll(): void;
   onClearSelection(): void;
@@ -28,21 +29,16 @@ export function ListVisibilityToolbar({
   totalInMode,
   mutating,
   statusMessage,
+  selectionPlacement = "toolbar",
   onModeChange,
   onSelectAll,
   onClearSelection,
   onApplySelection,
 }: ListVisibilityToolbarProps) {
-  const allSelected =
-    totalInMode > 0 && selectedCount === totalInMode;
+  const allSelected = totalInMode > 0 && selectedCount === totalInMode;
   const checked =
-    selectedCount === 0
-      ? false
-      : allSelected
-        ? true
-        : "indeterminate";
-  const applyLabel =
-    mode === "visible" ? "Hide selected" : "Restore selected";
+    selectedCount === 0 ? false : allSelected ? true : "indeterminate";
+  const applyLabel = mode === "visible" ? "Hide selected" : "Restore selected";
 
   return (
     <div
@@ -73,53 +69,51 @@ export function ListVisibilityToolbar({
         </ToggleGroupItem>
       </ToggleGroup>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]">
-        <label className="inline-flex min-h-[var(--control-compact)] items-center gap-[var(--space-2)] text-[length:var(--text-body)] leading-[var(--leading-body)] text-muted-foreground">
-          <Checkbox
-            checked={checked}
-            disabled={mutating || totalInMode === 0}
-            aria-label={allSelected ? "Clear selection" : "Select all items"}
-            onCheckedChange={() => {
-              if (allSelected) {
-                onClearSelection();
-              } else {
-                onSelectAll();
-              }
-            }}
-          />
-          {selectedCount > 0
-            ? `${selectedCount} selected`
-            : "Select all"}
-        </label>
-        {selectedCount > 0 ? (
+      {selectionPlacement === "toolbar" ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]">
+          <label className="inline-flex min-h-[var(--control-compact)] items-center gap-[var(--space-2)] text-[length:var(--text-body)] leading-[var(--leading-body)] text-muted-foreground">
+            <Checkbox
+              checked={checked}
+              disabled={mutating || totalInMode === 0}
+              aria-label={allSelected ? "Clear selection" : "Select all items"}
+              onCheckedChange={() => {
+                if (allSelected) {
+                  onClearSelection();
+                } else {
+                  onSelectAll();
+                }
+              }}
+            />
+            {selectedCount > 0 ? `${selectedCount} selected` : "Select all"}
+          </label>
+          {selectedCount > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={mutating}
+              onClick={onClearSelection}
+            >
+              Clear
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
-            variant="ghost"
-            disabled={mutating}
-            onClick={onClearSelection}
+            variant="outline"
+            disabled={mutating || selectedCount === 0}
+            onClick={onApplySelection}
           >
-            Clear
+            {applyLabel}
           </Button>
-        ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={mutating || selectedCount === 0}
-          onClick={onApplySelection}
-        >
-          {applyLabel}
-        </Button>
-      </div>
+        </div>
+      ) : null}
 
-      <span
-        role="status"
-        aria-live="polite"
-        className="sr-only"
-      >
-        {statusMessage}
-      </span>
+      {statusMessage ? (
+        <span role="status" aria-live="polite" className="sr-only">
+          {statusMessage}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -47,6 +47,9 @@ import {
   loadSourceCaptureStatus,
   markAllActivityRead,
   mergeTranscriptAudio,
+  exportAllTranscriptDays,
+  exportTranscriptDay,
+  seedBrowserFixtures,
   openDictionaryFile,
   reloadDictionaryFile,
   verifyModel,
@@ -1464,5 +1467,95 @@ describe("Activity read state (browser fallback)", () => {
     expect(
       skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
     ).toMatchObject({ status: "skipped", is_read: false });
+  });
+});
+
+describe("transcript text export browser fallback", () => {
+  it("downloads one UTF-8 text file per day and reports exact counts", async () => {
+    const blobs: Blob[] = [];
+    const downloads: Array<{ fileName: string; blob: Blob }> = [];
+    const createObjectURL = vi.fn((blob: Blob) => {
+      blobs.push(blob);
+      return `blob:transcript-${blobs.length}`;
+    });
+    const revokeObjectURL = vi.fn();
+    const createElement = vi.fn(() => ({
+      href: "",
+      download: "",
+      click() {
+        downloads.push({
+          fileName: this.download,
+          blob: blobs.at(-1) as Blob,
+        });
+      },
+    }));
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    vi.stubGlobal("document", { createElement });
+    seedBrowserFixtures({
+      settings: {
+        custom_sources: [
+          {
+            id: "team-room",
+            label: "Team room",
+            title_patterns: ["Team room"],
+            auto_prompt: false,
+          },
+        ],
+      },
+      models: [],
+      transcripts: [
+        {
+          transcript_path: "/tmp/WakeNote/20260824/100000-team-room.txt",
+          audio_path: "/tmp/WakeNote/20260824/100000-team-room.m4a",
+          recorded_at: "2026-08-24T10:00:00+09:00",
+          text: "Later",
+          source: "system",
+          source_label: "team-room",
+        },
+        {
+          transcript_path: "/tmp/WakeNote/20260823/180000.txt",
+          audio_path: "/tmp/WakeNote/20260823/180000.m4a",
+          recorded_at: "2026-08-23T18:00:00+09:00",
+          text: "Yesterday",
+        },
+        {
+          transcript_path: "/tmp/WakeNote/20260824/090000.txt",
+          audio_path: "/tmp/WakeNote/20260824/090000.m4a",
+          recorded_at: "2026-08-24T09:00:00+09:00",
+          text: "Earlier",
+        },
+      ],
+      reports: [],
+      runs: [],
+      meetings: [],
+      openrouterApiKey: "",
+      openaiApiKey: "",
+    });
+
+    try {
+      await expect(exportAllTranscriptDays()).resolves.toEqual({
+        destination_path: "Downloads",
+        day_count: 2,
+        transcript_count: 3,
+      });
+      await expect(exportTranscriptDay("2026-08-24")).resolves.toEqual({
+        destination_path: "WakeNote-2026-08-24.txt",
+        day_count: 1,
+        transcript_count: 2,
+      });
+
+      expect(downloads.map(({ fileName }) => fileName)).toEqual([
+        "WakeNote-2026-08-23.txt",
+        "WakeNote-2026-08-24.txt",
+        "WakeNote-2026-08-24.txt",
+      ]);
+      await expect(downloads[1].blob.text()).resolves.toBe(
+        "2026-08-24 09:00:00 [Mic] - Earlier\n\n" +
+          "2026-08-24 10:00:00 [Team room] - Later\n",
+      );
+      expect(revokeObjectURL).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

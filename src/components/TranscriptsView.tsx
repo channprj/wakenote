@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CloudDownload,
   Copy,
+  Download,
   Eye,
   EyeOff,
   FileText,
@@ -12,6 +13,7 @@ import {
   Loader2,
   Mic,
   MonitorSpeaker,
+  MoreHorizontal,
   Pause,
   Play,
   RotateCw,
@@ -39,12 +41,20 @@ import type {
   ModelDescriptor,
   RecentTranscript,
   TranscriptDay,
+  TranscriptExportResult,
 } from "../lib/types";
 import {
   ListVisibilityToolbar,
   type ListVisibilityMode,
 } from "./ListVisibilityToolbar";
 import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -142,6 +152,12 @@ export interface TranscriptPlaybackState {
   playbackPaused: boolean;
 }
 
+export type TranscriptExportUiState =
+  | { status: "idle" }
+  | { status: "running"; scope: "all" | "day"; day?: string }
+  | { status: "success"; result: TranscriptExportResult }
+  | { status: "error"; message: string };
+
 export function transcriptPlaybackStateAfterToggle(
   state: TranscriptPlaybackState,
   entry: RecentTranscript,
@@ -204,6 +220,10 @@ export function TranscriptsView({
   onGenerateReport,
   onOpenReports,
   onReload,
+  onExportAllDays,
+  onExportDay,
+  onOpenExportFolder,
+  exportState = { status: "idle" },
   autoPlayNext = false,
   openrouterKeyConfigured = false,
   reportError = null,
@@ -244,6 +264,10 @@ export function TranscriptsView({
   ) => void | Promise<void>;
   onOpenReports?: () => void;
   onReload?: (day: string) => void;
+  onExportAllDays?: () => void | Promise<void>;
+  onExportDay?: (day: string) => void | Promise<void>;
+  onOpenExportFolder?: (destinationPath: string) => void | Promise<void>;
+  exportState?: TranscriptExportUiState;
   autoPlayNext?: boolean;
   openrouterKeyConfigured?: boolean;
   reportError?: string | null;
@@ -801,33 +825,147 @@ export function TranscriptsView({
   const handlePrevWeek = () =>
     setViewWeekStart(addDays(effectiveWeekStart, -7));
   const handleNextWeek = () => setViewWeekStart(addDays(effectiveWeekStart, 7));
+  const exportRunning = exportState.status === "running";
+  const allPageEntriesSelected =
+    pageEntries.length > 0 && selectionCount === pageEntries.length;
+  const selectionChecked =
+    selectionCount === 0
+      ? false
+      : allPageEntriesSelected
+        ? true
+        : "indeterminate";
 
   return (
     <div className="transcripts-panel">
-      <DatePagePicker
-        activeDay={effectiveActiveDay}
-        availableDays={availableDays}
-        todayDay={todayDay}
-        weekStart={effectiveWeekStart}
-        earliestDay={earliestDay}
-        itemLabel="Transcript"
-        onSelectDay={handleSelectDay}
-        onPrevWeek={handlePrevWeek}
-        onNextWeek={handleNextWeek}
-      />
-      <ListVisibilityToolbar
-        mode={visibilityMode}
-        visibleCount={visibleCount}
-        hiddenCount={hiddenCount}
-        selectedCount={selectionCount}
-        totalInMode={pageEntries.length}
-        mutating={visibilityMutating}
-        statusMessage={visibilityStatus}
-        onModeChange={(mode) => onVisibilityModeChange?.(mode)}
-        onSelectAll={handleSelectAllVisible}
-        onClearSelection={handleClearSelection}
-        onApplySelection={() => void applyTranscriptVisibility(selectedEntries)}
-      />
+      <section
+        className="transcript-archive-rail"
+        aria-label="Transcript archive"
+      >
+        <DatePagePicker
+          activeDay={effectiveActiveDay}
+          availableDays={availableDays}
+          todayDay={todayDay}
+          weekStart={effectiveWeekStart}
+          earliestDay={earliestDay}
+          itemLabel="Transcript"
+          onSelectDay={handleSelectDay}
+          onPrevWeek={handlePrevWeek}
+          onNextWeek={handleNextWeek}
+        />
+        <Button
+          aria-label="Export all transcript days"
+          disabled={exportRunning || days.length === 0 || !onExportAllDays}
+          onClick={() => void onExportAllDays?.()}
+          type="button"
+        >
+          {exportState.status === "running" && exportState.scope === "all" ? (
+            <Loader2 className="loading-spin" />
+          ) : (
+            <Download />
+          )}
+          Export all
+        </Button>
+      </section>
+      {exportState.status !== "idle" ? (
+        <section
+          aria-live="polite"
+          className={`transcript-export-status${
+            exportState.status === "error"
+              ? " warning-banner warning-banner--danger"
+              : ""
+          }`}
+          data-status={exportState.status}
+          role="status"
+        >
+          <span>
+            {exportState.status === "running"
+              ? exportState.scope === "all"
+                ? "Exporting all transcript days…"
+                : `Exporting transcripts for ${exportState.day ?? effectiveActiveDay}…`
+              : exportState.status === "success"
+                ? `Exported ${exportState.result.transcript_count} transcript${
+                    exportState.result.transcript_count === 1 ? "" : "s"
+                  } across ${exportState.result.day_count} day${
+                    exportState.result.day_count === 1 ? "" : "s"
+                  }`
+                : `Transcript export unavailable: ${exportState.message}`}
+          </span>
+          {exportState.status === "success" && onOpenExportFolder ? (
+            <Button
+              aria-label="Show export in Finder"
+              onClick={() =>
+                void onOpenExportFolder(exportState.result.destination_path)
+              }
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              <FolderOpen /> Show in Finder
+            </Button>
+          ) : null}
+        </section>
+      ) : null}
+      <div className="transcript-browse-row">
+        <ListVisibilityToolbar
+          mode={visibilityMode}
+          visibleCount={visibleCount}
+          hiddenCount={hiddenCount}
+          selectedCount={selectionCount}
+          totalInMode={pageEntries.length}
+          mutating={visibilityMutating}
+          statusMessage={visibilityStatus}
+          selectionPlacement="external"
+          onModeChange={(mode) => onVisibilityModeChange?.(mode)}
+          onSelectAll={handleSelectAllVisible}
+          onClearSelection={handleClearSelection}
+          onApplySelection={() =>
+            void applyTranscriptVisibility(selectedEntries)
+          }
+        />
+        <div className="transcript-browse-row__filters">
+          {showSourceFilter ? (
+            <label className="transcript-source-filter">
+              <span>Source</span>
+              <Select
+                value={effectiveSourceFilter}
+                onValueChange={handleSourceFilterChange}
+              >
+                <SelectTrigger size="sm" aria-label="Transcript source">
+                  <SelectValue>
+                    {selectedSourceOption
+                      ? `${selectedSourceOption.label} (${selectedSourceOption.count})`
+                      : "All sources"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {sourceFilterOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label} ({option.count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+          ) : null}
+          <label className="transcript-source-filter">
+            <span>Order</span>
+            <Select
+              value={sortOrder}
+              onValueChange={(value) =>
+                handleSortOrderChange(value as HistorySortOrder)
+              }
+            >
+              <SelectTrigger size="sm" aria-label="Transcript order">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+      </div>
       <article className="transcript-day transcript-day--condensed">
         <header>
           <div>
@@ -838,247 +976,232 @@ export function TranscriptsView({
             data-slot="transcript-toolbar"
             className="transcript-day__actions transcript-toolbar"
           >
-            <span className="transcript-toolbar__autoplay">
-              Autoplay next: {autoPlayNext ? "On" : "Off"}
-            </span>
-            {showSourceFilter ? (
-              <label className="transcript-source-filter">
-                <span>Source</span>
-                <Select
-                  value={effectiveSourceFilter}
-                  onValueChange={handleSourceFilterChange}
-                >
-                  <SelectTrigger size="sm" aria-label="Transcript source">
-                    <SelectValue>
-                      {selectedSourceOption
-                        ? `${selectedSourceOption.label} (${selectedSourceOption.count})`
-                        : "All sources"}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sourceFilterOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label} ({option.count})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            ) : null}
-            <label className="transcript-source-filter">
-              <span>Order</span>
-              <Select
-                value={sortOrder}
-                onValueChange={(value) =>
-                  handleSortOrderChange(value as HistorySortOrder)
-                }
-              >
-                <SelectTrigger size="sm" aria-label="Transcript order">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            {hasEntries && selectionCount > 0 ? (
-              <>
-                <span
-                  aria-live="polite"
-                  className="transcript-day__selection-count"
-                >
-                  {selectionCount} selected
-                </span>
-                <Button
-                  aria-label="Copy selected transcripts"
-                  onClick={handleCopySelected}
-                  size="sm"
-                  type="button"
-                  variant="secondary"
-                >
-                  {copyToast === "selected" ? (
-                    <>
-                      <Check /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy /> Copy selection
-                    </>
-                  )}
-                </Button>
-                {onTrashTranscripts ? (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        aria-label="Move selected transcript bundles to Trash"
-                        disabled={trashMutating}
-                        size="sm"
-                        type="button"
-                        variant="destructive"
-                      >
-                        {trashMutating ? (
-                          <Loader2 className="loading-spin" />
-                        ) : (
-                          <Trash2 />
-                        )}
-                        {trashMutating
-                          ? "Moving…"
-                          : `Move ${selectionCount} to Trash`}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          Move {selectionCount} transcript
-                          {selectionCount === 1 ? "" : "s"} to Trash?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Each selected recording moves as one recoverable
-                          bundle containing its audio, transcript text, metadata
-                          JSON, and error text when present. Nothing is
-                          permanently deleted until you empty the macOS Trash.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          variant="destructive"
-                          onClick={() => void handleTrashSelected()}
-                        >
-                          Move bundles to Trash
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                ) : null}
-                {onMergeAudio && selectedAudioMergeEntries.length >= 2 ? (
-                  <Button
-                    aria-label={`Merge Audio · ${selectedAudioMergeEntries.length}`}
-                    disabled={audioMergeState.status === "running"}
-                    onClick={() => onMergeAudio(selectedAudioMergeEntries)}
-                    size="sm"
-                    type="button"
-                    variant="secondary"
-                  >
-                    {audioMergeState.status === "running" ? (
-                      <Loader2 className="loading-spin" />
-                    ) : (
-                      <FileAudio />
-                    )}
-                    Merge Audio · {selectedAudioMergeEntries.length}
-                  </Button>
-                ) : null}
-                {canGenerateReports ? (
-                  <>
-                    <Button
-                      aria-label="Summarize selected transcripts"
-                      disabled={Boolean(reportDisabledReason)}
-                      title={reportDisabledReason}
-                      onClick={() =>
-                        handleGenerateReport(selectedEntries, "summary")
-                      }
-                      size="sm"
-                      type="button"
-                      variant="secondary"
-                    >
-                      <FileText /> Summary
-                    </Button>
-                    <Button
-                      aria-label="Create detailed report from selected transcripts"
-                      disabled={Boolean(reportDisabledReason)}
-                      title={reportDisabledReason}
-                      onClick={() =>
-                        handleGenerateReport(selectedEntries, "detailed_report")
-                      }
-                      size="sm"
-                      type="button"
-                      variant="secondary"
-                    >
-                      <FileText /> Report
-                    </Button>
-                  </>
-                ) : null}
-              </>
-            ) : null}
-            {hasEntries ? (
-              <Button
-                aria-label={
-                  effectiveSourceFilter === ALL_SOURCE_FILTER
-                    ? "Copy all transcripts for this day"
-                    : "Copy all transcripts in current filter"
-                }
-                onClick={handleCopyAll}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                {copyToast === "all" ? (
-                  <>
-                    <Check /> Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy /> Copy all
-                  </>
-                )}
-              </Button>
-            ) : null}
-            {canGenerateReports ? (
-              <>
-                <Button
-                  aria-label={
-                    effectiveSourceFilter === ALL_SOURCE_FILTER
-                      ? "Summarize all visible transcripts for this day"
-                      : "Summarize all visible transcripts in current filter"
-                  }
-                  disabled={Boolean(reportDisabledReason)}
-                  title={reportDisabledReason}
-                  onClick={() =>
-                    handleGenerateReport(filteredEntries, "summary")
-                  }
-                  size="sm"
-                  type="button"
-                  variant="secondary"
-                >
-                  <FileText /> Summary all
-                </Button>
-                <Button
-                  aria-label={
-                    effectiveSourceFilter === ALL_SOURCE_FILTER
-                      ? "Create detailed report from all visible transcripts for this day"
-                      : "Create detailed report from all visible transcripts in current filter"
-                  }
-                  disabled={Boolean(reportDisabledReason)}
-                  title={reportDisabledReason}
-                  onClick={() =>
-                    handleGenerateReport(filteredEntries, "detailed_report")
-                  }
-                  size="sm"
-                  type="button"
-                  variant="secondary"
-                >
-                  <FileText /> Report all
-                </Button>
-              </>
-            ) : null}
             {hasPending && hasAnyEntries ? (
               <span className="transcript-day__icloud-hint">
                 {pendingCount} more in iCloud
               </span>
             ) : null}
             <Button
-              aria-label="Reload this day"
-              disabled={isLoadingActive}
-              onClick={() => onReload?.(effectiveActiveDay)}
+              aria-label={`Export transcripts for ${effectiveActiveDay}`}
+              disabled={
+                exportRunning ||
+                (availableCount === 0 && !hasAnyEntries) ||
+                !onExportDay
+              }
+              onClick={() => void onExportDay?.(effectiveActiveDay)}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              {exportState.status === "running" &&
+              exportState.scope === "day" ? (
+                <Loader2 className="loading-spin" />
+              ) : (
+                <Download />
+              )}
+              Export day
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label="More day actions"
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <MoreHorizontal /> More
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {hasEntries ? (
+                  <DropdownMenuItem onSelect={handleCopyAll}>
+                    <Copy /> {copyToast === "all" ? "Copied" : "Copy all"}
+                  </DropdownMenuItem>
+                ) : null}
+                {canGenerateReports ? (
+                  <>
+                    <DropdownMenuItem
+                      disabled={Boolean(reportDisabledReason)}
+                      title={reportDisabledReason}
+                      onSelect={() =>
+                        handleGenerateReport(filteredEntries, "summary")
+                      }
+                    >
+                      <FileText /> Summary all
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={Boolean(reportDisabledReason)}
+                      title={reportDisabledReason}
+                      onSelect={() =>
+                        handleGenerateReport(filteredEntries, "detailed_report")
+                      }
+                    >
+                      <FileText /> Report all
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+                {(hasEntries || canGenerateReports) && (
+                  <DropdownMenuSeparator />
+                )}
+                <DropdownMenuItem
+                  disabled={isLoadingActive}
+                  onSelect={() => onReload?.(effectiveActiveDay)}
+                >
+                  <RotateCw /> Reload
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+        {hasEntries && selectionCount > 0 ? (
+          <section
+            aria-label="Selected transcript actions"
+            className="transcript-selection-shelf"
+          >
+            <label className="transcript-selection-shelf__select-all">
+              <Checkbox
+                aria-label={
+                  allPageEntriesSelected
+                    ? "Clear transcript selection"
+                    : "Select all visible transcripts"
+                }
+                checked={selectionChecked}
+                disabled={visibilityMutating}
+                onCheckedChange={() => {
+                  if (allPageEntriesSelected) {
+                    handleClearSelection();
+                  } else {
+                    handleSelectAllVisible();
+                  }
+                }}
+              />
+              <strong>{selectionCount} selected</strong>
+            </label>
+            <Button
+              disabled={visibilityMutating}
+              onClick={handleClearSelection}
               size="sm"
               type="button"
               variant="ghost"
             >
-              <RotateCw /> Reload
+              Clear
             </Button>
-          </div>
-        </header>
+            <Button
+              aria-label="Copy selected transcripts"
+              onClick={handleCopySelected}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              {copyToast === "selected" ? <Check /> : <Copy />}
+              {copyToast === "selected" ? "Copied" : "Copy selection"}
+            </Button>
+            {onSetTranscriptsHidden ? (
+              <Button
+                disabled={visibilityMutating}
+                onClick={() => void applyTranscriptVisibility(selectedEntries)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {visibilityMode === "visible" ? <EyeOff /> : <Eye />}
+                {visibilityMode === "visible"
+                  ? "Hide selected"
+                  : "Restore selected"}
+              </Button>
+            ) : null}
+            {onMergeAudio && selectedAudioMergeEntries.length >= 2 ? (
+              <Button
+                aria-label={`Merge Audio · ${selectedAudioMergeEntries.length}`}
+                disabled={audioMergeState.status === "running"}
+                onClick={() => onMergeAudio(selectedAudioMergeEntries)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {audioMergeState.status === "running" ? (
+                  <Loader2 className="loading-spin" />
+                ) : (
+                  <FileAudio />
+                )}
+                Merge Audio · {selectedAudioMergeEntries.length}
+              </Button>
+            ) : null}
+            {canGenerateReports ? (
+              <>
+                <Button
+                  aria-label="Summarize selected transcripts"
+                  disabled={Boolean(reportDisabledReason)}
+                  title={reportDisabledReason}
+                  onClick={() =>
+                    handleGenerateReport(selectedEntries, "summary")
+                  }
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  <FileText /> Summary
+                </Button>
+                <Button
+                  aria-label="Create detailed report from selected transcripts"
+                  disabled={Boolean(reportDisabledReason)}
+                  title={reportDisabledReason}
+                  onClick={() =>
+                    handleGenerateReport(selectedEntries, "detailed_report")
+                  }
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  <FileText /> Report
+                </Button>
+              </>
+            ) : null}
+            {onTrashTranscripts ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    aria-label="Move selected transcript bundles to Trash"
+                    disabled={trashMutating}
+                    size="sm"
+                    type="button"
+                    variant="destructive"
+                  >
+                    {trashMutating ? (
+                      <Loader2 className="loading-spin" />
+                    ) : (
+                      <Trash2 />
+                    )}
+                    {trashMutating ? "Moving…" : "Trash"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Move {selectionCount} transcript
+                      {selectionCount === 1 ? "" : "s"} to Trash?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Each selected recording moves as one recoverable bundle
+                      containing its audio, transcript text, metadata JSON, and
+                      error text when present. Nothing is permanently deleted
+                      until you empty the macOS Trash.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      variant="destructive"
+                      onClick={() => void handleTrashSelected()}
+                    >
+                      Move bundles to Trash
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : null}
+          </section>
+        ) : null}
         {audioMergeState.status !== "idle" ? (
           <AudioMergeStatus
             state={audioMergeState}
@@ -1449,7 +1572,6 @@ function TranscriptEntryRow({
 
   return (
     <div
-      aria-selected={isSelected}
       className="transcript-entry transcript-entry--condensed"
       data-audio-path={
         regenerateAvailable ? (entry.audio_path ?? undefined) : undefined

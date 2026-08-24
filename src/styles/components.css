@@ -14,6 +14,8 @@
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #f87171;
+  --calendar-sunday: var(--danger);
+  --calendar-saturday: #60a5fa;
   --bg: #0b0d10;
   --surface: #15191f;
   --surface-alt: #1d232b;
@@ -103,6 +105,7 @@
   --success: #16a34a;
   --warning: #d97706;
   --danger: #dc2626;
+  --calendar-saturday: #1d4ed8;
   --bg: #f8fafc;
   --surface: #ffffff;
   --surface-alt: #f1f5f9;
@@ -1954,6 +1957,59 @@ tr:last-child td {
   gap: 10px;
 }
 
+.transcript-archive-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: color-mix(in oklch, var(--surface) 88%, var(--primary) 12%);
+}
+
+.transcript-archive-rail > * {
+  min-width: 0;
+}
+
+.transcript-browse-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.transcript-browse-row__filters {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.transcript-export-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface-alt);
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.transcript-export-status > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .transcript-pagination {
   display: flex;
   flex-wrap: wrap;
@@ -2015,14 +2071,14 @@ tr:last-child td {
   .transcript-pagination__day-label,
 .transcript-pagination__day[data-day-of-week="0"]
   .transcript-pagination__day-number {
-  color: #dc2626;
+  color: var(--calendar-sunday);
 }
 
 .transcript-pagination__day[data-day-of-week="6"]
   .transcript-pagination__day-label,
 .transcript-pagination__day[data-day-of-week="6"]
   .transcript-pagination__day-number {
-  color: #2563eb;
+  color: var(--calendar-saturday);
 }
 
 .transcript-pagination__day:hover:not(:disabled) {
@@ -2043,14 +2099,14 @@ tr:last-child td {
 .transcript-pagination__day[aria-current="page"] {
   border-color: var(--primary);
   background: var(--primary);
-  color: white;
+  color: var(--primary-foreground);
 }
 
 .transcript-pagination__day[aria-current="page"]
   .transcript-pagination__day-label,
 .transcript-pagination__day[aria-current="page"]
   .transcript-pagination__day-number {
-  color: white;
+  color: var(--primary-foreground);
 }
 
 .transcript-pagination__day[aria-current="page"]:hover {
@@ -2147,10 +2203,30 @@ tr:last-child td {
   margin-right: 4px;
 }
 
-.transcript-day__selection-count {
-  font-size: var(--text-caption);
-  line-height: var(--leading-caption);
-  color: var(--muted-foreground);
+.transcript-selection-shelf {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid color-mix(in oklch, var(--primary) 38%, var(--line));
+  border-radius: var(--radius-card);
+  background: color-mix(in oklch, var(--surface) 94%, var(--primary) 6%);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 16%);
+}
+
+.transcript-selection-shelf__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-compact);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3062,7 +3138,20 @@ code {
   }
 
   .transcript-pagination {
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    justify-content: stretch;
+    flex-wrap: nowrap;
+  }
+
+  .transcript-pagination__week {
+    grid-template-columns: repeat(7, minmax(48px, 1fr));
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .transcript-pagination__day {
+    scroll-snap-align: center;
   }
 
   .report-history__toolbar,

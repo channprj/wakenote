@@ -545,6 +545,12 @@ export interface TranscriptDay {
   count: number;
 }
 
+export interface TranscriptExportResult {
+  destination_path: string;
+  day_count: number;
+  transcript_count: number;
+}
+
 export interface UploadedAudio {
   audio_path: string;
   original_filename: string;

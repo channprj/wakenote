@@ -15,6 +15,7 @@ import {
   formatLocalTimestamp,
   formatTranscriptForCopy,
   formatTranscriptsForCopy,
+  formatTranscriptsForTextExport,
   groupQueueJobsByDay,
   groupTranscriptsByDay,
   humanizeBasenameTime,
@@ -191,12 +192,46 @@ describe("transcript history helpers", () => {
 
   it("counts only unread failed, cancelled, and skipped Activity outcomes", () => {
     const jobs: QueueJob[] = [
-      { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed", is_read: false },
-      { id: 2, audio_path: "/cancelled.wav", model_id: "m", status: "cancelled" },
-      { id: 3, audio_path: "/skipped.wav", model_id: "m", status: "skipped", is_read: false },
-      { id: 4, audio_path: "/read.wav", model_id: "m", status: "failed", is_read: true },
-      { id: 5, audio_path: "/pending.wav", model_id: "m", status: "pending", is_read: false },
-      { id: 6, audio_path: "/completed.wav", model_id: "m", status: "completed" },
+      {
+        id: 1,
+        audio_path: "/failed.wav",
+        model_id: "m",
+        status: "failed",
+        is_read: false,
+      },
+      {
+        id: 2,
+        audio_path: "/cancelled.wav",
+        model_id: "m",
+        status: "cancelled",
+      },
+      {
+        id: 3,
+        audio_path: "/skipped.wav",
+        model_id: "m",
+        status: "skipped",
+        is_read: false,
+      },
+      {
+        id: 4,
+        audio_path: "/read.wav",
+        model_id: "m",
+        status: "failed",
+        is_read: true,
+      },
+      {
+        id: 5,
+        audio_path: "/pending.wav",
+        model_id: "m",
+        status: "pending",
+        is_read: false,
+      },
+      {
+        id: 6,
+        audio_path: "/completed.wav",
+        model_id: "m",
+        status: "completed",
+      },
     ];
 
     expect(countUnreadActivityOutcomes(jobs)).toBe(3);
@@ -1208,5 +1243,35 @@ describe("formatTranscriptsForCopy", () => {
 
   it("returns an empty string for an empty list", () => {
     expect(formatTranscriptsForCopy([])).toBe("");
+  });
+});
+
+describe("formatTranscriptsForTextExport", () => {
+  it("separates chronological entries with blank lines and ends with one newline", () => {
+    const entries: RecentTranscript[] = [
+      {
+        transcript_path: "/tmp/WakeNote/20260824/090000.txt",
+        audio_path: "/tmp/WakeNote/20260824/090000.m4a",
+        recorded_at: "2026-08-24T09:00:00+09:00",
+        text: "First thought",
+      },
+      {
+        transcript_path: "/tmp/WakeNote/20260824/100000-youtube.txt",
+        audio_path: "/tmp/WakeNote/20260824/100000-youtube.m4a",
+        recorded_at: "2026-08-24T10:00:00+09:00",
+        text: "Second thought",
+        source: "system",
+        source_label: "youtube",
+      },
+    ];
+
+    expect(formatTranscriptsForTextExport(entries)).toBe(
+      "2026-08-24 09:00:00 [Mic] - First thought\n\n" +
+        "2026-08-24 10:00:00 [YouTube] - Second thought\n",
+    );
+  });
+
+  it("returns an empty string when a day has no transcripts", () => {
+    expect(formatTranscriptsForTextExport([])).toBe("");
   });
 });

@@ -54,6 +54,16 @@ export function formatTranscriptsForCopy(
     .join("\n");
 }
 
+export function formatTranscriptsForTextExport(
+  entries: readonly RecentTranscript[],
+  sourceLabels: Readonly<Record<string, string>> = {},
+): string {
+  if (entries.length === 0) return "";
+  return `${entries
+    .map((entry) => formatTranscriptForCopy(entry, sourceLabels))
+    .join("\n\n")}\n`;
+}
+
 export function transcriptSourceLabel(
   entry: Pick<RecentTranscript, "source" | "source_label" | "device_name">,
   sourceLabels: Readonly<Record<string, string>> = {},

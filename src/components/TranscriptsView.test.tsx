@@ -395,7 +395,7 @@ describe("TranscriptsView", () => {
     expect(markup).toContain(
       "No hidden transcripts for this day · Files remain on disk",
     );
-    expect(markup).toContain("Restore selected");
+    expect(markup).not.toContain("Restore selected");
   });
 
   it("preserves long transcript text and paths in the compact row structure", () => {
@@ -898,7 +898,7 @@ describe("TranscriptsView", () => {
     expect(markup).not.toContain("Whisper Large");
   });
 
-  it("always renders a reload button and shows copy actions only when the day has entries", () => {
+  it("always renders a More trigger and keeps day-wide actions out of the primary toolbar", () => {
     const withEntries = view({
       today: new Date("2026-05-19T18:00:00+09:00"),
       days: [{ day: "2026-05-19", count: 1 }],
@@ -914,18 +914,17 @@ describe("TranscriptsView", () => {
         ],
       ]),
     });
-    expect(withEntries).toContain('aria-label="Reload this day"');
-    expect(withEntries).toContain(
+    expect(withEntries).toContain('aria-label="More day actions"');
+    expect(withEntries).not.toContain(
       'aria-label="Copy all transcripts for this day"',
     );
-    expect(withEntries).toContain("Copy all");
 
     const empty = view({ today: new Date("2026-05-19T18:00:00+09:00") });
-    expect(empty).toContain('aria-label="Reload this day"');
+    expect(empty).toContain('aria-label="More day actions"');
     expect(empty).not.toContain("Copy all");
   });
 
-  it("shows OpenRouter summary and detailed report actions for visible transcripts", () => {
+  it("keeps OpenRouter day-wide actions out of the primary toolbar", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
@@ -936,17 +935,12 @@ describe("TranscriptsView", () => {
       onGenerateReport: () => undefined,
     });
 
-    expect(markup).toContain(
-      'aria-label="Summarize all visible transcripts for this day"',
-    );
-    expect(markup).toContain(
-      'aria-label="Create detailed report from all visible transcripts for this day"',
-    );
-    expect(markup).toContain("Summary all");
-    expect(markup).toContain("Report all");
+    expect(markup).toContain('aria-label="More day actions"');
+    expect(markup).not.toContain("Summary all");
+    expect(markup).not.toContain("Report all");
   });
 
-  it("disables OpenRouter report actions until an API key is saved", () => {
+  it("does not expose unavailable report actions in the primary toolbar", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
@@ -957,12 +951,8 @@ describe("TranscriptsView", () => {
       onGenerateReport: () => undefined,
     });
 
-    expect(markup).toMatch(
-      /aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/,
-    );
-    expect(markup).toContain(
-      "Save an OpenRouter API key in Advanced settings first",
-    );
+    expect(markup).toContain('aria-label="More day actions"');
+    expect(markup).not.toContain("Save an OpenRouter API key");
   });
 
   it("shows a durable run notice with Open Reports", () => {
@@ -981,7 +971,7 @@ describe("TranscriptsView", () => {
     expect(markup).not.toContain('aria-label="Report generation progress"');
   });
 
-  it("disables new report requests while a durable run is active", () => {
+  it("keeps active-run report actions behind More", () => {
     const markup = view({
       today: new Date("2026-05-10T12:00:00+09:00"),
       days: [{ day: "2026-05-10", count: 1 }],
@@ -993,20 +983,16 @@ describe("TranscriptsView", () => {
       onGenerateReport: () => undefined,
     });
 
-    expect(markup).toMatch(
-      /aria-label="Summarize all visible transcripts for this day"[^>]*disabled=""/,
-    );
-    expect(markup).toContain("A report is already running");
+    expect(markup).toContain('aria-label="More day actions"');
+    expect(markup).not.toContain("A report is already running");
   });
 
-  it("disables the reload button while the active day is loading", () => {
+  it("keeps the day loading state visible while secondary actions stay in More", () => {
     const markup = view({
       today: new Date("2026-05-19T18:00:00+09:00"),
       loadingDay: "2026-05-19",
     });
-    expect(markup).toMatch(
-      /<button[^>]*aria-label="Reload this day"[^>]*disabled=""/,
-    );
+    expect(markup).toContain('aria-label="More day actions"');
     expect(markup).toContain("Loading…");
   });
 
@@ -1046,7 +1032,7 @@ describe("TranscriptsView", () => {
     // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
     expect(markup).toContain("2 more in iCloud");
     expect(markup).toContain("local one");
-    expect(markup).toContain('aria-label="Reload this day"');
+    expect(markup).toContain('aria-label="More day actions"');
   });
 
   it("prompts a reload in the empty state when a day is entirely iCloud-evicted", () => {

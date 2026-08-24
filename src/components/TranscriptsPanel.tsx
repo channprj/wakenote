@@ -3,6 +3,8 @@ import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
 import { useListVisibility } from "../hooks/use-list-visibility";
 import { projectListItems } from "../lib/list-visibility";
 import {
+  exportAllTranscriptDays,
+  exportTranscriptDay,
   loadTranscriptDays,
   loadTranscriptsForDay,
   mergeTranscriptAudio,
@@ -24,7 +26,11 @@ import type {
   RecentTranscript,
   TranscriptDay,
 } from "../lib/types";
-import { TranscriptsView, formatLocalDay } from "./TranscriptsView";
+import {
+  TranscriptsView,
+  formatLocalDay,
+  type TranscriptExportUiState,
+} from "./TranscriptsView";
 
 export function TranscriptsPanel({
   customSources = [],
@@ -54,6 +60,9 @@ export function TranscriptsPanel({
   });
   const [trashMutating, setTrashMutating] = useState(false);
   const [trashError, setTrashError] = useState<string | null>(null);
+  const [exportState, setExportState] = useState<TranscriptExportUiState>({
+    status: "idle",
+  });
   const [visibilityMode, setVisibilityMode] = useState<"visible" | "hidden">(
     "visible",
   );
@@ -220,6 +229,40 @@ export function TranscriptsPanel({
     await openTranscriptFolder(destinationPath);
   }, []);
 
+  const exportAllDays = useCallback(async () => {
+    setExportState({ status: "running", scope: "all" });
+    try {
+      const result = await exportAllTranscriptDays();
+      setExportState(
+        result ? { status: "success", result } : { status: "idle" },
+      );
+    } catch (error) {
+      setExportState({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
+  const exportDay = useCallback(async (day: string) => {
+    setExportState({ status: "running", scope: "day", day });
+    try {
+      const result = await exportTranscriptDay(day);
+      setExportState(
+        result ? { status: "success", result } : { status: "idle" },
+      );
+    } catch (error) {
+      setExportState({
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
+  const openExportFolder = useCallback(async (destinationPath: string) => {
+    await openTranscriptFolder(destinationPath);
+  }, []);
+
   const trashEntries = useCallback(
     async (entries: readonly RecentTranscript[]) => {
       if (entries.length === 0 || trashMutating) {
@@ -362,11 +405,15 @@ export function TranscriptsPanel({
       reportError={reportError}
       reportRun={visibleRun}
       audioMergeState={audioMergeState}
+      exportState={exportState}
       onActiveDayChange={ensureDayLoaded}
       onOpenFolder={openEntryFolder}
       onGenerateReport={generateReport}
       onMergeAudio={mergeAudioEntries}
       onOpenMergedAudioFolder={openMergedAudioFolder}
+      onExportAllDays={exportAllDays}
+      onExportDay={exportDay}
+      onOpenExportFolder={openExportFolder}
       onOpenReports={onOpenReports}
       onRegenerate={regenerateEntries}
       onReload={reloadDay}

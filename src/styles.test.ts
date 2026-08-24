@@ -632,6 +632,65 @@ describe("compact overflow safety contract", () => {
     );
   });
 
+  it("separates transcript archive, browse, export, and selection layers", () => {
+    expect(cssRule(".transcript-archive-rail", componentsCss)).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto;",
+    );
+    expect(cssRule(".transcript-browse-row", componentsCss)).toContain(
+      "justify-content: space-between;",
+    );
+    expect(cssRule(".transcript-export-status", componentsCss)).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto;",
+    );
+    const selection = cssRule(".transcript-selection-shelf", componentsCss);
+    expect(selection).toContain("position: sticky;");
+    expect(selection).toContain("top: 0;");
+    expect(selection).toContain("flex-wrap: wrap;");
+  });
+
+  it("stacks transcript workspace layers without horizontal overflow", () => {
+    const compact = cssBlock("@media (max-width: 979px)", pagesCss);
+
+    expect(cssRule(".transcript-archive-rail", compact)).toContain(
+      "grid-template-columns: minmax(0, 1fr);",
+    );
+    expect(cssRule(".transcript-browse-row", compact)).toContain(
+      "align-items: stretch;",
+    );
+    expect(cssRule(".transcript-browse-row__filters", compact)).toContain(
+      "justify-content: flex-start;",
+    );
+  });
+
+  it("keeps the seven-day picker legible at the narrowest supported width", () => {
+    const narrow = cssBlock("@media (max-width: 640px)", componentsCss);
+
+    expect(cssRule(".transcript-pagination", narrow)).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
+    );
+    const week = cssRule(".transcript-pagination__week", narrow);
+    expect(week).toContain(
+      "grid-template-columns: repeat(7, minmax(48px, 1fr));",
+    );
+    expect(week).toContain("overflow-x: auto;");
+  });
+
+  it("uses theme-aware accessible transcript calendar colors", () => {
+    const active = cssRule(
+      '.transcript-pagination__day[aria-current="page"]',
+      componentsCss,
+    );
+    const activeLabels = cssRule(
+      '.transcript-pagination__day[aria-current="page"]\n  .transcript-pagination__day-label,\n.transcript-pagination__day[aria-current="page"]\n  .transcript-pagination__day-number',
+      componentsCss,
+    );
+
+    expect(active).toContain("color: var(--primary-foreground);");
+    expect(activeLabels).toContain("color: var(--primary-foreground);");
+    expect(componentsCss).toContain("color: var(--calendar-sunday);");
+    expect(componentsCss).toContain("color: var(--calendar-saturday);");
+  });
+
   it("turns Activity rows into labeled cards and stacks Settings controls", () => {
     const compact = cssBlock("@media (max-width: 979px)", pagesCss);
     const narrow = cssBlock("@media (max-width: 820px)", pagesCss);

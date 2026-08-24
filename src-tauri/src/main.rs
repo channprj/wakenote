@@ -3838,6 +3838,58 @@ async fn transcripts_for_day(
 }
 
 #[tauri::command]
+async fn export_all_transcript_days(
+    state: State<'_, BackendState>,
+    destination_parent: String,
+) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
+    let (save_root, custom_sources) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
+        (
+            expand_user_path(settings.save_root),
+            settings.custom_sources,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::transcript_export::export_all_transcript_days(
+            &save_root,
+            Path::new(&destination_parent),
+            &custom_sources,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn export_transcript_day(
+    state: State<'_, BackendState>,
+    day: String,
+    destination_path: String,
+) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
+    let (save_root, custom_sources) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        let settings = backend.settings();
+        (
+            expand_user_path(settings.save_root),
+            settings.custom_sources,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::transcript_export::export_transcript_day(
+            &save_root,
+            &day,
+            Path::new(&destination_path),
+            &custom_sources,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn rebuild_transcript_day_index(
     state: State<'_, BackendState>,
     day: String,
@@ -8458,6 +8510,8 @@ fn main() {
             recent_transcripts,
             transcript_days,
             transcripts_for_day,
+            export_all_transcript_days,
+            export_transcript_day,
             rebuild_transcript_day_index,
             start_llm_report,
             list_llm_report_runs,

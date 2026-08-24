@@ -184,8 +184,7 @@ function mockInvoke(command: string) {
         id: "meeting-1",
         title: "Meeting",
         source_filename: "audio.wav",
-        status:
-          command === "import_meeting_recording" ? "recorded" : "pending",
+        status: command === "import_meeting_recording" ? "recorded" : "pending",
         duration_ms: 1_000,
         created_at: "2026-08-03T00:00:00Z",
         updated_at: "2026-08-03T00:00:00Z",
@@ -522,6 +521,69 @@ describe("tauri runtime client snapshots", () => {
       day: "2026-05-12",
       download: true,
     });
+  });
+
+  it("chooses a directory and exports every transcript day through Tauri", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.open.mockResolvedValue("/tmp/Exports");
+    mocks.invoke.mockResolvedValue({
+      destination_path: "/tmp/Exports/WakeNote Transcripts 2026-08-24 153000",
+      day_count: 2,
+      transcript_count: 3,
+    });
+    const { exportAllTranscriptDays } = await import("./tauri-client");
+
+    const result = await exportAllTranscriptDays();
+
+    expect(mocks.open).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: "Export all transcript days",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("export_all_transcript_days", {
+      destinationParent: "/tmp/Exports",
+    });
+    expect(result).toEqual({
+      destination_path: "/tmp/Exports/WakeNote Transcripts 2026-08-24 153000",
+      day_count: 2,
+      transcript_count: 3,
+    });
+  });
+
+  it("chooses a text file and exports the active transcript day through Tauri", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.save.mockResolvedValue("/tmp/WakeNote-2026-08-24.txt");
+    mocks.invoke.mockResolvedValue({
+      destination_path: "/tmp/WakeNote-2026-08-24.txt",
+      day_count: 1,
+      transcript_count: 2,
+    });
+    const { exportTranscriptDay } = await import("./tauri-client");
+
+    const result = await exportTranscriptDay("2026-08-24");
+
+    expect(mocks.save).toHaveBeenCalledWith({
+      defaultPath: "WakeNote-2026-08-24.txt",
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("export_transcript_day", {
+      day: "2026-08-24",
+      destinationPath: "/tmp/WakeNote-2026-08-24.txt",
+    });
+    expect(result?.transcript_count).toBe(2);
+  });
+
+  it("does not invoke export commands after a cancelled destination dialog", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.open.mockResolvedValue(null);
+    mocks.save.mockResolvedValue(null);
+    const { exportAllTranscriptDays, exportTranscriptDay } = await import(
+      "./tauri-client"
+    );
+
+    await expect(exportAllTranscriptDays()).resolves.toBeNull();
+    await expect(exportTranscriptDay("2026-08-24")).resolves.toBeNull();
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
   it("invokes regenerate_transcript and reloads the Tauri snapshot", async () => {

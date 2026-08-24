@@ -54,6 +54,34 @@ function renderVisibilityView(
 }
 
 describe("TranscriptsView list visibility", () => {
+  it("reveals selection actions only after a transcript is selected", async () => {
+    const onSetTranscriptsHidden = vi.fn().mockResolvedValue(true);
+    renderVisibilityView(onSetTranscriptsHidden);
+
+    expect(screen.queryByRole("button", { name: "Hide selected" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Copy selected transcripts" }),
+    ).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Select transcript 2026-05-10 01:02:03",
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Hide selected" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Copy selected transcripts" }),
+    ).toBeTruthy();
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    expect(
+      screen
+        .getByText("Transcript selected for visibility")
+        .closest(".transcript-entry")
+        ?.getAttribute("aria-selected"),
+    ).toBeNull();
+  });
+
   it("sends the selected transcript paths as one hide batch", async () => {
     const onSetTranscriptsHidden = vi.fn().mockResolvedValue(true);
     renderVisibilityView(onSetTranscriptsHidden);
@@ -69,7 +97,7 @@ describe("TranscriptsView list visibility", () => {
     await userEvent.click(apply);
 
     expect(onSetTranscriptsHidden).toHaveBeenCalledWith([entry], true);
-    expect(apply.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Hide selected" })).toBeNull();
   });
 
   it("keeps selection intact when persistence rejects the batch", async () => {
@@ -104,6 +132,137 @@ describe("TranscriptsView list visibility", () => {
     );
 
     expect(onSetTranscriptsHidden).toHaveBeenCalledWith([entry], true);
+  });
+});
+
+describe("TranscriptsView day and archive actions", () => {
+  it("keeps exports visible and places secondary day actions in More", async () => {
+    const onExportAllDays = vi.fn();
+    const onExportDay = vi.fn();
+    const onReload = vi.fn();
+    render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: 1 }]}
+        entriesByDay={new Map([[day, [entry]]])}
+        openrouterKeyConfigured
+        onGenerateReport={vi.fn()}
+        onExportAllDays={onExportAllDays}
+        onExportDay={onExportDay}
+        onReload={onReload}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Export all transcript days" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Export transcripts for 2026-05-10",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "More day actions" }),
+    );
+
+    expect(screen.getByRole("menuitem", { name: "Copy all" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Summary all" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Report all" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Reload" }));
+
+    expect(onExportAllDays).toHaveBeenCalledOnce();
+    expect(onExportDay).toHaveBeenCalledWith(day);
+    expect(onReload).toHaveBeenCalledWith(day);
+    expect(screen.queryByText(/Autoplay next:/)).toBeNull();
+  });
+
+  it("keeps unavailable report and reload actions disabled inside More", async () => {
+    render(
+      <TranscriptsView
+        today={new Date("2026-05-10T12:00:00+09:00")}
+        days={[{ day, count: 1 }]}
+        entriesByDay={new Map([[day, [entry]]])}
+        loadingDay={day}
+        onGenerateReport={vi.fn()}
+        onReload={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "More day actions" }),
+    );
+
+    expect(
+      screen
+        .getByRole("menuitem", { name: "Summary all" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("menuitem", { name: "Report all" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("menuitem", { name: "Reload" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
+  });
+
+  it("announces export progress, success, and error while guarding concurrent exports", () => {
+    const common = {
+      today: new Date("2026-05-10T12:00:00+09:00"),
+      days: [{ day, count: 1 }],
+      entriesByDay: new Map([[day, [entry]]]),
+      onExportAllDays: vi.fn(),
+      onExportDay: vi.fn(),
+    };
+    const { rerender } = render(
+      <TranscriptsView
+        {...common}
+        exportState={{ status: "running", scope: "all" }}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "Exporting all transcript days",
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Export all transcript days",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    rerender(
+      <TranscriptsView
+        {...common}
+        onOpenExportFolder={vi.fn()}
+        exportState={{
+          status: "success",
+          result: {
+            destination_path: "/tmp/WakeNote Transcripts",
+            day_count: 2,
+            transcript_count: 3,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "Exported 3 transcripts across 2 days",
+    );
+    expect(
+      screen.getByRole("button", { name: "Show export in Finder" }),
+    ).toBeTruthy();
+
+    rerender(
+      <TranscriptsView
+        {...common}
+        exportState={{ status: "error", message: "Disk is full" }}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("Disk is full");
   });
 });
 

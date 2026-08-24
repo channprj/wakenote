@@ -1024,19 +1024,6 @@
   gap: 6px;
 }
 
-.transcript-toolbar__autoplay {
-  display: inline-flex;
-  min-height: var(--control-compact);
-  align-items: center;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--text-micro);
-  white-space: nowrap;
-}
-
 .transcript-pagination__day {
   min-width: 0;
 }
@@ -1428,6 +1415,31 @@
 
   .meeting-detail__hero > [data-slot="status-badge"] {
     grid-column: 2;
+    justify-self: start;
+  }
+
+  .transcript-archive-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transcript-archive-rail > [data-slot="button"] {
+    justify-self: start;
+  }
+
+  .transcript-browse-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .transcript-browse-row__filters {
+    justify-content: flex-start;
+  }
+
+  .transcript-export-status {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transcript-export-status > [data-slot="button"] {
     justify-self: start;
   }
 

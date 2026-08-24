@@ -8,9 +8,7 @@ import { ListVisibilityToolbar } from "./ListVisibilityToolbar";
 afterEach(cleanup);
 
 function renderToolbar(
-  overrides: Partial<
-    React.ComponentProps<typeof ListVisibilityToolbar>
-  > = {},
+  overrides: Partial<React.ComponentProps<typeof ListVisibilityToolbar>> = {},
 ) {
   const props: React.ComponentProps<typeof ListVisibilityToolbar> = {
     mode: "visible",
@@ -34,12 +32,8 @@ describe("ListVisibilityToolbar", () => {
   it("shows mode counts and applies Hide in Visible mode", async () => {
     const props = renderToolbar();
 
-    expect(
-      screen.getByRole("radio", { name: /Visible3/ }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("radio", { name: /Hidden2/ }),
-    ).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Visible3/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Hidden2/ })).toBeTruthy();
 
     await userEvent.click(
       screen.getByRole("button", { name: "Hide selected" }),
@@ -53,9 +47,7 @@ describe("ListVisibilityToolbar", () => {
     expect(
       screen.getByRole("button", { name: "Restore selected" }),
     ).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("radio", { name: /Visible3/ }),
-    );
+    await userEvent.click(screen.getByRole("radio", { name: /Visible3/ }));
 
     expect(props.onModeChange).toHaveBeenCalledWith("visible");
   });
@@ -92,8 +84,15 @@ describe("ListVisibilityToolbar", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
-    expect(
-      screen.getByRole("status").getAttribute("aria-live"),
-    ).toBe("polite");
+    expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("keeps only the visibility switch when selection controls live externally", () => {
+    renderToolbar({ selectionPlacement: "external" });
+
+    expect(screen.getByRole("radio", { name: /Visible3/ })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Hidden2/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hide selected" })).toBeNull();
   });
 });

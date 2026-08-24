@@ -12,7 +12,10 @@ import {
   createAudioMergeOperationId,
   eligibleAudioMergeEntries,
 } from "./audio-merge";
-import { formatLocalTimestamp } from "./transcript-history";
+import {
+  formatLocalTimestamp,
+  formatTranscriptsForTextExport,
+} from "./transcript-history";
 import {
   applyListVisibilityRequest,
   emptyListVisibilityState,
@@ -39,6 +42,7 @@ import type {
   RecentTranscript,
   SettingsPatch,
   TranscriptDay,
+  TranscriptExportResult,
   UploadedAudio,
   AudioWaveform,
   AppPermissions,
@@ -642,6 +646,104 @@ export async function rebuildTranscriptDayIndex(
   return invoke<RecentTranscript[]>("rebuild_transcript_day_index", {
     day,
     download,
+  });
+}
+
+function browserTranscriptSourceLabels(): Record<string, string> {
+  const settings = browserSnapshot.settings ?? defaultSettings();
+  return Object.fromEntries(
+    settings.custom_sources.map((source) => [source.id, source.label]),
+  );
+}
+
+function downloadBrowserTranscriptFile(
+  fileName: string,
+  entries: readonly RecentTranscript[],
+) {
+  if (
+    typeof document === "undefined" ||
+    typeof URL.createObjectURL !== "function"
+  ) {
+    return;
+  }
+  const content = formatTranscriptsForTextExport(
+    entries,
+    browserTranscriptSourceLabels(),
+  );
+  const url = URL.createObjectURL(
+    new Blob([content], { type: "text/plain;charset=utf-8" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function sortedBrowserTranscriptsForDay(day: string): RecentTranscript[] {
+  return (browserSnapshot.recent_transcripts ?? [])
+    .filter((transcript) => transcriptDayFromBrowser(transcript) === day)
+    .sort((left, right) => left.recorded_at.localeCompare(right.recorded_at));
+}
+
+export async function exportAllTranscriptDays(): Promise<TranscriptExportResult | null> {
+  if (!isTauriRuntime()) {
+    const days = await loadTranscriptDays();
+    let transcriptCount = 0;
+    let dayCount = 0;
+    for (const { day } of days) {
+      const entries = sortedBrowserTranscriptsForDay(day);
+      if (entries.length === 0) continue;
+      downloadBrowserTranscriptFile(`WakeNote-${day}.txt`, entries);
+      transcriptCount += entries.length;
+      dayCount += 1;
+    }
+    if (dayCount === 0) {
+      throw new Error("No transcripts to export");
+    }
+    return {
+      destination_path: "Downloads",
+      day_count: dayCount,
+      transcript_count: transcriptCount,
+    };
+  }
+
+  const destinationParent = await open({
+    directory: true,
+    multiple: false,
+    title: "Export all transcript days",
+  });
+  if (typeof destinationParent !== "string") return null;
+  return invoke<TranscriptExportResult>("export_all_transcript_days", {
+    destinationParent,
+  });
+}
+
+export async function exportTranscriptDay(
+  day: string,
+): Promise<TranscriptExportResult | null> {
+  if (!isTauriRuntime()) {
+    const entries = sortedBrowserTranscriptsForDay(day);
+    if (entries.length === 0) {
+      throw new Error(`No transcripts to export for ${day}`);
+    }
+    const fileName = `WakeNote-${day}.txt`;
+    downloadBrowserTranscriptFile(fileName, entries);
+    return {
+      destination_path: fileName,
+      day_count: 1,
+      transcript_count: entries.length,
+    };
+  }
+
+  const destinationPath = await save({
+    defaultPath: `WakeNote-${day}.txt`,
+    filters: [{ name: "Text", extensions: ["txt"] }],
+  });
+  if (!destinationPath) return null;
+  return invoke<TranscriptExportResult>("export_transcript_day", {
+    day,
+    destinationPath,
   });
 }
 
