@@ -3513,6 +3513,33 @@ pub fn transcripts_for_day_from_save_root(
     entries
 }
 
+pub(crate) fn transcripts_for_day_result_from_save_root(
+    root: &Path,
+    day: &str,
+    download: bool,
+) -> Result<Vec<RecentTranscript>, String> {
+    let Some(compact) = compact_day_from_dashed(day) else {
+        return Ok(Vec::new());
+    };
+
+    if !download && let Some(entries) = read_valid_transcript_day_index(root, day, &compact) {
+        return Ok(entries);
+    }
+
+    let _dataless_guard = if download {
+        None
+    } else {
+        Some(DatalessMaterializationGuard::disabled())
+    };
+    let entries = collect_transcripts_for_compact_day_result(root, &compact)?;
+
+    if download {
+        write_transcript_day_index(root, day, &compact, &entries)?;
+    }
+
+    Ok(entries)
+}
+
 pub fn rebuild_transcript_day_index_from_save_root(
     root: &Path,
     day: &str,
@@ -3581,6 +3608,32 @@ fn collect_transcripts_for_compact_day(root: &Path, compact: &str) -> Vec<Recent
         .into_iter()
         .map(|candidate| candidate.transcript)
         .collect()
+}
+
+fn collect_transcripts_for_compact_day_result(
+    root: &Path,
+    compact: &str,
+) -> Result<Vec<RecentTranscript>, String> {
+    let day_dir = root.join(compact);
+    let uploaded_dir = root.join("uploaded").join(compact);
+    let mut paths = Vec::new();
+    collect_day_sidecar_paths(&day_dir, &mut paths);
+    collect_day_sidecar_paths(&uploaded_dir, &mut paths);
+    paths.sort_by(|left, right| {
+        transcript_path_sort_key(left).cmp(&transcript_path_sort_key(right))
+    });
+
+    let candidates = paths
+        .iter()
+        .map(|path| transcript_display_candidate_from_sidecar_result(path))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    Ok(prefer_dictation_transcripts(candidates)
+        .into_iter()
+        .map(|candidate| candidate.transcript)
+        .collect())
 }
 
 fn transcript_day_index_path(root: &Path, compact: &str) -> PathBuf {
@@ -3837,10 +3890,25 @@ struct TranscriptDisplayCandidate {
 }
 
 fn transcript_display_candidate_from_sidecar(path: &Path) -> Option<TranscriptDisplayCandidate> {
-    let text = fs::read_to_string(path).ok()?.trim().to_string();
+    transcript_display_candidate_from_sidecar_result(path)
+        .ok()
+        .flatten()
+}
+
+fn transcript_display_candidate_from_sidecar_result(
+    path: &Path,
+) -> Result<Option<TranscriptDisplayCandidate>, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read transcript {}: {error}", path.display()))?
+        .trim()
+        .to_string();
     if text.is_empty() {
-        return None;
+        return Ok(None);
     }
+    Ok(Some(transcript_display_candidate_from_text(path, text)))
+}
+
+fn transcript_display_candidate_from_text(path: &Path, text: String) -> TranscriptDisplayCandidate {
     let metadata = metadata_for_transcript(path);
 
     let source = metadata
@@ -3869,7 +3937,7 @@ fn transcript_display_candidate_from_sidecar(path: &Path) -> Option<TranscriptDi
         .or_else(|| parse_recorded_at(&recorded_at));
     let ended_at = metadata.as_ref().map(|metadata| metadata.ended_at);
 
-    Some(TranscriptDisplayCandidate {
+    TranscriptDisplayCandidate {
         transcript: RecentTranscript {
             transcript_path: path.to_string_lossy().to_string(),
             audio_path: audio_path_for_transcript(path)
@@ -3884,7 +3952,7 @@ fn transcript_display_candidate_from_sidecar(path: &Path) -> Option<TranscriptDi
         },
         started_at,
         ended_at,
-    })
+    }
 }
 
 fn prefer_dictation_transcripts(
@@ -4909,6 +4977,40 @@ mod tests {
         let downloaded = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", true);
         assert_eq!(local, downloaded);
         assert_eq!(local.len(), 2);
+    }
+
+    #[test]
+    fn strict_transcripts_for_day_matches_the_local_day_view() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        std::fs::write(day.join("090000.txt"), "morning\n").expect("morning");
+        std::fs::write(day.join("180000.txt"), "evening\n").expect("evening");
+
+        let transcripts = transcripts_for_day_result_from_save_root(tmp.path(), "2026-05-10", true)
+            .expect("strict transcript day");
+
+        assert_eq!(
+            transcripts
+                .iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["morning", "evening"],
+        );
+    }
+
+    #[test]
+    fn strict_transcripts_for_day_reports_invalid_utf8_sidecars() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let day = tmp.path().join("20260510");
+        std::fs::create_dir_all(&day).expect("day");
+        std::fs::write(day.join("090000.txt"), [0xff, 0xfe]).expect("invalid UTF-8");
+
+        let error = transcripts_for_day_result_from_save_root(tmp.path(), "2026-05-10", true)
+            .expect_err("strict transcript read must fail");
+
+        assert!(error.contains("090000.txt"), "{error}");
+        assert!(error.contains("failed to read transcript"), "{error}");
     }
 
     #[test]

@@ -37,6 +37,7 @@ pub mod sources;
 pub mod storage;
 pub mod system_audio;
 pub mod text_input;
+pub mod transcript_export;
 pub mod transcription;
 pub mod transcription_cost;
 pub mod trash;
