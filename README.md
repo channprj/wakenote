@@ -19,7 +19,7 @@ The desktop app uses Tauri 2 and Rust for capture, persistence, and transcriptio
 
 ## Installation
 
-WakeNote currently documents a source build. Install Node.js 20+, `pnpm` 10, the stable Rust toolchain, and Xcode Command Line Tools, then run:
+WakeNote currently documents a source build. Install Node.js 20+, `pnpm` 10, the stable Rust toolchain, Xcode Command Line Tools, and CMake. On macOS, install CMake with `brew install cmake`, then run:
 
 ```bash
 pnpm install

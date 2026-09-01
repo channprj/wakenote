@@ -4,8 +4,8 @@
   "version": "0.260901.0",
   "identifier": "com.chann.wakenote",
   "build": {
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm native:preflight && pnpm dev",
+    "beforeBuildCommand": "pnpm native:preflight && pnpm build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },

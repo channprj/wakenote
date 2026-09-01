@@ -19,7 +19,7 @@ WakeNote는 마이크 한두 개, 지원되는 시스템 오디오 소스, 가�
 
 ## 설치
 
-현재 WakeNote 문서는 소스 빌드를 기준으로 합니다. Node.js 20+, `pnpm` 10, stable Rust toolchain, Xcode Command Line Tools를 설치한 뒤 다음을 실행하세요.
+현재 WakeNote 문서는 소스 빌드를 기준으로 합니다. Node.js 20+, `pnpm` 10, stable Rust toolchain, Xcode Command Line Tools, CMake를 설치하세요. macOS에서는 `brew install cmake`로 CMake를 설치한 뒤 다음을 실행하세요.
 
 ```bash
 pnpm install

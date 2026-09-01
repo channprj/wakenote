@@ -8,6 +8,7 @@
 - Node.js 20+ and `pnpm` 10. The repository pins `pnpm@10.33.4` in `package.json`.
 - The stable Rust toolchain; the crate uses Rust edition 2024.
 - Xcode Command Line Tools for Tauri builds and the native `/usr/bin/afconvert` M4A encoder.
+- CMake for compiling the bundled Whisper runtime (`brew install cmake` on macOS).
 - `ffmpeg` when recording MP3 or processing imported media that needs conversion. WakeNote checks common Homebrew and `~/.local/bin` locations before `PATH`.
 - Microphone permission for live microphone capture.
 - Screen Recording permission when system-audio capture is enabled.
@@ -18,6 +19,7 @@ Qwen3-ASR setup additionally needs `uv` or Python 3.10+ and enough disk space fo
 ### Install dependencies
 
 ```bash
+brew install cmake
 pnpm install
 ```
 
