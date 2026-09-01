@@ -213,7 +213,12 @@ function buildTauri(mode, bundle, env = process.env) {
   ensureDependencies();
   cleanRelocatedCargoArtifacts(mode);
 
-  const bundleArgs = bundle ? ['--bundles', bundle] : [];
+  // A DMG is composed from the finalized app below. Asking Tauri to build its
+  // DMG first would mount an intermediate image before we can add sherpa's
+  // runtime dylibs, forcing a second mount/repair cycle that endpoint security
+  // tools can keep busy during detach.
+  const tauriBundle = bundle === 'dmg' ? 'app' : bundle;
+  const bundleArgs = tauriBundle ? ['--bundles', tauriBundle] : [];
   // Bundle the in-process sherpa-onnx engine (Parakeet / SenseVoice) in shipped
   // builds. Kept out of the crate's default features so plain `cargo` builds and
   // CI stay light.
@@ -238,17 +243,14 @@ function buildTauri(mode, bundle, env = process.env) {
     'macos',
     APP_BUNDLE_NAME,
   );
-  if (fs.existsSync(appBundle)) {
-    bundleSherpaRuntime(appBundle, mode);
-    sealBundleSignature(appBundle, false);
+  if (!fs.existsSync(appBundle)) {
+    fail(`error: Tauri app bundle not found: ${appBundle}`);
   }
+  bundleSherpaRuntime(appBundle, mode);
+  sealBundleSignature(appBundle, false);
 
-  // `tauri build --bundles dmg` creates the DMG before this script regains
-  // control, and the Tauri bundler may remove its temporary `.app` afterwards.
-  // Repair the already-created image so `pnpm build release dmg` ships the same
-  // self-contained app as the loose bundle above.
   if (bundle === 'dmg') {
-    repairSherpaRuntimeInDmg(mode);
+    createDmgFromApp(appBundle, mode);
   }
 }
 
@@ -333,85 +335,67 @@ function bundleSherpaRuntime(appBundle, mode) {
   addRpathIfMissing(path.join(frameworks, 'libsherpa-onnx-c-api.dylib'), '@loader_path');
 }
 
-function latestDmgForMode(mode) {
+function createDmgFromApp(appBundle, mode) {
+  ensureMacOsInstallTarget();
+
   const dmgDir = path.join(tauriDir, 'target', bundleDirForMode(mode), 'bundle', 'dmg');
-  if (!fs.existsSync(dmgDir)) {
-    fail(`error: DMG output directory not found: ${dmgDir}`);
-  }
-
-  const dmgs = fs
-    .readdirSync(dmgDir)
-    .filter((name) => name.endsWith('.dmg'))
-    .map((name) => {
-      const fullPath = path.join(dmgDir, name);
-      return { fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs };
-    })
-    .sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  if (dmgs.length === 0) {
-    fail(`error: no DMG files found in ${dmgDir}`);
-  }
-
-  return dmgs[0].fullPath;
-}
-
-function repairSherpaRuntimeInDmg(mode) {
-  const sourceDmg = latestDmgForMode(mode);
-  const tempDir = fs.mkdtempSync(path.join(path.dirname(sourceDmg), '.wakenote-dmg-'));
-  const mountRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wakenote-dmg-mount-'));
-  const mountPoint = path.join(mountRoot, 'mount');
-  const rwBase = path.join(tempDir, 'image-rw');
-  const rwDmg = `${rwBase}.dmg`;
-  const repairedBase = path.join(tempDir, 'image-repaired');
-  const repairedDmg = `${repairedBase}.dmg`;
-  let attached = false;
+  const tauriConfig = JSON.parse(
+    fs.readFileSync(path.join(tauriDir, 'tauri.conf.json'), 'utf8'),
+  );
+  const productName = tauriConfig.productName;
+  const version = tauriConfig.version;
+  const architecture =
+    process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x64' : process.arch;
+  const dmgName = `${productName}_${version}_${architecture}.dmg`;
+  const outputDmg = path.join(dmgDir, dmgName);
+  const pendingDmg = path.join(dmgDir, `.${dmgName.slice(0, -4)}.building.dmg`);
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wakenote-dmg-staging-'));
   let failure = null;
 
-  console.log('==> Repairing sherpa-onnx runtime inside DMG');
-  fs.mkdirSync(mountPoint);
+  console.log('==> Creating DMG from finalized app bundle');
+  fs.mkdirSync(dmgDir, { recursive: true });
 
   try {
-    runOrThrow('hdiutil', ['convert', sourceDmg, '-format', 'UDRW', '-o', rwBase]);
-    // Tauri sized the image before the sherpa/onnxruntime dylibs were added.
-    // Grow the temporary read-write image so the repaired app fits, then the
-    // final UDZO conversion compresses it back down.
-    runOrThrow('hdiutil', ['resize', '-size', '320m', rwDmg]);
-    runOrThrow('hdiutil', ['attach', '-nobrowse', '-readwrite', '-mountpoint', mountPoint, rwDmg]);
-    attached = true;
-
-    const appBundle = path.join(mountPoint, APP_BUNDLE_NAME);
-    if (!fs.existsSync(appBundle)) {
-      fail(`error: DMG does not contain ${APP_BUNDLE_NAME}`);
-    }
-
-    bundleSherpaRuntime(appBundle, mode);
-    sealBundleSignature(appBundle, false);
-
-    runOrThrow('hdiutil', ['detach', mountPoint]);
-    attached = false;
+    runOrThrow('/usr/bin/ditto', [appBundle, path.join(stagingRoot, APP_BUNDLE_NAME)]);
+    fs.symlinkSync('/Applications', path.join(stagingRoot, 'Applications'));
+    fs.rmSync(pendingDmg, { force: true });
     runOrThrow('hdiutil', [
-      'convert',
-      rwDmg,
+      'create',
+      '-ov',
+      '-volname',
+      productName,
+      '-fs',
+      'HFS+',
+      '-srcfolder',
+      stagingRoot,
       '-format',
       'UDZO',
       '-imagekey',
       'zlib-level=9',
-      '-o',
-      repairedBase,
+      pendingDmg,
     ]);
-
-    const originalDmg = path.join(tempDir, 'image-original.dmg');
-    fs.renameSync(sourceDmg, originalDmg);
-    fs.renameSync(repairedDmg, sourceDmg);
-    fs.rmSync(originalDmg);
+    runOrThrow('hdiutil', ['verify', pendingDmg]);
+    fs.renameSync(pendingDmg, outputDmg);
+    console.log(`==> Created DMG: ${outputDmg}`);
   } catch (error) {
     failure = error;
   } finally {
-    if (attached) {
-      spawnSync('hdiutil', ['detach', mountPoint], { stdio: 'inherit' });
+    for (const cleanupPath of [stagingRoot, pendingDmg]) {
+      try {
+        fs.rmSync(cleanupPath, {
+          force: true,
+          maxRetries: 5,
+          recursive: true,
+          retryDelay: 200,
+        });
+      } catch (cleanupError) {
+        if (!failure) {
+          failure = cleanupError;
+        } else {
+          console.error(`warning: DMG staging cleanup also failed: ${cleanupError.message}`);
+        }
+      }
     }
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    fs.rmSync(mountRoot, { recursive: true, force: true });
   }
 
   if (failure) {

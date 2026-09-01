@@ -25,6 +25,15 @@ describe("scripts/build.mjs CLI", () => {
     );
   });
 
+  it("creates DMGs from the finalized app without mounting a repair image", () => {
+    expect(buildScript).toContain("const tauriBundle = bundle === 'dmg' ? 'app' : bundle");
+    expect(buildScript).toContain("function createDmgFromApp(appBundle, mode)");
+    expect(buildScript).toContain("fs.symlinkSync('/Applications'");
+    expect(buildScript).toMatch(/runOrThrow\('hdiutil', \[\s*'create'/);
+    expect(buildScript).not.toContain("Repairing sherpa-onnx runtime inside DMG");
+    expect(buildScript).not.toMatch(/runOrThrow\('hdiutil', \[\s*'attach'/);
+  });
+
   it("refreshes dependencies from the frozen lockfile before Tauri builds", () => {
     expect(buildScript).toMatch(
       /function ensureDependencies\(\)[\s\S]*run\('pnpm', \['install', '--frozen-lockfile'\]\);/,
