@@ -74,6 +74,12 @@ async function showAllStatuses(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("option", { name: "All statuses" }));
 }
 
+async function showVisibleActivity(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    screen.getByRole("button", { name: /^Visible \d+$/ }),
+  );
+}
+
 describe("QueuePanel pagination", () => {
   it("renders content warnings separately from processing errors", () => {
     const nowMs = Date.parse("2026-08-04T12:00:00.000Z");
@@ -182,6 +188,7 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
+    await showVisibleActivity(user);
     await showAllStatuses(user);
 
     expect(screen.getByText("1–50 of 51")).toBeTruthy();
@@ -256,6 +263,8 @@ describe("QueuePanel pagination", () => {
           '[data-slot="queue-table"] tbody a.truncate',
         ),
       ).map((link) => link.title);
+
+    await showVisibleActivity(user);
     expect(visiblePaths()).toEqual([
       "/recordings/20260804/180000.wav",
       "/recordings/20260804/090000.wav",
@@ -324,7 +333,7 @@ describe("QueuePanel pagination", () => {
     expect(onEnqueueBacklog).toHaveBeenCalledTimes(1);
   });
 
-  it("switches between unresolved attention and resolved issue history", async () => {
+  it("defaults to unresolved attention and switches to resolved issue history", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <QueuePanel
@@ -376,6 +385,17 @@ describe("QueuePanel pagination", () => {
       />,
     );
     const panel = within(container);
+
+    expect(
+      panel
+        .getByRole("button", { name: "Needs attention 1" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(container.querySelector('a[title="/unread.wav"]')).toBeTruthy();
+    expect(
+      container.querySelector('a[title="/resolved-failed.wav"]'),
+    ).toBeNull();
+    expect(container.querySelector('a[title="/completed.wav"]')).toBeNull();
 
     await user.click(panel.getByRole("button", { name: "Resolved 2" }));
 
@@ -473,6 +493,7 @@ describe("QueuePanel pagination", () => {
         ),
       ).map((link) => link.title);
 
+    await showVisibleActivity(user);
     expect(visiblePaths()).toEqual([
       "/recordings/20260804/110000.wav",
       "/recordings/20260804/090000.wav",
@@ -509,7 +530,7 @@ describe("QueuePanel pagination", () => {
     expect(onTrash).toHaveBeenCalledWith([1, 2, 3, 4]);
   }, 15_000);
 
-  it("hides clean completions by default and combines Activity filters", async () => {
+  it("hides clean completions in the visible view and combines Activity filters", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <QueuePanel
@@ -556,6 +577,7 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
+    await showVisibleActivity(user);
     expect(container.querySelector('a[title="/live-local.wav"]')).toBeNull();
     expect(
       container.querySelector('a[title="/dictation-openai.wav"]'),
@@ -618,6 +640,9 @@ describe("QueuePanel pagination", () => {
     );
 
     const panel = within(container);
+    await user.click(
+      panel.getByRole("button", { name: "Warnings & errors 51" }),
+    );
     const selectAll = panel.getByRole("checkbox", {
       name: "Select all 51 matching items",
     });
@@ -741,6 +766,7 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
+    await showVisibleActivity(user);
     await showAllStatuses(user);
 
     expect(
@@ -817,6 +843,7 @@ describe("QueuePanel pagination", () => {
       />,
     );
 
+    await showVisibleActivity(user);
     await showAllStatuses(user);
 
     await user.click(

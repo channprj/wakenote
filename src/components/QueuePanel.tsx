@@ -349,7 +349,7 @@ export function QueuePanel({
   const [activeDay, setActiveDay] = useState(todayDay);
   const [viewWeekStart, setViewWeekStart] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<HistorySortOrder>("newest");
-  const [activityView, setActivityView] = useState<ActivityView>("all");
+  const [activityView, setActivityView] = useState<ActivityView>("attention");
   const [activityFilters, setActivityFilters] = useState<ActivityFilters>(
     DEFAULT_ACTIVITY_FILTERS,
   );
