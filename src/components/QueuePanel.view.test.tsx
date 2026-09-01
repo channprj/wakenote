@@ -62,7 +62,7 @@ describe("QueuePanel compact layout", () => {
     expect(markup).not.toContain('data-tone="danger"');
   });
 
-  it("offers one read action for unread failed, cancelled, and skipped outcomes", () => {
+  it("offers one resolve action for unread outcomes and hides resolved history", () => {
     const markup = renderQueue({
       jobs: [
         { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed" },
@@ -91,7 +91,7 @@ describe("QueuePanel compact layout", () => {
     expect(markup).toMatch(
       /<button[^>]*title="Mark 3 outcomes as resolved"(?![^>]*disabled)/,
     );
-    expect(markup).toContain('data-read="true"');
+    expect(markup).not.toContain('data-read="true"');
   });
 
   it("disables mark all resolved when every attention outcome is resolved", () => {

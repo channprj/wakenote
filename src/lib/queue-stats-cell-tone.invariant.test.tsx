@@ -1,9 +1,13 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { mockModels } from "./app-state";
 import { queueStatsCellTone } from "./status-summary";
 import type { QueueJob, QueueJobStatus, QueueSnapshot } from "./types";
 import { QueuePanel } from "../components/QueuePanel";
+
+afterEach(cleanup);
 
 // Cross-surface invariant: QueuePanel's queue-stats banner cells and per-day group-row chip spans
 // must derive their data-tone from the shared queueStatsCellTone() helper for the same
@@ -47,8 +51,8 @@ function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
   };
 }
 
-function renderQueuePanelMarkup(status: QueueJobStatus): string {
-  return renderToStaticMarkup(
+function renderQueuePanel(status: QueueJobStatus): HTMLElement {
+  const { container } = render(
     <QueuePanel
       nowMs={Date.parse("2026-01-01T12:00:00.000Z")}
       queue={buildQueueSnapshot(status)}
@@ -65,29 +69,38 @@ function renderQueuePanelMarkup(status: QueueJobStatus): string {
       onReprocess={async () => true}
     />,
   );
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Visible \d+$/ }),
+  );
+  return container;
 }
 
-function extractStatsCellTone(markup: string, label: string): string {
-  const match = markup.match(
-    new RegExp(`<div[^>]*data-tone="([a-z]+)"[^>]*><span>${label}<\\/span>`),
-  );
+function extractStatsCellTone(container: HTMLElement, label: string): string {
+  const cell = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      '[data-slot="queue-summary"] > div',
+    ),
+  ).find((candidate) => candidate.querySelector("span")?.textContent === label);
   expect(
-    match,
+    cell,
     `expected queue-stats banner cell labeled "${label}"`,
-  ).not.toBeNull();
-  return match?.[1] ?? "";
+  ).toBeTruthy();
+  return cell?.dataset.tone ?? "";
 }
 
-function extractGroupChipTone(markup: string, status: QueueJobStatus): string {
+function extractGroupChipTone(
+  container: HTMLElement,
+  status: QueueJobStatus,
+): string {
   const bucket = status === "failed" ? "error" : status;
-  const match = markup.match(
-    new RegExp(`<span data-tone="([a-z]+)">\\d+ ${bucket}<\\/span>`),
-  );
+  const chip = Array.from(
+    container.querySelectorAll<HTMLElement>(".table-group-row span[data-tone]"),
+  ).find((candidate) => candidate.textContent?.endsWith(` ${bucket}`));
   expect(
-    match,
+    chip,
     `expected per-day group-row chip for "${status}"`,
-  ).not.toBeNull();
-  return match?.[1] ?? "";
+  ).toBeTruthy();
+  return chip?.dataset.tone ?? "";
 }
 
 describe.each<QueueJobStatus>([
@@ -99,11 +112,11 @@ describe.each<QueueJobStatus>([
   "skipped",
 ])("queue_job_status data-tone cross-surface invariant for %s", (status) => {
   it("renders the same data-tone in queue-stats banner cell and per-day group-row chip", () => {
-    const markup = renderQueuePanelMarkup(status);
+    const container = renderQueuePanel(status);
     const expectedTone = queueStatsCellTone(status);
 
-    const statsCellTone = extractStatsCellTone(markup, STATS_LABELS[status]);
-    const groupChipTone = extractGroupChipTone(markup, status);
+    const statsCellTone = extractStatsCellTone(container, STATS_LABELS[status]);
+    const groupChipTone = extractGroupChipTone(container, status);
 
     expect(statsCellTone).toBe(expectedTone);
     expect(groupChipTone).toBe(expectedTone);
