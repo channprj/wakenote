@@ -861,6 +861,15 @@ pub fn apply_outcome_at(
         return Ok(());
     }
 
+    if outcome
+        .issue
+        .as_ref()
+        .is_some_and(QueueJobIssue::is_discardable_activity_outcome)
+    {
+        queue.remove_jobs(&[outcome.id]);
+        return Ok(());
+    }
+
     if let Some(issue) = outcome.issue.as_mut() {
         issue.occurred_at = Some(occurred_at.to_rfc3339());
     }

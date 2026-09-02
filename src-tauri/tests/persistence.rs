@@ -280,7 +280,7 @@ fn persistence_round_trips_queue_and_recovers_running_jobs_as_pending() {
 }
 
 #[test]
-fn persistence_normalizes_legacy_activity_issues_without_starting_a_warning_window() {
+fn persistence_removes_legacy_non_actionable_activity_outcomes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = AppPersistence::new(tmp.path());
     std::fs::write(
@@ -297,30 +297,8 @@ fn persistence_normalizes_legacy_activity_issues_without_starting_a_warning_wind
     .expect("legacy queue");
 
     let queue = store.load_queue().expect("load queue").expect("queue");
-    let empty = queue.job(1).expect("empty transcript job");
-    assert_eq!(empty.status, QueueJobStatus::Failed);
-    assert_eq!(
-        empty.error.as_deref(),
-        Some("OpenAI returned an empty transcript")
-    );
-    assert_eq!(
-        empty
-            .issue
-            .as_ref()
-            .map(|issue| (issue.severity, issue.code)),
-        Some((QueueIssueSeverity::Warning, QueueIssueCode::EmptyTranscript)),
-    );
-    assert_eq!(empty.issue.as_ref().expect("issue").occurred_at, None);
-
-    let silent = queue.job(2).expect("silent job");
-    assert_eq!(
-        silent
-            .issue
-            .as_ref()
-            .map(|issue| (issue.severity, issue.code)),
-        Some((QueueIssueSeverity::Warning, QueueIssueCode::NoSpeech)),
-    );
-    assert!(silent.is_read);
+    assert_eq!(queue.job(1), None);
+    assert_eq!(queue.job(2), None);
 
     let broken = queue.job(3).expect("broken job");
     assert_eq!(
@@ -331,6 +309,38 @@ fn persistence_normalizes_legacy_activity_issues_without_starting_a_warning_wind
         Some((QueueIssueSeverity::Error, QueueIssueCode::Unknown)),
     );
     assert_eq!(broken.issue.as_ref().expect("issue").occurred_at, None);
+
+    let persisted = std::fs::read_to_string(tmp.path().join("transcription-queue.json"))
+        .expect("compacted queue");
+    assert!(!persisted.contains("OpenAI returned an empty transcript"));
+    assert!(!persisted.contains("No speech detected"));
+}
+
+#[test]
+fn persistence_does_not_save_non_actionable_activity_outcomes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let store = AppPersistence::new(tmp.path());
+    let mut queue = TranscriptionQueue::new();
+    let silent = queue.enqueue_file("/recordings/silent.wav", "whisper-medium");
+    let failed = queue.enqueue_file("/recordings/failed.wav", "whisper-medium");
+    queue
+        .mark_failed_with_issue(
+            silent,
+            wakenote::queue::QueueJobIssue::warning(QueueIssueCode::NoSpeech, "No speech detected"),
+        )
+        .expect("no speech outcome");
+    queue
+        .mark_failed(failed, "model missing")
+        .expect("actionable failure");
+
+    store.save_queue(&queue).expect("save queue");
+
+    let loaded = store.load_queue().expect("load queue").expect("queue");
+    assert_eq!(loaded.job(silent), None);
+    assert_eq!(
+        loaded.job(failed).expect("actionable job").status,
+        QueueJobStatus::Failed,
+    );
 }
 
 #[test]

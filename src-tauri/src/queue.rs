@@ -92,6 +92,13 @@ impl QueueJobIssue {
             self.occurred_at = Some(Utc::now().to_rfc3339());
         }
     }
+
+    pub fn is_discardable_activity_outcome(&self) -> bool {
+        matches!(
+            self.code,
+            QueueIssueCode::EmptyTranscript | QueueIssueCode::NoSpeech
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -545,6 +552,16 @@ impl TranscriptionQueue {
         let before = self.jobs.len();
         self.jobs.retain(|job| !ids.contains(&job.id));
         before - self.jobs.len()
+    }
+
+    pub fn discard_non_actionable_outcomes(&mut self) -> bool {
+        let before = self.jobs.len();
+        self.jobs.retain(|job| {
+            !job.issue
+                .as_ref()
+                .is_some_and(QueueJobIssue::is_discardable_activity_outcome)
+        });
+        self.jobs.len() != before
     }
 
     pub fn prune_completed_history(&mut self, max_completed: usize) -> bool {

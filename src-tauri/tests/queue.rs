@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use wakenote::queue::{
-    BacklogScan, QueueActivityKind, QueueIssueCode, QueueIssueSeverity, QueueJobIssue,
-    QueueJobStatus, TranscriptionQueue,
+    BacklogScan, QueueActivityKind, QueueIssueCode, QueueJobIssue, QueueJobStatus,
+    TranscriptionQueue,
 };
 use wakenote::settings::TranscriptionOptions;
 
@@ -102,29 +102,39 @@ fn queue_classifies_dictation_live_capture_and_imported_audio() {
 }
 
 #[test]
-fn queue_persists_warning_issues_and_clears_them_when_retried() {
+fn queue_discards_non_actionable_transcription_outcomes() {
     let mut queue = TranscriptionQueue::new();
-    let id = queue.enqueue_file("/recordings/empty.wav", "openai-gpt-transcribe");
-    let warning = QueueJobIssue {
-        severity: QueueIssueSeverity::Warning,
-        code: QueueIssueCode::EmptyTranscript,
-        message: "OpenAI returned an empty transcript".to_string(),
-        occurred_at: Some("2026-08-04T01:02:03+00:00".to_string()),
-    };
+    let empty = queue.enqueue_file("/recordings/empty.wav", "openai-gpt-transcribe");
+    let silent = queue.enqueue_file("/recordings/silent.wav", "whisper-medium");
+    let actionable = queue.enqueue_file("/recordings/broken.wav", "whisper-medium");
 
     queue
-        .mark_failed_with_issue(id, warning.clone())
-        .expect("warning outcome");
+        .mark_failed_with_issue(
+            empty,
+            QueueJobIssue::warning(
+                QueueIssueCode::EmptyTranscript,
+                "OpenAI returned an empty transcript",
+            ),
+        )
+        .expect("empty transcript outcome");
+    queue
+        .mark_failed_with_issue(
+            silent,
+            QueueJobIssue::warning(QueueIssueCode::NoSpeech, "No speech detected"),
+        )
+        .expect("no speech outcome");
+    queue
+        .mark_failed(actionable, "model missing")
+        .expect("actionable outcome");
 
-    let encoded = serde_json::to_string(&queue).expect("serialize queue");
-    let mut decoded: TranscriptionQueue = serde_json::from_str(&encoded).expect("queue json");
-    assert_eq!(decoded.job(id).expect("job").issue, Some(warning));
-    assert_eq!(decoded.unread_attention_count(), 1);
-    assert_eq!(decoded.unread_error_count(), 0);
-
-    decoded.retry(id).expect("retry warning");
-    assert_eq!(decoded.job(id).expect("retried job").issue, None);
-    assert_eq!(decoded.job(id).expect("retried job").error, None);
+    assert!(queue.discard_non_actionable_outcomes());
+    assert_eq!(queue.job(empty), None);
+    assert_eq!(queue.job(silent), None);
+    assert_eq!(
+        queue.job(actionable).expect("actionable job").status,
+        QueueJobStatus::Failed,
+    );
+    assert!(!queue.discard_non_actionable_outcomes());
 }
 
 #[test]

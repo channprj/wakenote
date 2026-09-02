@@ -113,7 +113,7 @@ fn transcription_worker_writes_dictionary_corrected_text() {
 }
 
 #[test]
-fn transcription_worker_records_empty_output_as_no_speech_without_blank_txt() {
+fn transcription_worker_discards_empty_output_from_activity_without_blank_txt() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230708.wav");
     std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
@@ -164,13 +164,7 @@ fn transcription_worker_records_empty_output_as_no_speech_without_blank_txt() {
         .expect("processed job");
 
     assert_eq!(processed, id);
-    let job = queue.job(id).expect("job");
-    assert_eq!(job.status, QueueJobStatus::Failed);
-    assert_eq!(job.error.as_deref(), Some("No speech detected"));
-    assert_eq!(
-        job.issue.as_ref().map(|issue| (issue.severity, issue.code)),
-        Some((QueueIssueSeverity::Warning, QueueIssueCode::NoSpeech)),
-    );
+    assert_eq!(queue.job(id), None);
     assert!(!audio_path.with_extension("txt").exists());
     assert_eq!(
         std::fs::read_to_string(audio_path.with_extension("error.txt")).expect("error sidecar"),
@@ -684,9 +678,9 @@ fn cancelled_transcription_job_ignores_late_worker_outcome() {
 }
 
 #[test]
-fn applying_an_outcome_stamps_the_issue_at_the_terminal_boundary() {
+fn applying_an_actionable_outcome_stamps_the_issue_at_the_terminal_boundary() {
     let mut queue = TranscriptionQueue::new();
-    let id = queue.enqueue_file("/recordings/empty.wav", "openai-gpt-transcribe");
+    let id = queue.enqueue_file("/recordings/artifact.wav", "whisper-medium");
     queue.start_next().expect("start job");
     let occurred_at = chrono::Utc.with_ymd_and_hms(2026, 8, 4, 1, 2, 3).unwrap();
 
@@ -694,10 +688,7 @@ fn applying_an_outcome_stamps_the_issue_at_the_terminal_boundary() {
         &mut queue,
         TranscriptionJobOutcome::failed_with_issue(
             id,
-            wakenote::queue::QueueJobIssue::warning(
-                QueueIssueCode::EmptyTranscript,
-                "OpenAI returned an empty transcript",
-            ),
+            wakenote::queue::QueueJobIssue::error(QueueIssueCode::Provider, "Provider unavailable"),
         ),
         occurred_at,
     )

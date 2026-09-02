@@ -17,7 +17,7 @@ use wakenote::debug_log::debug_log_path_for;
 use wakenote::live_capture::AudioFrame;
 use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
 use wakenote::models::{ModelStatus, ModelStore, default_model_registry};
-use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobIssue, QueueJobStatus};
+use wakenote::queue::{QueueIssueCode, QueueJobIssue, QueueJobStatus};
 use wakenote::recorder::{ChunkMetadata, ChunkSource, TranscriptionStatus};
 use wakenote::settings::{
     AudioFormat, CaptureMicrophoneEntry, FloatingOverlayPosition, MicrophoneSlot, SettingsPatch,
@@ -3437,7 +3437,7 @@ fn resolved_attention_history_does_not_hold_tray_in_error() {
 }
 
 #[test]
-fn warning_only_activity_does_not_turn_the_backend_tray_red() {
+fn non_actionable_activity_is_discarded_without_turning_the_backend_tray_red() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("empty.wav");
     std::fs::write(&audio_path, b"audio").expect("audio file");
@@ -3459,11 +3459,7 @@ fn warning_only_activity_does_not_turn_the_backend_tray_red() {
         ))
         .expect("warning outcome");
 
-    let job = backend.queue_snapshot().jobs.pop().expect("warning job");
-    assert_eq!(
-        job.issue.map(|issue| issue.severity),
-        Some(QueueIssueSeverity::Warning),
-    );
+    assert!(backend.queue_snapshot().jobs.is_empty());
     assert_ne!(backend.app_status().tray_state, TrayState::Error);
 }
 

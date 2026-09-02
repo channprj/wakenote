@@ -241,6 +241,7 @@ impl AppPersistence {
         let original = queue.clone();
         queue.recover_running_as_pending();
         queue.normalize_legacy_issues();
+        queue.discard_non_actionable_outcomes();
         queue.hydrate_activity_kinds();
         queue.prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
         if queue != original {
@@ -251,6 +252,7 @@ impl AppPersistence {
 
     pub fn save_queue(&self, queue: &TranscriptionQueue) -> Result<(), PersistenceError> {
         let mut persisted = queue.clone();
+        persisted.discard_non_actionable_outcomes();
         persisted.prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
         write_json_atomic(&self.queue_path(), &persisted)
     }
