@@ -60,7 +60,7 @@ async function sha256(file) {
   return hash.digest('hex');
 }
 
-/** Build locally or explicitly publish previously built files. Never push Git refs. */
+/** Build locally or publish, building current artifacts as needed. Never push Git refs. */
 export async function runRelease({
   root = projectRoot,
   mode,
@@ -84,8 +84,8 @@ export async function runRelease({
   const checksums = path.join(output, 'SHA256SUMS.txt');
   const manifestPath = path.join(output, 'release.json');
 
-  if (mode === 'build') {
-    if (fs.existsSync(output)) {
+  async function buildArtifacts(replaceExisting = false) {
+    if (fs.existsSync(output) && !replaceExisting) {
       throw new Error(`Release output already exists: ${output}. Keep it for publication, or move this directory aside before rebuilding.`);
     }
     if (dryRun) {
@@ -120,55 +120,98 @@ export async function runRelease({
         version, commit, arch: architecture, artifact, sha256: digest,
         signing: 'ad-hoc', notarized: false,
       }, null, 2)}\n`);
-      fs.renameSync(staging, output);
+      let backup;
+      if (fs.existsSync(output)) {
+        const previous = fs.mkdtempSync(path.join(parent, '.previous-'));
+        backup = path.join(previous, architecture);
+        fs.renameSync(output, backup);
+        console.log(`Previous release output preserved: ${backup}`);
+      }
+      try {
+        fs.renameSync(staging, output);
+      } catch (error) {
+        if (backup) fs.renameSync(backup, output);
+        throw error;
+      }
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }
-    console.log(`Local release ready: ${output}\nNext: pnpm release:publish --dry-run`);
+    console.log(`Local release ready: ${output}`);
+  }
+
+  async function localBuildProblem() {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (!manifest || manifest.version !== version || manifest.commit !== commit || manifest.arch !== architecture || manifest.artifact !== artifact) {
+        return 'Release manifest does not match the current source, version, or architecture.';
+      }
+      const digest = await sha256(dmg);
+      if (digest !== manifest.sha256 || fs.readFileSync(checksums, 'utf8') !== `${digest}  ${artifact}\n`) {
+        return 'Release checksum mismatch.';
+      }
+      return null;
+    } catch (error) {
+      if (error.code === 'ENOENT' || error instanceof SyntaxError) return 'Local release files are missing or invalid.';
+      throw error;
+    }
+  }
+
+  if (mode === 'build') {
+    await buildArtifacts();
     return;
   }
 
-  if (!fs.existsSync(manifestPath)) throw new Error('No local release manifest. Run pnpm release:build first.');
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  if (manifest.version !== version || manifest.commit !== commit || manifest.arch !== architecture || manifest.artifact !== artifact) {
-    throw new Error('Release manifest does not match the current source, version, or architecture. Rebuild this release.');
+  function verifyPublication() {
+    const tagRef = `refs/tags/${tag}`;
+    if (run('git', ['cat-file', '-t', tagRef]) !== 'tag' || run('git', ['rev-parse', `${tagRef}^{}`]) !== commit) {
+      throw new Error(`${tag} must be an annotated tag pointing at HEAD.`);
+    }
+    const branch = run('git', ['symbolic-ref', '--short', 'HEAD']);
+    if (run('git', ['config', `branch.${branch}.remote`]) !== 'origin') {
+      throw new Error('The current branch must track origin before publication.');
+    }
+    const branchRef = run('git', ['config', `branch.${branch}.merge`]);
+    const remoteRefs = new Map(run('git', ['ls-remote', 'origin', branchRef, tagRef, `${tagRef}^{}`])
+      .split('\n').filter(Boolean).map((line) => {
+        const [sha, ref] = line.split(/\s+/);
+        return [ref, sha];
+      }));
+    if (remoteRefs.get(branchRef) !== commit || remoteRefs.get(`${tagRef}^{}`) !== commit || remoteRefs.get(tagRef) !== run('git', ['rev-parse', tagRef])) {
+      throw new Error('Push the current branch and annotated tag to origin before publication; remote refs must match the local source.');
+    }
+    const repo = githubRepo(run);
+    const permissions = JSON.parse(run('gh', ['api', `repos/${repo}/actions/permissions`]));
+    if (permissions.enabled !== false) throw new Error('GitHub Actions must be disabled for this local-only release workflow.');
+    const releases = run('gh', ['api', '--paginate', `repos/${repo}/releases`, '--jq', '.[].tag_name']);
+    if (releases.split('\n').includes(tag)) throw new Error(`GitHub release ${tag} already exists. Inspect it before retrying; existing assets are never overwritten.`);
+    return repo;
   }
-  const digest = await sha256(dmg);
-  if (digest !== manifest.sha256 || fs.readFileSync(checksums, 'utf8') !== `${digest}  ${artifact}\n`) {
-    throw new Error('Release checksum mismatch. Rebuild before publishing.');
+
+  const repo = verifyPublication();
+  const buildProblem = await localBuildProblem();
+  if (dryRun) {
+    console.log(buildProblem
+      ? `${buildProblem}\nWould build ${artifact} from ${commit} into ${output}`
+      : `Would reuse verified local release: ${output}`);
+    console.log(`Verified publication prerequisites for ${tag} (${commit}) in ${repo}.\nWould ${draft ? 'create a draft with' : 'publish'}: ${artifact}, SHA256SUMS.txt, release.json\nNo build was run and no GitHub release was created.`);
+    return;
   }
-  const tagRef = `refs/tags/${tag}`;
-  if (run('git', ['cat-file', '-t', tagRef]) !== 'tag' || run('git', ['rev-parse', `${tagRef}^{}`]) !== commit) {
-    throw new Error(`${tag} must be an annotated tag pointing at HEAD.`);
+  if (buildProblem) {
+    console.log(`${buildProblem}\nBuilding the current release before publication.`);
+    await buildArtifacts(true);
+    // Native builds can take time; refresh remote checks before uploading.
+    if (verifyPublication() !== repo) throw new Error('The GitHub repository changed during the build.');
+    const remainingProblem = await localBuildProblem();
+    if (remainingProblem) throw new Error(remainingProblem);
+  } else {
+    console.log(`Reusing verified local release: ${output}`);
   }
-  const branch = run('git', ['symbolic-ref', '--short', 'HEAD']);
-  if (run('git', ['config', `branch.${branch}.remote`]) !== 'origin') {
-    throw new Error('The current branch must track origin before publication.');
-  }
-  const branchRef = run('git', ['config', `branch.${branch}.merge`]);
-  const remoteRefs = new Map(run('git', ['ls-remote', 'origin', branchRef, tagRef, `${tagRef}^{}`])
-    .split('\n').filter(Boolean).map((line) => {
-      const [sha, ref] = line.split(/\s+/);
-      return [ref, sha];
-    }));
-  if (remoteRefs.get(branchRef) !== commit || remoteRefs.get(`${tagRef}^{}`) !== commit || remoteRefs.get(tagRef) !== run('git', ['rev-parse', tagRef])) {
-    throw new Error('Push the current branch and annotated tag to origin before publication; remote refs must match the local source.');
-  }
-  const repo = githubRepo(run);
-  const permissions = JSON.parse(run('gh', ['api', `repos/${repo}/actions/permissions`]));
-  if (permissions.enabled !== false) throw new Error('GitHub Actions must be disabled for this local-only release workflow.');
-  const releases = run('gh', ['api', '--paginate', `repos/${repo}/releases`, '--jq', '.[].tag_name']);
-  if (releases.split('\n').includes(tag)) throw new Error(`GitHub release ${tag} already exists. Inspect it before retrying; existing assets are never overwritten.`);
   const args = [
     'release', 'create', tag, dmg, checksums, manifestPath,
     '--repo', repo, '--verify-tag', '--title', tag, '--generate-notes',
     '--notes', `Locally built macOS ${architecture} DMG. The app is ad-hoc signed and is not notarized. See USAGE.md for installation instructions.`,
     ...(draft ? ['--draft'] : []),
   ];
-  if (dryRun) {
-    console.log(`Verified ${tag} (${commit}) for ${repo}.\nWould ${draft ? 'create a draft with' : 'publish'}: ${artifact}, SHA256SUMS.txt, release.json\nNo GitHub release was created.`);
-    return;
-  }
   // Hashing and network checks can take time; catch edits before the write.
   if (readVersion(root) !== version || sourceCommit(run) !== commit) throw new Error('Source changed before publication.');
   console.log(run('gh', args));
@@ -182,10 +225,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   pnpm release:publish [--dry-run] [--draft]
 
 Build a DMG for this Mac into release/v<version>/<architecture>/.
+Publishing reuses artifacts matching the current commit, version, architecture
+and checksums, or builds them first. Replaced local output is preserved.
 Commit synchronized versions before building. Push the branch and annotated
 version tag before publishing. Publishing requires gh authentication with
-access to Actions settings, disabled Actions, and verified local artifacts.
---dry-run validates without building or creating a GitHub release.
+access to Actions settings and disabled Actions.
+--dry-run validates and reports whether a build is needed, without building
+or creating a GitHub release.
 --draft uploads a draft release for review instead of publishing immediately.`);
   } else {
     const [mode, ...flags] = args;
