@@ -31,15 +31,14 @@ See [Usage](USAGE.md#installation) for macOS permissions, optional model prerequ
 
 ## Local releases
 
-GitHub Actions is disabled for this repository. Build on your Mac and publish manually:
+GitHub Actions is disabled for this repository. Publish from your Mac; the command reuses a verified current build or builds it first:
 
 ```bash
-pnpm release:build
 pnpm release:publish --dry-run
 pnpm release:publish
 ```
 
-Commit synchronized versions before building, and push the branch and annotated version tag before publishing. Artifacts go to `release/v<version>/<architecture>/`; each build targets the current Mac only. The app is ad-hoc signed and not notarized. See the [release procedure](USAGE.md#local-build-and-manual-github-release) for prerequisites, draft releases, and recovery.
+Commit synchronized versions and push the branch and annotated version tag before publishing. `--dry-run` reports whether a build is needed without building or publishing. Use `pnpm release:build` to prepare artifacts separately. Artifacts go to `release/v<version>/<architecture>/`; each build targets the current Mac only. The app is ad-hoc signed and not notarized. See the [release procedure](USAGE.md#local-build-and-manual-github-release) for prerequisites, draft releases, and recovery.
 
 ## Quick start
 
