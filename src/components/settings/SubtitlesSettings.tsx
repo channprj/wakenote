@@ -20,16 +20,19 @@ export function SubtitlesSettings({
   actions: SettingsActions;
 }) {
   const { settings } = snapshot;
+  const [error, setError] = useState<string | null>(null);
 
-  function updateSubtitle(
+  async function updateSubtitle(
     patch: Parameters<SettingsActions["onPatch"]>[0],
     preview = true,
   ) {
-    void Promise.resolve(actions.onPatch(patch)).then(() => {
-      if (preview) {
-        return actions.onPreviewSubtitle(patch);
-      }
-    });
+    setError(null);
+    try {
+      await (actions.onSavePatch ?? actions.onPatch)(patch);
+      if (preview) await actions.onPreviewSubtitle(patch);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   return (
@@ -38,6 +41,11 @@ export function SubtitlesSettings({
         title="Subtitles"
         description="Show Live transcription, Dictation, or both as configurable subtitles above other windows."
       >
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         <TranslationControls
           scope="subtitle"
           settings={settings}
@@ -270,3 +278,4 @@ function ColorSetting({
     </Field>
   );
 }
+import { useState } from "react";

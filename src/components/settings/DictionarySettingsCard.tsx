@@ -5,7 +5,7 @@ import {
   RefreshCwIcon,
   XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,9 +52,22 @@ export function DictionarySettingsCard({
   onReloadFile: () => void | Promise<void>;
 }) {
   const [draft, setDraft] = useState<DictionaryDraft | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const saving = useRef(false);
   const editing = draft?.id !== null;
 
+  async function perform(action: () => void | Promise<void>) {
+    setError(null);
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   function editEntry(entry: DictionaryEntry) {
+    setError(null);
     setDraft({
       id: entry.id,
       term: entry.term,
@@ -63,8 +76,8 @@ export function DictionarySettingsCard({
     });
   }
 
-  function saveDraft() {
-    if (!draft) return;
+  async function saveDraft() {
+    if (!draft || saving.current) return;
     const term = draft.term.trim();
     if (!term) return;
     const nextEntry: DictionaryEntry = {
@@ -78,8 +91,14 @@ export function DictionarySettingsCard({
           entry.id === draft.id ? nextEntry : entry,
         )
       : [...settings.dictionary, nextEntry];
-    void onPatch({ dictionary });
-    setDraft(null);
+    saving.current = true;
+    setPending(true);
+    await perform(async () => {
+      await onPatch({ dictionary });
+      setDraft(null);
+    });
+    saving.current = false;
+    setPending(false);
   }
 
   return (
@@ -93,7 +112,7 @@ export function DictionarySettingsCard({
           checked={settings.dictionary_enabled}
           description="Use provider hints when supported and deterministic alias correction everywhere."
           onCheckedChange={(dictionary_enabled) =>
-            void onPatch({ dictionary_enabled })
+            void perform(() => onPatch({ dictionary_enabled }))
           }
         />
 
@@ -103,9 +122,10 @@ export function DictionarySettingsCard({
             size="sm"
             variant="outline"
             aria-label="Add Dictionary entry"
-            onClick={() =>
-              setDraft({ id: null, term: "", aliases: "", enabled: true })
-            }
+            onClick={() => {
+              setError(null);
+              setDraft({ id: null, term: "", aliases: "", enabled: true });
+            }}
           >
             <PlusIcon data-icon="inline-start" />
             Add entry
@@ -115,7 +135,7 @@ export function DictionarySettingsCard({
             size="sm"
             variant="outline"
             aria-label="Open dictionary.txt"
-            onClick={() => void onOpenFile()}
+            onClick={() => void perform(onOpenFile)}
           >
             <FilePenLineIcon data-icon="inline-start" />
             Open dictionary.txt
@@ -125,7 +145,7 @@ export function DictionarySettingsCard({
             size="icon-sm"
             variant="ghost"
             aria-label="Reload dictionary.txt"
-            onClick={() => void onReloadFile()}
+            onClick={() => void perform(onReloadFile)}
           >
             <RefreshCwIcon data-icon="solo" />
           </Button>
@@ -155,11 +175,13 @@ export function DictionarySettingsCard({
                   className="dictionary-chip__delete"
                   aria-label={`Delete Dictionary entry ${entry.term}`}
                   onClick={() =>
-                    void onPatch({
-                      dictionary: settings.dictionary.filter(
-                        (candidate) => candidate.id !== entry.id,
-                      ),
-                    })
+                    void perform(() =>
+                      onPatch({
+                        dictionary: settings.dictionary.filter(
+                          (candidate) => candidate.id !== entry.id,
+                        ),
+                      }),
+                    )
                   }
                 >
                   <XIcon aria-hidden="true" />
@@ -184,6 +206,11 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
           </pre>
         </div>
 
+        {error && !draft ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         {status.error ? (
           <Alert variant="destructive">
             <AlertCircleIcon />
@@ -194,7 +221,7 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
 
       <Dialog
         open={Boolean(draft)}
-        onOpenChange={(open) => !open && setDraft(null)}
+        onOpenChange={(open) => !open && !saving.current && setDraft(null)}
       >
         {draft ? (
           <DialogContent
@@ -227,6 +254,7 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
                   id="dictionary-term"
                   aria-label="Canonical term"
                   value={draft.term}
+                  disabled={pending}
                   placeholder="WakeNote"
                   autoFocus
                   onChange={(event) => {
@@ -248,6 +276,7 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
                   id="dictionary-aliases"
                   aria-label="Aliases"
                   value={draft.aliases}
+                  disabled={pending}
                   placeholder="wake note, wake-note"
                   onChange={(event) => {
                     const aliases = event.currentTarget.value;
@@ -272,6 +301,7 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
                   id="dictionary-enabled"
                   aria-label="Enable Dictionary entry"
                   checked={draft.enabled}
+                  disabled={pending}
                   onCheckedChange={(enabled) =>
                     setDraft((current) =>
                       current ? { ...current, enabled } : current,
@@ -281,10 +311,16 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
               </Field>
             </div>
 
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
             <DialogFooter>
               <Button
                 type="button"
                 variant="outline"
+                disabled={pending}
                 onClick={() => setDraft(null)}
               >
                 Cancel
@@ -292,7 +328,7 @@ Qwen3 ASR = qwen 3 asr, 큐원 ASR`}</code>
               <Button
                 type="button"
                 aria-label="Save Dictionary entry"
-                disabled={!draft.term.trim()}
+                disabled={pending || !draft.term.trim()}
                 onClick={saveDraft}
               >
                 Save

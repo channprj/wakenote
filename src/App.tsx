@@ -430,8 +430,9 @@ export default function App() {
             }
             openSettings("audio");
             try {
-              const { getCurrentWindow } =
-                await import("@tauri-apps/api/window");
+              const { getCurrentWindow } = await import(
+                "@tauri-apps/api/window"
+              );
               const currentWindow = getCurrentWindow();
               await currentWindow.show();
               await currentWindow.setFocus();
@@ -567,7 +568,10 @@ export default function App() {
     }
   }
 
-  async function runAction(action: () => Promise<AppSnapshot>) {
+  async function runAction(
+    action: () => Promise<AppSnapshot>,
+    propagateError = false,
+  ) {
     const revision = settingsWrites.current.revision;
     setBusy(true);
     setError(null);
@@ -577,6 +581,7 @@ export default function App() {
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      if (propagateError) throw caught;
       return false;
     } finally {
       setBusy(false);
@@ -818,16 +823,24 @@ export default function App() {
             void runAction(() => cancelModelDownload(modelId)),
           onDeleteModel: (modelId) =>
             void runAction(() => deleteModel(modelId)),
-          onSaveOpenRouterApiKey: (apiKey) =>
-            void runAction(() => saveOpenRouterApiKey(apiKey)),
-          onDeleteOpenRouterApiKey: () =>
-            void runAction(deleteOpenRouterApiKey),
-          onSaveOpenAiApiKey: (apiKey) =>
-            void runAction(() => saveOpenAiApiKey(apiKey)),
-          onDeleteOpenAiApiKey: () => void runAction(deleteOpenAiApiKey),
-          onSaveSonioxApiKey: (apiKey) =>
-            void runAction(() => saveSonioxApiKey(apiKey)),
-          onDeleteSonioxApiKey: () => void runAction(deleteSonioxApiKey),
+          onSaveOpenRouterApiKey: async (apiKey) => {
+            await runAction(() => saveOpenRouterApiKey(apiKey), true);
+          },
+          onDeleteOpenRouterApiKey: async () => {
+            await runAction(deleteOpenRouterApiKey, true);
+          },
+          onSaveOpenAiApiKey: async (apiKey) => {
+            await runAction(() => saveOpenAiApiKey(apiKey), true);
+          },
+          onDeleteOpenAiApiKey: async () => {
+            await runAction(deleteOpenAiApiKey, true);
+          },
+          onSaveSonioxApiKey: async (apiKey) => {
+            await runAction(() => saveSonioxApiKey(apiKey), true);
+          },
+          onDeleteSonioxApiKey: async () => {
+            await runAction(deleteSonioxApiKey, true);
+          },
         }}
       />
     ),

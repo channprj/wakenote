@@ -1,4 +1,11 @@
-import { Children, type ReactNode, useEffect, useId, useState } from "react";
+import {
+  Children,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import {
   Card,
   CardContent,
@@ -191,6 +198,12 @@ export function SettingSlider({
   valueLabel?: string;
   onValueChange: (value: number) => void;
 }) {
+  const [draft, setDraft] = useState(value);
+  const dragging = useRef(false);
+  useEffect(() => {
+    if (!dragging.current) setDraft(value);
+  }, [value]);
+
   return (
     <Field
       orientation="responsive"
@@ -208,14 +221,29 @@ export function SettingSlider({
         <Slider
           aria-label={label}
           aria-disabled={disabled}
-          value={[value]}
+          value={[draft]}
           min={min}
           max={max}
           step={step}
           disabled={disabled}
-          onValueChange={(values) => onValueChange(values[0] ?? value)}
+          onPointerDown={() => {
+            dragging.current = true;
+          }}
+          onValueChange={(values) => {
+            setDraft(values[0] ?? value);
+          }}
+          onValueCommit={(values) => {
+            dragging.current = false;
+            const next = values[0] ?? value;
+            setDraft(next);
+            if (next !== value) onValueChange(next);
+          }}
+          onPointerCancel={() => {
+            dragging.current = false;
+            setDraft(value);
+          }}
         />
-        <output>{valueLabel ?? `${value}${suffix}`}</output>
+        <output>{valueLabel ?? `${draft}${suffix}`}</output>
       </div>
     </Field>
   );
@@ -244,12 +272,20 @@ export function SettingNumberInput({
 }) {
   const inputId = useId();
   const [draft, setDraft] = useState(String(value));
+  const focused = useRef(false);
+  const canceled = useRef(false);
 
   useEffect(() => {
-    setDraft(String(value));
+    if (!focused.current) setDraft(String(value));
   }, [value]);
 
   const commit = () => {
+    focused.current = false;
+    if (canceled.current || !draft.trim()) {
+      canceled.current = false;
+      setDraft(String(value));
+      return;
+    }
     const parsed = Number(draft);
     const normalized = Number.isFinite(parsed)
       ? Math.max(min, Math.min(max, Math.round(parsed / step) * step))
@@ -284,13 +320,18 @@ export function SettingNumberInput({
           max={max}
           step={step}
           disabled={disabled}
+          onFocus={() => {
+            focused.current = true;
+          }}
           onChange={(event) => setDraft(event.currentTarget.value)}
           onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
-              commit();
+              event.preventDefault();
               event.currentTarget.blur();
             } else if (event.key === "Escape") {
+              event.preventDefault();
+              canceled.current = true;
               setDraft(String(value));
               event.currentTarget.blur();
             }

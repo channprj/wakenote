@@ -1,5 +1,5 @@
 import { KeyRoundIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Field,
@@ -41,8 +41,8 @@ export function IntegrationsSettings({
           value={openRouterApiKey}
           configured={snapshot.openrouter_key_configured}
           onChange={setOpenRouterApiKey}
-          onSave={() => {
-            actions.onSaveOpenRouterApiKey(openRouterApiKey);
+          onSave={async () => {
+            await actions.onSaveOpenRouterApiKey(openRouterApiKey);
             setOpenRouterApiKey("");
           }}
           onDelete={actions.onDeleteOpenRouterApiKey}
@@ -53,8 +53,8 @@ export function IntegrationsSettings({
           value={openAiApiKey}
           configured={snapshot.openai_key_configured}
           onChange={setOpenAiApiKey}
-          onSave={() => {
-            actions.onSaveOpenAiApiKey(openAiApiKey);
+          onSave={async () => {
+            await actions.onSaveOpenAiApiKey(openAiApiKey);
             setOpenAiApiKey("");
           }}
           onDelete={actions.onDeleteOpenAiApiKey}
@@ -65,8 +65,8 @@ export function IntegrationsSettings({
           value={sonioxApiKey}
           configured={snapshot.soniox_key_configured}
           onChange={setSonioxApiKey}
-          onSave={() => {
-            actions.onSaveSonioxApiKey(sonioxApiKey);
+          onSave={async () => {
+            await actions.onSaveSonioxApiKey(sonioxApiKey);
             setSonioxApiKey("");
           }}
           onDelete={actions.onDeleteSonioxApiKey}
@@ -146,9 +146,26 @@ function ApiCredentialRow({
   value: string;
   configured: boolean;
   onChange: (value: string) => void;
-  onSave: () => void;
-  onDelete: () => void;
+  onSave: () => void | Promise<void>;
+  onDelete: () => void | Promise<void>;
 }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  async function perform(action: () => void | Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+    }
+  }
   return (
     <Field orientation="responsive" className="settings-row">
       <FieldContent>
@@ -161,6 +178,7 @@ function ApiCredentialRow({
           autoComplete="off"
           aria-label={`${provider} API Key`}
           value={value}
+          disabled={pending}
           placeholder={
             configured
               ? "Enter a new key to replace the saved key"
@@ -172,8 +190,8 @@ function ApiCredentialRow({
           type="button"
           size="sm"
           variant="outline"
-          disabled={!value.trim()}
-          onClick={onSave}
+          disabled={pending || !value.trim()}
+          onClick={() => void perform(onSave)}
         >
           <KeyRoundIcon data-icon="inline-start" />
           Save
@@ -182,8 +200,8 @@ function ApiCredentialRow({
           type="button"
           size="sm"
           variant="ghost"
-          disabled={!configured}
-          onClick={onDelete}
+          disabled={pending || !configured}
+          onClick={() => void perform(onDelete)}
         >
           <Trash2Icon data-icon="inline-start" />
           Delete
@@ -192,6 +210,11 @@ function ApiCredentialRow({
       <StatusBadge tone={configured ? "success" : "warning"}>
         {configured ? "API key saved" : "API key missing"}
       </StatusBadge>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
     </Field>
   );
 }

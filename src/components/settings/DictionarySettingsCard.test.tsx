@@ -38,6 +38,38 @@ function dictionarySettings() {
 }
 
 describe("DictionarySettingsCard", () => {
+  it("preserves the open dictionary draft after persistence fails", async () => {
+    const user = userEvent.setup();
+    const onPatch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Cannot save dictionary"))
+      .mockResolvedValueOnce(undefined);
+    render(
+      <DictionarySettingsCard
+        settings={dictionarySettings()}
+        status={syncedStatus}
+        onPatch={onPatch}
+        onOpenFile={vi.fn()}
+        onReloadFile={vi.fn()}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add Dictionary entry" }),
+    );
+    await user.type(screen.getByLabelText("Canonical term"), "Codex");
+    await user.click(
+      screen.getByRole("button", { name: "Save Dictionary entry" }),
+    );
+    expect(await screen.findByText("Cannot save dictionary")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Canonical term") as HTMLInputElement).value,
+    ).toBe("Codex");
+    await user.click(
+      screen.getByRole("button", { name: "Save Dictionary entry" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renders compact canonical chips and saves dialog edits as one patch", async () => {
     const user = userEvent.setup();
     const onPatch = vi.fn();

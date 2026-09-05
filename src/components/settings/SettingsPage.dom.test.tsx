@@ -143,6 +143,56 @@ function makeActions(): SettingsActions {
 }
 
 describe("SettingsPage interactions", () => {
+  it("retains a failed credential draft and clears it only after a successful retry", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Secret store unavailable"))
+      .mockResolvedValueOnce(undefined);
+    actions.onSaveOpenRouterApiKey = save;
+    render(
+      <SettingsPage
+        section="integrations"
+        onSectionChange={() => {}}
+        snapshot={mockSnapshot()}
+        actions={actions}
+      />,
+    );
+    const input = screen.getByLabelText(
+      "OpenRouter API Key",
+    ) as HTMLInputElement;
+    const row = input.closest(".settings-row") as HTMLElement;
+    await user.type(input, "test-secret");
+    await user.click(within(row).getByRole("button", { name: /Save/ }));
+    expect(await screen.findByText("Secret store unavailable")).toBeTruthy();
+    expect(input.value).toBe("test-secret");
+    await user.click(within(row).getByRole("button", { name: /Save/ }));
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not preview subtitle settings when saving fails", async () => {
+    const actions = makeActions();
+    actions.onSavePatch = vi
+      .fn()
+      .mockRejectedValue(new Error("Settings disk full"));
+    render(
+      <SettingsPage
+        section="subtitles"
+        onSectionChange={() => {}}
+        snapshot={mockSnapshot()}
+        actions={actions}
+      />,
+    );
+    fireEvent.keyDown(
+      screen.getByRole("slider", { name: "Subtitle font size" }),
+      { key: "Home" },
+    );
+    expect(await screen.findByText("Settings disk full")).toBeTruthy();
+    expect(actions.onPreviewSubtitle).not.toHaveBeenCalled();
+  });
+
   it("routes app-list permissions to System Settings and keeps Microphone native", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

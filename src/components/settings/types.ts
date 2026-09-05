@@ -26,10 +26,10 @@ export interface SettingsActions {
   onDownloadModel: (modelId: string) => void;
   onCancelModelDownload: (modelId: string) => void;
   onDeleteModel: (modelId: string) => void;
-  onSaveOpenRouterApiKey: (apiKey: string) => void;
-  onDeleteOpenRouterApiKey: () => void;
-  onSaveOpenAiApiKey: (apiKey: string) => void;
-  onDeleteOpenAiApiKey: () => void;
-  onSaveSonioxApiKey: (apiKey: string) => void;
-  onDeleteSonioxApiKey: () => void;
+  onSaveOpenRouterApiKey: (apiKey: string) => void | Promise<void>;
+  onDeleteOpenRouterApiKey: () => void | Promise<void>;
+  onSaveOpenAiApiKey: (apiKey: string) => void | Promise<void>;
+  onDeleteOpenAiApiKey: () => void | Promise<void>;
+  onSaveSonioxApiKey: (apiKey: string) => void | Promise<void>;
+  onDeleteSonioxApiKey: () => void | Promise<void>;
 }

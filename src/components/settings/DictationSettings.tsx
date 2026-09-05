@@ -393,7 +393,7 @@ export function DictationSettings({
       <DictionarySettingsCard
         settings={settings}
         status={snapshot.dictionary_file_status}
-        onPatch={actions.onPatch}
+        onPatch={actions.onSavePatch ?? actions.onPatch}
         onOpenFile={actions.onOpenDictionaryFile}
         onReloadFile={actions.onReloadDictionaryFile}
       />
