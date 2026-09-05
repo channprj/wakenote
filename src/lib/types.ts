@@ -196,6 +196,16 @@ export interface AppSettings {
   auto_transcript_input_enabled: boolean;
   auto_transcript_input_trailing_space: boolean;
   auto_transcript_input_model: string;
+  text_transform_model: string;
+  subtitle_translation_enabled: boolean;
+  subtitle_translation_language: TranscriptionLanguage;
+  transcription_translation_enabled: boolean;
+  transcription_translation_language: TranscriptionLanguage;
+  dictation_translation_enabled: boolean;
+  dictation_translation_language: TranscriptionLanguage;
+  enhance_prompt_enabled: boolean;
+  enhance_prompt_shortcut: string;
+  enhance_prompt_system_prompt: string;
   dictation_enabled: boolean;
   dictation_shortcut: string;
   dictation_language: TranscriptionLanguage;

@@ -127,6 +127,26 @@ export function isTauriRuntime() {
   return typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 }
 
+export interface TextTransformResult {
+  kind: "translate" | "enhance_prompt";
+  text: string;
+  model: string;
+  target_language: AppSettings["transcription_language"] | null;
+}
+
+export async function transformText(requestId: string, request: {
+  kind: TextTransformResult["kind"];
+  text: string;
+  target_language: AppSettings["transcription_language"] | null;
+}): Promise<TextTransformResult> {
+  if (!isTauriRuntime()) throw new Error("Translation and Enhanced Prompt require the WakeNote desktop app and an OpenRouter API key.");
+  return invoke("transform_text", { requestId, request });
+}
+
+export async function cancelTextTransform(requestId: string): Promise<void> {
+  if (isTauriRuntime()) await invoke("cancel_text_transform", { requestId });
+}
+
 function normalizeSubtitlePatch(
   patch: SettingsPatch,
   current?: AppSettings,

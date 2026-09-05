@@ -1,3 +1,4 @@
+import enhancePromptDefault from "../assets/enhance-prompt.txt?raw";
 import type {
   AppMode,
   AppSettings,
@@ -181,6 +182,16 @@ export function defaultSettings(): AppSettings {
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,
     auto_transcript_input_model: "",
+    text_transform_model: "",
+    subtitle_translation_enabled: false,
+    subtitle_translation_language: "ko",
+    transcription_translation_enabled: false,
+    transcription_translation_language: "ko",
+    dictation_translation_enabled: false,
+    dictation_translation_language: "ko",
+    enhance_prompt_enabled: false,
+    enhance_prompt_shortcut: "ctrl+alt+space",
+    enhance_prompt_system_prompt: enhancePromptDefault.trim(),
     dictation_enabled: false,
     dictation_shortcut: "alt+space",
     dictation_language: "auto",

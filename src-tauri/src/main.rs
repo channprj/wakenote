@@ -134,6 +134,65 @@ type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
 type AutoTypeState = Mutex<wakenote::auto_type::AutoTypeSession>;
+type TextTransformJobs =
+    Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>;
+
+#[tauri::command]
+async fn transform_text(
+    state: State<'_, BackendState>,
+    jobs: State<'_, TextTransformJobs>,
+    request_id: String,
+    request: wakenote::text_transform::TextTransformRequest,
+) -> Result<wakenote::text_transform::TextTransformResult, String> {
+    if request_id.is_empty() || request_id.len() > 128 {
+        return Err("Invalid text-processing request id".into());
+    }
+    let (settings, key) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        (
+            backend.settings(),
+            backend.load_openrouter_api_key()?.unwrap_or_default(),
+        )
+    };
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    {
+        let mut pending = jobs.lock().map_err(|error| error.to_string())?;
+        if pending.contains_key(&request_id) {
+            return Err("This text-processing request is already running".into());
+        }
+        if pending.len() >= 8 {
+            return Err("Too many text-processing requests. Try again shortly.".into());
+        }
+        pending.insert(request_id.clone(), cancellation.clone());
+    }
+    let result = wakenote::text_transform::transform_text_with_client(
+        &wakenote::llm::ReqwestOpenRouterClient::default(),
+        &settings,
+        &key,
+        &request,
+        &cancellation,
+    )
+    .await;
+    if let Ok(mut pending) = jobs.lock() {
+        pending.remove(&request_id);
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_text_transform(
+    jobs: State<'_, TextTransformJobs>,
+    request_id: String,
+) -> Result<(), String> {
+    if let Some(token) = jobs
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&request_id)
+    {
+        token.cancel();
+    }
+    Ok(())
+}
 
 enum AutoTypeUpdate {
     Started,
@@ -8501,6 +8560,7 @@ fn main() {
             app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
             app.manage(AutoTypeState::default());
+            app.manage(TextTransformJobs::default());
             app.manage(overlay_caption_state);
             app.manage(subtitle_preview_state);
             app.manage(intentional_quit_state);
@@ -8680,6 +8740,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            transform_text,
+            cancel_text_transform,
             get_settings,
             dictionary_file_status,
             open_dictionary_file,

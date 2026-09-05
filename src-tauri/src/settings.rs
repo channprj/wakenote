@@ -143,6 +143,18 @@ pub fn default_openrouter_model() -> String {
     OPENROUTER_DEFAULT_MODEL_ID.to_string()
 }
 
+pub fn default_translation_language() -> TranscriptionLanguage {
+    TranscriptionLanguage::Ko
+}
+pub fn default_enhance_prompt_shortcut() -> String {
+    "ctrl+alt+space".into()
+}
+pub fn default_enhance_prompt_system_prompt() -> String {
+    include_str!("../../src/assets/enhance-prompt.txt")
+        .trim()
+        .to_string()
+}
+
 pub fn default_llm_max_iterations() -> u8 {
     3
 }
@@ -449,6 +461,29 @@ pub struct AppSettings {
     pub auto_transcript_input_trailing_space: bool,
     #[serde(default)]
     pub auto_transcript_input_model: String,
+    #[serde(default)]
+    pub text_transform_model: String,
+    #[serde(default)]
+    pub subtitle_translation_enabled: bool,
+    #[serde(default = "default_translation_language")]
+    pub subtitle_translation_language: TranscriptionLanguage,
+    #[serde(default)]
+    pub transcription_translation_enabled: bool,
+    #[serde(default = "default_translation_language")]
+    pub transcription_translation_language: TranscriptionLanguage,
+    #[serde(default)]
+    pub dictation_translation_enabled: bool,
+    #[serde(default = "default_translation_language")]
+    pub dictation_translation_language: TranscriptionLanguage,
+    #[serde(default)]
+    pub enhance_prompt_enabled: bool,
+    #[serde(default = "default_enhance_prompt_shortcut")]
+    pub enhance_prompt_shortcut: String,
+    #[serde(default = "default_enhance_prompt_system_prompt")]
+    pub enhance_prompt_system_prompt: String,
+    /// Per-capture mode only; never persisted as a preference.
+    #[serde(skip)]
+    pub dictation_enhance_prompt: bool,
     /// Shortcut dictation: press the global shortcut, speak, then press it
     /// again to type the transcript into the focused app. Off by default.
     #[serde(default)]
@@ -581,6 +616,16 @@ pub struct SettingsPatch {
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
     pub auto_transcript_input_model: Option<String>,
+    pub text_transform_model: Option<String>,
+    pub subtitle_translation_enabled: Option<bool>,
+    pub subtitle_translation_language: Option<TranscriptionLanguage>,
+    pub transcription_translation_enabled: Option<bool>,
+    pub transcription_translation_language: Option<TranscriptionLanguage>,
+    pub dictation_translation_enabled: Option<bool>,
+    pub dictation_translation_language: Option<TranscriptionLanguage>,
+    pub enhance_prompt_enabled: Option<bool>,
+    pub enhance_prompt_shortcut: Option<String>,
+    pub enhance_prompt_system_prompt: Option<String>,
     pub dictation_enabled: Option<bool>,
     pub dictation_shortcut: Option<String>,
     pub dictation_language: Option<TranscriptionLanguage>,
@@ -1104,6 +1149,52 @@ impl AppSettings {
     }
 
     pub fn apply_patch(&mut self, patch: SettingsPatch) {
+        if let Some(value) = patch.text_transform_model.as_ref() {
+            self.text_transform_model = value.trim().to_string();
+        }
+        if let Some(value) = patch.subtitle_translation_enabled.as_ref() {
+            self.subtitle_translation_enabled = *value;
+        }
+        if let Some(value) = patch.subtitle_translation_language.as_ref() {
+            self.subtitle_translation_language = if *value == TranscriptionLanguage::Auto {
+                default_translation_language()
+            } else {
+                *value
+            };
+        }
+        if let Some(value) = patch.transcription_translation_enabled.as_ref() {
+            self.transcription_translation_enabled = *value;
+        }
+        if let Some(value) = patch.transcription_translation_language.as_ref() {
+            self.transcription_translation_language = if *value == TranscriptionLanguage::Auto {
+                default_translation_language()
+            } else {
+                *value
+            };
+        }
+        if let Some(value) = patch.dictation_translation_enabled.as_ref() {
+            self.dictation_translation_enabled = *value;
+        }
+        if let Some(value) = patch.dictation_translation_language.as_ref() {
+            self.dictation_translation_language = if *value == TranscriptionLanguage::Auto {
+                default_translation_language()
+            } else {
+                *value
+            };
+        }
+        if let Some(value) = patch.enhance_prompt_enabled.as_ref() {
+            self.enhance_prompt_enabled = *value;
+        }
+        if let Some(value) = patch.enhance_prompt_shortcut.as_ref() {
+            self.enhance_prompt_shortcut = value.trim().to_lowercase();
+        }
+        if let Some(value) = patch.enhance_prompt_system_prompt.as_ref() {
+            self.enhance_prompt_system_prompt = if value.trim().is_empty() {
+                default_enhance_prompt_system_prompt()
+            } else {
+                value.clone()
+            };
+        }
         let capture_microphones_patch = patch.capture_microphones.clone();
         let legacy_microphone_patch = patch.selected_microphone.is_some()
             || patch.selected_microphone_label.is_some()
@@ -1482,6 +1573,17 @@ impl Default for AppSettings {
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
             auto_transcript_input_model: String::new(),
+            text_transform_model: String::new(),
+            subtitle_translation_enabled: false,
+            subtitle_translation_language: default_translation_language(),
+            transcription_translation_enabled: false,
+            transcription_translation_language: default_translation_language(),
+            dictation_translation_enabled: false,
+            dictation_translation_language: default_translation_language(),
+            enhance_prompt_enabled: false,
+            enhance_prompt_shortcut: default_enhance_prompt_shortcut(),
+            enhance_prompt_system_prompt: default_enhance_prompt_system_prompt(),
+            dictation_enhance_prompt: false,
             dictation_enabled: false,
             dictation_shortcut: default_dictation_shortcut(),
             dictation_language: default_dictation_language(),
@@ -1545,6 +1647,14 @@ impl AppSettings {
             &self.selected_model
         } else {
             configured
+        }
+    }
+
+    pub fn effective_text_transform_model(&self) -> &str {
+        if self.text_transform_model.trim().is_empty() {
+            &self.openrouter_model
+        } else {
+            self.text_transform_model.trim()
         }
     }
 
