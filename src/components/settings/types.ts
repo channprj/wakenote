@@ -3,6 +3,8 @@ import type { PermissionFeature } from "@/lib/permission-guidance";
 
 export interface SettingsActions {
   onPatch: (patch: Partial<AppSettings>) => void | Promise<void>;
+  /** Explicit editors await persistence and display failures beside their draft. */
+  onSavePatch?: (patch: Partial<AppSettings>) => Promise<void>;
   onPermissionRequired: (feature: PermissionFeature) => Promise<boolean>;
   onPreviewSubtitle: (patch: Partial<AppSettings>) => void | Promise<void>;
   onSetMicrophoneInputVolume: (

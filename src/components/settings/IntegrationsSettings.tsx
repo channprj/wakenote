@@ -9,10 +9,11 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Textarea } from "@/components/ui/textarea";
+import { defaultSettings } from "@/lib/app-state";
 import type { AppSnapshot } from "@/lib/types";
 import { SettingSlider, SettingsCard, SettingsGrid } from "./settings-controls";
 import type { SettingsActions } from "./types";
+import { SettingsTextEditor } from "./SettingsTextEditor";
 
 export function IntegrationsSettings({
   snapshot,
@@ -22,6 +23,8 @@ export function IntegrationsSettings({
   actions: SettingsActions;
 }) {
   const { settings } = snapshot;
+  const savePatch = actions.onSavePatch ?? actions.onPatch;
+  const defaults = defaultSettings();
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [openAiApiKey, setOpenAiApiKey] = useState("");
   const [sonioxApiKey, setSonioxApiKey] = useState("");
@@ -74,19 +77,13 @@ export function IntegrationsSettings({
         title="OpenRouter reports"
         description="Configure the model and prompts used for transcript summaries and detailed reports."
       >
-        <Field orientation="responsive" className="settings-row">
-          <FieldContent>
-            <FieldLabel htmlFor="openrouter-model">OpenRouter Model</FieldLabel>
-          </FieldContent>
-          <Input
-            id="openrouter-model"
-            className="max-w-sm"
-            value={settings.openrouter_model}
-            onChange={(event) =>
-              actions.onPatch({ openrouter_model: event.currentTarget.value })
-            }
-          />
-        </Field>
+        <SettingsTextEditor
+          label="OpenRouter Model"
+          multiline={false}
+          value={settings.openrouter_model}
+          defaultValue={defaults.openrouter_model}
+          onSave={(openrouter_model) => savePatch({ openrouter_model })}
+        />
         <SettingSlider
           label="Maximum agent iterations"
           value={settings.llm_max_iterations}
@@ -96,20 +93,24 @@ export function IntegrationsSettings({
             actions.onPatch({ llm_max_iterations })
           }
         />
-        <PromptSetting
+        <SettingsTextEditor
           label="Summary Prompt Template"
+          description="Available variables: {{transcripts}}, {{date_range}}, {{selected_count}}. Save applies this prompt to new summaries."
           value={settings.llm_summary_prompt_template}
+          defaultValue={defaults.llm_summary_prompt_template}
           rows={7}
-          onChange={(llm_summary_prompt_template) =>
-            actions.onPatch({ llm_summary_prompt_template })
+          onSave={(llm_summary_prompt_template) =>
+            savePatch({ llm_summary_prompt_template })
           }
         />
-        <PromptSetting
+        <SettingsTextEditor
           label="Detailed Report Prompt Template"
+          description="Available variables: {{transcripts}}, {{date_range}}, {{selected_count}}. Save applies this prompt to new reports."
           value={settings.llm_report_prompt_template}
+          defaultValue={defaults.llm_report_prompt_template}
           rows={9}
-          onChange={(llm_report_prompt_template) =>
-            actions.onPatch({ llm_report_prompt_template })
+          onSave={(llm_report_prompt_template) =>
+            savePatch({ llm_report_prompt_template })
           }
         />
       </SettingsCard>
@@ -177,31 +178,6 @@ function ApiCredentialRow({
       <StatusBadge tone={configured ? "success" : "warning"}>
         {configured ? "API key saved" : "API key missing"}
       </StatusBadge>
-    </Field>
-  );
-}
-
-function PromptSetting({
-  label,
-  value,
-  rows,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  rows: number;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field orientation="vertical" className="settings-row">
-      <FieldLabel>{label}</FieldLabel>
-      <Textarea
-        aria-label={label}
-        value={value}
-        rows={rows}
-        className="max-h-64 resize-y font-mono text-xs"
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
     </Field>
   );
 }

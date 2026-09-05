@@ -144,6 +144,11 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot>(mockSnapshot());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const settingsWrites = useRef({
+    tail: Promise.resolve(),
+    pending: 0,
+    revision: 0,
+  });
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
   const [dictationState, setDictationState] = useState<DictationStatePayload>({
     state: "idle",
@@ -160,11 +165,12 @@ export default function App() {
   });
 
   async function refresh() {
+    const revision = settingsWrites.current.revision;
     setBusy(true);
     setError(null);
     try {
       const next = await loadSnapshot();
-      setSnapshot((current) => preserveRecentTranscripts(current, next));
+      acceptSnapshot(next, revision);
       await handlePermissionOnboarding(next);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -188,10 +194,9 @@ export default function App() {
     }
 
     try {
-      const persisted = await saveSettingsPatch({
+      await commitSettingsPatch({
         permission_onboarding_seen: true,
       });
-      setSnapshot((current) => preserveRecentTranscripts(current, persisted));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -399,9 +404,8 @@ export default function App() {
             }
             openSettings("audio");
             try {
-              const { getCurrentWindow } = await import(
-                "@tauri-apps/api/window"
-              );
+              const { getCurrentWindow } =
+                await import("@tauri-apps/api/window");
               const currentWindow = getCurrentWindow();
               await currentWindow.show();
               await currentWindow.setFocus();
@@ -430,9 +434,11 @@ export default function App() {
   }, []);
 
   async function refreshQuietly() {
+    if (settingsWrites.current.pending > 0) return;
+    const revision = settingsWrites.current.revision;
     try {
       const next = await loadSnapshot();
-      setSnapshot((current) => preserveRecentTranscripts(current, next));
+      acceptSnapshot(next, revision);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -496,25 +502,52 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [pollingDependencyKey]);
 
-  async function patchSettings(patch: Partial<AppSettings>) {
+  function acceptSnapshot(next: AppSnapshot, revision: number) {
+    setSnapshot((current) =>
+      preserveRecentTranscripts(current, {
+        ...next,
+        settings:
+          settingsWrites.current.pending > 0 ||
+          settingsWrites.current.revision !== revision
+            ? current.settings
+            : next.settings,
+      }),
+    );
+  }
+
+  function commitSettingsPatch(patch: Partial<AppSettings>): Promise<void> {
+    const writes = settingsWrites.current;
+    writes.pending += 1;
+    writes.revision += 1;
     setBusy(true);
     setError(null);
-    try {
+    const pending = writes.tail.then(async () => {
       const next = await saveSettingsPatch(patch);
       setSnapshot((current) => preserveRecentTranscripts(current, next));
+    });
+    // One failed write must not poison subsequent retries or unrelated fields.
+    writes.tail = pending.catch(() => {});
+    return pending.finally(() => {
+      writes.pending -= 1;
+      if (writes.pending === 0) setBusy(false);
+    });
+  }
+
+  async function patchSettings(patch: Partial<AppSettings>) {
+    try {
+      await commitSettingsPatch(patch);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(false);
     }
   }
 
   async function runAction(action: () => Promise<AppSnapshot>) {
+    const revision = settingsWrites.current.revision;
     setBusy(true);
     setError(null);
     try {
       const next = await action();
-      setSnapshot((current) => preserveRecentTranscripts(current, next));
+      acceptSnapshot(next, revision);
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -621,9 +654,7 @@ export default function App() {
         activityAttention={activityAttention.attention}
         transcriptEntries={transcriptEntries}
         busy={busy}
-        onStart={() =>
-          void runPermissionAction("live_input", startLiveCapture)
-        }
+        onStart={() => void runPermissionAction("live_input", startLiveCapture)}
         onStop={() => void runAction(stopLiveCapture)}
         onRefresh={() => void refresh()}
         onPatch={(patch) => void patchSettings(patch)}
@@ -720,6 +751,7 @@ export default function App() {
         snapshot={snapshot}
         actions={{
           onPatch: patchSettings,
+          onSavePatch: commitSettingsPatch,
           onPermissionRequired: ensurePermission,
           onPreviewSubtitle: (patch) => previewSubtitle(patch),
           onSetMicrophoneInputVolume: (deviceId, volumePercent) =>

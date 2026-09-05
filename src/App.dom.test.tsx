@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "./lib/app-state";
@@ -40,6 +47,145 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import App from "./App";
+
+describe("settings persistence", () => {
+  it("reports a failed explicit prompt save and preserves the draft", async () => {
+    const user = userEvent.setup();
+    const snapshot = mockSnapshot();
+    snapshot.settings.permission_onboarding_seen = true;
+    snapshot.settings.start_live_input_on_launch = false;
+    mocks.loadSnapshot.mockResolvedValue(snapshot);
+    mocks.saveSettingsPatch.mockRejectedValueOnce(
+      new Error("Cannot write settings"),
+    );
+    mocks.saveSettingsPatch.mockResolvedValueOnce({
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        llm_summary_prompt_template: "Keep my draft",
+      },
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Integrations" }));
+    const input = screen.getByRole("textbox", {
+      name: "Summary Prompt Template",
+    });
+    fireEvent.change(input, { target: { value: "Keep my draft" } });
+    await user.click(
+      screen.getByRole("button", { name: "Save Summary Prompt Template" }),
+    );
+    expect(await screen.findByText("Cannot write settings")).toBeTruthy();
+    expect((input as HTMLTextAreaElement).value).toBe("Keep my draft");
+    await user.click(
+      screen.getByRole("button", { name: "Save Summary Prompt Template" }),
+    );
+    await waitFor(() =>
+      expect(mocks.saveSettingsPatch).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.queryByText("Cannot write settings")).toBeNull();
+  });
+
+  it("serializes separate prompt saves so an older response cannot undo the newer one", async () => {
+    const user = userEvent.setup();
+    const snapshot = mockSnapshot();
+    snapshot.settings.permission_onboarding_seen = true;
+    snapshot.settings.start_live_input_on_launch = false;
+    mocks.loadSnapshot.mockResolvedValue(snapshot);
+    let finishFirst!: (value: AppSnapshot) => void;
+    mocks.saveSettingsPatch.mockImplementationOnce(
+      () =>
+        new Promise<AppSnapshot>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const final = structuredClone(snapshot);
+    final.settings.llm_summary_prompt_template = "New summary";
+    final.settings.llm_report_prompt_template = "New report";
+    mocks.saveSettingsPatch.mockResolvedValueOnce(final);
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Integrations" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Summary Prompt Template" }),
+      { target: { value: "New summary" } },
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save Summary Prompt Template" }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Detailed Report Prompt Template" }),
+      { target: { value: "New report" } },
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Save Detailed Report Prompt Template",
+      }),
+    );
+    expect(mocks.saveSettingsPatch).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      finishFirst({
+        ...snapshot,
+        settings: {
+          ...snapshot.settings,
+          llm_summary_prompt_template: "New summary",
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.saveSettingsPatch).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Detailed Report Prompt Template",
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toBe("New report");
+  });
+
+  it("does not let an older snapshot refresh roll back a saved prompt", async () => {
+    const user = userEvent.setup();
+    const snapshot = mockSnapshot();
+    snapshot.settings.permission_onboarding_seen = true;
+    snapshot.settings.start_live_input_on_launch = false;
+    mocks.loadSnapshot.mockResolvedValueOnce(snapshot);
+    let finishRefresh!: (value: AppSnapshot) => void;
+    mocks.loadSnapshot.mockImplementationOnce(
+      () =>
+        new Promise<AppSnapshot>((resolve) => {
+          finishRefresh = resolve;
+        }),
+    );
+    const saved = {
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        llm_summary_prompt_template: "Saved prompt",
+      },
+    };
+    mocks.saveSettingsPatch.mockResolvedValue(saved);
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Refresh" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Integrations" }));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Summary Prompt Template" }),
+      { target: { value: "Saved prompt" } },
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save Summary Prompt Template" }),
+    );
+    await act(async () => finishRefresh(snapshot));
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Summary Prompt Template",
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toBe("Saved prompt");
+  });
+});
 
 class TestResizeObserver {
   observe() {}
@@ -179,7 +325,9 @@ describe("explicit action permission guidance", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Start Input" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Start Input" }),
+    );
 
     expect(
       (await screen.findByRole("tab", { name: "Audio" })).getAttribute(
@@ -199,7 +347,9 @@ describe("explicit action permission guidance", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Start Input" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Start Input" }),
+    );
 
     await waitFor(() => expect(mocks.startLiveCapture).toHaveBeenCalledOnce());
     expect(mocks.loadPermissionSnapshot).toHaveBeenCalledOnce();
@@ -209,8 +359,7 @@ describe("explicit action permission guidance", () => {
 describe("native permission guidance", () => {
   it("shows WakeNote and selects Audio for a typed Dictation event", async () => {
     let guidanceHandler:
-      | ((event: { payload: unknown }) => void | Promise<void>)
-      | undefined;
+      ((event: { payload: unknown }) => void | Promise<void>) | undefined;
     mocks.listen.mockImplementation(async (eventName, handler) => {
       if (eventName === "permission-guidance-required") {
         guidanceHandler = handler;
@@ -232,9 +381,7 @@ describe("native permission guidance", () => {
     });
 
     expect(
-      screen.getByRole("tab", { name: "Audio" }).getAttribute(
-        "aria-selected",
-      ),
+      screen.getByRole("tab", { name: "Audio" }).getAttribute("aria-selected"),
     ).toBe("true");
     expect(mocks.showMainWindow).toHaveBeenCalledOnce();
     expect(mocks.focusMainWindow).toHaveBeenCalledOnce();
