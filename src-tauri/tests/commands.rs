@@ -36,6 +36,27 @@ fn epoch_local_path_parts() -> (String, String) {
 }
 
 #[test]
+fn failed_settings_save_keeps_previous_prompt_and_retry_persists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut backend = AppBackend::load_from_dir(tmp.path()).unwrap();
+    let original = backend.settings().llm_summary_prompt_template;
+    std::fs::create_dir(tmp.path().join("settings.json")).unwrap();
+    let patch = SettingsPatch {
+        llm_summary_prompt_template: Some("My edited prompt".into()),
+        ..Default::default()
+    };
+    assert!(backend.try_update_settings(patch.clone()).is_err());
+    assert_eq!(backend.settings().llm_summary_prompt_template, original);
+    std::fs::remove_dir(tmp.path().join("settings.json")).unwrap();
+    backend.try_update_settings(patch).unwrap();
+    let restored = AppBackend::load_from_dir(tmp.path()).unwrap();
+    assert_eq!(
+        restored.settings().llm_summary_prompt_template,
+        "My edited prompt"
+    );
+}
+
+#[test]
 fn live_preview_model_prefers_speed_then_accuracy_then_id_without_mutating_final_identity() {
     let mut registry = default_model_registry();
     let mut selected = registry.remove("qwen3-asr-1.7b").expect("selected model");

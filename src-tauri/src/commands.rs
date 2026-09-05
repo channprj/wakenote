@@ -884,7 +884,14 @@ impl AppBackend {
         self.settings.clone()
     }
 
-    pub fn update_settings(&mut self, mut patch: SettingsPatch) -> AppSettings {
+    pub fn update_settings(&mut self, patch: SettingsPatch) -> AppSettings {
+        self.try_update_settings(patch).unwrap_or_else(|error| {
+            eprintln!("[settings] could not save settings: {error}");
+            self.settings.clone()
+        })
+    }
+
+    pub fn try_update_settings(&mut self, mut patch: SettingsPatch) -> Result<AppSettings, String> {
         if let Some(model_id) = patch.selected_model.as_deref() {
             let model_directory = patch
                 .model_directory
@@ -894,16 +901,22 @@ impl AppBackend {
                 patch.selected_model = None;
             }
         }
-        self.settings.apply_patch(patch);
-        let models = self.model_registry();
-        self.settings.transcription_options = validate_model_options(
+        let mut candidate = self.settings.clone();
+        candidate.apply_patch(patch);
+        let models = model_registry_snapshot(expand_user_path(&candidate.model_directory));
+        candidate.transcription_options = validate_model_options(
             &models,
-            &self.settings.selected_model,
-            &self.settings.transcription_options,
+            &candidate.selected_model,
+            &candidate.transcription_options,
         );
+        if let Some(persistence) = &self.persistence {
+            persistence
+                .save_settings(&candidate)
+                .map_err(|error| format!("Could not save settings: {error}"))?;
+        }
+        self.settings = candidate;
         self.sync_capture_settings();
-        self.persist_settings();
-        self.settings.clone()
+        Ok(self.settings.clone())
     }
 
     fn save_root_path(&self) -> PathBuf {

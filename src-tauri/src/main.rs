@@ -3017,7 +3017,37 @@ fn update_settings(
 
     let (settings, live_event_handler, live_events) = {
         let mut backend = state.lock().map_err(|error| error.to_string())?;
-        let settings = backend.update_settings(patch);
+        let settings = match backend.try_update_settings(patch) {
+            Ok(settings) => settings,
+            Err(error) => {
+                let shortcut_rollback = reconcile_dictation_shortcut_registration(
+                    &app,
+                    &candidate_settings,
+                    &previous_settings,
+                );
+                let launch_rollback = apply_launch_at_login_action(
+                    &app,
+                    launch_at_login_action_for_patch(
+                        &candidate_settings,
+                        &SettingsPatch {
+                            launch_at_login: Some(previous_settings.launch_at_login),
+                            ..Default::default()
+                        },
+                    ),
+                );
+                return Err(format!(
+                    "{error}{}{}",
+                    shortcut_rollback
+                        .err()
+                        .map(|error| format!("; shortcut restore failed: {error}"))
+                        .unwrap_or_default(),
+                    launch_rollback
+                        .err()
+                        .map(|error| format!("; login setting restore failed: {error}"))
+                        .unwrap_or_default(),
+                ));
+            }
+        };
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (settings, handler, events)
     };
