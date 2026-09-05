@@ -30,6 +30,42 @@ use wakenote::voice_leveling::AudioFrameProcessor;
 
 struct ScalingProcessor(f32);
 
+#[test]
+fn enhanced_prompt_shortcut_is_distinct_and_does_not_overlap_a_modifier_trigger() {
+    let settings = AppSettings {
+        dictation_enabled: true,
+        enhance_prompt_enabled: true,
+        ..Default::default()
+    };
+    assert!(candidate_dictation_settings(&settings, &SettingsPatch::default()).is_ok());
+    for shortcut in ["alt+space", "leftalt", "ctrl+alt"] {
+        assert!(
+            candidate_dictation_settings(
+                &settings,
+                &SettingsPatch {
+                    enhance_prompt_shortcut: Some(shortcut.into()),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+    }
+    let modifier_primary = AppSettings {
+        dictation_shortcut: "rightalt".into(),
+        ..settings
+    };
+    assert!(candidate_dictation_settings(&modifier_primary, &SettingsPatch::default()).is_err());
+    let valid = candidate_dictation_settings(
+        &modifier_primary,
+        &SettingsPatch {
+            enhance_prompt_shortcut: Some(" Command + Shift + P ".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(valid.enhance_prompt_shortcut, "shift+cmd+p");
+}
+
 fn dictation_input(slot: MicrophoneSlot, id: &str, label: &str) -> DictationMicrophoneInput {
     DictationMicrophoneInput {
         slot,

@@ -927,6 +927,28 @@ pub fn candidate_dictation_settings(
     candidate.apply_patch(patch);
     if candidate.dictation_enabled {
         validate_dictation_shortcut(&candidate.dictation_shortcut)?;
+        if candidate.enhance_prompt_enabled {
+            let enhanced = validate_dictation_shortcut(&candidate.enhance_prompt_shortcut)?;
+            if modifier_shortcut(&enhanced)?.is_some() {
+                return Err(
+                    "Enhanced Prompt requires a shortcut with a main key, such as Ctrl+Alt+Space"
+                        .into(),
+                );
+            }
+            let primary = validate_dictation_shortcut(&candidate.dictation_shortcut)?;
+            let enhanced_parts: Vec<_> = enhanced.split('+').collect();
+            let modifier_overlap = modifier_shortcut(&primary)?.is_some()
+                && primary.split('+').all(|part| {
+                    let logical = part
+                        .strip_prefix("left")
+                        .or_else(|| part.strip_prefix("right"))
+                        .unwrap_or(part);
+                    enhanced_parts.contains(&logical)
+                });
+            if primary == enhanced || modifier_overlap {
+                return Err("Enhanced Prompt shortcut overlaps the Dictation shortcut. Choose a different key combination.".into());
+            }
+        }
     }
     Ok(candidate)
 }
@@ -934,6 +956,13 @@ pub fn candidate_dictation_settings(
 pub fn normalize_dictation_patch(patch: &mut SettingsPatch) -> Result<(), String> {
     if let Some(shortcut) = patch.dictation_shortcut.as_deref() {
         patch.dictation_shortcut = Some(validate_dictation_shortcut(shortcut)?);
+    }
+    if let Some(shortcut) = patch.enhance_prompt_shortcut.as_deref() {
+        let normalized = validate_dictation_shortcut(shortcut)?;
+        if modifier_shortcut(&normalized)?.is_some() {
+            return Err("Enhanced Prompt requires a shortcut with a main key".into());
+        }
+        patch.enhance_prompt_shortcut = Some(normalized);
     }
     Ok(())
 }

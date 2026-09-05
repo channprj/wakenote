@@ -29,6 +29,26 @@ pub struct TextTransformResult {
     pub target_language: Option<TranscriptionLanguage>,
 }
 
+pub fn dictation_transform_request(
+    settings: &AppSettings,
+    text: &str,
+) -> Option<TextTransformRequest> {
+    let kind = if settings.dictation_enhance_prompt {
+        TextTransformKind::EnhancePrompt
+    } else if settings.dictation_translation_enabled {
+        TextTransformKind::Translate
+    } else {
+        return None;
+    };
+    Some(TextTransformRequest {
+        kind,
+        text: text.into(),
+        target_language: settings
+            .dictation_translation_enabled
+            .then_some(settings.dictation_translation_language),
+    })
+}
+
 pub fn language_name(language: TranscriptionLanguage) -> Option<&'static str> {
     match language {
         TranscriptionLanguage::Auto => None,

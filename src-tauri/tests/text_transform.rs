@@ -8,6 +8,31 @@ use wakenote::text_transform::{
 };
 
 struct Client;
+
+#[test]
+fn only_the_dedicated_capture_is_enhanced_and_translation_can_be_combined() {
+    use wakenote::text_transform::dictation_transform_request;
+    let mut settings = AppSettings {
+        enhance_prompt_enabled: true,
+        ..Default::default()
+    };
+    assert!(dictation_transform_request(&settings, "original").is_none());
+    settings.dictation_translation_enabled = true;
+    settings.dictation_translation_language = TranscriptionLanguage::En;
+    let translated = dictation_transform_request(&settings, "original").unwrap();
+    assert_eq!(translated.kind, TextTransformKind::Translate);
+    settings.dictation_enhance_prompt = true;
+    let enhanced = dictation_transform_request(&settings, "original").unwrap();
+    assert_eq!(enhanced.kind, TextTransformKind::EnhancePrompt);
+    assert_eq!(enhanced.target_language, Some(TranscriptionLanguage::En));
+    settings.dictation_translation_enabled = false;
+    assert_eq!(
+        dictation_transform_request(&settings, "original")
+            .unwrap()
+            .target_language,
+        None
+    );
+}
 #[async_trait]
 impl OpenRouterClient for Client {
     async fn chat(&self, key: &str, body: Value) -> Result<String, String> {

@@ -45,9 +45,8 @@ use wakenote::dictation::{
     DictationCaptureHealth, DictationCaptureResult, DictationMicrophoneInput, DictationRecording,
     DictationRuntime, DictationShortcutEvent, DictationSlotFailure, DictationStage,
     DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey,
-    ShortcutRegistrationChange, archive_dictation_recording, candidate_dictation_settings,
-    modifier_shortcut, normalize_dictation_patch, prepare_dictation_audio,
-    shortcut_registration_change, transcribe_dictation_recording_execution,
+    archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
+    normalize_dictation_patch, prepare_dictation_audio, transcribe_dictation_recording_execution,
     validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
@@ -128,7 +127,7 @@ type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
-type DictationShortcutDispatcher = mpsc::Sender<DictationShortcutEvent>;
+type DictationShortcutDispatcher = mpsc::Sender<(DictationShortcutEvent, bool)>;
 type ModifierShortcutState = Arc<Mutex<ModifierShortcutRuntime>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
@@ -1702,7 +1701,7 @@ fn play_dictation_cue_nonblocking_on_failure(
 
 fn dispatch_dictation_shortcut_event(app: &AppHandle, event: DictationShortcutEvent) {
     if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>()
-        && let Err(error) = dispatcher.send(event)
+        && let Err(error) = dispatcher.send((event, false))
     {
         eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
     }
@@ -1713,9 +1712,19 @@ fn spawn_dictation_shortcut_worker(app: AppHandle) -> Result<DictationShortcutDi
     thread::Builder::new()
         .name("dictation-shortcut-events".to_string())
         .spawn(move || {
-            while let Ok(event) = receiver.recv() {
-                if let Err(error) = handle_dictation_shortcut_event(&app, event) {
+            let mut active_mode = None;
+            while let Ok((event, enhanced)) = receiver.recv() {
+                if active_mode.is_some_and(|mode| mode != enhanced) {
+                    continue;
+                }
+                if event == DictationShortcutEvent::Pressed {
+                    active_mode = Some(enhanced);
+                }
+                if let Err(error) = handle_dictation_shortcut_event(&app, event, enhanced) {
                     finish_dictation(&app, Some(error));
+                }
+                if event == DictationShortcutEvent::Released {
+                    active_mode = None;
                 }
             }
         })
@@ -1739,11 +1748,18 @@ fn parse_dictation_shortcut(raw: &str) -> Result<(String, ParsedDictationShortcu
     Ok((normalized, ParsedDictationShortcut::Keyed(shortcut)))
 }
 
-fn register_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String> {
+fn register_dictation_shortcut_for_mode(
+    app: &AppHandle,
+    raw: &str,
+    enhanced: bool,
+) -> Result<(), String> {
     let (normalized, shortcut) = parse_dictation_shortcut(raw)?;
     let shortcut = match shortcut {
         ParsedDictationShortcut::Keyed(shortcut) => shortcut,
         ParsedDictationShortcut::Modifiers(shortcut) => {
+            if enhanced {
+                return Err("Enhanced Prompt requires a shortcut with a main key".into());
+            }
             return app
                 .state::<ModifierShortcutState>()
                 .lock()
@@ -1768,7 +1784,9 @@ fn register_dictation_shortcut(app: &AppHandle, raw: &str) -> Result<(), String>
                 ShortcutState::Pressed => DictationShortcutEvent::Pressed,
                 ShortcutState::Released => DictationShortcutEvent::Released,
             };
-            dispatch_dictation_shortcut_event(app, event);
+            if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>() {
+                let _ = dispatcher.send((event, enhanced));
+            }
         })
         .map_err(|error| format!("could not register dictation shortcut '{normalized}': {error}"))
 }
@@ -1799,8 +1817,8 @@ fn suspend_dictation_shortcut(
     state: State<'_, BackendState>,
 ) -> Result<(), String> {
     let settings = state.lock().map_err(|error| error.to_string())?.settings();
-    if settings.dictation_enabled {
-        unregister_dictation_shortcut(&app, &settings.dictation_shortcut)?;
+    for (shortcut, _) in active_dictation_shortcuts(&settings) {
+        unregister_dictation_shortcut(&app, &shortcut)?;
     }
     Ok(())
 }
@@ -1808,13 +1826,34 @@ fn suspend_dictation_shortcut(
 #[tauri::command]
 fn resume_dictation_shortcut(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
     let settings = state.lock().map_err(|error| error.to_string())?.settings();
-    if !settings.dictation_enabled {
-        return Ok(());
+    for (shortcut, enhanced) in active_dictation_shortcuts(&settings) {
+        if !is_dictation_shortcut_registered(&app, &shortcut)? {
+            register_dictation_shortcut_for_mode(&app, &shortcut, enhanced)?;
+        }
     }
-    if is_dictation_shortcut_registered(&app, &settings.dictation_shortcut)? {
-        return Ok(());
+    Ok(())
+}
+
+#[tauri::command]
+fn enhanced_dictation_event(app: AppHandle, pressed: bool) -> Result<(), String> {
+    let settings = app
+        .state::<BackendState>()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .settings();
+    if !settings.dictation_enabled || !settings.enhance_prompt_enabled {
+        return Err("Enable Dictation and Enhanced Prompt in Settings first".into());
     }
-    register_dictation_shortcut(&app, &settings.dictation_shortcut)
+    app.state::<DictationShortcutDispatcher>()
+        .send((
+            if pressed {
+                DictationShortcutEvent::Pressed
+            } else {
+                DictationShortcutEvent::Released
+            },
+            true,
+        ))
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -1930,37 +1969,58 @@ fn install_modifier_shortcut_monitors(
     Ok(())
 }
 
+fn active_dictation_shortcuts(settings: &AppSettings) -> Vec<(String, bool)> {
+    if !settings.dictation_enabled {
+        return Vec::new();
+    }
+    let mut shortcuts = vec![(settings.dictation_shortcut.clone(), false)];
+    if settings.enhance_prompt_enabled {
+        shortcuts.push((settings.enhance_prompt_shortcut.clone(), true));
+    }
+    shortcuts
+}
+
 fn reconcile_dictation_shortcut_registration(
     app: &AppHandle,
     previous: &AppSettings,
     next: &AppSettings,
 ) -> Result<(), String> {
-    match shortcut_registration_change(
-        previous.dictation_enabled,
-        &previous.dictation_shortcut,
-        next.dictation_enabled,
-        &next.dictation_shortcut,
-    ) {
-        ShortcutRegistrationChange::Unchanged => Ok(()),
-        ShortcutRegistrationChange::Register(shortcut) => {
-            register_dictation_shortcut(app, &shortcut)
-        }
-        ShortcutRegistrationChange::Unregister(shortcut) => {
-            unregister_dictation_shortcut(app, &shortcut)
-        }
-        ShortcutRegistrationChange::Replace { previous, next } => {
-            unregister_dictation_shortcut(app, &previous)?;
-            if let Err(error) = register_dictation_shortcut(app, &next) {
-                return match register_dictation_shortcut(app, &previous) {
-                    Ok(()) => Err(error),
-                    Err(rollback_error) => Err(format!(
-                        "{error}; restoring the previous shortcut also failed: {rollback_error}"
-                    )),
-                };
-            }
-            Ok(())
-        }
+    let old = active_dictation_shortcuts(previous);
+    let new = active_dictation_shortcuts(next);
+    if old == new {
+        return Ok(());
     }
+    let mut installed: Vec<String> = Vec::new();
+    let result = (|| {
+        for (shortcut, _) in &old {
+            unregister_dictation_shortcut(app, shortcut)?;
+        }
+        for (shortcut, enhanced) in &new {
+            register_dictation_shortcut_for_mode(app, shortcut, *enhanced)?;
+            installed.push(shortcut.clone());
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        for shortcut in installed {
+            let _ = unregister_dictation_shortcut(app, &shortcut);
+        }
+        let mut failures = Vec::new();
+        for (shortcut, enhanced) in old {
+            if !is_dictation_shortcut_registered(app, &shortcut).unwrap_or(false)
+                && let Err(restore_error) =
+                    register_dictation_shortcut_for_mode(app, &shortcut, enhanced)
+            {
+                failures.push(restore_error);
+            }
+        }
+        return Err(if failures.is_empty() {
+            error
+        } else {
+            format!("{error}; shortcut restore failed: {}", failures.join("; "))
+        });
+    }
+    Ok(())
 }
 
 fn show_dictation_overlay(
@@ -2304,6 +2364,54 @@ fn finish_dictation(app: &AppHandle, error: Option<String>) {
     }
 }
 
+fn transform_dictation_output(
+    app: &AppHandle,
+    operation_id: u64,
+    settings: &AppSettings,
+    text: &str,
+) -> Result<String, String> {
+    let Some(request) = wakenote::text_transform::dictation_transform_request(settings, text)
+    else {
+        return Ok(text.into());
+    };
+    if !dictation_operation_is_active(app, operation_id) {
+        return Err("Dictation cancelled".into());
+    }
+    let key = app
+        .state::<BackendState>()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .load_openrouter_api_key()?
+        .unwrap_or_default();
+    show_dictation_overlay(
+        app,
+        overlay::DictationOverlayState::Transcribing,
+        Some(
+            if settings.dictation_enhance_prompt {
+                "Enhancing prompt…"
+            } else {
+                "Translating…"
+            }
+            .into(),
+        ),
+    );
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    tauri::async_runtime::block_on(async {
+        let client = wakenote::llm::ReqwestOpenRouterClient::default();
+        tokio::select! {
+            result = wakenote::text_transform::transform_text_with_client(
+                &client, settings, &key, &request, &cancellation,
+            ) => result.map(|result| result.text),
+            _ = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if !dictation_operation_is_active(app, operation_id) { break; }
+                }
+            } => { cancellation.cancel(); Err("Dictation cancelled".into()) }
+        }
+    })
+}
+
 fn process_dictation_recording(
     app: &AppHandle,
     operation_id: u64,
@@ -2538,8 +2646,26 @@ fn process_dictation_recording(
                 );
                 return;
             }
+            let output_text = match transform_dictation_output(app, operation_id, &settings, &text)
+            {
+                Ok(output) => output,
+                Err(error) => {
+                    refresh_transcript_day_index(&archive.audio_path);
+                    if dictation_operation_is_active(app, operation_id) {
+                        show_dictation_operation_error(
+                            app,
+                            operation_id,
+                            format!("{error}. The original transcript is saved in Transcripts."),
+                        );
+                    }
+                    return;
+                }
+            };
+            if !dictation_operation_is_active(app, operation_id) {
+                return;
+            }
             let Some(input_text) = wakenote::text_input::dictation_input_text(
-                &text,
+                &output_text,
                 settings.dictation_remove_trailing_space,
             ) else {
                 let _ = TranscriptionSidecar::write_error(&archive, "No speech detected");
@@ -2560,7 +2686,7 @@ fn process_dictation_recording(
                 app,
                 operation_id,
                 archive.audio_path.clone(),
-                &text,
+                &output_text,
                 &settings,
             );
             type_dictation_text_on_main_thread(app, operation_id, input_text, settings, started);
@@ -3042,16 +3168,18 @@ async fn stop_dictation_after_limit(app: AppHandle, operation_id: u64) {
 fn handle_dictation_shortcut_event(
     app: &AppHandle,
     event: DictationShortcutEvent,
+    enhanced: bool,
 ) -> Result<(), String> {
-    let settings = app
+    let mut settings = app
         .try_state::<BackendState>()
         .ok_or_else(|| "dictation backend is unavailable".to_string())?
         .lock()
         .map_err(|error| error.to_string())?
         .settings();
-    if !settings.dictation_enabled {
+    if !settings.dictation_enabled || (enhanced && !settings.enhance_prompt_enabled) {
         return Ok(());
     }
+    settings.dictation_enhance_prompt = enhanced;
     let event_name = match event {
         DictationShortcutEvent::Pressed => "pressed",
         DictationShortcutEvent::Released => "released",
@@ -8596,17 +8724,12 @@ fn main() {
 
             install_modifier_shortcut_monitors(app.handle(), modifier_shortcut_state)?;
 
-            if initial_settings_for_runtime.dictation_enabled
-                && let Err(error) = register_dictation_shortcut(
-                    app.handle(),
-                    &initial_settings_for_runtime.dictation_shortcut,
-                )
-            {
-                append_runtime_debug_log(
-                    &initial_settings_for_runtime,
-                    format!("[dictation] startup registration failed: {error}"),
-                );
-                eprintln!("[dictation] startup registration failed: {error}");
+            for (shortcut, enhanced) in active_dictation_shortcuts(&initial_settings_for_runtime) {
+                if let Err(error) = register_dictation_shortcut_for_mode(app.handle(), &shortcut, enhanced) {
+                    append_runtime_debug_log(&initial_settings_for_runtime,
+                        format!("[dictation] startup registration failed enhanced={enhanced}: {error}"));
+                    eprintln!("[dictation] startup registration failed enhanced={enhanced}: {error}");
+                }
             }
 
             let startup_recovery_cutoff = chrono::Utc::now();
@@ -8740,6 +8863,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            enhanced_dictation_event,
             transform_text,
             cancel_text_transform,
             get_settings,

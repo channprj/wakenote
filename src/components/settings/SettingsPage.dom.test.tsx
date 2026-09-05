@@ -813,6 +813,59 @@ describe("SettingsPage interactions", () => {
     expect(snapshot.settings.selected_model).not.toBe("whisper-small");
   });
 
+  it("saves Enhanced Prompt drafts explicitly and configures dictation translation independently", async () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+    const actions = makeActions();
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Enhanced Prompt system prompt",
+    });
+    fireEvent.change(editor, {
+      target: { value: "Write a concise task prompt. Keep my constraints." },
+    });
+    expect(actions.onPatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        enhance_prompt_system_prompt: expect.anything(),
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Save Enhanced Prompt system prompt",
+      }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      enhance_prompt_system_prompt:
+        "Write a concise task prompt. Keep my constraints.",
+    });
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Enhanced Prompt mode" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      enhance_prompt_enabled: true,
+    });
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Translate dictation" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_translation_enabled: true,
+    });
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Dictation translation language" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "English" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_translation_language: "en",
+    });
+  });
+
   it("keeps the compact Dictionary editor in Dictation instead of Models", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

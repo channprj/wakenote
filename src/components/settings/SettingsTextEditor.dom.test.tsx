@@ -13,6 +13,21 @@ import { SettingsTextEditor } from "./SettingsTextEditor";
 afterEach(cleanup);
 
 describe("settings text editing", () => {
+  it("can explicitly clear an optional model override", async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsTextEditor
+        label="Model"
+        value="custom/model"
+        allowEmpty
+        multiline={false}
+        onSave={save}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Model" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(""));
+  });
   it("preserves a cleared draft and subsequent typing across snapshot updates until Save", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
     const view = render(

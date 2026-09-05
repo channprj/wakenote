@@ -30,7 +30,7 @@ export function IntegrationsSettings({
   const [sonioxApiKey, setSonioxApiKey] = useState("");
 
   return (
-    <SettingsGrid maxColumns={3}>
+    <SettingsGrid maxColumns={2}>
       <SettingsCard
         title="External AI API keys"
         description="Manage cloud transcription and report credentials in one place. Keys stay in WakeNote's private app-data secret store."
@@ -73,6 +73,20 @@ export function IntegrationsSettings({
         />
       </SettingsCard>
 
+      <SettingsCard
+        title="Translation & prompt processing"
+        description="Translation and Enhanced Prompt use OpenRouter. Only text is sent; these features are off until enabled in their settings."
+      >
+        <SettingsTextEditor
+          label="Translation & prompt model"
+          multiline={false}
+          allowEmpty
+          description={`Leave blank to use the report model (${settings.openrouter_model}). Enter any compatible OpenRouter model ID.`}
+          value={settings.text_transform_model}
+          defaultValue=""
+          onSave={(text_transform_model) => savePatch({ text_transform_model })}
+        />
+      </SettingsCard>
       <SettingsCard
         title="OpenRouter reports"
         description="Configure the model and prompts used for transcript summaries and detailed reports."

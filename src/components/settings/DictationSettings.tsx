@@ -28,6 +28,9 @@ import {
   type SelectOption,
 } from "./settings-controls";
 import { DictionarySettingsCard } from "./DictionarySettingsCard";
+import { SettingsTextEditor } from "./SettingsTextEditor";
+import { TranslationControls } from "./TranslationControls";
+import { defaultSettings } from "@/lib/app-state";
 import type { SettingsActions } from "./types";
 
 const DICTATION_LANGUAGES = [
@@ -157,7 +160,9 @@ export function DictationSettings({
     setCapturingShortcut(false);
     setShortcutError(null);
     try {
-      await actions.onPatch({ dictation_shortcut: shortcut });
+      await (actions.onSavePatch ?? actions.onPatch)({
+        dictation_shortcut: shortcut,
+      });
     } catch (error) {
       setShortcutError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -392,6 +397,47 @@ export function DictationSettings({
         onOpenFile={actions.onOpenDictionaryFile}
         onReloadFile={actions.onReloadDictionaryFile}
       />
+      <SettingsCard
+        title="Translation & Enhanced Prompt"
+        description="Keep normal Dictation as spoken text, or use a separate shortcut to turn your speech into a ready-to-use prompt."
+      >
+        <TranslationControls
+          scope="dictation"
+          settings={settings}
+          onPatch={actions.onPatch}
+        />
+        <SettingSwitch
+          label="Enhanced Prompt mode"
+          checked={settings.enhance_prompt_enabled}
+          description="Requires Dictation to be enabled and an OpenRouter key. Hold the dedicated shortcut to speak; release to format and type the prompt."
+          onCheckedChange={(enhance_prompt_enabled) =>
+            actions.onPatch({ enhance_prompt_enabled })
+          }
+        />
+        <SettingsTextEditor
+          label="Enhanced Prompt shortcut"
+          multiline={false}
+          description="Use a different key combination from Dictation, for example Ctrl+Alt+Space. Modifier-only shortcuts are not supported for this mode."
+          value={settings.enhance_prompt_shortcut}
+          defaultValue={defaultSettings().enhance_prompt_shortcut}
+          onSave={(enhance_prompt_shortcut) =>
+            (actions.onSavePatch ?? actions.onPatch)({
+              enhance_prompt_shortcut,
+            })
+          }
+        />
+        <SettingsTextEditor
+          label="Enhanced Prompt system prompt"
+          description="Controls how spoken drafts are rewritten. The original recording and transcript stay in Transcripts."
+          value={settings.enhance_prompt_system_prompt}
+          defaultValue={defaultSettings().enhance_prompt_system_prompt}
+          onSave={(enhance_prompt_system_prompt) =>
+            (actions.onSavePatch ?? actions.onPatch)({
+              enhance_prompt_system_prompt,
+            })
+          }
+        />
+      </SettingsCard>
       <SettingsCard
         title="Feedback"
         description="Choose the audio cues and where the compact Dictation bubble appears."

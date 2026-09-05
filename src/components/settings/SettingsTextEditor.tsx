@@ -13,6 +13,7 @@ export function SettingsTextEditor({
   defaultValue,
   multiline = true,
   rows = 8,
+  allowEmpty = false,
   onSave,
 }: {
   label: string;
@@ -21,6 +22,7 @@ export function SettingsTextEditor({
   defaultValue?: string;
   multiline?: boolean;
   rows?: number;
+  allowEmpty?: boolean;
   onSave: (value: string) => void | Promise<void>;
 }) {
   const id = useId();
@@ -42,7 +44,7 @@ export function SettingsTextEditor({
   }, [value]);
 
   async function save() {
-    if (savingRef.current || !dirty || !draft.trim()) return;
+    if (savingRef.current || !dirty || (!allowEmpty && !draft.trim())) return;
     savingRef.current = true;
     setSaving(true);
     setError(null);
@@ -103,7 +105,7 @@ export function SettingsTextEditor({
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          disabled={saving || !dirty || !draft.trim()}
+          disabled={saving || !dirty || (!allowEmpty && !draft.trim())}
           aria-label={`Save ${label}`}
           onClick={() => void save()}
         >
