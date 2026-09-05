@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import type { AppSnapshot } from "@/lib/types";
@@ -100,7 +101,7 @@ export function SubtitlesSettings({
         />
         <SettingSlider
           label="Subtitle font size"
-          description="A short example appears on screen while you adjust the size."
+          description="A short example appears on screen when you finish adjusting the size."
           value={settings.floating_overlay_font_size_px}
           min={10}
           max={48}
@@ -271,11 +272,10 @@ function ColorSetting({
       <Input
         aria-label={label}
         type="color"
-        className="w-16 p-1"
+        className="w-16 min-w-16 shrink-0 p-1"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
       />
     </Field>
   );
 }
-import { useState } from "react";
