@@ -60,6 +60,10 @@ const LIVE_CHUNK_HISTORY_LIMIT: usize = 256;
 /// to the frontend (or to the live transcription service).
 #[derive(Debug, Clone)]
 pub enum LiveTranscriptEvent {
+    Discarded {
+        source_key: String,
+        chunk_id: u64,
+    },
     Started {
         source_key: String,
         source_label: String,
@@ -892,6 +896,26 @@ impl AppBackend {
     }
 
     pub fn try_update_settings(&mut self, mut patch: SettingsPatch) -> Result<AppSettings, String> {
+        if let Some(model_id) = patch
+            .auto_transcript_input_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            let model = self
+                .model_registry()
+                .into_iter()
+                .find(|model| model.id == model_id)
+                .ok_or_else(|| format!("Unknown auto-type model: {model_id}"))?;
+            if model.provider_runtime != "whisper-rs"
+                && !matches!(
+                    model_id,
+                    "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+                )
+            {
+                return Err("Auto-type requires a Whisper or cloud realtime model".into());
+            }
+        }
         if let Some(model_id) = patch.selected_model.as_deref() {
             let model_directory = patch
                 .model_directory
@@ -1059,6 +1083,7 @@ impl AppBackend {
 
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
         if model_id == self.settings.selected_model
+            || model_id == self.settings.effective_auto_type_model()
             || model_id == self.settings.effective_dictation_model()
             || model_id == self.settings.effective_meeting_model()
         {
@@ -2156,6 +2181,12 @@ impl AppBackend {
         let mut queue_changed = false;
         for event in events {
             match event {
+                CaptureControllerEvent::ChunkDiscarded { chunk_id } => {
+                    self.emit_live_event(LiveTranscriptEvent::Discarded {
+                        source_key: "system".into(),
+                        chunk_id,
+                    });
+                }
                 CaptureControllerEvent::ChunkStarted {
                     chunk_id,
                     started_at,
@@ -3203,6 +3234,13 @@ impl AppBackend {
         let mut queue_changed = false;
         for event in events {
             match event {
+                CaptureControllerEvent::ChunkDiscarded { chunk_id } => {
+                    self.finish_live_chunk_suppression(&source_key, chunk_id);
+                    self.emit_live_event(LiveTranscriptEvent::Discarded {
+                        source_key: source_key.clone(),
+                        chunk_id,
+                    });
+                }
                 CaptureControllerEvent::ChunkStarted {
                     chunk_id,
                     started_at,
@@ -3234,7 +3272,7 @@ impl AppBackend {
                             source_label: source_label.clone(),
                             microphone_slot,
                             chunk_id,
-                            model_id: self.settings.selected_model.clone(),
+                            model_id: self.settings.effective_auto_type_model().to_string(),
                             language: self.settings.transcription_language,
                             suppress_low_confidence_transcripts: self
                                 .settings

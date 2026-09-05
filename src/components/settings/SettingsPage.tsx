@@ -117,6 +117,7 @@ export function SettingsSectionContent({
       return (
         <AdvancedSettings
           settings={snapshot.settings}
+          models={snapshot.models}
           onPatch={actions.onPatch}
         />
       );

@@ -786,6 +786,33 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it("saves an independent realtime auto-type model", async () => {
+    const snapshot = mockSnapshot();
+    const model = snapshot.models.find(
+      (model) => model.id === "whisper-small",
+    )!;
+    model.status = "ready";
+    const actions = makeActions();
+    render(
+      <SettingsPage
+        section="advanced"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Auto-type model" }),
+    );
+    await userEvent.click(
+      screen.getByRole("option", { name: model.display_name }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      auto_transcript_input_model: "whisper-small",
+    });
+    expect(snapshot.settings.selected_model).not.toBe("whisper-small");
+  });
+
   it("keeps the compact Dictionary editor in Dictation instead of Models", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

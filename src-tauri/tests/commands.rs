@@ -692,6 +692,7 @@ fn backend_merges_two_microphones_into_one_recording_and_queue_job_by_default() 
     );
     for event in live_events {
         match event {
+            LiveTranscriptEvent::Discarded { .. } => {}
             LiveTranscriptEvent::Started {
                 source_label,
                 microphone_slot,

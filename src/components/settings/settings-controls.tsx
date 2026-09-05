@@ -94,6 +94,7 @@ export interface SelectOption<T extends string = string> {
   value: T;
   label: string;
   group?: string;
+  disabled?: boolean;
 }
 
 export function SettingSelect<T extends string>({
@@ -151,7 +152,11 @@ export function SettingSelect<T extends string>({
             <SelectGroup key={group.label ?? "ungrouped"}>
               {group.label ? <SelectLabel>{group.label}</SelectLabel> : null}
               {group.options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
+                <SelectItem
+                  key={option.value}
+                  value={option.value}
+                  disabled={option.disabled}
+                >
                   {option.label}
                 </SelectItem>
               ))}

@@ -447,6 +447,8 @@ pub struct AppSettings {
     pub auto_transcript_input_enabled: bool,
     #[serde(default)]
     pub auto_transcript_input_trailing_space: bool,
+    #[serde(default)]
+    pub auto_transcript_input_model: String,
     /// Shortcut dictation: press the global shortcut, speak, then press it
     /// again to type the transcript into the focused app. Off by default.
     #[serde(default)]
@@ -578,6 +580,7 @@ pub struct SettingsPatch {
     pub input_monitoring_enabled: Option<bool>,
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
+    pub auto_transcript_input_model: Option<String>,
     pub dictation_enabled: Option<bool>,
     pub dictation_shortcut: Option<String>,
     pub dictation_language: Option<TranscriptionLanguage>,
@@ -1255,6 +1258,9 @@ impl AppSettings {
         if let Some(value) = patch.auto_transcript_input_trailing_space {
             self.auto_transcript_input_trailing_space = value;
         }
+        if let Some(value) = patch.auto_transcript_input_model {
+            self.auto_transcript_input_model = value.trim().to_string();
+        }
         if let Some(value) = patch.dictation_enabled {
             self.dictation_enabled = value;
         }
@@ -1475,6 +1481,7 @@ impl Default for AppSettings {
             input_monitoring_enabled: false,
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
+            auto_transcript_input_model: String::new(),
             dictation_enabled: false,
             dictation_shortcut: default_dictation_shortcut(),
             dictation_language: default_dictation_language(),
@@ -1538,6 +1545,15 @@ impl AppSettings {
             &self.selected_model
         } else {
             configured
+        }
+    }
+
+    pub fn effective_auto_type_model(&self) -> &str {
+        if self.auto_transcript_input_enabled && !self.auto_transcript_input_model.trim().is_empty()
+        {
+            self.auto_transcript_input_model.trim()
+        } else {
+            &self.selected_model
         }
     }
 

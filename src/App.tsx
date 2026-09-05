@@ -364,6 +364,25 @@ export default function App() {
         ["dictionary-changed", () => null],
         ["dictionary-file-error", () => null],
         ["microphone-input-levels-changed", () => null],
+        [
+          "auto-type-error",
+          (payload) => {
+            setError(String(payload));
+            return null;
+          },
+        ],
+        [
+          "live-transcript-discarded",
+          (payload) => {
+            const data = payload as { source_key: string; chunk_id: number };
+            return {
+              type: "committed",
+              ...data,
+              audio_path: "",
+              will_transcribe: false,
+            };
+          },
+        ],
       ];
 
       for (const [eventName, parse] of subscriptions) {

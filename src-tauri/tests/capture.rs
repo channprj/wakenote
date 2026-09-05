@@ -22,6 +22,41 @@ fn settings() -> AppSettings {
     }
 }
 
+#[test]
+fn auto_type_bounds_microphone_chunks_and_snapshots_its_model_without_changing_archival_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut configured = settings();
+    configured.auto_transcript_input_enabled = true;
+    configured.auto_transcript_input_model = "whisper-small".into();
+    configured.transcription_enabled = true;
+    let config = |source| CaptureControllerConfig {
+        save_root: tmp.path().to_path_buf(),
+        settings: configured.clone(),
+        sample_rate: 10,
+        device_id: "mic".into(),
+        device_name: "Mic".into(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 9, 6, 0, 0, 0).unwrap(),
+        app_version: "test".into(),
+        source,
+        source_label: (source == ChunkSource::System).then(|| "system".into()),
+    };
+    let mut mic = CaptureController::new(config(ChunkSource::Microphone));
+    let mut system = CaptureController::new(config(ChunkSource::System));
+    for _ in 0..65 {
+        mic.process_samples(&[0.8], 100).unwrap();
+        system.process_samples(&[0.8], 100).unwrap();
+    }
+    assert!(!mic.completed_chunks().is_empty());
+    assert!(system.completed_chunks().is_empty());
+    let metadata: ChunkMetadata =
+        serde_json::from_slice(&std::fs::read(&mic.completed_chunks()[0].metadata_path).unwrap())
+            .unwrap();
+    assert_eq!(metadata.model_id, "whisper-small");
+    assert_eq!(metadata.max_chunk_ms, 5_000);
+    assert_eq!(configured.max_chunk_ms, 30_000);
+}
+
 fn wav_sample_count(path: &std::path::Path) -> usize {
     let reader = hound::WavReader::open(path).expect("wav");
     reader.into_samples::<i16>().count()
@@ -341,6 +376,13 @@ fn capture_processor_rollover_does_not_write_silence_only_chunk_when_speech_stop
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 1);
     assert_eq!(wav_sample_count(&chunks[0].audio_path), 5);
+    assert!(
+        processor
+            .pending_events()
+            .iter()
+            .any(|event| matches!(event, CaptureControllerEvent::ChunkDiscarded { .. })),
+        "discarded silence must release pending realtime output"
+    );
 }
 
 #[test]

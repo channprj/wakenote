@@ -133,6 +133,91 @@ type ModifierShortcutState = Arc<Mutex<ModifierShortcutRuntime>>;
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
+type AutoTypeState = Mutex<wakenote::auto_type::AutoTypeSession>;
+
+enum AutoTypeUpdate {
+    Started,
+    Partial(String),
+    Final(String),
+    Failed,
+}
+
+fn clear_auto_type(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AutoTypeState>()
+        && let Ok(mut session) = state.lock()
+    {
+        session.clear();
+    }
+}
+
+fn dispatch_auto_type(
+    app: &AppHandle,
+    source_key: &str,
+    slot: Option<MicrophoneSlot>,
+    chunk_id: u64,
+    update: AutoTypeUpdate,
+) {
+    if !source_key.starts_with("microphone") || slot == Some(MicrophoneSlot::Secondary) {
+        return;
+    }
+    let input_app = app.clone();
+    let scheduled = app.run_on_main_thread(move || {
+        let Some(state) = input_app.try_state::<AutoTypeState>() else {
+            return;
+        };
+        let Ok(mut session) = state.lock() else {
+            return;
+        };
+        let settings = input_app
+            .try_state::<BackendState>()
+            .and_then(|backend| backend.lock().ok().map(|backend| backend.settings()))
+            .unwrap_or_default();
+        if !settings.auto_transcript_input_enabled
+            || settings.pause_all
+            || !settings.recording_enabled
+            || !settings.transcription_enabled
+            || dictation_suppresses_vor_live_transcription(&input_app)
+        {
+            session.clear();
+            return;
+        }
+        let observed = match update {
+            AutoTypeUpdate::Started => session.start(chunk_id),
+            AutoTypeUpdate::Partial(text) => {
+                session.partial(chunk_id, &text);
+                Ok(())
+            }
+            AutoTypeUpdate::Final(text) => {
+                session.finish(chunk_id, &text);
+                Ok(())
+            }
+            AutoTypeUpdate::Failed => {
+                session.discard(chunk_id);
+                Ok(())
+            }
+        };
+        let result = observed.and_then(|()| {
+            session.flush(settings.auto_transcript_input_trailing_space, |text| {
+                wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
+                    text,
+                    wakenote::text_input::ClipboardAfterInput::PreservePrevious,
+                )
+            })
+        });
+        if let Err(error) = result {
+            session.clear();
+            append_runtime_debug_log(&settings, format!("[auto-type] {error}"));
+            let _ = input_app.emit("auto-type-error", error);
+        }
+    });
+    if let Err(error) = scheduled {
+        clear_auto_type(app);
+        let _ = app.emit(
+            "auto-type-error",
+            format!("Could not schedule auto-type: {error}"),
+        );
+    }
+}
 type OverlayCaptionState = Arc<Mutex<OverlayCaptionRuntime>>;
 type SubtitlePreviewState = Arc<AtomicU64>;
 type IntentionalQuitState = Arc<AtomicBool>;
@@ -2652,6 +2737,7 @@ fn start_dictation_capture(
     state: &DictationState,
     settings: AppSettings,
 ) -> Result<u64, String> {
+    clear_auto_type(app);
     let resolution = resolve_dictation_inputs(&settings);
     if resolution.ready.is_empty() {
         return Err(dictation_start_error(&resolution.failures));
@@ -3051,6 +3137,14 @@ fn update_settings(
         let (handler, events) = live_events_for_dispatch(&mut backend);
         (settings, handler, events)
     };
+    if previous_settings.auto_transcript_input_enabled != settings.auto_transcript_input_enabled
+        || previous_settings.auto_transcript_input_model != settings.auto_transcript_input_model
+        || settings.pause_all
+        || !settings.transcription_enabled
+        || !settings.recording_enabled
+    {
+        clear_auto_type(&app);
+    }
     voice_leveling_policy.set_enabled(settings.voice_auto_level_enabled);
     if dictionary_was_patched {
         match dictionary_state.lock() {
@@ -3077,6 +3171,16 @@ fn update_settings(
         service.update_model_directory(&settings.model_directory);
     }
     preload_dictation_model(&app, &settings);
+    if settings.auto_transcript_input_enabled
+        && let Ok(slot) = live_transcriber_state.lock()
+        && let Some(service) = slot.as_ref()
+        && model_supports_live_partials(
+            &settings.model_directory,
+            settings.effective_auto_type_model(),
+        )
+    {
+        service.preload(settings.effective_auto_type_model());
+    }
     if settings.show_dock_icon != previous_show_dock_icon {
         apply_dock_icon_visibility(&app, settings.show_dock_icon)
             .map_err(|error| error.to_string())?;
@@ -5363,7 +5467,8 @@ fn start_live_capture_runtime(
     // while the model loads. Best-effort — a failure just falls back to the
     // original lazy load on the first partial request.
     let preview_model = backend_state.lock().ok().and_then(|backend| {
-        let settings = backend.settings();
+        let mut settings = backend.settings();
+        settings.selected_model = settings.effective_auto_type_model().to_string();
         let models = backend.model_registry();
         live_preview_model_id(&settings, &models, &settings.model_directory)
             .filter(|model_id| model_supports_live_partials(&settings.model_directory, model_id))
@@ -6758,6 +6863,13 @@ fn kick_transcription_worker_if_needed(
 }
 
 fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial: RealtimePartial) {
+    dispatch_auto_type(
+        app,
+        &partial.source_key,
+        partial.microphone_slot,
+        partial.chunk_id,
+        AutoTypeUpdate::Partial(partial.text.clone()),
+    );
     if partial.source_key.starts_with("meeting:") {
         return;
     }
@@ -6849,6 +6961,13 @@ fn wire_live_transcription(
                 if dictation_suppresses_vor_live_transcription(&app_for_partial) {
                     return;
                 }
+                dispatch_auto_type(
+                    &app_for_partial,
+                    &result.source_key,
+                    result.microphone_slot,
+                    result.chunk_id,
+                    AutoTypeUpdate::Partial(result.text.clone()),
+                );
                 eprintln!(
                     "[wakenote] live partial -> FE chunk_id={} text='{}'",
                     result.chunk_id, result.text
@@ -7026,6 +7145,22 @@ fn wire_live_transcription(
     let openai_realtime_for_handler = openai_realtime.clone();
     let soniox_realtime_for_handler = soniox_realtime.clone();
     let handler: wakenote::commands::LiveEventHandler = Arc::new(move |event| match event {
+        LiveTranscriptEvent::Discarded {
+            source_key,
+            chunk_id,
+        } => {
+            dispatch_auto_type(
+                &app_for_handler,
+                &source_key,
+                None,
+                chunk_id,
+                AutoTypeUpdate::Failed,
+            );
+            let _ = app_for_handler.emit(
+                "live-transcript-discarded",
+                serde_json::json!({ "source_key": source_key, "chunk_id": chunk_id }),
+            );
+        }
         LiveTranscriptEvent::Started {
             source_key,
             source_label,
@@ -7034,6 +7169,13 @@ fn wire_live_transcription(
             started_at,
             overlay_position,
         } => {
+            dispatch_auto_type(
+                &app_for_handler,
+                &source_key,
+                microphone_slot,
+                chunk_id,
+                AutoTypeUpdate::Started,
+            );
             eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
             if microphone_slot != Some(MicrophoneSlot::Secondary)
                 && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()
@@ -7179,6 +7321,15 @@ fn wire_live_transcription(
             overlay_position: _,
             will_transcribe,
         } => {
+            if !will_transcribe {
+                dispatch_auto_type(
+                    &app_for_handler,
+                    &source_key,
+                    microphone_slot,
+                    chunk_id,
+                    AutoTypeUpdate::Failed,
+                );
+            }
             eprintln!(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
@@ -7467,7 +7618,7 @@ fn emit_outcome_to_frontend(
     audio_path: &Path,
     outcome: &TranscriptionJobOutcome,
 ) {
-    let (chunk_id, auto_input_enabled, settings_for_log) = backend_state
+    let (chunk_id, settings_for_log) = backend_state
         .lock()
         .ok()
         .map(|backend| {
@@ -7475,17 +7626,10 @@ fn emit_outcome_to_frontend(
                 backend
                     .chunk_id_for_audio_path(audio_path)
                     .or_else(|| chunk_id_from_metadata(audio_path)),
-                backend.settings().auto_transcript_input_enabled,
                 backend.settings(),
             )
         })
-        .unwrap_or_else(|| {
-            (
-                chunk_id_from_metadata(audio_path),
-                false,
-                AppSettings::default(),
-            )
-        });
+        .unwrap_or_else(|| (chunk_id_from_metadata(audio_path), AppSettings::default()));
     let audio_path_str = audio_path.to_string_lossy().to_string();
     let recorded_at = recorded_at_for_audio_path(audio_path);
     let source_identity = capture_source_identity_from_metadata(audio_path);
@@ -7513,6 +7657,15 @@ fn emit_outcome_to_frontend(
                 .map(|content| content.trim_end().to_string())
                 .unwrap_or_default();
             if text.is_empty() {
+                if let Some(id) = chunk_id {
+                    dispatch_auto_type(
+                        app,
+                        &source_identity.source_key,
+                        source_identity.microphone_slot,
+                        id,
+                        AutoTypeUpdate::Failed,
+                    );
+                }
                 eprintln!(
                     "[wakenote] emit_outcome_to_frontend: empty sidecar at {}",
                     transcript_path.display()
@@ -7546,32 +7699,14 @@ fn emit_outcome_to_frontend(
                     publish_overlay_caption_snapshot(app, snapshot, "live final caption");
                 }
             }
-            if wakenote::text_input::auto_transcript_input_should_type(
-                auto_input_enabled,
-                chunk_id,
-                &text,
-            ) {
-                let text_for_input = wakenote::text_input::auto_transcript_input_text(
-                    &text,
-                    settings_for_log.auto_transcript_input_trailing_space,
+            if let Some(id) = chunk_id {
+                dispatch_auto_type(
+                    app,
+                    &source_identity.source_key,
+                    source_identity.microphone_slot,
+                    id,
+                    AutoTypeUpdate::Final(text.clone()),
                 );
-                let settings_for_input = settings_for_log.clone();
-                if let Err(error) = app.run_on_main_thread(move || {
-                    if let Some(text_for_input) = text_for_input
-                        && let Err(error) =
-                            wakenote::text_input::type_text_into_focused_cursor(&text_for_input)
-                    {
-                        append_runtime_debug_log(
-                            &settings_for_input,
-                            format!("[auto-input] failed to type transcript: {error}"),
-                        );
-                    }
-                }) {
-                    append_runtime_debug_log(
-                        &settings_for_log,
-                        format!("[auto-input] failed to schedule transcript input: {error}"),
-                    );
-                }
             }
             if let Err(error) = app.emit(
                 EVENT_LIVE_FINAL,
@@ -7589,6 +7724,15 @@ fn emit_outcome_to_frontend(
             }
         }
         TranscriptionJobStatus::Failed(error) => {
+            if let Some(id) = chunk_id {
+                dispatch_auto_type(
+                    app,
+                    &source_identity.source_key,
+                    source_identity.microphone_slot,
+                    id,
+                    AutoTypeUpdate::Failed,
+                );
+            }
             eprintln!(
                 "[wakenote] emit failed chunk_id={:?} path={} error={}",
                 chunk_id, audio_path_str, error
@@ -8356,6 +8500,7 @@ fn main() {
             app.manage(dictation_shortcut_dispatcher);
             app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
+            app.manage(AutoTypeState::default());
             app.manage(overlay_caption_state);
             app.manage(subtitle_preview_state);
             app.manage(intentional_quit_state);

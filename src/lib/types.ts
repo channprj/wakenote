@@ -195,6 +195,7 @@ export interface AppSettings {
   input_monitoring_enabled: boolean;
   auto_transcript_input_enabled: boolean;
   auto_transcript_input_trailing_space: boolean;
+  auto_transcript_input_model: string;
   dictation_enabled: boolean;
   dictation_shortcut: string;
   dictation_language: TranscriptionLanguage;

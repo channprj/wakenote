@@ -180,6 +180,7 @@ export function defaultSettings(): AppSettings {
     input_monitoring_enabled: false,
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,
+    auto_transcript_input_model: "",
     dictation_enabled: false,
     dictation_shortcut: "alt+space",
     dictation_language: "auto",

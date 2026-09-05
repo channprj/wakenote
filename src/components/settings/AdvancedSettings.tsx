@@ -1,27 +1,69 @@
 import { CustomSourceSettings } from "./CustomSourceSettings";
-import { SettingSwitch, SettingsCard, SettingsGrid } from "./settings-controls";
+import {
+  SettingSelect,
+  SettingSwitch,
+  SettingsCard,
+  SettingsGrid,
+} from "./settings-controls";
 import { vadGateDisabledReason } from "./settings-helpers";
-import type { AppSettings } from "@/lib/types";
+import type { AppSettings, ModelDescriptor } from "@/lib/types";
 
 export function AdvancedSettings({
   settings,
   onPatch,
+  models = [],
 }: {
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => void;
+  models?: ModelDescriptor[];
 }) {
+  const compatibleModels = models.filter(
+    (model) =>
+      model.provider_runtime === "whisper-rs" ||
+      ["openai-gpt-live-transcribe", "soniox-realtime-v5"].includes(model.id),
+  );
+  const modelOptions = [
+    { value: "__default__", label: "Default transcription model" },
+    ...compatibleModels.map((model) => ({
+      value: model.id,
+      label: model.display_name,
+      disabled: !["ready", "installed", "unloaded"].includes(model.status),
+    })),
+  ];
+  if (
+    settings.auto_transcript_input_model &&
+    !modelOptions.some(
+      (model) => model.value === settings.auto_transcript_input_model,
+    )
+  ) {
+    modelOptions.push({
+      value: settings.auto_transcript_input_model,
+      label: `${settings.auto_transcript_input_model} (Unavailable)`,
+    });
+  }
   return (
     <SettingsGrid maxColumns={2}>
       <SettingsCard
         title="Text output"
-        description="Send completed phrases to the active application."
+        description="Type stable speech into the active application while you speak."
       >
         <SettingSwitch
           label="Auto-type transcripts into cursor"
           checked={settings.auto_transcript_input_enabled}
-          description="Paste each completed live transcript at the current cursor."
+          description="Uses Primary or merged microphones, never app audio or imported files. Requires running input, transcription, and Accessibility permission."
           onCheckedChange={(auto_transcript_input_enabled) =>
             onPatch({ auto_transcript_input_enabled })
+          }
+        />
+        <SettingSelect
+          label="Auto-type model"
+          description="Choose an installed Whisper model or a configured cloud realtime model. Smaller local models usually respond faster. Final corrections stay in Activity; WakeNote never erases text you have edited."
+          value={settings.auto_transcript_input_model || "__default__"}
+          options={modelOptions}
+          onValueChange={(model) =>
+            onPatch({
+              auto_transcript_input_model: model === "__default__" ? "" : model,
+            })
           }
         />
         <SettingSwitch

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -19,6 +20,14 @@ const LIVE_PARTIAL_INTERVAL_MS: u64 = 750;
 /// returns nothing below ~1 s, so submitting earlier wastes a decode cycle
 /// the worker could spend on the next, longer slice.
 const LIVE_PARTIAL_MIN_DURATION_MS: u64 = 1_000;
+// Unique across devices and stream restarts so late ASR results cannot target a new utterance.
+static NEXT_CHUNK_ID: OnceLock<AtomicU64> = OnceLock::new();
+
+fn next_chunk_id() -> u64 {
+    NEXT_CHUNK_ID
+        .get_or_init(|| AtomicU64::new(Utc::now().timestamp_micros().unsigned_abs()))
+        .fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone)]
 pub struct CaptureProcessorConfig {
@@ -69,6 +78,9 @@ pub enum CaptureControllerEvent {
         chunk_id: u64,
         chunk: RecordedChunk,
     },
+    ChunkDiscarded {
+        chunk_id: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -92,7 +104,6 @@ pub struct CaptureProcessor {
     active_samples: Vec<f32>,
     active_started_at_ms: Option<u64>,
     active_has_signal: bool,
-    next_chunk_id: u64,
     current_chunk_id: Option<u64>,
     last_partial_emit_offset_ms: u64,
     completed_chunks: Vec<RecordedChunk>,
@@ -205,7 +216,6 @@ impl CaptureProcessor {
             active_samples: Vec::new(),
             active_started_at_ms: None,
             active_has_signal: false,
-            next_chunk_id: 1,
             current_chunk_id: None,
             last_partial_emit_offset_ms: 0,
             completed_chunks: Vec::new(),
@@ -264,8 +274,7 @@ impl CaptureProcessor {
                 self.push_pre_roll(frame);
             }
             GateDecision::Start { started_at_ms } => {
-                let chunk_id = self.next_chunk_id;
-                self.next_chunk_id = self.next_chunk_id.saturating_add(1);
+                let chunk_id = next_chunk_id();
                 self.current_chunk_id = Some(chunk_id);
                 self.active_started_at_ms = Some(started_at_ms);
                 self.active_samples.clear();
@@ -306,8 +315,7 @@ impl CaptureProcessor {
                     self.config.sample_rate,
                 ));
                 self.commit_active_chunk(ended_at_ms)?;
-                let chunk_id = self.next_chunk_id;
-                self.next_chunk_id = self.next_chunk_id.saturating_add(1);
+                let chunk_id = next_chunk_id();
                 self.current_chunk_id = Some(chunk_id);
                 self.active_started_at_ms = Some(overlap_started_at_ms);
                 self.active_samples = overlap_samples;
@@ -392,6 +400,11 @@ impl CaptureProcessor {
     }
 
     fn rollover_overlap_samples(&self) -> Vec<f32> {
+        if self.config.settings.auto_transcript_input_enabled
+            && self.config.source == ChunkSource::Microphone
+        {
+            return Vec::new();
+        }
         let overlap_count =
             sample_count_for_duration_ms(self.config.settings.pre_roll_ms, self.config.sample_rate);
         if overlap_count == 0 || self.active_samples.is_empty() {
@@ -429,6 +442,10 @@ impl CaptureProcessor {
         let started_at_ms = self.active_started_at_ms.unwrap_or(self.elapsed_ms);
         let chunk_id = self.current_chunk_id;
         if self.active_samples.is_empty() || !self.active_has_signal {
+            if let Some(chunk_id) = chunk_id {
+                self.pending_events
+                    .push(CaptureControllerEvent::ChunkDiscarded { chunk_id });
+            }
             self.active_samples.clear();
             self.active_started_at_ms = None;
             self.active_has_signal = false;
@@ -510,9 +527,20 @@ fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> 
 }
 
 fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
+    let mut settings = config.settings.clone();
+    if settings.auto_transcript_input_enabled && config.source == ChunkSource::Microphone {
+        // Keep each hypothesis inside the ten-second live decoder window, even
+        // when the archival chunk setting is several minutes. Settings on disk stay unchanged.
+        settings.max_chunk_ms = settings.max_chunk_ms.min(5_000);
+        settings.min_chunk_ms = settings.min_chunk_ms.min(1_000);
+        settings.release_ms = settings.release_ms.min(750);
+        if !settings.auto_transcript_input_model.is_empty() {
+            settings.selected_model = settings.auto_transcript_input_model.clone();
+        }
+    }
     CaptureProcessorConfig {
         save_root: config.save_root.clone(),
-        settings: config.settings.clone(),
+        settings,
         sample_rate: config.sample_rate,
         device_id: config.device_id.clone(),
         device_name: config.device_name.clone(),
