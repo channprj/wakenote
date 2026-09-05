@@ -99,7 +99,8 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain("Microphone processing");
     expect(markup).toContain("Input monitoring uses Primary only.");
     expect(markup).toContain("Threshold");
-    expect(markup).not.toContain("OpenRouter");
+    expect(markup).toContain("Translate transcripts");
+    expect(markup).not.toContain("OpenRouter API Key");
   });
 
   it("keeps model files and storage paths separate", () => {

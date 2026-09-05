@@ -131,7 +131,7 @@ It should return `false`. The setting is managed under **Settings → Actions �
 ### First launch
 
 1. Open **Settings › Audio** and grant the requested Microphone permission.
-2. Select one Primary microphone. Add a distinct Secondary device only if you want two-device capture; `System Default` is limited to a one-microphone configuration.
+2. Select one Primary microphone. `System Default` can be combined with a distinct Secondary device. WakeNote prevents capturing the same physical device twice, including when the default input resolves to it. Speaker/app audio is configured separately under System Audio.
 3. Speak and use **Calibration** to apply a threshold that stays above the room noise floor and below normal speech.
 4. Open **Settings › Storage**, choose a save root, and click **Confirm Save Root**.
 5. Open **Settings › Models**. Install an on-device model or select a configured cloud model.
@@ -403,6 +403,29 @@ The dictation stream is independent from voice-activated archival capture. VOR k
 
 The top-center feedback bubble remains available even when Subtitle is off. Microphone permission is required for capture; Accessibility permission is required for focused-cursor typing.
 
+### Realtime auto-type
+
+Enable **Settings › Advanced › Auto-type transcripts into cursor** and select an **Auto-type model** independently from archival transcription. Choose an installed Whisper model or a configured compatible realtime cloud model; leaving the selection at the default follows the transcription model.
+
+Auto-type appends the stable shared prefix of successive partial results, then the remaining final text. While enabled, microphone chunks roll over within five seconds so final-only recognition does not wait for a long recording. Actual latency depends on the selected model and provider. Imports, system/app audio, and a separate Secondary stream never type into the cursor. Dictation temporarily suppresses auto-type to avoid duplicate input.
+
+WakeNote does not backspace over text already inserted. If a model revises that prefix or native typing fails, an error is shown and the corrected source remains available in Activity/Transcripts. Keep the destination focused and grant Accessibility permission before enabling auto-type.
+
+### Translation and Enhanced Prompt
+
+Save an OpenRouter key under **Settings › Integrations**. **Translation & prompt model** accepts a separate compatible OpenRouter model ID; blank uses the report model. These features send text to OpenRouter, can incur provider charges, and are disabled by default. Local ASR does not make this optional text processing local.
+
+- **Subtitles:** enable **Translate subtitles** and choose the target language in Settings › Subtitles. Original captions appear while translation is pending or unavailable. Requests are coalesced and stale results discarded; a completed translated caption receives its normal reading time.
+- **Transcripts:** enable **Translate transcripts** in Settings › Audio for automatic translation of displayed rows, or use **Translate to …** on a transcript. Translation is shown separately with its own copy/retry controls. Audio and original transcript files are never replaced; translations are cached only for the current app session.
+- **Dictation:** enable **Translate dictation** in Settings › Dictation. After release, the translated text is inserted at the cursor. Failed processing does not paste an untranslated substitute; the original transcript remains saved.
+- **Enhanced Prompt:** enable the mode in Settings › Dictation and hold its separate shortcut (default **Control+Option+Space**) while speaking. Release to rewrite the draft as a usable prompt without executing it. Normal Dictation keeps its own shortcut and behavior. Overlapping shortcuts are rejected. If Dictation translation is enabled, the enhanced prompt uses that target language too.
+
+The editable **Enhanced Prompt system prompt** starts with instructions to preserve intent, names, constraints, and uncertainty, avoid invented requirements, and use Goal/Context/Inputs/Requirements/Output format sections only where useful. It restructures your request; it does not answer it. Native automation can use `enhanced_dictation_event` with a `pressed` boolean, while `transform_text` / `cancel_text_transform` expose cancellable text processing.
+
+### Editing prompts and settings
+
+Prompt/model editors keep a local draft. **Save** persists the complete value; **Cancel** restores the saved value; **Reset** loads the default into the draft for review before saving. Background refreshes do not overwrite an unsaved draft, and failed saves retain it with an error. API keys and Dictionary dialogs also retain failed drafts. Sliders persist on release; numeric fields persist on blur/Enter and cancel with Escape.
+
 ### Reports
 
 Reports use OpenRouter and the configured report model. Start from **Reports › New report** or select captures in **Transcripts** and choose Summary or Report.
@@ -483,7 +506,7 @@ Use the actual generated filename for `<version>`.
 
 - Confirm **Settings › Audio › Microphone Permission** is granted.
 - Verify that the pinned device is present. WakeNote reconnects to the same device rather than silently replacing it with another physical input.
-- In a two-microphone setup, choose two explicit, distinct devices; do not combine `System Default` with a Secondary input.
+- In a two-microphone setup, choose distinct physical devices. `System Default` is supported as Primary; if macOS routes it to the selected Secondary device, choose another Secondary input.
 - Watch each microphone status row for Active, Waiting, or Reconnecting state.
 - The input-volume row mirrors macOS. `Digital auto level only` means the device exposes no writable hardware volume; capture remains available and the row is intentionally read-only.
 - Some USB interfaces manage gain with a physical knob and do not expose a macOS input-volume property.

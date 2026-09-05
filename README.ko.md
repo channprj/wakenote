@@ -12,6 +12,7 @@ WakeNote는 마이크 한두 개, 지원되는 시스템 오디오 소스, 가�
 
 - **자동 캡처** — 보정 가능한 dBFS gate와 attack/release timing, pre-roll, lead-in, post-roll로 긴 무음 구간을 계속 저장하지 않으면서 발화를 보존합니다.
 - **유연한 듀얼 마이크** — Primary와 Secondary를 따로 저장하거나 적응형 동기화 후 합칠 수 있으며, Priority Audio로 두 입력을 섞지 않고 현재 가장 깨끗한 입력만 녹음할 수도 있습니다.
+- **실시간 입력과 프롬프트 변환** — 오토타입 모델을 별도로 선택하고, 자막·전사·딕테이션의 번역 언어를 지정할 수 있습니다. Enhanced Prompt의 별도 단축키로 말한 초안을 프롬프트로 정리하며, 시스템 프롬프트도 수정할 수 있습니다. 번역과 프롬프트 변환은 선택적으로 켜는 OpenRouter 기능입니다.
 - **로컬 및 opt-in 클라우드 ASR** — Whisper, sherpa-onnx, Qwen3-ASR는 로컬에서 실행되며 OpenRouter, OpenAI, Soniox는 해당 API key를 저장한 뒤에만 사용할 수 있습니다.
 - **실시간 및 보관 workflow** — 커스터마이징 가능한 Subtitle, 단축키 받아쓰기, 페이지 처리된 날짜별 Transcripts·Activity 기록, M4A 회의 녹음, Markdown 보고서가 동일한 model 및 Dictionary 계약을 공유합니다.
 - **지속 가능한 복구** — queue job은 재시작 후에도 유지되고, running 작업은 안전하게 취소할 수 있으며, 선택한 녹음 bundle은 텍스트·JSON·오디오를 빠뜨리지 않고 macOS 휴지통으로 함께 이동합니다.
