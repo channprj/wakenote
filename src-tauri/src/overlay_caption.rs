@@ -58,6 +58,7 @@ pub struct OverlayCaptionRuntime {
     style: FloatingOverlayCaptionStyle,
     hide_at: Option<Instant>,
     scheduled_generation: Option<u64>,
+    translation_pending: bool,
 }
 
 impl Default for OverlayCaptionRuntime {
@@ -77,6 +78,7 @@ impl Default for OverlayCaptionRuntime {
             style: default_overlay_caption_style(),
             hide_at: None,
             scheduled_generation: None,
+            translation_pending: false,
         }
     }
 }
@@ -385,6 +387,7 @@ impl OverlayCaptionRuntime {
     }
 
     pub fn hide(&mut self) {
+        self.translation_pending = false;
         if self.visible
             || !self.raw_text.is_empty()
             || !self.text.is_empty()
@@ -421,6 +424,34 @@ impl OverlayCaptionRuntime {
         }
         self.scheduled_generation = Some(self.generation);
         Some(self.generation)
+    }
+
+    /// Keep a final caption available while its translation is in flight, then
+    /// grant the translated result the normal reading time. New speech still replaces it.
+    pub fn set_translation_pending(&mut self, pending: bool) -> bool {
+        let pending = pending && self.visible && self.phase == OverlayCaptionPhase::Final;
+        if self.translation_pending == pending
+            && (!pending
+                || self
+                    .hide_at
+                    .is_some_and(|expiry| expiry > Instant::now() + Duration::from_secs(44)))
+        {
+            return false;
+        }
+        self.translation_pending = pending;
+        if self.visible && self.phase == OverlayCaptionPhase::Final {
+            self.hide_at = Some(
+                Instant::now()
+                    + if pending {
+                        Duration::from_secs(46)
+                    } else {
+                        self.final_hold_duration()
+                    },
+            );
+            self.generation = self.generation.saturating_add(1);
+            return true;
+        }
+        false
     }
 
     pub fn set_position(&mut self, position: FloatingOverlayPosition) {

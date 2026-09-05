@@ -45,6 +45,7 @@ import {
   SettingsGrid,
 } from "./settings-controls";
 import type { SettingsActions } from "./types";
+import { TranslationControls } from "./TranslationControls";
 
 const durationFields = [
   ["attack_ms", "Attack", 50, 2_000],
@@ -228,6 +229,11 @@ export function AudioSettings({
           onValueChange={(transcription_language) =>
             actions.onPatch({ transcription_language })
           }
+        />
+        <TranslationControls
+          scope="transcription"
+          settings={settings}
+          onPatch={actions.onPatch}
         />
       </SettingsCard>
 

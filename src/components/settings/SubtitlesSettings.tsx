@@ -10,6 +10,7 @@ import {
   SettingsGrid,
 } from "./settings-controls";
 import type { SettingsActions } from "./types";
+import { TranslationControls } from "./TranslationControls";
 
 export function SubtitlesSettings({
   snapshot,
@@ -37,6 +38,11 @@ export function SubtitlesSettings({
         title="Subtitles"
         description="Show Live transcription, Dictation, or both as configurable subtitles above other windows."
       >
+        <TranslationControls
+          scope="subtitle"
+          settings={settings}
+          onPatch={actions.onPatch}
+        />
         <SettingSwitch
           label="Show subtitles"
           checked={settings.show_floating_overlay}

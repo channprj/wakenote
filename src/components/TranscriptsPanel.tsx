@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { TranslationPreferences } from "@/lib/text-translation";
 import { useLlmReportRuns } from "../hooks/use-llm-report-runs";
 import { useListVisibility } from "../hooks/use-list-visibility";
 import { projectListItems } from "../lib/list-visibility";
@@ -39,6 +40,7 @@ export function TranscriptsPanel({
   autoPlayNext = false,
   openrouterKeyConfigured = false,
   onOpenReports,
+  translation,
 }: {
   customSources?: readonly CustomSourceEntry[];
   models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
@@ -46,6 +48,7 @@ export function TranscriptsPanel({
   autoPlayNext?: boolean;
   openrouterKeyConfigured?: boolean;
   onOpenReports?: () => void;
+  translation?: TranslationPreferences;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<
@@ -382,6 +385,7 @@ export function TranscriptsPanel({
 
   return (
     <TranscriptsView
+      translation={translation}
       days={days}
       entriesByDay={
         visibilityMode === "visible"

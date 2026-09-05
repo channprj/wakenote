@@ -365,6 +365,13 @@ export default function App() {
         ["dictionary-file-error", () => null],
         ["microphone-input-levels-changed", () => null],
         [
+          "text-transform-error",
+          (payload) => {
+            setError(String(payload));
+            return null;
+          },
+        ],
+        [
           "auto-type-error",
           (payload) => {
             setError(String(payload));
@@ -706,6 +713,14 @@ export default function App() {
         description="Browse daily voice clips, play audio, and create reports."
       >
         <TranscriptsPanel
+          translation={{
+            enabled: snapshot.settings.transcription_translation_enabled,
+            language: snapshot.settings.transcription_translation_language,
+            model:
+              snapshot.settings.text_transform_model ||
+              snapshot.settings.openrouter_model,
+            configured: snapshot.openrouter_key_configured,
+          }}
           customSources={snapshot.settings.custom_sources}
           models={snapshot.models}
           selectedModelId={snapshot.settings.selected_model}

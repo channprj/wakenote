@@ -26,6 +26,8 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TranslatedText } from "./TranslatedText";
+import type { TranslationPreferences } from "@/lib/text-translation";
 import {
   fileUrlFromPath,
   formatLocalTimestamp,
@@ -206,6 +208,7 @@ export function nextPlayableTranscriptPath(
 }
 
 export function TranscriptsView({
+  translation,
   days,
   entriesByDay,
   loadingDay = null,
@@ -245,6 +248,7 @@ export function TranscriptsView({
   today = new Date(),
 }: {
   days: TranscriptDay[];
+  translation?: TranslationPreferences;
   entriesByDay: ReadonlyMap<string, RecentTranscript[]>;
   loadingDay?: string | null;
   sourceLabels?: Readonly<Record<string, string>>;
@@ -1215,6 +1219,7 @@ export function TranscriptsView({
           >
             {pageEntries.map((entry) => (
               <TranscriptEntryRow
+                translation={translation}
                 entry={entry}
                 isPlaybackActive={
                   entry.transcript_path === playingTranscriptPath
@@ -1500,6 +1505,7 @@ function audioMergeStageLabel(stage: string) {
 }
 
 function TranscriptEntryRow({
+  translation,
   canOpenContextMenu,
   canRegenerateFromContext,
   entry,
@@ -1516,6 +1522,7 @@ function TranscriptEntryRow({
   visibilityMutating,
 }: {
   canOpenContextMenu: boolean;
+  translation?: TranslationPreferences;
   canRegenerateFromContext: boolean;
   entry: RecentTranscript;
   isPlaybackActive: boolean;
@@ -1598,7 +1605,13 @@ function TranscriptEntryRow({
         <span>{timestamp || entry.transcript_path}</span>
       </a>
       <TranscriptSourceBadge entry={entry} sourceLabels={sourceLabels} />
-      <p className="transcript-entry__text">{entry.text}</p>
+      {translation ? (
+        <div className="transcript-entry__text">
+          <TranslatedText text={entry.text} preferences={translation} />
+        </div>
+      ) : (
+        <p className="transcript-entry__text">{entry.text}</p>
+      )}
       <div className="transcript-entry__actions">
         <Button
           aria-label={playLabel}

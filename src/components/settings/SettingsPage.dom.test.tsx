@@ -866,6 +866,36 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it.each([
+    ["audio", "transcripts", "transcription"],
+    ["subtitles", "subtitles", "subtitle"],
+  ] as const)(
+    "configures translation for %s without changing source recognition",
+    async (section, label, scope) => {
+      const actions = makeActions();
+      render(
+        <SettingsPage
+          section={section}
+          snapshot={mockSnapshot()}
+          actions={actions}
+          onSectionChange={() => {}}
+        />,
+      );
+      await userEvent.click(
+        screen.getByRole("switch", { name: `Translate ${label}` }),
+      );
+      expect(actions.onPatch).toHaveBeenCalledWith({
+        [`${scope}_translation_enabled`]: true,
+      });
+      const title = `${label[0].toUpperCase()}${label.slice(1)} translation language`;
+      await userEvent.click(screen.getByRole("combobox", { name: title }));
+      await userEvent.click(screen.getByRole("option", { name: "Japanese" }));
+      expect(actions.onPatch).toHaveBeenCalledWith({
+        [`${scope}_translation_language`]: "ja",
+      });
+    },
+  );
+
   it("keeps the compact Dictionary editor in Dictation instead of Models", async () => {
     const user = userEvent.setup();
     const actions = makeActions();

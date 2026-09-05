@@ -133,6 +133,105 @@ type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
 type AutoTypeState = Mutex<wakenote::auto_type::AutoTypeSession>;
+type SubtitleTranslationState =
+    Arc<Mutex<wakenote::subtitle_translation::SubtitleTranslationQueue>>;
+
+fn apply_subtitle_translation(
+    app: &AppHandle,
+    snapshot: &mut OverlayCaptionSnapshot,
+    max_width: Option<f64>,
+) {
+    let Some(state) = app.try_state::<SubtitleTranslationState>() else {
+        return;
+    };
+    let settings = app
+        .state::<BackendState>()
+        .lock()
+        .map(|backend| backend.settings())
+        .unwrap_or_default();
+    let request =
+        wakenote::subtitle_translation::CaptionTranslationRequest::new(snapshot, &settings);
+    let (start, translated, waiting) = {
+        let Ok(mut queue) = state.lock() else {
+            return;
+        };
+        if let Some(request) = request {
+            let start = queue.submit(request.clone());
+            (
+                start,
+                queue.translated_text(&request).map(str::to_string),
+                queue.is_waiting(&request),
+            )
+        } else {
+            queue.clear();
+            (false, None, false)
+        }
+    };
+    if let Some(captions) = app.try_state::<OverlayCaptionState>()
+        && let Ok(mut runtime) = captions.lock()
+        && runtime.set_translation_pending(waiting)
+        && snapshot.source != OverlayCaptionSource::Preview
+    {
+        *snapshot = runtime.snapshot();
+    }
+    if let Some(text) = translated {
+        snapshot.text = StableCaptionPager::default()
+            .update_for_max_width(
+                &text,
+                &snapshot.style,
+                max_width.unwrap_or(snapshot.style.max_width_px as f64),
+            )
+            .text;
+    }
+    if start {
+        let app = app.clone();
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            let client = wakenote::llm::ReqwestOpenRouterClient::default();
+            loop {
+                tokio::time::sleep(Duration::from_millis(350)).await;
+                let next = state.lock().ok().and_then(|mut queue| queue.take_next());
+                let Some((request, cancellation)) = next else {
+                    break;
+                };
+                let key = app
+                    .state::<BackendState>()
+                    .lock()
+                    .map_err(|error| error.to_string())
+                    .and_then(|backend| backend.load_openrouter_api_key())
+                    .map(|key| key.unwrap_or_default());
+                let result = match key {
+                    Ok(key) => wakenote::text_transform::transform_text_with_client(
+                        &client,
+                        &request.settings,
+                        &key,
+                        &wakenote::text_transform::TextTransformRequest {
+                            kind: wakenote::text_transform::TextTransformKind::Translate,
+                            text: request.text.clone(),
+                            target_language: Some(request.settings.subtitle_translation_language),
+                        },
+                        &cancellation,
+                    )
+                    .await
+                    .map(|result| result.text),
+                    Err(error) => Err(error),
+                };
+                let accepted = state
+                    .lock()
+                    .map(|mut queue| queue.complete(&request, result.clone()))
+                    .unwrap_or(false);
+                if accepted {
+                    if let Err(error) = result {
+                        let _ = app.emit("text-transform-error", format!("Subtitle translation failed: {error}. The original text remains available."));
+                    }
+                    if let Some(snapshot) = current_caption_snapshot(&app) {
+                        publish_overlay_caption_snapshot(&app, snapshot, "subtitle translation");
+                    }
+                }
+            }
+        });
+    }
+}
 type TextTransformJobs =
     Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>;
 
@@ -1043,6 +1142,9 @@ fn publish_overlay_caption_snapshot(
         }
 
         snapshot = latest_caption_snapshot_for_publication(&app_for_task, snapshot);
+
+        apply_subtitle_translation(&app_for_task, &mut snapshot,
+            layout_context.map(|context| context.effective_max_width_px));
 
         let preview_protects_visible_window = !snapshot.visible
             && app_for_task
@@ -3408,7 +3510,11 @@ fn update_settings(
 }
 
 fn overlay_presentation_settings_changed(previous: &AppSettings, next: &AppSettings) -> bool {
-    previous.effective_floating_overlay_position() != next.effective_floating_overlay_position()
+    previous.subtitle_translation_enabled != next.subtitle_translation_enabled
+        || previous.subtitle_translation_language != next.subtitle_translation_language
+        || previous.effective_text_transform_model() != next.effective_text_transform_model()
+        || previous.effective_floating_overlay_position()
+            != next.effective_floating_overlay_position()
         || previous.effective_dictation_subtitle_position()
             != next.effective_dictation_subtitle_position()
         || previous.floating_overlay_caption_style() != next.floating_overlay_caption_style()
@@ -8689,6 +8795,7 @@ fn main() {
             app.manage(live_transcriber_state.clone());
             app.manage(AutoTypeState::default());
             app.manage(TextTransformJobs::default());
+            app.manage(SubtitleTranslationState::default());
             app.manage(overlay_caption_state);
             app.manage(subtitle_preview_state);
             app.manage(intentional_quit_state);
