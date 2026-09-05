@@ -28,6 +28,18 @@ pnpm tauri dev
 
 macOS 권한, 선택 모델별 추가 요구사항, release build, 로컬 설치, DMG packaging은 [사용법](USAGE.md#installation)을 참고하세요.
 
+## 로컬 릴리스
+
+이 저장소의 GitHub Actions는 비활성화되어 있습니다. Mac에서 빌드한 뒤 명령을 직접 실행해 게시합니다.
+
+```bash
+pnpm release:build
+pnpm release:publish --dry-run
+pnpm release:publish
+```
+
+빌드 전에 버전을 동기화하고 커밋하세요. 게시 전에 브랜치와 annotated 버전 태그도 푸시해야 합니다. 산출물은 `release/v<version>/<architecture>/`에 저장되며, 현재 Mac의 아키텍처용으로 빌드됩니다. 앱은 ad-hoc 서명을 사용하고 공증되지 않습니다. 필요한 도구, 초안 릴리스와 실패 시 처리 방법은 [릴리스 절차](USAGE.md#local-build-and-manual-github-release)를 참고하세요.
+
 ## 빠른 시작
 
 1. **Settings › Audio**에서 Microphone 접근을 허용하고 Primary 입력을 선택하세요. 필요할 때만 서로 다른 Secondary 입력을 추가하세요.

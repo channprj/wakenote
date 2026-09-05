@@ -28,6 +28,18 @@ pnpm tauri dev
 
 See [Usage](USAGE.md#installation) for macOS permissions, optional model prerequisites, release builds, local installation, and DMG packaging.
 
+## Local releases
+
+GitHub Actions is disabled for this repository. Build on your Mac and publish manually:
+
+```bash
+pnpm release:build
+pnpm release:publish --dry-run
+pnpm release:publish
+```
+
+Commit synchronized versions before building, and push the branch and annotated version tag before publishing. Artifacts go to `release/v<version>/<architecture>/`; each build targets the current Mac only. The app is ad-hoc signed and not notarized. See the [release procedure](USAGE.md#local-build-and-manual-github-release) for prerequisites, draft releases, and recovery.
+
 ## Quick start
 
 1. Open **Settings › Audio**, allow Microphone access, and select the Primary input. Add a distinct Secondary input only when needed.

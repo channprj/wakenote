@@ -78,6 +78,54 @@ pnpm dmg:downloads
 
 `pnpm dmg:downloads` is a standalone script. Do not pass `dmg:downloads` as an argument to `pnpm build`.
 
+### Local build and manual GitHub Release
+
+GitHub Actions is disabled in the repository settings to avoid hosted build and release costs. There are no hosted workflows in this checkout. Pushes and tags do not build or publish the app; maintainers run the following commands on a Mac.
+
+1. Commit the functional changes and run the relevant local tests. Use the installed Headatever skill's `scripts/headatever.sh patch --no-git` to advance `VERSION`. Synchronize the same value in `package.json`, `src-tauri/Cargo.toml`, the `wakenote` entry of `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`.
+2. Create a separate `chore(release): v<version>` commit containing the five version files, then create an annotated `v<version>` tag on that commit. The worktree must be clean, including untracked source files.
+3. Build locally and push the branch and tag before publication:
+
+```bash
+pnpm release:build
+git push
+git push origin "v$(tr -d '\n' < VERSION)"
+```
+
+`release:build` reuses the existing native build pipeline, includes the sherpa-onnx runtime, checks the app signature, version and architecture, and verifies the DMG. It does not install or launch the app. It creates these files under `release/v<version>/aarch64/` on Apple Silicon, or `release/v<version>/x64/` on Intel:
+
+- `WakeNote_<version>_<architecture>.dmg`
+- `SHA256SUMS.txt`
+- `release.json` with the source commit, version, architecture and DMG hash
+
+The generated directory is ignored by Git. A build targets only the current Mac; it is not a universal or cross-architecture build. Native dependencies may still be downloaded during the local build. Existing output is preserved: use it for publication, or move that exact version/architecture directory aside to rebuild it. Changing source after building requires a new build from the intended release commit.
+
+4. Install GitHub CLI (`brew install gh`) and authenticate with `gh auth login` if needed. The account must be able to create releases and read the repository's Actions settings. `origin` must point to the target GitHub repository and the current branch must track `origin`.
+5. Validate and explicitly publish:
+
+```bash
+# Read-only validation, including live branch/tag and Actions checks
+pnpm release:publish --dry-run
+
+# Create the GitHub Release and upload the three verified files
+pnpm release:publish
+
+# Alternatively, upload as a draft and publish later in the GitHub UI
+pnpm release:publish --draft
+```
+
+Publication checks all five versions, the clean source commit, checksums, the annotated tag, live remote branch/tag parity, and that Actions remains disabled. It refuses an existing release, including a draft, and never pushes refs or overwrites release assets. If an upload fails, inspect the release in GitHub before retrying; a partially uploaded draft may already exist. A draft created with `--draft` is published through GitHub, not by rerunning `release:publish`.
+
+The app uses **ad-hoc signing and is not notarized**. The release notes state this as well. Downloads can therefore require macOS approval before opening; verify their source and checksum first. This local workflow does not configure Developer ID signing or notarization.
+
+To inspect the cost-control setting:
+
+```bash
+gh api repos/channprj/wakenote/actions/permissions --jq .enabled
+```
+
+It should return `false`. The setting is managed under **Settings → Actions → General → Disable actions**; restoring hosted automation is a separate, explicit decision.
+
 ## Quick start
 
 ### First launch
@@ -169,6 +217,11 @@ WakeNote never overwrites an existing basename. A collision adds `-2`, then `-3`
 | `pnpm dmg` | Build a release DMG |
 | `pnpm dmg:debug` | Build a debug DMG |
 | `pnpm dmg:downloads` | Build a release DMG and move it to `~/Downloads` |
+| `pnpm release:build` | Build and verify a local DMG, checksum file and source manifest under `release/` |
+| `pnpm release:build --dry-run` | Validate source/version prerequisites and show the local output path without building |
+| `pnpm release:publish --dry-run` | Validate local artifacts and live GitHub publication prerequisites without creating a release |
+| `pnpm release:publish` | Manually create a GitHub Release with verified local artifacts |
+| `pnpm release:publish --draft` | Upload verified artifacts to a draft GitHub Release |
 | `pnpm preview` | Preview the already-built frontend bundle |
 | `pnpm test` | Run the complete frontend Vitest suite once |
 | `pnpm exec tsc --noEmit` | Type-check without emitting files |
