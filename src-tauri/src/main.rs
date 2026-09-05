@@ -2544,6 +2544,19 @@ where
                 });
             }
             Ok(resolved) => {
+                if resolution.ready.iter().any(|ready| {
+                    ready.config.device_id == resolved.device_id
+                        || resolved
+                            .core_audio_uid
+                            .as_ref()
+                            .is_some_and(|uid| ready.config.core_audio_uid.as_ref() == Some(uid))
+                }) {
+                    resolution.failures.push(DictationSlotFailure {
+                        slot,
+                        error: "Secondary resolves to the same microphone as Primary; choose a different device".to_string(),
+                    });
+                    continue;
+                }
                 let input = DictationMicrophoneInput {
                     slot,
                     device: CaptureMicrophoneEntry {
@@ -5385,6 +5398,33 @@ fn start_live_capture_slot_runtime(
             "{} is disconnected; waiting for the same device",
             requested_label
         ));
+    }
+
+    if slot == MicrophoneSlot::Secondary {
+        let primary = backend_state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .settings()
+            .capture_microphones
+            .first()
+            .cloned();
+        if let Some(primary) = primary
+            && let Ok(primary) = resolve_capture_device_with_timeout(
+                primary.id,
+                Some(primary.label),
+                primary.core_audio_uid,
+            )
+            && (primary.device_id == resolved.device_id
+                || resolved
+                    .core_audio_uid
+                    .as_ref()
+                    .is_some_and(|uid| primary.core_audio_uid.as_ref() == Some(uid)))
+        {
+            return Err(
+                "Secondary resolves to the same microphone as Primary; choose a different device"
+                    .to_string(),
+            );
+        }
     }
 
     let (device_id, sample_rate, handler, events) = {
@@ -9160,6 +9200,23 @@ mod tests {
             core_audio_uid: entry.core_audio_uid.clone(),
             sample_rate: 48_000,
         }
+    }
+
+    #[test]
+    fn dictation_default_and_secondary_only_open_distinct_physical_devices() {
+        let mut settings = dictation_resolution_settings();
+        settings.capture_microphones[0].id = "default".into();
+        let distinct =
+            resolve_dictation_inputs_with(&settings, |entry| Ok(resolved_dictation_device(entry)));
+        assert_eq!(distinct.ready.len(), 2);
+        let duplicate = resolve_dictation_inputs_with(&settings, |entry| {
+            let mut resolved = resolved_dictation_device(entry);
+            resolved.core_audio_uid = Some("same-hardware".into());
+            Ok(resolved)
+        });
+        assert_eq!(duplicate.ready.len(), 1);
+        assert_eq!(duplicate.failures.len(), 1);
+        assert!(duplicate.failures[0].error.contains("same microphone"));
     }
 
     #[test]

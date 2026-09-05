@@ -91,15 +91,21 @@ export function normalizeCaptureMicrophones(
       return true;
     })
     .slice(0, 2);
-  if (
-    normalized.some((entry) => entry.id === "default") &&
-    normalized.length > 1
-  ) {
-    return normalized.slice(0, 1);
-  }
   return normalized.length > 0
     ? normalized
     : [{ id: "default", label: "System Default" }];
+}
+
+export function sameMicrophone(
+  first: CaptureMicrophoneEntry,
+  second: CaptureMicrophoneEntry,
+): boolean {
+  return (
+    first.id === second.id ||
+    Boolean(
+      first.core_audio_uid && first.core_audio_uid === second.core_audio_uid,
+    )
+  );
 }
 
 export function rebindCaptureMicrophones(

@@ -504,7 +504,7 @@ fn capture_microphones_keep_first_two_unique_explicit_devices() {
 }
 
 #[test]
-fn system_default_cannot_be_combined_with_an_explicit_capture_microphone() {
+fn system_default_can_be_combined_with_an_explicit_capture_microphone() {
     let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
         id: id.to_string(),
         label: label.to_string(),
@@ -516,14 +516,20 @@ fn system_default_cannot_be_combined_with_an_explicit_capture_microphone() {
             entry("default", "System Default"),
             entry("input-2-wireless", "Wireless"),
         ]),
-        vec![entry("default", "System Default")],
+        vec![
+            entry("default", "System Default"),
+            entry("input-2-wireless", "Wireless")
+        ],
     );
     assert_eq!(
         normalize_capture_microphones(vec![
             entry("input-1-wired", "Wired"),
             entry("default", "System Default"),
         ]),
-        vec![entry("input-1-wired", "Wired")],
+        vec![
+            entry("input-1-wired", "Wired"),
+            entry("default", "System Default")
+        ],
     );
 }
 

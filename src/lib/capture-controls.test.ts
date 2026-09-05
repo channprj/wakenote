@@ -34,13 +34,16 @@ describe("capture controls", () => {
     ]);
   });
 
-  it("does not combine System Default with a second device", () => {
+  it("allows System Default with a second device", () => {
     expect(
       normalizeCaptureMicrophones([
         { id: "default", label: "System Default" },
         { id: "wired", label: "Wired" },
       ]),
-    ).toEqual([{ id: "default", label: "System Default" }]);
+    ).toEqual([
+      { id: "default", label: "System Default" },
+      { id: "wired", label: "Wired" },
+    ]);
   });
 
   it("rebinds a stale BOYA selection to one active same-name device", () => {

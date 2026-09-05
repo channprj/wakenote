@@ -24,6 +24,7 @@ import {
   inputAvailability,
   normalizeCaptureMicrophones,
   rebindCaptureMicrophones,
+  sameMicrophone,
 } from "@/lib/capture-controls";
 import {
   RECORDING_FIELD_HELP,
@@ -490,7 +491,6 @@ function MicrophoneSelectors({
   const explicitDevices = stableMicrophones.filter(
     (device) => device.id !== "default",
   );
-  const secondaryDisabled = primary.id === "default";
   const optionLabel = (id: string) => {
     const device = stableMicrophones.find((microphone) => microphone.id === id);
     if (!device) return null;
@@ -525,7 +525,7 @@ function MicrophoneSelectors({
             onChange(
               normalizeCaptureMicrophones([
                 nextPrimary,
-                ...(id === "default" || secondary?.id === id || !secondary
+                ...(!secondary || sameMicrophone(nextPrimary, secondary)
                   ? []
                   : [secondary]),
               ]),
@@ -554,7 +554,6 @@ function MicrophoneSelectors({
         </Select>
         <Select
           value={secondary?.id ?? "__none__"}
-          disabled={secondaryDisabled}
           onValueChange={(id) => {
             if (id === "__none__") {
               onChange([primary]);
@@ -570,13 +569,7 @@ function MicrophoneSelectors({
             className="w-full"
             aria-label="Secondary microphone"
           >
-            <SelectValue
-              placeholder={
-                secondaryDisabled
-                  ? "Choose a physical Primary first"
-                  : "No Secondary microphone"
-              }
-            >
+            <SelectValue placeholder="No Secondary microphone">
               {secondary ? optionLabel(secondary.id) : null}
             </SelectValue>
           </SelectTrigger>
@@ -584,9 +577,17 @@ function MicrophoneSelectors({
             <SelectGroup>
               <SelectItem value="__none__">No Secondary microphone</SelectItem>
               {explicitDevices
-                .filter((device) => device.id !== primary.id)
+                .filter(
+                  (device) =>
+                    !sameMicrophone(device, primary) ||
+                    device.id === secondary?.id,
+                )
                 .map((device) => (
-                  <SelectItem key={device.id} value={device.id}>
+                  <SelectItem
+                    key={device.id}
+                    value={device.id}
+                    disabled={sameMicrophone(device, primary)}
+                  >
                     {device.label}
                     {device.available ? "" : " (Unavailable)"}
                   </SelectItem>

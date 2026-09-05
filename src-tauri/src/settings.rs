@@ -678,7 +678,7 @@ pub fn normalize_capture_microphones(
     entries: Vec<CaptureMicrophoneEntry>,
 ) -> Vec<CaptureMicrophoneEntry> {
     let mut seen = std::collections::HashSet::new();
-    let mut normalized = entries
+    let normalized = entries
         .into_iter()
         .filter_map(|entry| {
             let id = entry.id.trim().to_string();
@@ -707,9 +707,6 @@ pub fn normalize_capture_microphones(
         .take(MAX_CAPTURE_MICROPHONES)
         .collect::<Vec<_>>();
 
-    if normalized.len() > 1 && normalized.iter().any(|entry| entry.id == "default") {
-        normalized.truncate(1);
-    }
     if normalized.is_empty() {
         return default_capture_microphones();
     }

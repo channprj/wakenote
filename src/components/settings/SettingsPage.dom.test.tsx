@@ -663,6 +663,60 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it("allows selecting Secondary with System Default Primary, excluding the same physical device", async () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "default", label: "System Default", core_audio_uid: "built-in" },
+    ];
+    snapshot.microphones = [
+      {
+        id: "default",
+        label: "System Default",
+        core_audio_uid: "built-in",
+        available: true,
+        fallback: false,
+      },
+      {
+        id: "internal",
+        label: "Built-in microphone",
+        core_audio_uid: "built-in",
+        available: true,
+        fallback: false,
+      },
+      {
+        id: "usb",
+        label: "USB microphone",
+        core_audio_uid: "usb",
+        available: true,
+        fallback: false,
+      },
+    ];
+    const actions = makeActions();
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Secondary microphone" }),
+    );
+    expect(
+      screen.queryByRole("option", { name: "Built-in microphone" }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("option", { name: "USB microphone" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      capture_microphones: [
+        { id: "default", label: "System Default", core_audio_uid: "built-in" },
+        { id: "usb", label: "USB microphone", core_audio_uid: "usb" },
+      ],
+    });
+  });
+
   it("enables voice-aware auto level by default and explains hardware fallback", async () => {
     const actions = makeActions();
     const snapshot = mockSnapshot();
