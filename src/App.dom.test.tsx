@@ -16,6 +16,15 @@ import type { AppSnapshot } from "./lib/types";
 const mocks = vi.hoisted(() => ({
   loadSnapshot: vi.fn<() => Promise<AppSnapshot>>(),
   loadRecentTranscripts: vi.fn().mockResolvedValue([]),
+  loadRecentDictations: vi.fn().mockResolvedValue([]),
+  loadTranscriptDays: vi.fn().mockResolvedValue([]),
+  loadTranscriptsForDay: vi.fn().mockResolvedValue([]),
+  loadListVisibility: vi.fn().mockResolvedValue({
+    meetings: [],
+    transcripts: [],
+    report_runs: [],
+    legacy_reports: [],
+  }),
   loadDictationState: vi.fn().mockResolvedValue({ state: "idle", error: null }),
   loadPermissionSnapshot: vi.fn(),
   saveSettingsPatch: vi.fn(),
@@ -31,6 +40,10 @@ vi.mock("./lib/tauri-client", async (importOriginal) => {
     ...actual,
     loadSnapshot: mocks.loadSnapshot,
     loadRecentTranscripts: mocks.loadRecentTranscripts,
+    loadRecentDictations: mocks.loadRecentDictations,
+    loadTranscriptDays: mocks.loadTranscriptDays,
+    loadTranscriptsForDay: mocks.loadTranscriptsForDay,
+    loadListVisibility: mocks.loadListVisibility,
     loadDictationState: mocks.loadDictationState,
     loadPermissionSnapshot: mocks.loadPermissionSnapshot,
     saveSettingsPatch: mocks.saveSettingsPatch,
@@ -149,7 +162,9 @@ describe("settings persistence", () => {
     const snapshot = mockSnapshot();
     snapshot.settings.permission_onboarding_seen = true;
     snapshot.settings.start_live_input_on_launch = false;
-    mocks.loadSnapshot.mockResolvedValueOnce(snapshot);
+    // Keep background polling out of this explicit refresh race.
+    snapshot.status.tray_state = "paused";
+    mocks.loadSnapshot.mockResolvedValue(snapshot).mockResolvedValueOnce(snapshot);
     let finishRefresh!: (value: AppSnapshot) => void;
     mocks.loadSnapshot.mockImplementationOnce(
       () =>
@@ -165,8 +180,11 @@ describe("settings persistence", () => {
       },
     };
     mocks.saveSettingsPatch.mockResolvedValue(saved);
-    render(<App />);
+    await act(async () => {
+      render(<App />);
+    });
     await user.click(await screen.findByRole("button", { name: "Refresh" }));
+    expect(mocks.loadSnapshot).toHaveBeenCalledTimes(2);
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("tab", { name: "Integrations" }));
     fireEvent.change(
@@ -236,6 +254,9 @@ beforeEach(() => {
     value: {},
   });
   mocks.loadRecentTranscripts.mockResolvedValue([]);
+  mocks.loadRecentDictations.mockResolvedValue([]);
+  mocks.loadTranscriptDays.mockResolvedValue([]);
+  mocks.loadTranscriptsForDay.mockResolvedValue([]);
   mocks.loadDictationState.mockResolvedValue({ state: "idle", error: null });
   mocks.listen.mockResolvedValue(() => {});
   mocks.loadSnapshot.mockReset();
@@ -313,6 +334,43 @@ describe("permission onboarding", () => {
 
     expect(screen.getByText("Capture", { selector: "h1" })).toBeTruthy();
     expect(mocks.saveSettingsPatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dictation history navigation", () => {
+  it("opens a recent dictation's day with the dictation source filter", async () => {
+    const user = userEvent.setup();
+    const dictation = {
+      transcript_path: "/tmp/20260510/090000-dictation.txt",
+      audio_path: null,
+      recorded_at: "2026-05-10T09:00:00+09:00",
+      source: "microphone" as const,
+      source_label: "dictation",
+      text: "A recent dictated message",
+    };
+    const microphone = {
+      ...dictation,
+      transcript_path: "/tmp/ordinary.txt",
+      source_label: null,
+      text: "An ordinary capture",
+    };
+    mocks.loadSnapshot.mockResolvedValue(nativeSnapshot(true, null));
+    mocks.loadRecentDictations.mockResolvedValue([dictation]);
+    mocks.loadTranscriptDays.mockResolvedValue([{ day: "2026-05-10", count: 2 }]);
+    mocks.loadTranscriptsForDay.mockResolvedValue([dictation, microphone]);
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Dictation" }));
+    await screen.findByRole("list", { name: "Recent dictations" });
+    await user.click(screen.getByRole("button", { name: "View all dictations" }));
+    await waitFor(() =>
+      expect(mocks.loadTranscriptsForDay).toHaveBeenCalledWith("2026-05-10", false),
+    );
+    expect(await screen.findByText(dictation.text)).toBeTruthy();
+    expect(screen.queryByText(microphone.text)).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Transcript source" }).textContent,
+    ).toContain("Dictations (1)");
   });
 });
 

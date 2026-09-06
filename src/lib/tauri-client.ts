@@ -19,6 +19,7 @@ import {
 import {
   formatLocalTimestamp,
   formatTranscriptsForTextExport,
+  isDictationTranscript,
 } from "./transcript-history";
 import {
   applyListVisibilityRequest,
@@ -618,6 +619,27 @@ export async function loadRecentTranscripts(
   }
 
   return invoke<RecentTranscript[]>("recent_transcripts", { limit });
+}
+
+export async function loadRecentDictations(
+  limit = 10,
+): Promise<RecentTranscript[]> {
+  if (!isTauriRuntime()) {
+    const visibility = await loadListVisibility();
+    const hidden = new Set(visibility.transcripts);
+    return (browserSnapshot.recent_transcripts ?? [])
+      .filter(
+        (entry) =>
+          isDictationTranscript(entry) && !hidden.has(entry.transcript_path),
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(right.recorded_at) - Date.parse(left.recorded_at) ||
+          right.transcript_path.localeCompare(left.transcript_path),
+      )
+      .slice(0, Math.max(0, Math.min(5000, Math.trunc(limit))));
+  }
+  return invoke<RecentTranscript[]>("recent_dictations", { limit });
 }
 
 function transcriptDayFromBrowser(transcript: RecentTranscript): string {

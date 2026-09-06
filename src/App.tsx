@@ -13,6 +13,7 @@ import { RecordingStatusRail } from "./components/shell/RecordingStatusRail";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { newestTranscriptTextEntries } from "./lib/live-transcripts";
+import { formatLocalTimestamp } from "./lib/transcript-history";
 import { useActivityAttention } from "./hooks/use-activity-attention";
 import type { PrimaryRoute, SettingsSection } from "./lib/navigation";
 import {
@@ -139,6 +140,9 @@ function WorkspacePage({
 
 export default function App() {
   const [activeRoute, setActiveRoute] = useState<PrimaryRoute>("capture");
+  const [dictationHistory, setDictationHistory] = useState<{
+    day: string | null;
+  } | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] =
     useState<SettingsSection>("general");
   const [snapshot, setSnapshot] = useState<AppSnapshot>(mockSnapshot());
@@ -718,6 +722,8 @@ export default function App() {
         description="Browse daily voice clips, play audio, and create reports."
       >
         <TranscriptsPanel
+          initialSourceFilter={dictationHistory ? "dictation" : "all"}
+          initialActiveDay={dictationHistory?.day}
           translation={{
             enabled: snapshot.settings.transcription_translation_enabled,
             language: snapshot.settings.transcription_translation_language,
@@ -800,6 +806,14 @@ export default function App() {
           onSuspendDictationShortcut: suspendDictationShortcut,
           onResumeDictationShortcut: resumeDictationShortcut,
           onPressedModifierShortcut: pressedModifierShortcut,
+          onOpenDictationHistory: (entry) => {
+            setDictationHistory({
+              day: entry
+                ? formatLocalTimestamp(entry.recorded_at).slice(0, 10)
+                : null,
+            });
+            setActiveRoute("transcripts");
+          },
           onChooseSaveRoot: () => void runAction(chooseSaveRoot),
           onRevealSaveFolder: () => void runAction(revealSaveFolder),
           onChooseModelDirectory: () => void runAction(chooseModelDirectory),
@@ -851,7 +865,10 @@ export default function App() {
       activeRoute={activeRoute}
       queueAttentionCount={activityAttention.attention?.count ?? 0}
       queueAttentionTone={activityAttention.attention?.tone ?? "warning"}
-      onNavigate={setActiveRoute}
+      onNavigate={(route) => {
+        setDictationHistory(null);
+        setActiveRoute(route);
+      }}
       theme={themeMode}
       statusRail={
         activeRoute === "capture" &&

@@ -28,6 +28,7 @@ import {
   type SelectOption,
 } from "./settings-controls";
 import { DictionarySettingsCard } from "./DictionarySettingsCard";
+import { RecentDictations } from "./RecentDictations";
 import { SettingsTextEditor } from "./SettingsTextEditor";
 import { TranslationControls } from "./TranslationControls";
 import { defaultSettings } from "@/lib/app-state";
@@ -522,6 +523,10 @@ export function DictationSettings({
           }
         />
       </SettingsCard>
+      <RecentDictations
+        snapshot={snapshot}
+        onOpenHistory={actions.onOpenDictationHistory}
+      />
       <DictionarySettingsCard
         settings={settings}
         status={snapshot.dictionary_file_status}

@@ -91,7 +91,7 @@ export function isDictationTranscript(
 ): boolean {
   return (
     (entry.source ?? "microphone") === "microphone" &&
-    entry.source_label === "dictation"
+    entry.source_label?.toLowerCase() === "dictation"
   );
 }
 

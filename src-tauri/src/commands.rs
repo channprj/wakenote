@@ -3793,6 +3793,26 @@ fn collect_day_sidecar_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
 }
 
 pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<RecentTranscript> {
+    recent_transcripts_matching_from_save_root(root, limit, |_| true)
+}
+
+pub fn recent_dictations_from_save_root(
+    root: &Path,
+    limit: usize,
+    hidden: &BTreeSet<String>,
+) -> Vec<RecentTranscript> {
+    recent_transcripts_matching_from_save_root(root, limit, |entry| {
+        entry.source == ChunkSource::Microphone
+            && transcript_is_dictation(entry)
+            && !hidden.contains(&entry.transcript_path)
+    })
+}
+
+fn recent_transcripts_matching_from_save_root(
+    root: &Path,
+    limit: usize,
+    include: impl Fn(&RecentTranscript) -> bool,
+) -> Vec<RecentTranscript> {
     if limit == 0 {
         return Vec::new();
     }
@@ -3825,7 +3845,9 @@ pub fn recent_transcripts_from_save_root(root: &Path, limit: usize) -> Vec<Recen
             if transcripts.len() >= limit {
                 break;
             }
-            transcripts.push(candidate.transcript);
+            if include(&candidate.transcript) {
+                transcripts.push(candidate.transcript);
+            }
         }
     }
     transcripts
@@ -5134,6 +5156,54 @@ mod tests {
         assert_eq!(transcripts.len(), 2);
         assert_eq!(transcripts[0].text, "second newest");
         assert_eq!(transcripts[1].text, "oldest");
+    }
+
+    #[test]
+    fn recent_dictations_filter_before_limiting_and_skip_hidden_records() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let older = tmp.path().join("20260527");
+        let newer = tmp.path().join("20260528");
+        std::fs::create_dir_all(&older).unwrap();
+        std::fs::create_dir_all(&newer).unwrap();
+        let base = Utc.with_ymd_and_hms(2026, 5, 27, 9, 0, 0).unwrap();
+        write_transcript_fixture(
+            &older,
+            "090000-dictation",
+            "older dictation",
+            base,
+            base + chrono::Duration::seconds(5),
+            Some("Dictation"),
+        );
+        let base = base + chrono::Duration::days(1);
+        write_transcript_fixture(
+            &newer,
+            "090000-dictation",
+            "newer dictation",
+            base,
+            base + chrono::Duration::seconds(5),
+            Some("dictation"),
+        );
+        std::fs::write(newer.join("100000.txt"), "newest ordinary capture").unwrap();
+        let all = recent_dictations_from_save_root(tmp.path(), 2, &BTreeSet::new());
+        assert_eq!(
+            all.iter()
+                .map(|entry| entry.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["newer dictation", "older dictation"]
+        );
+        let hidden = BTreeSet::from([all[0].transcript_path.clone()]);
+        let visible = recent_dictations_from_save_root(tmp.path(), 1, &hidden);
+        assert_eq!(visible[0].text, "older dictation");
+        assert!(recent_dictations_from_save_root(tmp.path(), 0, &hidden).is_empty());
+
+        let metadata_path = newer.join("090000-dictation.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["source"] = serde_json::json!("system");
+        std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let visible = recent_dictations_from_save_root(tmp.path(), 10, &BTreeSet::new());
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].text, "older dictation");
     }
 
     fn write_transcript_fixture(

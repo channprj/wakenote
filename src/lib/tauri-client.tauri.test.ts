@@ -333,6 +333,14 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("cancel_dictation");
   });
 
+  it("loads recent dictations with a dedicated bounded history command", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockResolvedValue([]);
+    const { loadRecentDictations } = await import("./tauri-client");
+    await expect(loadRecentDictations()).resolves.toEqual([]);
+    expect(mocks.invoke).toHaveBeenCalledWith("recent_dictations", { limit: 10 });
+  });
+
   it("routes supported app-list permissions through the native drag shelf", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.invoke.mockImplementation(mockInvoke);

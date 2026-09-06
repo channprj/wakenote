@@ -245,6 +245,7 @@ export function TranscriptsView({
   onTrashTranscripts,
   initialPlayingTranscriptPath = null,
   initialSourceFilter = ALL_SOURCE_FILTER,
+  initialActiveDay = null,
   today = new Date(),
 }: {
   days: TranscriptDay[];
@@ -295,26 +296,34 @@ export function TranscriptsView({
   ) => readonly string[] | Promise<readonly string[]>;
   initialPlayingTranscriptPath?: string | null;
   initialSourceFilter?: string;
+  initialActiveDay?: string | null;
   today?: Date;
 }) {
   const todayDay = formatLocalDay(today);
 
   const availableDays = useMemo(() => {
     const set = new Set<string>([todayDay]);
+    if (
+      initialActiveDay &&
+      isYearMonthDayLabel(initialActiveDay) &&
+      initialActiveDay <= todayDay
+    ) {
+      set.add(initialActiveDay);
+    }
     for (const entry of days) {
       if (isYearMonthDayLabel(entry.day) && entry.day <= todayDay) {
         set.add(entry.day);
       }
     }
     return set;
-  }, [days, todayDay]);
+  }, [days, todayDay, initialActiveDay]);
 
   const earliestDay = useMemo(() => {
     const sorted = [...availableDays].filter(isYearMonthDayLabel).sort();
     return sorted[0] ?? todayDay;
   }, [availableDays, todayDay]);
 
-  const [activeDay, setActiveDay] = useState<string | null>(null);
+  const [activeDay, setActiveDay] = useState<string | null>(initialActiveDay);
   const [viewWeekStart, setViewWeekStart] = useState<string | null>(null);
   const [playingTranscriptPath, setPlayingTranscriptPath] = useState<
     string | null
@@ -824,7 +833,6 @@ export function TranscriptsView({
     effectiveSourceFilter === ALL_SOURCE_FILTER
       ? `${activeEntries.length} transcript${activeEntries.length === 1 ? "" : "s"}`
       : `${filteredEntries.length} / ${activeEntries.length} transcripts`;
-  const showSourceFilter = sourceFilterOptions.length > 2;
   const effectiveWeekStart = viewWeekStart ?? weekStartFor(effectiveActiveDay);
   const handlePrevWeek = () =>
     setViewWeekStart(addDays(effectiveWeekStart, -7));
@@ -927,30 +935,28 @@ export function TranscriptsView({
           }
         />
         <div className="transcript-browse-row__filters">
-          {showSourceFilter ? (
-            <label className="transcript-source-filter">
-              <span>Source</span>
-              <Select
-                value={effectiveSourceFilter}
-                onValueChange={handleSourceFilterChange}
-              >
-                <SelectTrigger size="sm" aria-label="Transcript source">
-                  <SelectValue>
-                    {selectedSourceOption
-                      ? `${selectedSourceOption.label} (${selectedSourceOption.count})`
-                      : "All sources"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {sourceFilterOptions.map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.label} ({option.count})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-          ) : null}
+          <label className="transcript-source-filter">
+            <span>Source</span>
+            <Select
+              value={effectiveSourceFilter}
+              onValueChange={handleSourceFilterChange}
+            >
+              <SelectTrigger size="sm" aria-label="Transcript source">
+                <SelectValue>
+                  {selectedSourceOption
+                    ? `${selectedSourceOption.label} (${selectedSourceOption.count})`
+                    : "All sources"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {sourceFilterOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label} ({option.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
           <label className="transcript-source-filter">
             <span>Order</span>
             <Select
@@ -1261,15 +1267,27 @@ export function TranscriptsView({
           <EmptyState
             className="transcripts-empty"
             icon={EyeOff}
-            title="No hidden transcripts for this day · Files remain on disk"
+            title={
+              effectiveSourceFilter === "dictation"
+                ? "No hidden dictations for this day · Files remain on disk"
+                : "No hidden transcripts for this day · Files remain on disk"
+            }
             description="Hiding a capture only removes it from this list. Audio and transcript files are never deleted."
           />
         ) : (
           <EmptyState
             className="transcripts-empty"
             icon={Mic}
-            title="No transcripts for this day"
-            description="Captures land here automatically once recording picks up speech. Pick another day above, or start input from Capture."
+            title={
+              effectiveSourceFilter === "dictation"
+                ? "No dictations for this day"
+                : "No transcripts for this day"
+            }
+            description={
+              effectiveSourceFilter === "dictation"
+                ? "Pick another day, or use a dictation hotkey to record. Choose All sources to see other captures."
+                : "Captures land here automatically once recording picks up speech. Pick another day above, or start input from Capture."
+            }
           />
         )}
         {pagination.pageCount > 1 ? (
@@ -1690,14 +1708,18 @@ export function transcriptSourceFilterOptions(
   }
 
   const microphone = byId.get("microphone");
-  const dictation = byId.get("dictation");
+  const dictation: TranscriptSourceFilterOption = {
+    id: "dictation",
+    label: "Dictations",
+    count: byId.get("dictation")?.count ?? 0,
+  };
   const microphoneDevices = [...byId.values()].filter((option) =>
     option.id.startsWith("microphone:"),
   );
   const ordered = [
+    dictation,
     ...(microphone ? [microphone] : []),
     ...microphoneDevices,
-    ...(dictation ? [dictation] : []),
     ...[...byId.values()].filter(
       (option) =>
         option.id !== "microphone" &&

@@ -4265,6 +4265,29 @@ async fn recent_transcripts(
 }
 
 #[tauri::command]
+async fn recent_dictations(
+    state: State<'_, BackendState>,
+    limit: Option<usize>,
+) -> Result<Vec<RecentTranscript>, String> {
+    let (save_root, hidden) = {
+        let backend = state.lock().map_err(|error| error.to_string())?;
+        (
+            expand_user_path(backend.settings().save_root),
+            backend
+                .load_list_visibility()
+                .map_err(|error| error.to_string())?
+                .transcripts,
+        )
+    };
+    let limit = normalize_recent_transcript_limit(Some(limit.unwrap_or(10)));
+    tauri::async_runtime::spawn_blocking(move || {
+        wakenote::commands::recent_dictations_from_save_root(&save_root, limit, &hidden)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn transcript_days(
     state: State<'_, BackendState>,
 ) -> Result<Vec<wakenote::commands::TranscriptDay>, String> {
@@ -9038,6 +9061,7 @@ fn main() {
             open_screen_recording_settings,
             open_permission_drag_shelf,
             recent_transcripts,
+            recent_dictations,
             transcript_days,
             transcripts_for_day,
             export_all_transcript_days,

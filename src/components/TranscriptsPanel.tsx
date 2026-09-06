@@ -41,6 +41,8 @@ export function TranscriptsPanel({
   openrouterKeyConfigured = false,
   onOpenReports,
   translation,
+  initialSourceFilter,
+  initialActiveDay,
 }: {
   customSources?: readonly CustomSourceEntry[];
   models?: readonly Pick<ModelDescriptor, "id" | "display_name" | "status">[];
@@ -49,6 +51,8 @@ export function TranscriptsPanel({
   openrouterKeyConfigured?: boolean;
   onOpenReports?: () => void;
   translation?: TranslationPreferences;
+  initialSourceFilter?: string;
+  initialActiveDay?: string | null;
 }) {
   const [days, setDays] = useState<TranscriptDay[]>([]);
   const [entriesByDay, setEntriesByDay] = useState<
@@ -385,6 +389,8 @@ export function TranscriptsPanel({
 
   return (
     <TranscriptsView
+      initialSourceFilter={initialSourceFilter}
+      initialActiveDay={initialActiveDay}
       translation={translation}
       days={days}
       entriesByDay={

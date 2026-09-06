@@ -1,4 +1,4 @@
-import type { AppSettings } from "@/lib/types";
+import type { AppSettings, RecentTranscript } from "@/lib/types";
 import type { PermissionFeature } from "@/lib/permission-guidance";
 
 export interface SettingsActions {
@@ -14,6 +14,7 @@ export interface SettingsActions {
   onSuspendDictationShortcut: () => void | Promise<void>;
   onResumeDictationShortcut: () => void | Promise<void>;
   onPressedModifierShortcut: () => Promise<string | null>;
+  onOpenDictationHistory?: (entry?: RecentTranscript) => void;
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;

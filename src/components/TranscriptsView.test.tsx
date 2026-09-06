@@ -792,6 +792,7 @@ describe("TranscriptsView", () => {
 
     expect(options).toEqual([
       { id: "all", label: "All sources", count: 5 },
+      { id: "dictation", label: "Dictations", count: 0 },
       { id: "microphone:input-1-wired", label: "Wired", count: 1 },
       { id: "microphone:input-2-wireless", label: "Wireless", count: 1 },
       {
@@ -821,8 +822,8 @@ describe("TranscriptsView", () => {
 
     expect(transcriptSourceFilterOptions([microphone, dictation])).toEqual([
       { id: "all", label: "All sources", count: 2 },
+      { id: "dictation", label: "Dictations", count: 1 },
       { id: "microphone:input-1-wired", label: "Wired", count: 1 },
-      { id: "dictation", label: "Dict", count: 1 },
     ]);
     expect(
       filterTranscriptsBySource([microphone, dictation], "dictation"),

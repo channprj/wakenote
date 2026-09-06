@@ -48,6 +48,18 @@ interface CaptureSeed {
 const captureSeeds: readonly CaptureSeed[] = [
   {
     daysAgo: 0,
+    time: [10, 4, 12],
+    text: "검토한 문서 보내드립니다. 수정이 필요한 부분은 편하게 알려주세요.",
+    sourceLabel: "dictation",
+  },
+  {
+    daysAgo: 1,
+    time: [16, 20, 8],
+    text: "Please move our review to Thursday afternoon. I will send the updated notes before the meeting.",
+    sourceLabel: "dictation",
+  },
+  {
+    daysAgo: 0,
     time: [9, 12, 4],
     text: "오늘 오전 스탠드업 시작할게요. 먼저 릴리스 브랜치 상태부터 공유드리겠습니다.",
   },
