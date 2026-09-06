@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use chrono::{TimeZone, Utc};
 use wakenote::dictation::{
-    DictationAction, DictationCaptureHealth, DictationMicrophoneInput, DictationMixSession,
-    DictationProcessOutcome, DictationRecording, DictationRuntime, DictationShortcutEvent,
-    DictationStage, ModifierShortcut, ModifierShortcutRuntime, ShortcutRegistrationChange,
+    DictationAction, DictationCaptureHealth, DictationHotkeyMode, DictationMicrophoneInput,
+    DictationMixSession, DictationModifierShortcuts, DictationProcessOutcome, DictationRecording,
+    DictationRuntime, DictationShortcutEvent, DictationStage, ModifierShortcut,
+    ModifierShortcutRuntime, ShortcutRegistrationChange, active_dictation_shortcuts,
     archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
     prepare_dictation_audio, shortcut_registration_change, transcribe_and_type_dictation_recording,
     transcribe_dictation_recording, transcribe_dictation_recording_execution,
@@ -29,6 +30,148 @@ use wakenote::transcription::{
 use wakenote::voice_leveling::AudioFrameProcessor;
 
 struct ScalingProcessor(f32);
+
+#[test]
+fn toggle_hotkey_records_until_the_next_distinct_press() {
+    use DictationAction::*;
+    use DictationHotkeyMode::Toggle;
+    use DictationShortcutEvent::*;
+    let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), StartRecording);
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), Ignore);
+    assert_eq!(runtime.handle_hotkey_event(Released, Toggle), Ignore);
+    assert_eq!(runtime.stage(), DictationStage::Recording);
+    assert_eq!(
+        runtime.handle_hotkey_event(Pressed, Toggle),
+        StopAndTranscribe
+    );
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), Ignore);
+    assert_eq!(runtime.handle_hotkey_event(Released, Toggle), Ignore);
+    assert_eq!(runtime.stage(), DictationStage::Transcribing);
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), Cancel);
+    runtime.finish();
+    // Key repeat after completion must not start a fresh recording.
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), Ignore);
+    assert_eq!(runtime.handle_hotkey_event(Released, Toggle), Ignore);
+    assert_eq!(runtime.handle_hotkey_event(Pressed, Toggle), StartRecording);
+}
+
+#[test]
+fn hold_toggle_and_enhanced_hotkeys_do_not_take_over_each_others_recordings() {
+    use DictationAction::*;
+    use DictationHotkeyMode::*;
+    use DictationShortcutEvent::*;
+    for (owner, other) in [
+        (Hold, Toggle),
+        (Toggle, Hold),
+        (Enhanced, Toggle),
+        (Hold, Enhanced),
+    ] {
+        let mut runtime = DictationRuntime::<ScriptedDictationInput>::default();
+        assert_eq!(runtime.handle_hotkey_event(Pressed, owner), StartRecording);
+        assert_eq!(runtime.handle_hotkey_event(Pressed, other), Ignore);
+        assert_eq!(runtime.handle_hotkey_event(Released, other), Ignore);
+        assert_eq!(runtime.stage(), DictationStage::Recording);
+        if owner == Toggle {
+            assert_eq!(runtime.handle_hotkey_event(Released, owner), Ignore);
+            assert_eq!(
+                runtime.handle_hotkey_event(Pressed, owner),
+                StopAndTranscribe
+            );
+        } else {
+            assert_eq!(
+                runtime.handle_hotkey_event(Released, owner),
+                StopAndTranscribe
+            );
+        }
+    }
+}
+
+#[test]
+fn modifier_hotkeys_keep_independent_latches_and_modes() {
+    use DictationHotkeyMode::*;
+    use DictationShortcutEvent::*;
+    let hold = modifier_shortcut("leftctrl").unwrap().unwrap();
+    let toggle = modifier_shortcut("rightctrl").unwrap().unwrap();
+    let released = ModifierShortcut::new(false, false, false, false);
+    let mut registry = DictationModifierShortcuts::default();
+    registry.register(hold, Hold).unwrap();
+    registry.register(toggle, Toggle).unwrap();
+    assert!(registry.register(toggle, Hold).is_err());
+    assert!(registry.handle_modifiers(released).is_empty());
+    assert_eq!(registry.handle_modifiers(hold), vec![(Pressed, Hold)]);
+    assert!(registry.handle_modifiers(hold).is_empty());
+    assert_eq!(registry.handle_modifiers(released), vec![(Released, Hold)]);
+    assert_eq!(registry.handle_modifiers(toggle), vec![(Pressed, Toggle)]);
+    assert_eq!(
+        registry.handle_modifiers(released),
+        vec![(Released, Toggle)]
+    );
+    registry.unregister(hold);
+    assert!(!registry.is_registered(hold));
+    assert!(registry.is_registered(toggle));
+}
+
+#[test]
+fn toggle_preferences_migrate_validate_collisions_and_can_be_cleared() {
+    let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("dictation_toggle_shortcut");
+    let mut settings: AppSettings = serde_json::from_value(legacy).unwrap();
+    assert_eq!(settings.dictation_shortcut, "alt+space");
+    assert!(settings.dictation_toggle_shortcut.is_empty());
+    settings.dictation_enabled = true;
+    assert_eq!(active_dictation_shortcuts(&settings).len(), 1);
+    for shortcut in ["alt+space", "leftalt"] {
+        assert!(
+            candidate_dictation_settings(
+                &settings,
+                &SettingsPatch {
+                    dictation_toggle_shortcut: Some(shortcut.into()),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .contains("overlaps")
+        );
+    }
+    let settings = candidate_dictation_settings(
+        &settings,
+        &SettingsPatch {
+            dictation_toggle_shortcut: Some(" Command + Shift + D ".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(settings.dictation_toggle_shortcut, "shift+cmd+d");
+    assert_eq!(
+        active_dictation_shortcuts(&settings)[1].1,
+        DictationHotkeyMode::Toggle
+    );
+    assert!(
+        candidate_dictation_settings(
+            &settings,
+            &SettingsPatch {
+                enhance_prompt_enabled: Some(true),
+                enhance_prompt_shortcut: Some("shift+cmd+d".into()),
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .contains("overlaps")
+    );
+    let settings = candidate_dictation_settings(
+        &settings,
+        &SettingsPatch {
+            dictation_toggle_shortcut: Some("  ".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(active_dictation_shortcuts(&settings).len(), 1);
+}
 
 #[test]
 fn enhanced_prompt_shortcut_is_distinct_and_does_not_overlap_a_modifier_trigger() {

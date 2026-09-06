@@ -116,9 +116,10 @@ describe("SettingsPage ownership", () => {
     ];
     const markup = renderSection("dictation", snapshot);
 
-    expect(markup).toContain("Shortcut dictation");
+    expect(markup).toContain("Dictation hotkeys");
     expect(markup).toContain("Enable shortcut dictation");
-    expect(markup).toContain("Dictation shortcut");
+    expect(markup).toContain("Hold-to-dictate hotkey");
+    expect(markup).toContain("Toggle dictation hotkey");
     expect(markup).toContain("Dictation language");
     expect(markup).toContain("Dictation model");
     expect(markup).toContain("Dictation microphones");
@@ -135,9 +136,9 @@ describe("SettingsPage ownership", () => {
     expect(markup).toContain("Bubble position");
     expect(markup).toContain("Auto-detect");
     expect(markup).toContain(
-      "Hold the shortcut to record. Release it to transcribe and type at the cursor.",
+      "Hold to record. Release to transcribe and type at the cursor.",
     );
-    expect(markup).not.toContain("Press once to record");
+    expect(markup).toContain("Press once to record, then press again");
   });
 
   it("separates integrations, subtitles, and advanced text output", () => {

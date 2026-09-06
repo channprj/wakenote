@@ -208,6 +208,7 @@ export interface AppSettings {
   enhance_prompt_system_prompt: string;
   dictation_enabled: boolean;
   dictation_shortcut: string;
+  dictation_toggle_shortcut: string;
   dictation_language: TranscriptionLanguage;
   dictation_start_sound: DictationCueSound;
   dictation_stop_sound: DictationCueSound;

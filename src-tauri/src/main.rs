@@ -42,12 +42,12 @@ use wakenote::commands::{
 use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
-    DictationCaptureHealth, DictationCaptureResult, DictationMicrophoneInput, DictationRecording,
-    DictationRuntime, DictationShortcutEvent, DictationSlotFailure, DictationStage,
-    DictationStatePayload, ModifierShortcut, ModifierShortcutRuntime, PhysicalModifierKey,
-    archive_dictation_recording, candidate_dictation_settings, modifier_shortcut,
-    normalize_dictation_patch, prepare_dictation_audio, transcribe_dictation_recording_execution,
-    validate_dictation_shortcut,
+    DictationCaptureHealth, DictationCaptureResult, DictationHotkeyMode, DictationMicrophoneInput,
+    DictationModifierShortcuts, DictationRecording, DictationRuntime, DictationShortcutEvent,
+    DictationSlotFailure, DictationStage, DictationStatePayload, ModifierShortcut,
+    PhysicalModifierKey, active_dictation_shortcuts, archive_dictation_recording,
+    candidate_dictation_settings, modifier_shortcut, normalize_dictation_patch,
+    prepare_dictation_audio, transcribe_dictation_recording_execution, validate_dictation_shortcut,
 };
 use wakenote::dictionary::DictionaryContext;
 use wakenote::dictionary_file::{
@@ -127,8 +127,10 @@ type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
-type DictationShortcutDispatcher = mpsc::Sender<(DictationShortcutEvent, bool)>;
-type ModifierShortcutState = Arc<Mutex<ModifierShortcutRuntime>>;
+type DictationShortcutDispatcher = mpsc::Sender<(DictationShortcutEvent, DictationHotkeyMode)>;
+type ModifierShortcutState = Arc<Mutex<DictationModifierShortcuts>>;
+#[derive(Default)]
+struct DictationShortcutSuspension(AtomicBool);
 type InputMonitorState = Arc<Mutex<InputMonitorRuntime>>;
 type AutoTranscriptionState = Arc<AtomicBool>;
 type LiveTranscriberState = Arc<Mutex<Option<Arc<LiveTranscriptionService>>>>;
@@ -1801,9 +1803,20 @@ fn play_dictation_cue_nonblocking_on_failure(
     }
 }
 
-fn dispatch_dictation_shortcut_event(app: &AppHandle, event: DictationShortcutEvent) {
+fn dispatch_dictation_shortcut_event(
+    app: &AppHandle,
+    event: DictationShortcutEvent,
+    mode: DictationHotkeyMode,
+) {
+    if app
+        .state::<DictationShortcutSuspension>()
+        .0
+        .load(Ordering::SeqCst)
+    {
+        return;
+    }
     if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>()
-        && let Err(error) = dispatcher.send((event, false))
+        && let Err(error) = dispatcher.send((event, mode))
     {
         eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
     }
@@ -1814,19 +1827,9 @@ fn spawn_dictation_shortcut_worker(app: AppHandle) -> Result<DictationShortcutDi
     thread::Builder::new()
         .name("dictation-shortcut-events".to_string())
         .spawn(move || {
-            let mut active_mode = None;
-            while let Ok((event, enhanced)) = receiver.recv() {
-                if active_mode.is_some_and(|mode| mode != enhanced) {
-                    continue;
-                }
-                if event == DictationShortcutEvent::Pressed {
-                    active_mode = Some(enhanced);
-                }
-                if let Err(error) = handle_dictation_shortcut_event(&app, event, enhanced) {
+            while let Ok((event, mode)) = receiver.recv() {
+                if let Err(error) = handle_dictation_shortcut_event(&app, event, mode) {
                     finish_dictation(&app, Some(error));
-                }
-                if event == DictationShortcutEvent::Released {
-                    active_mode = None;
                 }
             }
         })
@@ -1853,20 +1856,20 @@ fn parse_dictation_shortcut(raw: &str) -> Result<(String, ParsedDictationShortcu
 fn register_dictation_shortcut_for_mode(
     app: &AppHandle,
     raw: &str,
-    enhanced: bool,
+    mode: DictationHotkeyMode,
 ) -> Result<(), String> {
     let (normalized, shortcut) = parse_dictation_shortcut(raw)?;
     let shortcut = match shortcut {
         ParsedDictationShortcut::Keyed(shortcut) => shortcut,
         ParsedDictationShortcut::Modifiers(shortcut) => {
-            if enhanced {
+            if mode == DictationHotkeyMode::Enhanced {
                 return Err("Enhanced Prompt requires a shortcut with a main key".into());
             }
             return app
                 .state::<ModifierShortcutState>()
                 .lock()
                 .map_err(|error| error.to_string())?
-                .register(shortcut)
+                .register(shortcut, mode)
                 .map_err(|error| {
                     format!("could not register dictation shortcut '{normalized}': {error}")
                 });
@@ -1886,9 +1889,7 @@ fn register_dictation_shortcut_for_mode(
                 ShortcutState::Pressed => DictationShortcutEvent::Pressed,
                 ShortcutState::Released => DictationShortcutEvent::Released,
             };
-            if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>() {
-                let _ = dispatcher.send((event, enhanced));
-            }
+            dispatch_dictation_shortcut_event(app, event, mode);
         })
         .map_err(|error| format!("could not register dictation shortcut '{normalized}': {error}"))
 }
@@ -1919,20 +1920,31 @@ fn suspend_dictation_shortcut(
     state: State<'_, BackendState>,
 ) -> Result<(), String> {
     let settings = state.lock().map_err(|error| error.to_string())?.settings();
+    app.state::<DictationShortcutSuspension>()
+        .0
+        .store(true, Ordering::SeqCst);
+    cancel_dictation_runtime(&app)?;
     for (shortcut, _) in active_dictation_shortcuts(&settings) {
         unregister_dictation_shortcut(&app, &shortcut)?;
     }
+    app.state::<DictationState>()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .reset_hotkeys();
     Ok(())
 }
 
 #[tauri::command]
 fn resume_dictation_shortcut(app: AppHandle, state: State<'_, BackendState>) -> Result<(), String> {
     let settings = state.lock().map_err(|error| error.to_string())?.settings();
-    for (shortcut, enhanced) in active_dictation_shortcuts(&settings) {
+    for (shortcut, mode) in active_dictation_shortcuts(&settings) {
         if !is_dictation_shortcut_registered(&app, &shortcut)? {
-            register_dictation_shortcut_for_mode(&app, &shortcut, enhanced)?;
+            register_dictation_shortcut_for_mode(&app, &shortcut, mode)?;
         }
     }
+    app.state::<DictationShortcutSuspension>()
+        .0
+        .store(false, Ordering::SeqCst);
     Ok(())
 }
 
@@ -1953,7 +1965,7 @@ fn enhanced_dictation_event(app: AppHandle, pressed: bool) -> Result<(), String>
             } else {
                 DictationShortcutEvent::Released
             },
-            true,
+            DictationHotkeyMode::Enhanced,
         ))
         .map_err(|error| error.to_string())
 }
@@ -2026,11 +2038,11 @@ fn handle_modifier_shortcut_event(
         [key] => ModifierShortcut::Physical(*key),
         _ => logical,
     };
-    let event = runtime
+    let events = runtime
         .lock()
         .map(|mut runtime| runtime.handle_modifiers(pressed))
-        .unwrap_or(None);
-    if let Some(event) = event {
+        .unwrap_or_default();
+    for (event, mode) in events {
         if let Some(settings) = app
             .try_state::<BackendState>()
             .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
@@ -2040,7 +2052,7 @@ fn handle_modifier_shortcut_event(
                 format!("[dictation] modifier shortcut event={event:?}"),
             );
         }
-        dispatch_dictation_shortcut_event(app, event);
+        dispatch_dictation_shortcut_event(app, event, mode);
     }
 }
 
@@ -2071,17 +2083,6 @@ fn install_modifier_shortcut_monitors(
     Ok(())
 }
 
-fn active_dictation_shortcuts(settings: &AppSettings) -> Vec<(String, bool)> {
-    if !settings.dictation_enabled {
-        return Vec::new();
-    }
-    let mut shortcuts = vec![(settings.dictation_shortcut.clone(), false)];
-    if settings.enhance_prompt_enabled {
-        shortcuts.push((settings.enhance_prompt_shortcut.clone(), true));
-    }
-    shortcuts
-}
-
 fn reconcile_dictation_shortcut_registration(
     app: &AppHandle,
     previous: &AppSettings,
@@ -2092,13 +2093,17 @@ fn reconcile_dictation_shortcut_registration(
     if old == new {
         return Ok(());
     }
+    app.state::<DictationState>()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .reset_hotkeys();
     let mut installed: Vec<String> = Vec::new();
     let result = (|| {
         for (shortcut, _) in &old {
             unregister_dictation_shortcut(app, shortcut)?;
         }
-        for (shortcut, enhanced) in &new {
-            register_dictation_shortcut_for_mode(app, shortcut, *enhanced)?;
+        for (shortcut, mode) in &new {
+            register_dictation_shortcut_for_mode(app, shortcut, *mode)?;
             installed.push(shortcut.clone());
         }
         Ok(())
@@ -2108,10 +2113,10 @@ fn reconcile_dictation_shortcut_registration(
             let _ = unregister_dictation_shortcut(app, &shortcut);
         }
         let mut failures = Vec::new();
-        for (shortcut, enhanced) in old {
+        for (shortcut, mode) in old {
             if !is_dictation_shortcut_registered(app, &shortcut).unwrap_or(false)
                 && let Err(restore_error) =
-                    register_dictation_shortcut_for_mode(app, &shortcut, enhanced)
+                    register_dictation_shortcut_for_mode(app, &shortcut, mode)
             {
                 failures.push(restore_error);
             }
@@ -3270,15 +3275,26 @@ async fn stop_dictation_after_limit(app: AppHandle, operation_id: u64) {
 fn handle_dictation_shortcut_event(
     app: &AppHandle,
     event: DictationShortcutEvent,
-    enhanced: bool,
+    mode: DictationHotkeyMode,
 ) -> Result<(), String> {
+    if app
+        .state::<DictationShortcutSuspension>()
+        .0
+        .load(Ordering::SeqCst)
+    {
+        return Ok(());
+    }
     let mut settings = app
         .try_state::<BackendState>()
         .ok_or_else(|| "dictation backend is unavailable".to_string())?
         .lock()
         .map_err(|error| error.to_string())?
         .settings();
-    if !settings.dictation_enabled || (enhanced && !settings.enhance_prompt_enabled) {
+    let enhanced = mode == DictationHotkeyMode::Enhanced;
+    if !settings.dictation_enabled
+        || (enhanced && !settings.enhance_prompt_enabled)
+        || (mode == DictationHotkeyMode::Toggle && settings.dictation_toggle_shortcut.is_empty())
+    {
         return Ok(());
     }
     settings.dictation_enhance_prompt = enhanced;
@@ -3301,7 +3317,7 @@ fn handle_dictation_shortcut_event(
     }
     let action = {
         let mut runtime = state.lock().map_err(|error| error.to_string())?;
-        runtime.handle_shortcut_event(event)
+        runtime.handle_hotkey_event(event, mode)
     };
     match action {
         DictationAction::Ignore => Ok(()),
@@ -3387,6 +3403,11 @@ fn update_settings(
         )
     };
     let candidate_settings = candidate_dictation_settings(&previous_settings, &patch)?;
+    if active_dictation_shortcuts(&previous_settings)
+        != active_dictation_shortcuts(&candidate_settings)
+    {
+        cancel_dictation_runtime(&app)?;
+    }
     apply_launch_at_login_action(&app, launch_at_login_action)?;
     reconcile_dictation_shortcut_registration(&app, &previous_settings, &candidate_settings)?;
 
@@ -8779,7 +8800,7 @@ fn main() {
             let dictation_state: DictationState =
                 Arc::new(Mutex::new(DictationRuntime::default()));
             let modifier_shortcut_state: ModifierShortcutState =
-                Arc::new(Mutex::new(ModifierShortcutRuntime::default()));
+                Arc::new(Mutex::new(DictationModifierShortcuts::default()));
             let dictation_shortcut_dispatcher =
                 spawn_dictation_shortcut_worker(app.handle().clone())?;
             app.manage(backend_state.clone());
@@ -8791,6 +8812,7 @@ fn main() {
             app.manage(input_monitor_state);
             app.manage(dictation_state);
             app.manage(dictation_shortcut_dispatcher);
+            app.manage(DictationShortcutSuspension::default());
             app.manage(modifier_shortcut_state.clone());
             app.manage(live_transcriber_state.clone());
             app.manage(AutoTypeState::default());
@@ -8831,11 +8853,11 @@ fn main() {
 
             install_modifier_shortcut_monitors(app.handle(), modifier_shortcut_state)?;
 
-            for (shortcut, enhanced) in active_dictation_shortcuts(&initial_settings_for_runtime) {
-                if let Err(error) = register_dictation_shortcut_for_mode(app.handle(), &shortcut, enhanced) {
+            for (shortcut, mode) in active_dictation_shortcuts(&initial_settings_for_runtime) {
+                if let Err(error) = register_dictation_shortcut_for_mode(app.handle(), &shortcut, mode) {
                     append_runtime_debug_log(&initial_settings_for_runtime,
-                        format!("[dictation] startup registration failed enhanced={enhanced}: {error}"));
-                    eprintln!("[dictation] startup registration failed enhanced={enhanced}: {error}");
+                        format!("[dictation] startup registration failed mode={mode:?}: {error}"));
+                    eprintln!("[dictation] startup registration failed mode={mode:?}: {error}");
                 }
             }
 

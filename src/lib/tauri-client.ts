@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { normalizeDictationShortcut } from "./dictation-shortcut";
+import {
+  normalizeDictationShortcut,
+  normalizeEnhancedPromptShortcut,
+  validateDictationHotkeys,
+} from "./dictation-shortcut";
 import { modelSupportsContext } from "./models";
 import {
   activityIssue,
@@ -795,6 +799,17 @@ export async function saveSettingsPatch(
         safePatch.dictation_shortcut,
       );
     }
+    if (typeof safePatch.dictation_toggle_shortcut === "string") {
+      safePatch.dictation_toggle_shortcut =
+        safePatch.dictation_toggle_shortcut.trim()
+          ? normalizeDictationShortcut(safePatch.dictation_toggle_shortcut)
+          : "";
+    }
+    if (typeof safePatch.enhance_prompt_shortcut === "string") {
+      safePatch.enhance_prompt_shortcut = normalizeEnhancedPromptShortcut(
+        safePatch.enhance_prompt_shortcut,
+      );
+    }
     let queue = browserSnapshot.queue ?? emptyQueue();
     if (
       safePatch.recording_enabled === false ||
@@ -809,6 +824,7 @@ export async function saveSettingsPatch(
     }
 
     const settings = { ...previousSettings, ...safePatch };
+    validateDictationHotkeys(settings);
     const dictionaryFileStatus = safePatch.dictionary
       ? {
           ...browserSnapshot.dictionary_file_status,

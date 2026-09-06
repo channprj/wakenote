@@ -194,6 +194,7 @@ export function defaultSettings(): AppSettings {
     enhance_prompt_system_prompt: enhancePromptDefault.trim(),
     dictation_enabled: false,
     dictation_shortcut: "alt+space",
+    dictation_toggle_shortcut: "",
     dictation_language: "auto",
     dictation_start_sound: "original",
     dictation_stop_sound: "original",

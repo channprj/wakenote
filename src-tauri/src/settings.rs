@@ -484,12 +484,14 @@ pub struct AppSettings {
     /// Per-capture mode only; never persisted as a preference.
     #[serde(skip)]
     pub dictation_enhance_prompt: bool,
-    /// Shortcut dictation: press the global shortcut, speak, then press it
-    /// again to type the transcript into the focused app. Off by default.
+    /// Enable the hold and optional toggle dictation hotkeys. Off by default.
     #[serde(default)]
     pub dictation_enabled: bool,
     #[serde(default = "default_dictation_shortcut")]
     pub dictation_shortcut: String,
+    /// Empty until configured, so existing hotkeys keep their behavior.
+    #[serde(default)]
+    pub dictation_toggle_shortcut: String,
     #[serde(default = "default_dictation_language")]
     pub dictation_language: TranscriptionLanguage,
     #[serde(default)]
@@ -628,6 +630,7 @@ pub struct SettingsPatch {
     pub enhance_prompt_system_prompt: Option<String>,
     pub dictation_enabled: Option<bool>,
     pub dictation_shortcut: Option<String>,
+    pub dictation_toggle_shortcut: Option<String>,
     pub dictation_language: Option<TranscriptionLanguage>,
     pub dictation_start_sound: Option<DictationCueSound>,
     pub dictation_stop_sound: Option<DictationCueSound>,
@@ -1366,6 +1369,9 @@ impl AppSettings {
         if let Some(value) = patch.dictation_language {
             self.dictation_language = value;
         }
+        if let Some(value) = patch.dictation_toggle_shortcut {
+            self.dictation_toggle_shortcut = value.trim().to_lowercase();
+        }
         if let Some(value) = patch.dictation_start_sound {
             self.dictation_start_sound = value;
         }
@@ -1586,6 +1592,7 @@ impl Default for AppSettings {
             dictation_enhance_prompt: false,
             dictation_enabled: false,
             dictation_shortcut: default_dictation_shortcut(),
+            dictation_toggle_shortcut: String::new(),
             dictation_language: default_dictation_language(),
             dictation_start_sound: DictationCueSound::default(),
             dictation_stop_sound: DictationCueSound::default(),

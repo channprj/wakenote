@@ -77,6 +77,21 @@ const DICTATION_BUBBLE_POSITIONS = [
 
 const DEFAULT_DICTATION_MODEL = "__default__";
 const USABLE_MODEL_STATUSES = new Set(["ready", "installed", "unloaded"]);
+const DICTATION_HOTKEYS = [
+  {
+    field: "dictation_shortcut",
+    label: "Hold-to-dictate hotkey",
+    description:
+      "Hold to record. Release to transcribe and type at the cursor.",
+  },
+  {
+    field: "dictation_toggle_shortcut",
+    label: "Toggle dictation hotkey",
+    description:
+      "Press once to record, then press again to transcribe and type. Leave unset to disable.",
+  },
+] as const;
+type HotkeyField = (typeof DICTATION_HOTKEYS)[number]["field"];
 
 export function dictationMicrophoneSummary(
   inputs: AppSettings["capture_microphones"],
@@ -94,6 +109,15 @@ function isPhysicalModifierShortcut(shortcut: string): boolean {
   return /^(?:left|right)(?:ctrl|alt|shift|cmd)$/.test(shortcut);
 }
 
+function isModifierOnlyShortcut(shortcut: string): boolean {
+  return (
+    isPhysicalModifierShortcut(shortcut) ||
+    shortcut
+      .split("+")
+      .every((part) => ["ctrl", "alt", "shift", "cmd"].includes(part))
+  );
+}
+
 export function DictationSettings({
   snapshot,
   actions,
@@ -102,53 +126,87 @@ export function DictationSettings({
   actions: SettingsActions;
 }) {
   const { settings } = snapshot;
-  const [capturingShortcut, setCapturingShortcut] = useState(false);
+  const [capturingShortcut, setCapturingShortcut] =
+    useState<HotkeyField | null>(null);
   const [shortcutError, setShortcutError] = useState<string | null>(null);
+  const [errorField, setErrorField] = useState<HotkeyField | null>(null);
+  const [shortcutBusy, setShortcutBusy] = useState(false);
   const mountedRef = useRef(true);
-  const captureActiveRef = useRef(false);
+  const captureActiveRef = useRef<HotkeyField | null>(null);
+  const shortcutBusyRef = useRef(false);
+  const pendingModifierRef = useRef<string | null>(null);
+  const shortcutButtons = useRef<
+    Partial<Record<HotkeyField, HTMLButtonElement>>
+  >({});
+
+  useEffect(() => {
+    if (capturingShortcut) shortcutButtons.current[capturingShortcut]?.focus();
+  }, [capturingShortcut]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (captureActiveRef.current) {
-        captureActiveRef.current = false;
+        captureActiveRef.current = null;
         void actions.onResumeDictationShortcut();
       }
     };
   }, [actions.onResumeDictationShortcut]);
 
-  async function startShortcutCapture() {
+  function setCaptureBusy(busy: boolean) {
+    shortcutBusyRef.current = busy;
+    if (mountedRef.current) setShortcutBusy(busy);
+  }
+
+  async function startShortcutCapture(field: HotkeyField) {
     if (
       !settings.dictation_enabled ||
       capturingShortcut ||
-      captureActiveRef.current
+      captureActiveRef.current ||
+      shortcutBusyRef.current
     ) {
       return;
     }
+    setCaptureBusy(true);
+    setErrorField(field);
+    pendingModifierRef.current = null;
     setShortcutError(null);
     try {
       await actions.onSuspendDictationShortcut();
     } catch (error) {
       setShortcutError(error instanceof Error ? error.message : String(error));
+      // A partially failed suspension may already have removed one hotkey.
+      try {
+        await actions.onResumeDictationShortcut();
+      } catch (resumeError) {
+        setShortcutError(`${String(error)}; ${String(resumeError)}`);
+      }
+      setCaptureBusy(false);
       return;
     }
     if (!mountedRef.current) {
       await actions.onResumeDictationShortcut();
+      setCaptureBusy(false);
       return;
     }
-    captureActiveRef.current = true;
-    setCapturingShortcut(true);
+    captureActiveRef.current = field;
+    setCapturingShortcut(field);
+    setCaptureBusy(false);
   }
 
   async function cancelShortcutCapture() {
-    captureActiveRef.current = false;
-    setCapturingShortcut(false);
+    if (!captureActiveRef.current) return;
+    captureActiveRef.current = null;
+    setCapturingShortcut(null);
+    setCaptureBusy(true);
     setShortcutError(null);
     try {
       await actions.onResumeDictationShortcut();
     } catch (error) {
       setShortcutError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCaptureBusy(false);
     }
   }
 
@@ -156,12 +214,14 @@ export function DictationSettings({
     if (!captureActiveRef.current) {
       return;
     }
-    captureActiveRef.current = false;
-    setCapturingShortcut(false);
+    const field = captureActiveRef.current;
+    captureActiveRef.current = null;
+    setCapturingShortcut(null);
+    setCaptureBusy(true);
     setShortcutError(null);
     try {
       await (actions.onSavePatch ?? actions.onPatch)({
-        dictation_shortcut: shortcut,
+        [field]: shortcut,
       });
     } catch (error) {
       setShortcutError(error instanceof Error ? error.message : String(error));
@@ -172,7 +232,25 @@ export function DictationSettings({
         setShortcutError(
           error instanceof Error ? error.message : String(error),
         );
+      } finally {
+        setCaptureBusy(false);
       }
+    }
+  }
+
+  async function clearToggleShortcut() {
+    if (shortcutBusyRef.current || captureActiveRef.current) return;
+    setCaptureBusy(true);
+    setErrorField("dictation_toggle_shortcut");
+    setShortcutError(null);
+    try {
+      await (actions.onSavePatch ?? actions.onPatch)({
+        dictation_toggle_shortcut: "",
+      });
+    } catch (error) {
+      setShortcutError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCaptureBusy(false);
     }
   }
 
@@ -182,6 +260,7 @@ export function DictationSettings({
     }
     let cancelled = false;
     let polling = false;
+    let nativeModifierSeen = false;
     const poll = async () => {
       if (polling) {
         return;
@@ -189,8 +268,13 @@ export function DictationSettings({
       polling = true;
       try {
         const shortcut = await actions.onPressedModifierShortcut();
-        if (!cancelled && shortcut) {
-          await commitShortcut(shortcut);
+        if (!cancelled) {
+          if (shortcut) {
+            nativeModifierSeen = true;
+            rememberModifierShortcut(shortcut);
+          } else if (nativeModifierSeen && pendingModifierRef.current) {
+            await commitShortcut(pendingModifierRef.current);
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -209,6 +293,15 @@ export function DictationSettings({
       window.clearInterval(timer);
     };
   }, [capturingShortcut, actions.onPressedModifierShortcut]);
+
+  function rememberModifierShortcut(shortcut: string) {
+    if (
+      !pendingModifierRef.current ||
+      shortcut.split("+").length >= pendingModifierRef.current.split("+").length
+    ) {
+      pendingModifierRef.current = shortcut;
+    }
+  }
 
   async function captureShortcut(event: KeyboardEvent<HTMLButtonElement>) {
     if (!capturingShortcut || !captureActiveRef.current) {
@@ -229,21 +322,23 @@ export function DictationSettings({
       );
       return;
     }
-    if (isPhysicalModifierShortcut(shortcut)) {
+    if (isModifierOnlyShortcut(shortcut)) {
+      rememberModifierShortcut(shortcut);
       return;
     }
 
     await commitShortcut(shortcut);
   }
 
-  async function capturePhysicalModifierRelease(
+  async function captureModifierRelease(
     event: KeyboardEvent<HTMLButtonElement>,
   ) {
     if (!capturingShortcut || !captureActiveRef.current) {
       return;
     }
-    const shortcut = dictationShortcutFromKeyboardEvent(event);
-    if (!shortcut || !isPhysicalModifierShortcut(shortcut)) {
+    const shortcut =
+      pendingModifierRef.current ?? dictationShortcutFromKeyboardEvent(event);
+    if (!shortcut || !isModifierOnlyShortcut(shortcut)) {
       return;
     }
     event.preventDefault();
@@ -276,8 +371,8 @@ export function DictationSettings({
   return (
     <SettingsGrid maxColumns={2}>
       <SettingsCard
-        title="Shortcut dictation"
-        description="Hold the shortcut to record. Release it to transcribe and type at the cursor."
+        title="Dictation hotkeys"
+        description="Dictate into any app with hold or toggle recording. Press Escape to cancel."
       >
         <SettingSwitch
           label="Enable shortcut dictation"
@@ -287,41 +382,78 @@ export function DictationSettings({
             void actions.onPatch({ dictation_enabled })
           }
         />
-        <Field
-          orientation="responsive"
-          className="settings-row"
-          data-disabled={!settings.dictation_enabled || undefined}
-          data-invalid={Boolean(shortcutError) || undefined}
-        >
-          <FieldContent>
-            <FieldLabel>Dictation shortcut</FieldLabel>
-            <FieldDescription>
-              {shortcutError ??
-                "Use a single key, a modified key, a modifier chord, or one physical modifier."}
-            </FieldDescription>
-          </FieldContent>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="min-w-40 max-w-full"
-            aria-label="Dictation shortcut"
-            aria-invalid={Boolean(shortcutError)}
-            disabled={!settings.dictation_enabled}
-            onClick={() => void startShortcutCapture()}
-            onKeyDown={(event) => void captureShortcut(event)}
-            onKeyUp={(event) => void capturePhysicalModifierRelease(event)}
-            onBlur={() => {
-              if (capturingShortcut) {
-                void cancelShortcutCapture();
-              }
-            }}
+        {DICTATION_HOTKEYS.map(({ field, label, description }) => (
+          <Field
+            key={field}
+            orientation="responsive"
+            className="settings-row"
+            data-disabled={!settings.dictation_enabled || undefined}
+            data-invalid={
+              (errorField === field && Boolean(shortcutError)) || undefined
+            }
           >
-            {capturingShortcut
-              ? "Press shortcut…"
-              : formatDictationShortcut(settings.dictation_shortcut)}
-          </Button>
-        </Field>
+            <FieldContent>
+              <FieldLabel>{label}</FieldLabel>
+              <FieldDescription>
+                {errorField === field && shortcutError
+                  ? shortcutError
+                  : description}
+              </FieldDescription>
+            </FieldContent>
+            <div className="flex max-w-full items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-w-40 max-w-full"
+                aria-label={label}
+                ref={(element) => {
+                  if (element) shortcutButtons.current[field] = element;
+                }}
+                aria-invalid={errorField === field && Boolean(shortcutError)}
+                disabled={
+                  !settings.dictation_enabled ||
+                  shortcutBusy ||
+                  (capturingShortcut !== null && capturingShortcut !== field)
+                }
+                onClick={() => void startShortcutCapture(field)}
+                onKeyDown={(event) => void captureShortcut(event)}
+                onKeyUp={(event) => void captureModifierRelease(event)}
+                onBlur={() => {
+                  if (captureActiveRef.current === field) {
+                    void cancelShortcutCapture();
+                  }
+                }}
+              >
+                {capturingShortcut === field
+                  ? "Press shortcut…"
+                  : settings[field]
+                    ? formatDictationShortcut(settings[field])
+                    : "Not set"}
+              </Button>
+              {field === "dictation_toggle_shortcut" && settings[field] && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Clear toggle dictation hotkey"
+                  disabled={
+                    !settings.dictation_enabled ||
+                    shortcutBusy ||
+                    capturingShortcut !== null
+                  }
+                  onClick={() => void clearToggleShortcut()}
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          </Field>
+        ))}
+        <p className="text-xs text-muted-foreground">
+          Click a hotkey and press your keys. For a modifier chord or one
+          physical modifier, release the keys to save.
+        </p>
         <SettingSelect
           label="Dictation language"
           description="Auto-detect is independent of the archival transcription language."

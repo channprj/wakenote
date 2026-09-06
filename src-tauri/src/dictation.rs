@@ -57,6 +57,23 @@ pub enum DictationShortcutEvent {
     Released,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictationHotkeyMode {
+    Hold,
+    Toggle,
+    Enhanced,
+}
+
+impl DictationHotkeyMode {
+    fn index(self) -> usize {
+        match self {
+            Self::Hold => 0,
+            Self::Toggle => 1,
+            Self::Enhanced => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShortcutRegistrationChange {
     Unchanged,
@@ -216,6 +233,53 @@ impl ModifierShortcutRuntime {
     }
 }
 
+/// Each modifier hotkey keeps its own latch so hold and toggle can coexist.
+#[derive(Debug, Default)]
+pub struct DictationModifierShortcuts {
+    shortcuts: Vec<(DictationHotkeyMode, ModifierShortcutRuntime)>,
+}
+
+impl DictationModifierShortcuts {
+    pub fn register(
+        &mut self,
+        shortcut: ModifierShortcut,
+        mode: DictationHotkeyMode,
+    ) -> Result<(), String> {
+        if self.is_registered(shortcut) {
+            return Err("this modifier hotkey is already registered".into());
+        }
+        let mut runtime = ModifierShortcutRuntime::default();
+        runtime.register(shortcut)?;
+        self.shortcuts.push((mode, runtime));
+        Ok(())
+    }
+
+    pub fn unregister(&mut self, shortcut: ModifierShortcut) {
+        self.shortcuts
+            .retain(|(_, runtime)| !runtime.is_registered(shortcut));
+    }
+
+    pub fn is_registered(&self, shortcut: ModifierShortcut) -> bool {
+        self.shortcuts
+            .iter()
+            .any(|(_, runtime)| runtime.is_registered(shortcut))
+    }
+
+    pub fn handle_modifiers(
+        &mut self,
+        pressed: ModifierShortcut,
+    ) -> Vec<(DictationShortcutEvent, DictationHotkeyMode)> {
+        self.shortcuts
+            .iter_mut()
+            .filter_map(|(mode, runtime)| {
+                runtime
+                    .handle_modifiers(pressed)
+                    .map(|event| (event, *mode))
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationMicrophoneInput {
     pub slot: MicrophoneSlot,
@@ -367,6 +431,8 @@ pub struct DictationRuntime<B: AudioInputBackend + Default> {
     active_recording_id: Option<u64>,
     capture_claimed: bool,
     stop_cue_armed: bool,
+    hotkey_pressed: [bool; 3],
+    active_hotkey: Option<DictationHotkeyMode>,
 }
 
 impl<B: AudioInputBackend + Default> Default for DictationRuntime<B> {
@@ -383,11 +449,60 @@ impl<B: AudioInputBackend + Default> Default for DictationRuntime<B> {
             active_recording_id: None,
             capture_claimed: false,
             stop_cue_armed: false,
+            hotkey_pressed: [false; 3],
+            active_hotkey: None,
         }
     }
 }
 
 impl<B: AudioInputBackend + Default> DictationRuntime<B> {
+    pub fn reset_hotkeys(&mut self) {
+        self.hotkey_pressed = [false; 3];
+        self.active_hotkey = None;
+    }
+
+    pub fn handle_hotkey_event(
+        &mut self,
+        event: DictationShortcutEvent,
+        mode: DictationHotkeyMode,
+    ) -> DictationAction {
+        let pressed = event == DictationShortcutEvent::Pressed;
+        let was_pressed = &mut self.hotkey_pressed[mode.index()];
+        if *was_pressed == pressed {
+            return DictationAction::Ignore;
+        }
+        *was_pressed = pressed;
+
+        // Releasing a hold key must never stop a recording started by toggle,
+        // and an unrelated hotkey must not take over an active recording.
+        if self.stage == DictationStage::Recording && self.active_hotkey != Some(mode) {
+            return DictationAction::Ignore;
+        }
+        let action = if mode == DictationHotkeyMode::Toggle {
+            if !pressed {
+                return DictationAction::Ignore;
+            }
+            match self.stage {
+                DictationStage::Idle => {
+                    self.stage = DictationStage::Recording;
+                    DictationAction::StartRecording
+                }
+                DictationStage::Recording => {
+                    self.stage = DictationStage::Transcribing;
+                    DictationAction::StopAndTranscribe
+                }
+                DictationStage::Transcribing => DictationAction::Cancel,
+                DictationStage::Error => DictationAction::Ignore,
+            }
+        } else {
+            self.handle_shortcut_event(event)
+        };
+        if action == DictationAction::StartRecording {
+            self.active_hotkey = Some(mode);
+        }
+        action
+    }
+
     pub fn handle_press_at(&mut self, now: Instant) -> DictationAction {
         if self
             .last_press
@@ -880,6 +995,7 @@ impl<B: AudioInputBackend + Default> DictationRuntime<B> {
     }
 
     fn clear_capture_state(&mut self) {
+        self.active_hotkey = None;
         self.mix_session = None;
         self.settings_snapshot = None;
         self.started_at = None;
@@ -926,7 +1042,6 @@ pub fn candidate_dictation_settings(
     let mut candidate = previous.clone();
     candidate.apply_patch(patch);
     if candidate.dictation_enabled {
-        validate_dictation_shortcut(&candidate.dictation_shortcut)?;
         if candidate.enhance_prompt_enabled {
             let enhanced = validate_dictation_shortcut(&candidate.enhance_prompt_shortcut)?;
             if modifier_shortcut(&enhanced)?.is_some() {
@@ -935,27 +1050,102 @@ pub fn candidate_dictation_settings(
                         .into(),
                 );
             }
-            let primary = validate_dictation_shortcut(&candidate.dictation_shortcut)?;
-            let enhanced_parts: Vec<_> = enhanced.split('+').collect();
-            let modifier_overlap = modifier_shortcut(&primary)?.is_some()
-                && primary.split('+').all(|part| {
-                    let logical = part
-                        .strip_prefix("left")
-                        .or_else(|| part.strip_prefix("right"))
-                        .unwrap_or(part);
-                    enhanced_parts.contains(&logical)
-                });
-            if primary == enhanced || modifier_overlap {
-                return Err("Enhanced Prompt shortcut overlaps the Dictation shortcut. Choose a different key combination.".into());
+        }
+        let shortcuts = active_dictation_shortcuts(&candidate);
+        for (index, (shortcut, mode)) in shortcuts.iter().enumerate() {
+            validate_dictation_shortcut(shortcut)?;
+            for (other, other_mode) in &shortcuts[..index] {
+                if dictation_shortcuts_overlap(shortcut, other)? {
+                    return Err(format!(
+                        "{} overlaps {}. Choose a different key combination.",
+                        hotkey_label(*mode),
+                        hotkey_label(*other_mode),
+                    ));
+                }
             }
         }
     }
     Ok(candidate)
 }
 
+fn hotkey_label(mode: DictationHotkeyMode) -> &'static str {
+    match mode {
+        DictationHotkeyMode::Hold => "Hold-to-dictate hotkey",
+        DictationHotkeyMode::Toggle => "Toggle dictation hotkey",
+        DictationHotkeyMode::Enhanced => "Enhanced Prompt shortcut",
+    }
+}
+
+pub fn active_dictation_shortcuts(settings: &AppSettings) -> Vec<(String, DictationHotkeyMode)> {
+    if !settings.dictation_enabled {
+        return Vec::new();
+    }
+    let mut shortcuts = vec![(
+        settings.dictation_shortcut.clone(),
+        DictationHotkeyMode::Hold,
+    )];
+    if !settings.dictation_toggle_shortcut.is_empty() {
+        shortcuts.push((
+            settings.dictation_toggle_shortcut.clone(),
+            DictationHotkeyMode::Toggle,
+        ));
+    }
+    if settings.enhance_prompt_enabled {
+        shortcuts.push((
+            settings.enhance_prompt_shortcut.clone(),
+            DictationHotkeyMode::Enhanced,
+        ));
+    }
+    shortcuts
+}
+
+pub fn dictation_shortcuts_overlap(left: &str, right: &str) -> Result<bool, String> {
+    let left = validate_dictation_shortcut(left)?;
+    let right = validate_dictation_shortcut(right)?;
+    if left == right {
+        return Ok(true);
+    }
+    // Opposite physical keys can be assigned independently.
+    if matches!(
+        modifier_shortcut(&left)?,
+        Some(ModifierShortcut::Physical(_))
+    ) && matches!(
+        modifier_shortcut(&right)?,
+        Some(ModifierShortcut::Physical(_))
+    ) {
+        return Ok(false);
+    }
+    for (required, other) in [(&left, &right), (&right, &left)] {
+        if modifier_shortcut(required)?.is_some() {
+            let other_parts = other.split('+').map(logical_modifier).collect::<Vec<_>>();
+            if required
+                .split('+')
+                .map(logical_modifier)
+                .all(|part| other_parts.contains(&part))
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn logical_modifier(part: &str) -> &str {
+    part.strip_prefix("left")
+        .or_else(|| part.strip_prefix("right"))
+        .unwrap_or(part)
+}
+
 pub fn normalize_dictation_patch(patch: &mut SettingsPatch) -> Result<(), String> {
     if let Some(shortcut) = patch.dictation_shortcut.as_deref() {
         patch.dictation_shortcut = Some(validate_dictation_shortcut(shortcut)?);
+    }
+    if let Some(shortcut) = patch.dictation_toggle_shortcut.as_deref() {
+        patch.dictation_toggle_shortcut = Some(if shortcut.trim().is_empty() {
+            String::new()
+        } else {
+            validate_dictation_shortcut(shortcut)?
+        });
     }
     if let Some(shortcut) = patch.enhance_prompt_shortcut.as_deref() {
         let normalized = validate_dictation_shortcut(shortcut)?;

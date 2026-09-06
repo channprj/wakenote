@@ -217,6 +217,31 @@ describe("tauri live capture client", () => {
     expect(loweredMaximum.settings.subtitle_max_height_px).toBe(40);
   });
 
+  it("validates toggle hotkeys, collisions, and clearing without changing the hold shortcut", async () => {
+    await saveSettingsPatch({
+      dictation_enabled: true,
+      dictation_shortcut: "alt+space",
+    });
+    const saved = await saveSettingsPatch({
+      dictation_toggle_shortcut: " Shift + Command + D ",
+    });
+    expect(saved.settings.dictation_toggle_shortcut).toBe("shift+cmd+d");
+    await expect(
+      saveSettingsPatch({ dictation_toggle_shortcut: "alt+space" }),
+    ).rejects.toThrow("overlaps");
+    await expect(
+      saveSettingsPatch({ dictation_toggle_shortcut: "leftalt" }),
+    ).rejects.toThrow("overlaps");
+    const unchanged = await saveSettingsPatch({});
+    expect(unchanged.settings.dictation_toggle_shortcut).toBe("shift+cmd+d");
+    const cleared = await saveSettingsPatch({
+      dictation_toggle_shortcut: "  ",
+    });
+    expect(cleared.settings.dictation_toggle_shortcut).toBe("");
+    expect(cleared.settings.dictation_shortcut).toBe("alt+space");
+    await saveSettingsPatch({ dictation_enabled: false });
+  });
+
   it("validates browser fallback dictation shortcut patches like the backend", async () => {
     const normalized = await saveSettingsPatch({
       dictation_shortcut: " Command + Alt + D ",

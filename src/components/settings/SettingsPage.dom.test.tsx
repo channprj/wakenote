@@ -317,7 +317,7 @@ describe("SettingsPage interactions", () => {
 
     expect(
       screen
-        .getByRole("button", { name: "Dictation shortcut" })
+        .getByRole("button", { name: "Hold-to-dictate hotkey" })
         .hasAttribute("disabled"),
     ).toBe(true);
     expect(
@@ -483,7 +483,7 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
     await user.click(shortcut);
     expect(actions.onSuspendDictationShortcut).toHaveBeenCalledOnce();
 
@@ -505,6 +505,9 @@ describe("SettingsPage interactions", () => {
       shiftKey: true,
       repeat: true,
     });
+
+    expect(actions.onPatch).not.toHaveBeenCalled();
+    fireEvent.keyUp(shortcut, { code: "ShiftLeft", key: "Shift", ctrlKey: true });
 
     expect(actions.onPatch).toHaveBeenCalledOnce();
     expect(actions.onPatch).toHaveBeenCalledWith({
@@ -534,7 +537,7 @@ describe("SettingsPage interactions", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Dictation shortcut" }),
+      screen.getByRole("button", { name: "Hold-to-dictate hotkey" }),
     );
 
     await waitFor(() => {
@@ -560,7 +563,7 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, {
       code: "ControlLeft",
@@ -597,7 +600,7 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Dictation shortcut" });
+    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, { code: "Escape", key: "Escape" });
 
@@ -620,12 +623,110 @@ describe("SettingsPage interactions", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Dictation shortcut" }),
+      screen.getByRole("button", { name: "Hold-to-dictate hotkey" }),
     );
     view.unmount();
     await act(async () => {});
 
     expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce();
+  });
+
+  it("captures and clears the toggle hotkey independently of the hold hotkey", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+    const view = render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    const toggle = screen.getByRole("button", {
+      name: "Toggle dictation hotkey",
+    });
+    expect(toggle.textContent).toBe("Not set");
+    await user.click(toggle);
+    fireEvent.keyDown(toggle, {
+      code: "ControlLeft",
+      key: "Control",
+      ctrlKey: true,
+    });
+    fireEvent.keyDown(toggle, {
+      code: "AltLeft",
+      key: "Alt",
+      ctrlKey: true,
+      altKey: true,
+    });
+    expect(actions.onPatch).not.toHaveBeenCalled();
+    fireEvent.keyDown(toggle, {
+      code: "KeyD",
+      key: "d",
+      ctrlKey: true,
+      altKey: true,
+    });
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      dictation_toggle_shortcut: "ctrl+alt+d",
+    });
+    await waitFor(() =>
+      expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Hold-to-dictate hotkey" })
+        .textContent,
+    ).toBe("Option + Space");
+    snapshot.settings.dictation_toggle_shortcut = "ctrl+alt+d";
+    view.rerender(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Clear toggle dictation hotkey" }),
+    );
+    expect(actions.onPatch).toHaveBeenLastCalledWith({
+      dictation_toggle_shortcut: "",
+    });
+  });
+
+  it("keeps the saved toggle hotkey and restores listening when a collision is rejected", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    actions.onSavePatch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Toggle dictation hotkey overlaps Hold-to-dictate hotkey."),
+      );
+    const snapshot = mockSnapshot();
+    snapshot.settings.dictation_enabled = true;
+    snapshot.settings.dictation_toggle_shortcut = "ctrl+alt+d";
+    render(
+      <SettingsPage
+        section="dictation"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    const toggle = screen.getByRole("button", {
+      name: "Toggle dictation hotkey",
+    });
+    await user.click(toggle);
+    fireEvent.keyDown(toggle, { code: "Space", key: " ", altKey: true });
+    await waitFor(() =>
+      expect(actions.onResumeDictationShortcut).toHaveBeenCalledOnce(),
+    );
+    expect(
+      screen.getByText(
+        "Toggle dictation hotkey overlaps Hold-to-dictate hotkey.",
+      ),
+    ).toBeTruthy();
+    expect(toggle.textContent).toBe("Control + Option + D");
   });
 
   it("keeps a controlled active tab visible inside the compact tab scroller", () => {

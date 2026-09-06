@@ -1,3 +1,5 @@
+import type { AppSettings } from "./types";
+
 export interface DictationShortcutKeyEvent {
   code: string;
   key: string;
@@ -11,8 +13,14 @@ const LETTER_KEY_CODES = Array.from(
   { length: 26 },
   (_, index) => `Key${String.fromCharCode(65 + index)}`,
 );
-const DIGIT_KEY_CODES = Array.from({ length: 10 }, (_, index) => `Digit${index}`);
-const FUNCTION_KEY_CODES = Array.from({ length: 24 }, (_, index) => `F${index + 1}`);
+const DIGIT_KEY_CODES = Array.from(
+  { length: 10 },
+  (_, index) => `Digit${index}`,
+);
+const FUNCTION_KEY_CODES = Array.from(
+  { length: 24 },
+  (_, index) => `F${index + 1}`,
+);
 const NAMED_KEY_CODES = [
   "Space",
   "Enter",
@@ -36,7 +44,9 @@ export const SUPPORTED_DICTATION_KEY_CODES = [
   ...NAMED_KEY_CODES,
 ] as const;
 
-const MODIFIER_ALIASES: Readonly<Record<string, "ctrl" | "alt" | "shift" | "cmd">> = {
+const MODIFIER_ALIASES: Readonly<
+  Record<string, "ctrl" | "alt" | "shift" | "cmd">
+> = {
   ctrl: "ctrl",
   control: "ctrl",
   alt: "alt",
@@ -142,9 +152,7 @@ export function normalizeDictationShortcut(raw: string): string {
   const mainKey = mainKeys[0] ?? "";
   const functionKey = /^f(?:[1-9]|1\d|2[0-4])$/.test(mainKey);
   const supportedMainKey =
-    /^[a-z0-9]$/.test(mainKey) ||
-    functionKey ||
-    NAMED_MAIN_KEYS.has(mainKey);
+    /^[a-z0-9]$/.test(mainKey) || functionKey || NAMED_MAIN_KEYS.has(mainKey);
   if (!supportedMainKey) {
     throw new Error(`Unsupported dictation shortcut key: ${mainKey}`);
   }
@@ -171,8 +179,8 @@ export function dictationShortcutFromKeyboardEvent(
   if (!mainKey && modifiers.length < 2) {
     return physicalModifier;
   }
-  const parts = [...modifiers, mainKey ?? null].filter(
-    (part): part is string => Boolean(part),
+  const parts = [...modifiers, mainKey ?? null].filter((part): part is string =>
+    Boolean(part),
   );
   try {
     return normalizeDictationShortcut(parts.join("+"));
@@ -213,6 +221,85 @@ export function formatDictationShortcut(shortcut: string): string {
     .split("+")
     .map((part) => labels[part] ?? part.toUpperCase())
     .join(" + ");
+}
+
+function isModifierShortcut(shortcut: string): boolean {
+  return (
+    /^(?:left|right)(?:ctrl|alt|shift|cmd)$/.test(shortcut) ||
+    shortcut
+      .split("+")
+      .every((part) =>
+        MODIFIER_ORDER.includes(part as (typeof MODIFIER_ORDER)[number]),
+      )
+  );
+}
+
+export function normalizeEnhancedPromptShortcut(shortcut: string): string {
+  const normalized = normalizeDictationShortcut(shortcut);
+  if (isModifierShortcut(normalized)) {
+    throw new Error("Enhanced Prompt requires a shortcut with a main key");
+  }
+  return normalized;
+}
+
+export function dictationShortcutsOverlap(
+  left: string,
+  right: string,
+): boolean {
+  left = normalizeDictationShortcut(left);
+  right = normalizeDictationShortcut(right);
+  if (left === right) return true;
+  const physical = /^(?:left|right)(?:ctrl|alt|shift|cmd)$/;
+  if (physical.test(left) && physical.test(right)) return false;
+  const logical = (part: string) => part.replace(/^(left|right)/, "");
+  return [
+    [left, right],
+    [right, left],
+  ].some(
+    ([required, other]) =>
+      isModifierShortcut(required) &&
+      required
+        .split("+")
+        .map(logical)
+        .every((part) => other.split("+").map(logical).includes(part)),
+  );
+}
+
+export function validateDictationHotkeys(
+  settings: Pick<
+    AppSettings,
+    | "dictation_enabled"
+    | "dictation_shortcut"
+    | "dictation_toggle_shortcut"
+    | "enhance_prompt_enabled"
+    | "enhance_prompt_shortcut"
+  >,
+): void {
+  if (!settings.dictation_enabled) return;
+  const hotkeys = [["Hold-to-dictate hotkey", settings.dictation_shortcut]];
+  if (settings.dictation_toggle_shortcut) {
+    hotkeys.push([
+      "Toggle dictation hotkey",
+      settings.dictation_toggle_shortcut,
+    ]);
+  }
+  if (settings.enhance_prompt_enabled) {
+    normalizeEnhancedPromptShortcut(settings.enhance_prompt_shortcut);
+    hotkeys.push([
+      "Enhanced Prompt shortcut",
+      settings.enhance_prompt_shortcut,
+    ]);
+  }
+  for (const [index, [label, shortcut]] of hotkeys.entries()) {
+    normalizeDictationShortcut(shortcut);
+    for (const [otherLabel, other] of hotkeys.slice(0, index)) {
+      if (dictationShortcutsOverlap(shortcut, other)) {
+        throw new Error(
+          `${label} overlaps ${otherLabel}. Choose a different key combination.`,
+        );
+      }
+    }
+  }
 }
 
 function physicalModifierFromCode(code: string): string | null {
