@@ -4,7 +4,7 @@
 
 **Local-first voice capture and transcription for macOS.**
 
-WakeNote is a menu-bar recorder for one or two microphones, supported system-audio sources, imported recordings, and push-to-talk dictation. It turns speech into durable audio, metadata, transcript, and report files while letting you choose between on-device ASR and explicitly configured cloud providers.
+WakeNote is a menu-bar recorder for one or two microphones, supported system-audio sources, imported recordings, and dictation with hold or toggle hotkeys. It turns speech into durable audio, metadata, transcript, and report files while letting you choose between on-device ASR and explicitly configured cloud providers.
 
 The desktop app uses Tauri 2 and Rust for capture, persistence, and transcription, with a React 19 and TypeScript workspace for Capture, Meetings, Transcripts, Reports, Activity, and Settings.
 
@@ -13,7 +13,7 @@ The desktop app uses Tauri 2 and Rust for capture, persistence, and transcriptio
 - **Automatic capture** — a calibrated dBFS gate, attack/release timing, pre-roll, lead-in, and post-roll preserve speech without continuously writing silence.
 - **Flexible dual microphones** — Keep Primary and Secondary separate, adaptively synchronize and merge them, or use Priority Audio to record whichever input is currently cleanest without summing both microphones.
 - **Local and opt-in cloud ASR** — Whisper, sherpa-onnx, and Qwen3-ASR run locally; OpenRouter, OpenAI, and Soniox are available only after their API keys are saved.
-- **Live and archival workflows** — Customizable Subtitles, shortcut dictation, paged daily transcript and Activity history, M4A meeting recordings, and Markdown reports share the same model and Dictionary contracts.
+- **Live and archival workflows** — Customizable Subtitles, independent hold and toggle dictation hotkeys, Recent Dictations with copy and history actions, a dedicated Dictations filter, paged daily transcript and Activity history, M4A meeting recordings, and Markdown reports share the same model and Dictionary contracts.
 - **Focused-cursor tools** — Realtime auto-type has its own model selection. Opt-in OpenRouter translation supports Subtitles, Transcripts, and Dictation; a separate Enhanced Prompt shortcut turns spoken drafts into structured prompts with an editable system prompt.
 - **Durable recovery** — queued jobs survive restarts, running work can be cancelled safely, and selected recording bundles move to macOS Trash together instead of leaving text, JSON, or audio behind.
 - **Inspectable storage** — audio, metadata, transcripts, recoverable errors, meetings, and reports stay under a user-selected save root.

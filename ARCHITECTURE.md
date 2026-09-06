@@ -96,9 +96,11 @@ Provider-native context is used only when supported. Deterministic correction re
 
 ### Dictation
 
-`dictation.rs` owns shortcut validation, push-to-talk state, dedicated microphone capture, the ten-minute guard, and its temporary inference audio. `text_input.rs` inserts a non-empty final transcript into the focused macOS application and restores the previous clipboard contents.
+`dictation.rs` owns shortcut validation, independent hold/toggle event handling, dedicated microphone capture, the ten-minute guard, and temporary inference audio. The existing `dictation_shortcut` setting remains the hold hotkey; `dictation_toggle_shortcut` defaults to empty. Repeated key events are ignored, and only the hotkey that started a recording can finish it. Active hotkeys, including Enhanced Prompt, are validated together for overlaps. Shortcut capture suspends native handlers until editing completes. `text_input.rs` inserts a non-empty final transcript into the focused macOS application and follows the configured clipboard retention policy.
 
-Dictation uses the configured Primary microphone without interrupting archival voice-activated recording. VOR chunks that overlap Dictation remain as audio-only records and skip live/final transcription so the same speech is not stored twice. Dictation audio, metadata, transcript, or recoverable error sidecar is stored like any other capture; only temporary inference files are discarded.
+Dictation selects the cleanest signal from the configured Primary and optional Secondary microphones without interrupting archival voice-activated recording. VOR chunks that overlap Dictation remain as audio-only records and skip live/final transcription so the same speech is not stored twice. Dictation audio, metadata, transcript, or recoverable error sidecar is stored like any other capture; only temporary inference files are discarded.
+
+The `recent_dictations` command scans daily transcript storage on a blocking worker, filtering microphone entries with a case-insensitive `dictation` label and excluding hidden records before applying the limit. Settings requests ten entries and links them into the Transcripts daily browser with the selected date and source filter. The Dictations source option remains available with a zero count so changing dates cannot silently clear the filter.
 
 ### Meetings
 
@@ -150,11 +152,11 @@ Provider-specific protocol state does not leak into the recorder or frontend. A 
 
 ```text
 global shortcut pressed
-  -> dedicated Primary capture + feedback overlay
-  -> shortcut released -> saved dictation artifact
+  -> dedicated microphone capture + feedback overlay
+  -> hold released or toggle pressed again -> saved dictation artifact
   -> selected dictation model
   -> non-empty final text -> transcript sidecar
-  -> focused-cursor insertion + clipboard restoration
+  -> focused-cursor insertion + configured clipboard retention
 ```
 
 ### Meetings

@@ -309,7 +309,8 @@ Settings patches are clamped or normalized by the Rust backend.
 | Start live input on launch | `on` | `on` / `off` |
 | Input monitoring | `off` | `on` / `off`; Primary only |
 | Shortcut dictation | `off` | `on` / `off` |
-| Dictation shortcut | `Option+Space` | supported key, key chord, or physical modifier combination |
+| Hold-to-dictate hotkey | `Option+Space` | supported key, key chord, or physical modifier combination |
+| Toggle dictation hotkey | not set | optional separate hotkey; press to start, press again to finish |
 | Dictation language | `auto` | same language set as archival transcription |
 | Subtitle | `off` | `on` / `off` |
 | Subtitle position | top center | off; top/bottom × left/center/right |
@@ -396,13 +397,21 @@ Selected Transcript rows can be moved to Trash together. WakeNote stages every e
 
 Enable **Settings › Dictation › Shortcut dictation**, choose a compatible model and language, then keep the cursor in the destination application:
 
-1. Hold the configured shortcut to start dedicated Primary-microphone capture.
-2. Speak while holding it, then release it to stop and transcribe.
-3. WakeNote writes the dictation artifact and, for non-empty final text, types at the focused cursor.
+1. Use **Hold-to-dictate hotkey** (default **Option+Space**) to record while holding the keys; release to stop and transcribe.
+2. Alternatively, set **Toggle dictation hotkey**. Press it once to start recording, release the keys while speaking, then press it again to stop and transcribe.
+3. WakeNote saves the dictation and types non-empty final text at the focused cursor.
 
-The dictation stream is independent from voice-activated archival capture. VOR keeps recording during Dictation, but overlapping VOR chunks stay audio-only and skip transcription to avoid saving the same speech twice. Each Dictation attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, a press during transcription is ignored, and recording stops automatically after ten minutes. WakeNote restores the previous clipboard after native insertion.
+Click either hotkey field and press the desired keys. Release modifier-only combinations to save them. The two hotkeys and the enabled Enhanced Prompt shortcut must not overlap. **Clear** removes the optional toggle hotkey; existing hold hotkeys are preserved when updating WakeNote.
+
+Dictation uses the Primary and optional Secondary microphones selected in Audio and automatically selects the cleanest signal. Its stream is independent from voice-activated archival capture. VOR keeps recording during Dictation, but overlapping VOR chunks stay audio-only and skip transcription to avoid saving the same speech twice. Each Dictation attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, and recording stops automatically after ten minutes. Press **Escape** to cancel, or press a dictation hotkey during transcription to cancel processing. **Copy result to clipboard** keeps the inserted result by default; turn it off to restore the previous clipboard after insertion.
 
 The top-center feedback bubble remains available even when Subtitle is off. Microphone permission is required for capture; Accessibility permission is required for focused-cursor typing.
+
+### Recent Dictations
+
+**Settings › Dictation › Recent Dictations** shows the ten latest saved dictation transcripts across dates. Expand an entry to read the full original transcript, check its microphone, or **Copy text**. Hidden transcripts are excluded. Use the refresh button to reload the list.
+
+**View in Transcripts** opens that entry's date with the dictation filter selected. **View all dictations** opens the same daily browser at the latest result. You can also choose **Source › Dictations** directly on the **Transcripts** page. The filter stays selected while changing dates or switching visible/hidden records, including days with no dictations. Choose **All sources** to show other captures again.
 
 ### Realtime auto-type
 
@@ -418,7 +427,7 @@ Save an OpenRouter key under **Settings › Integrations**. **Translation & prom
 
 - **Subtitles:** enable **Translate subtitles** and choose the target language in Settings › Subtitles. Original captions appear while translation is pending or unavailable. Requests are coalesced and stale results discarded; a completed translated caption receives its normal reading time.
 - **Transcripts:** enable **Translate transcripts** in Settings › Audio for automatic translation of displayed rows, or use **Translate to …** on a transcript. Translation is shown separately with its own copy/retry controls. Audio and original transcript files are never replaced; translations are cached only for the current app session.
-- **Dictation:** enable **Translate dictation** in Settings › Dictation. After release, the translated text is inserted at the cursor. Failed processing does not paste an untranslated substitute; the original transcript remains saved.
+- **Dictation:** enable **Translate dictation** in Settings › Dictation. When recording finishes, the translated text is inserted at the cursor. Failed processing does not paste an untranslated substitute; the original transcript remains saved.
 - **Enhanced Prompt:** enable the mode in Settings › Dictation and hold its separate shortcut (default **Control+Option+Space**) while speaking. Release to rewrite the draft as a usable prompt without executing it. Normal Dictation keeps its own shortcut and behavior. Overlapping shortcuts are rejected. If Dictation translation is enabled, the enhanced prompt uses that target language too.
 
 The editable **Enhanced Prompt system prompt** starts with instructions to preserve intent, names, constraints, and uncertainty, avoid invented requirements, and use Goal/Context/Inputs/Requirements/Output format sections only where useful. It restructures your request; it does not answer it. Native automation can use `enhanced_dictation_event` with a `pressed` boolean, while `transform_text` / `cancel_text_transform` expose cancellable text processing.
@@ -549,7 +558,7 @@ Deletion waits until the active transcription worker acknowledges cancellation s
 - Grant **Accessibility** permission for WakeNote/System Events in **System Settings › Privacy & Security › Accessibility**.
 - Keep the destination cursor focused until transcription finishes.
 - Empty or low-signal results are deliberately not inserted.
-- Shortcut events received while a previous dictation is transcribing are ignored.
+- Pressing a dictation hotkey during transcription cancels processing; wait for completion if you want the result inserted.
 
 ### MP3 recording fails
 
