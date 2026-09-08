@@ -213,6 +213,12 @@ pub fn model_supports_context(
         && (!diarization_required || model.capabilities.diarization)
 }
 
+pub fn model_supports_reprocessing(model: &ModelDescriptor) -> bool {
+    model_supports_context(model, TranscriptionContext::File, false)
+        || (model.capabilities.realtime
+            && matches!(model.id.as_str(), "openai-gpt-live-transcribe" | "soniox-realtime-v5"))
+}
+
 pub fn validate_model_options(
     models: &[ModelDescriptor],
     selected_model_id: &str,

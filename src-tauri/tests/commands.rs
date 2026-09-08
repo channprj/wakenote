@@ -1571,6 +1571,57 @@ fn backend_reprocess_jobs_rejects_an_active_batch_without_mutating_the_queue() {
 }
 
 #[test]
+fn backend_reprocesses_with_realtime_models_and_preserves_replay_after_restart() {
+    for model_id in ["soniox-realtime-v5", "openai-gpt-live-transcribe"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let audio_path = tmp.path().join("saved.wav");
+        std::fs::write(&audio_path, b"saved audio").unwrap();
+        let mut backend = AppBackend::load_from_dir(tmp.path()).unwrap();
+        backend.update_settings(SettingsPatch {
+            model_directory: Some(tmp.path().join("models").to_string_lossy().into()),
+            selected_model: Some(model_id.into()),
+            ..SettingsPatch::default()
+        });
+        let queued = backend.enqueue_audio_file(&audio_path, Some(model_id.into()));
+        let original = queued
+            .jobs
+            .iter()
+            .find(|job| job.audio_path == audio_path)
+            .unwrap();
+        assert!(!original.replay_recorded_audio);
+        let mut legacy_job = serde_json::to_value(original).unwrap();
+        legacy_job
+            .as_object_mut()
+            .unwrap()
+            .remove("replay_recorded_audio");
+        assert!(
+            !serde_json::from_value::<wakenote::queue::QueueJob>(legacy_job)
+                .unwrap()
+                .replay_recorded_audio
+        );
+        backend
+            .finish_transcription_job(TranscriptionJobOutcome::failed(original.id, "old failure"))
+            .unwrap();
+        let queued = backend
+            .reprocess_jobs(vec![original.id], model_id.into())
+            .unwrap();
+        assert!(
+            queued
+                .jobs
+                .iter()
+                .find(|job| job.id == original.id)
+                .unwrap()
+                .replay_recorded_audio
+        );
+
+        let mut restored = AppBackend::load_from_dir(tmp.path()).unwrap();
+        let started = restored.start_next_transcription_job().unwrap();
+        assert_eq!(started.job.model_id, model_id);
+        assert!(started.job.replay_recorded_audio);
+    }
+}
+
+#[test]
 fn backend_reprocesses_warning_and_clean_completed_jobs() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");

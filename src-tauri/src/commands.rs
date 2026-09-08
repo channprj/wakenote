@@ -25,8 +25,8 @@ use crate::manual_meeting_capture::{
 };
 use crate::meeting::{MeetingFinishedEvent, MeetingStatus, start_manual_recorded_meeting_capture};
 use crate::models::{
-    ModelDescriptor, ModelStatus, ModelStore, TranscriptionContext, default_model_registry,
-    model_supports_context, validate_model_options,
+    ModelDescriptor, ModelStatus, ModelStore, default_model_registry,
+    model_supports_reprocessing, validate_model_options,
 };
 use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer};
 use crate::persistence::{
@@ -2408,9 +2408,9 @@ impl AppBackend {
             .into_iter()
             .find(|model| model.id == model_id)
             .ok_or_else(|| format!("unknown model {model_id}"))?;
-        if !model_supports_context(&model, TranscriptionContext::File, false) {
+        if !model_supports_reprocessing(&model) {
             return Err(format!(
-                "model {model_id} does not support file transcription"
+                "model {model_id} does not support audio reprocessing"
             ));
         }
         if !model_is_selectable(&model_id, &self.settings.model_directory) {
@@ -2737,7 +2737,14 @@ impl AppBackend {
             return Ok(self.queue.snapshot());
         };
         let runtime = match started.credentials.and_then(|credentials| {
+            let replay = started.job.replay_recorded_audio.then(|| {
+                crate::recorded_realtime::RecordedRealtimeOptions {
+                    credentials: credentials.clone(),
+                    is_cancelled: std::sync::Arc::new(|| false),
+                }
+            });
             RuntimeTranscriber::for_archival_with_credentials(&started.model_directory, credentials)
+                .map(|runtime| runtime.with_recorded_realtime(replay))
                 .map_err(|error| error.to_string())
         }) {
             Ok(runtime) => {

@@ -254,7 +254,7 @@ describe("Activity issue reprocessing", () => {
     ]);
   });
 
-  it("offers only ready file-transcription models and prefers the current model", () => {
+  it("offers runnable reprocessing models and prefers the current model", () => {
     const models = [
       model("ready-file", "ready", ["file"]),
       model("installed-file", "installed", ["file"]),

@@ -1092,48 +1092,52 @@ describe("tauri live capture client", () => {
     },
   );
 
-  it("reprocesses only selected browser fallback issue jobs with an explicit model", async () => {
-    await downloadModel("whisper-small");
-    await loadSnapshot();
-    const before = await enqueueAudioFiles([
-      "/tmp/imported/reprocess-selected.wav",
-      "/tmp/imported/reprocess-unselected.wav",
-    ]);
-    const selected = before.queue.jobs.find(
-      (job) => job.audio_path === "/tmp/imported/reprocess-selected.wav",
-    );
-    const unselected = before.queue.jobs.find(
-      (job) => job.audio_path === "/tmp/imported/reprocess-unselected.wav",
-    );
-    expect(selected?.id).toBeTypeOf("number");
-    expect(unselected?.id).toBeTypeOf("number");
-    if (selected) {
-      selected.status = "failed";
-      selected.error = "mock failure";
-      selected.is_read = true;
-    }
-    if (unselected) {
-      unselected.status = "skipped";
-      unselected.is_read = true;
-    }
+  it.each(["whisper-small", "soniox-realtime-v5", "openai-gpt-live-transcribe"])(
+    "reprocesses only selected browser fallback issue jobs with %s",
+    async (modelId) => {
+      await downloadModel("whisper-small");
+      await loadSnapshot();
+      const before = await enqueueAudioFiles([
+        "/tmp/imported/reprocess-selected.wav",
+        "/tmp/imported/reprocess-unselected.wav",
+      ]);
+      const selected = before.queue.jobs.find(
+        (job) => job.audio_path === "/tmp/imported/reprocess-selected.wav",
+      );
+      const unselected = before.queue.jobs.find(
+        (job) => job.audio_path === "/tmp/imported/reprocess-unselected.wav",
+      );
+      expect(selected?.id).toBeTypeOf("number");
+      expect(unselected?.id).toBeTypeOf("number");
+      if (selected) {
+        selected.status = "failed";
+        selected.error = "mock failure";
+        selected.is_read = true;
+      }
+      if (unselected) {
+        unselected.status = "skipped";
+        unselected.is_read = true;
+      }
 
-    const snapshot = await reprocessJobs([selected?.id ?? -1], "whisper-small");
+      const snapshot = await reprocessJobs([selected?.id ?? -1], modelId);
 
-    expect(
-      snapshot.queue.jobs.find((job) => job.id === selected?.id),
-    ).toMatchObject({
-      model_id: "whisper-small",
-      status: "pending",
-      error: null,
-      is_read: false,
-    });
-    expect(
-      snapshot.queue.jobs.find((job) => job.id === unselected?.id),
-    ).toMatchObject({
-      status: "skipped",
-      is_read: true,
-    });
-  });
+      expect(
+        snapshot.queue.jobs.find((job) => job.id === selected?.id),
+      ).toMatchObject({
+        model_id: modelId,
+        status: "pending",
+        error: null,
+        is_read: false,
+        replay_recorded_audio: true,
+      });
+      expect(
+        snapshot.queue.jobs.find((job) => job.id === unselected?.id),
+      ).toMatchObject({
+        status: "skipped",
+        is_read: true,
+      });
+    },
+  );
 
   it("reprocesses warning and clean completed jobs", async () => {
     await downloadModel("whisper-small");

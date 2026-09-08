@@ -116,6 +116,9 @@ pub struct QueueJob {
     pub transcription_options: Option<TranscriptionOptions>,
     #[serde(default)]
     pub activity_kind: QueueActivityKind,
+    /// Explicit reprocessing must replay saved audio instead of waiting for a live capture.
+    #[serde(default)]
+    pub replay_recorded_audio: bool,
 }
 
 impl QueueJob {
@@ -205,6 +208,7 @@ impl TranscriptionQueue {
             is_read: false,
             transcription_options: None,
             activity_kind,
+            replay_recorded_audio: false,
         });
         (id, true)
     }
@@ -263,6 +267,7 @@ impl TranscriptionQueue {
                 return Err(format!("job {} is currently running", job.id));
             }
             job.model_id = model_id;
+            job.replay_recorded_audio = true;
             job.status = QueueJobStatus::Pending;
             job.error = None;
             job.issue = None;
@@ -270,7 +275,9 @@ impl TranscriptionQueue {
             return Ok(job.id);
         }
 
-        Ok(self.enqueue_file(audio_path, model_id))
+        let id = self.enqueue_file(audio_path, model_id);
+        self.job_mut(id).expect("enqueued job").replay_recorded_audio = true;
+        Ok(id)
     }
 
     pub fn start_next(&mut self) -> Option<QueueJob> {

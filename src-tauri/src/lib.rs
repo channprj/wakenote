@@ -30,6 +30,7 @@ pub mod permissions;
 pub mod persistence;
 pub mod queue;
 pub mod recorder;
+pub mod recorded_realtime;
 pub mod settings;
 pub mod soniox_async;
 pub mod soniox_realtime;

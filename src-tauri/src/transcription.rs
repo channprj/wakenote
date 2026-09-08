@@ -28,6 +28,7 @@ use crate::queue::{QueueIssueCode, QueueJobIssue, QueueJobStatus, TranscriptionQ
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
+use crate::recorded_realtime::{RecordedRealtimeOptions, transcribe_recorded_realtime};
 use crate::settings::{TranscriptionLanguage, expand_user_path};
 use crate::soniox_async::SonioxAsyncClient;
 use crate::transcription_cost::estimated_provider_cost_usd;
@@ -964,6 +965,7 @@ pub struct RuntimeTranscriber {
     soniox_async: SonioxAsyncClient,
     streaming_enabled: bool,
     partial_callback: Option<TranscriptionPartialCallback>,
+    recorded_realtime: Option<RecordedRealtimeOptions>,
 }
 
 impl fmt::Debug for RuntimeTranscriber {
@@ -995,6 +997,7 @@ impl RuntimeTranscriber {
             soniox_async: SonioxAsyncClient::default(),
             streaming_enabled: false,
             partial_callback: None,
+            recorded_realtime: None,
         }
     }
 
@@ -1010,6 +1013,7 @@ impl RuntimeTranscriber {
             soniox_async: SonioxAsyncClient::default(),
             streaming_enabled: false,
             partial_callback: None,
+            recorded_realtime: None,
         }
     }
 
@@ -1033,6 +1037,7 @@ impl RuntimeTranscriber {
             soniox_async,
             streaming_enabled: false,
             partial_callback: None,
+            recorded_realtime: None,
         })
     }
 
@@ -1050,11 +1055,19 @@ impl RuntimeTranscriber {
         model_runtime_for_id(&self.model_directory, model_id)
     }
 
+    pub fn with_recorded_realtime(mut self, options: Option<RecordedRealtimeOptions>) -> Self {
+        self.recorded_realtime = options;
+        self
+    }
+
     fn wait_for_realtime_result(
         &self,
-        audio_path: &Path,
+        request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionExecution, TranscriptionError> {
-        match realtime_result_store().wait(audio_path) {
+        if let Some(options) = self.recorded_realtime.as_ref() {
+            return transcribe_recorded_realtime(request, options);
+        }
+        match realtime_result_store().wait(request.audio_path) {
             RealtimeStoredResult::Completed(execution) => Ok(execution),
             RealtimeStoredResult::Failed(failure) => Err(TranscriptionError::Failure(failure)),
         }
@@ -1113,7 +1126,7 @@ impl Transcriber for RuntimeTranscriber {
                     )
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 "openai-realtime" | "soniox-realtime" => self
-                    .wait_for_realtime_result(request.audio_path)
+                    .wait_for_realtime_result(request)
                     .map(|execution| execution.text),
                 "soniox-async-stt" => self
                     .soniox_async
@@ -1141,7 +1154,7 @@ impl Transcriber for RuntimeTranscriber {
             return transcriber.transcribe_execution(request);
         }
         if matches!(runtime.as_str(), "openai-realtime" | "soniox-realtime") {
-            return self.wait_for_realtime_result(request.audio_path);
+            return self.wait_for_realtime_result(request);
         }
         if runtime == "openai-stt" {
             let model_id = request.model_id.to_string();

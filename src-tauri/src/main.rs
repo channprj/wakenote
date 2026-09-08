@@ -7830,8 +7830,22 @@ fn spawn_transcription_job(
             started.job.model_id
         );
 
+        let cancel_backend = backend_state.clone();
+        let job_id = started.job.id;
         let transcriber = match started.credentials.and_then(|credentials| {
+            let replay = started.job.replay_recorded_audio.then(|| {
+                wakenote::recorded_realtime::RecordedRealtimeOptions {
+                    credentials: credentials.clone(),
+                    is_cancelled: Arc::new(move || {
+                        cancel_backend
+                            .lock()
+                            .map(|backend| backend.transcription_job_was_cancelled(job_id))
+                            .unwrap_or(true)
+                    }),
+                }
+            });
             RuntimeTranscriber::for_archival_with_credentials(started.model_directory, credentials)
+                .map(|runtime| runtime.with_recorded_realtime(replay))
                 .map_err(|error| error.to_string())
         }) {
             Ok(transcriber) => transcriber,

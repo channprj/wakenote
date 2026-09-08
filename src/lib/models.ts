@@ -54,6 +54,14 @@ export function isMeetingTranscriptionModel(model: ModelDescriptor) {
   );
 }
 
+export function modelSupportsReprocessing(model: ModelDescriptor) {
+  return (
+    modelSupportsContext(model, "file") ||
+    (model.capabilities.realtime &&
+      ["openai-gpt-live-transcribe", "soniox-realtime-v5"].includes(model.id))
+  );
+}
+
 export function meetingTranscriptionModels(models: ModelDescriptor[]) {
   return models.filter(isMeetingTranscriptionModel);
 }

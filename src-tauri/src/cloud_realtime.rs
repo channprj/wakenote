@@ -69,6 +69,14 @@ impl RealtimeResultStore {
         audio_path: &Path,
         cancel: &AtomicBool,
     ) -> Option<RealtimeStoredResult> {
+        self.wait_until_cancelled(audio_path, || cancel.load(Ordering::Acquire))
+    }
+
+    pub fn wait_until_cancelled(
+        &self,
+        audio_path: &Path,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Option<RealtimeStoredResult> {
         let (lock, ready) = &*self.inner;
         let mut results = match lock.lock() {
             Ok(results) => results,
@@ -81,7 +89,7 @@ impl RealtimeResultStore {
         };
         let deadline = Instant::now() + RESULT_WAIT_TIMEOUT;
         loop {
-            if cancel.load(Ordering::Acquire) {
+            if is_cancelled() {
                 results.remove(audio_path);
                 return None;
             }

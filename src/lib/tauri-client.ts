@@ -5,7 +5,7 @@ import {
   normalizeEnhancedPromptShortcut,
   validateDictationHotkeys,
 } from "./dictation-shortcut";
-import { modelSupportsContext } from "./models";
+import { modelSupportsReprocessing } from "./models";
 import {
   activityIssue,
   isActivityAttentionOutcome,
@@ -2147,7 +2147,7 @@ export async function reprocessJobs(
       uniqueIds.length === 0 ||
       !model ||
       !isUsableBrowserModel(modelId, models) ||
-      !modelSupportsContext(model, "file")
+      !modelSupportsReprocessing(model)
     ) {
       return browserSnapshot;
     }
@@ -2181,6 +2181,7 @@ export async function reprocessJobs(
             issue: null,
             is_read: false,
             transcription_options: settings.transcription_options,
+            replay_recorded_audio: true,
           }
         : job,
     );

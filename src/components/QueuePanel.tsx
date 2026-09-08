@@ -36,7 +36,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { StatusBadge } from "./ui/status-badge";
-import { formatModelLabel, modelSupportsContext } from "../lib/models";
+import { formatModelLabel, modelSupportsReprocessing } from "../lib/models";
 import { queueStatsCellTone } from "../lib/status-summary";
 import {
   activityAttentionAt,
@@ -167,7 +167,7 @@ export function reprocessingModels(
   return models.filter(
     (model) =>
       ["ready", "installed", "unloaded"].includes(model.status) &&
-      modelSupportsContext(model, "file"),
+      modelSupportsReprocessing(model),
   );
 }
 
@@ -780,7 +780,7 @@ export function QueuePanel({
                   }
                   title={
                     availableReprocessingModels.length === 0
-                      ? "No ready file transcription model"
+                      ? "No ready transcription model"
                       : selectedReprocessableIds.length === 0
                         ? "Select at least one rerunnable job"
                         : `Reprocess ${selectedReprocessableIds.length} selected ${selectedReprocessableIds.length === 1 ? "job" : "jobs"}`

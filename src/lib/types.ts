@@ -339,6 +339,7 @@ export interface QueueJob {
   is_read?: boolean;
   transcription_options?: TranscriptionOptions | null;
   activity_kind?: QueueActivityKind;
+  replay_recorded_audio?: boolean;
 }
 
 export interface QueueSnapshot {
