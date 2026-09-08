@@ -10924,11 +10924,12 @@ mod tests {
             .iter()
             .find(|model| model.id == "soniox-realtime-v5")
             .expect("realtime model");
-        let unready = models
+        let mut unready = models
             .iter()
             .find(|model| model.id == "whisper-medium")
             .expect("local model")
             .clone();
+        unready.status = ModelStatus::Missing;
         let request = StartMeetingTranscriptionRequest {
             model_id: realtime.id.clone(),
             language: TranscriptionLanguage::Auto,
