@@ -667,6 +667,71 @@ describe("QueuePanel pagination", () => {
     );
   }, 15_000);
 
+  it("follows the current default model when settings change after a manual choice", async () => {
+    const user = userEvent.setup();
+    const onReprocess = vi.fn().mockResolvedValue(true);
+    const props = {
+      nowMs: Date.parse("2026-08-04T12:00:00.000Z"),
+      queue: {
+        jobs: [
+          {
+            id: 1,
+            audio_path: "/one.wav",
+            model_id: "old",
+            status: "failed" as const,
+          },
+        ],
+        pending_count: 0,
+        running_count: 0,
+        failed_count: 1,
+      },
+      models: [
+        readyFileModel("whisper-small", "Whisper Small"),
+        readyFileModel("whisper-medium", "Whisper Medium"),
+        readyFileModel("openai", "OpenAI Transcribe"),
+      ],
+      selectedModelId: "whisper-medium",
+      canProcessTranscription: true,
+      onImportAudioFiles: () => {},
+      onEnqueueBacklog: () => {},
+      onMarkAllRead: () => {},
+      onCancelCurrent: () => {},
+      onProcessNext: () => {},
+      onRetry: () => {},
+      onSkip: () => {},
+      onReprocess,
+    };
+    const { rerender } = render(<QueuePanel {...props} />);
+    const selectedModelLabel = () =>
+      screen.getByRole("combobox", { name: "Reprocessing model" }).textContent;
+
+    expect(selectedModelLabel()).toBe("Whisper Medium");
+    await user.click(
+      screen.getByRole("combobox", { name: "Reprocessing model" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Whisper Small" }));
+
+    // Ordinary snapshot updates must keep the user's explicit choice.
+    rerender(
+      <QueuePanel
+        {...props}
+        models={[...props.models]}
+        nowMs={props.nowMs + 1_000}
+      />,
+    );
+    expect(selectedModelLabel()).toBe("Whisper Small");
+    await user.click(screen.getByRole("checkbox", { name: "Select one.wav" }));
+
+    rerender(<QueuePanel {...props} selectedModelId="openai" />);
+    expect(selectedModelLabel()).toBe("OpenAI Transcribe");
+    await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
+    expect(onReprocess).toHaveBeenCalledWith([1], "openai");
+
+    // Returning to an earlier default must not revive the old manual choice.
+    rerender(<QueuePanel {...props} />);
+    expect(selectedModelLabel()).toBe("Whisper Medium");
+  });
+
   it("supports selecting only one issue", async () => {
     const user = userEvent.setup();
     const onReprocess = vi.fn().mockResolvedValue(true);

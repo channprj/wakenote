@@ -13,7 +13,7 @@ import {
   SkipForward,
   Trash2,
 } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -358,6 +358,11 @@ export function QueuePanel({
   );
   const [requestedReprocessingModelId, setRequestedReprocessingModelId] =
     useState("");
+
+  useEffect(() => {
+    setRequestedReprocessingModelId("");
+  }, [selectedModelId]);
+
   const [reprocessing, setReprocessing] = useState(false);
   const [trashing, setTrashing] = useState(false);
   const [playingJob, setPlayingJob] = useState<QueueJob | null>(null);
