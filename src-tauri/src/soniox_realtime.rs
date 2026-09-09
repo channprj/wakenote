@@ -304,11 +304,12 @@ async fn run_connected_session<S>(
                         return;
                     }
                 }
-                Some(ConnectionCommand::Close) => {
-                    let _ = writer.close().await;
-                    return;
-                }
-                None => {
+                // A close after commit means "no more audio", not "drop the
+                // result": the transcription worker is already waiting for this
+                // path, so keep the socket open until the provider finishes or
+                // the commit deadline fires. The manager closes a session as soon
+                // as the next chunk's samples arrive, which races `finished`.
+                Some(ConnectionCommand::Close) | None => {
                     command_channel_open = false;
                     if committed_path.is_none() {
                         let _ = writer.close().await;
@@ -888,6 +889,85 @@ mod tests {
             panic!("completed result after provider finished")
         };
         assert_eq!(result.requested_model_id, SONIOX_REALTIME_MODEL_ID);
+        assert_eq!(result.usage.map(|usage| usage.audio_duration_ms), Some(20));
+    }
+
+    #[tokio::test]
+    async fn soniox_realtime_delivers_committed_result_when_closed_before_finished() {
+        // The manager closes a session as soon as samples for the next chunk
+        // arrive. With the 5 s auto-type rollover that happens ~1 s after the
+        // commit, racing the provider's `finished` frame. The committed chunk
+        // must still publish its result; otherwise the transcription worker
+        // waits out the 75 s result-store timeout and auto-type stalls behind it.
+        let audio_path = PathBuf::from("/tmp/wakenote-soniox-closed-before-finished.wav");
+        let _ = realtime_result_store().try_take(&audio_path);
+        let (client_io, server_io) = duplex(1_048_576);
+        let client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
+        let mut server = WebSocketStream::from_raw_socket(server_io, Role::Server, None).await;
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        command_tx
+            .send(ConnectionCommand::Append(vec![0, 0]))
+            .expect("append command");
+        command_tx
+            .send(ConnectionCommand::Commit {
+                audio_path: audio_path.clone(),
+                audio_duration_ms: 20,
+            })
+            .expect("commit command");
+        command_tx
+            .send(ConnectionCommand::Close)
+            .expect("close command");
+
+        let request = RealtimeSamplesRequest {
+            source_key: "microphone:test".into(),
+            source_label: "Test microphone".into(),
+            microphone_slot: None,
+            chunk_id: 1,
+            model_id: SONIOX_REALTIME_MODEL_ID.into(),
+            language: crate::settings::TranscriptionLanguage::Ko,
+            dictionary: crate::dictionary::DictionaryContext::default(),
+            sample_rate: 16_000,
+            samples: Arc::new(vec![0.0]),
+            credentials: crate::cloud_transcription::TranscriptionCredentials::default(),
+        };
+        let shared_failure = Arc::new(Mutex::new(None));
+        let client_task = tokio::spawn(run_connected_session(
+            client,
+            request,
+            command_rx,
+            Arc::new(|_| {}),
+            shared_failure,
+            "secret",
+        ));
+        let server_task = tokio::spawn(async move {
+            assert!(matches!(server.next().await, Some(Ok(Message::Text(_)))));
+            assert!(matches!(server.next().await, Some(Ok(Message::Binary(_)))));
+            assert!(matches!(
+                server.next().await,
+                Some(Ok(Message::Text(message))) if message.is_empty()
+            ));
+            sleep(Duration::from_millis(50)).await;
+            server
+                .send(Message::Text(
+                    json!({
+                        "tokens": [{ "text": "안녕하세요", "is_final": true, "start_ms": 0, "end_ms": 20 }],
+                        "finished": true
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+        });
+
+        let (client_result, server_result) = tokio::join!(client_task, server_task);
+        client_result.expect("client task");
+        server_result.expect("server task");
+        let Some(RealtimeStoredResult::Completed(result)) =
+            realtime_result_store().try_take(&audio_path)
+        else {
+            panic!("committed result must be published even when closed before finished")
+        };
+        assert_eq!(result.text, "안녕하세요");
         assert_eq!(result.usage.map(|usage| usage.audio_duration_ms), Some(20));
     }
 }

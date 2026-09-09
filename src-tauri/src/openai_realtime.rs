@@ -6,12 +6,13 @@ use std::time::Duration;
 use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, header::AUTHORIZATION};
+use tokio_tungstenite::{WebSocketStream, connect_async};
 
 use crate::cloud_realtime::{
     RealtimePartial, RealtimePartialCallback, RealtimeSamplesRequest, RealtimeStoredResult,
@@ -233,7 +234,7 @@ async fn manager_loop(
 
 async fn connection_loop(
     request: RealtimeSamplesRequest,
-    mut commands: mpsc::UnboundedReceiver<ConnectionCommand>,
+    commands: mpsc::UnboundedReceiver<ConnectionCommand>,
     on_partial: RealtimePartialCallback,
     shared_failure: Arc<Mutex<Option<TranscriptionFailure>>>,
 ) {
@@ -263,6 +264,18 @@ async fn connection_loop(
         store_shared_failure(&shared_failure, transport_failure());
         return;
     };
+    run_connected_session(socket, request, commands, on_partial, shared_failure).await;
+}
+
+async fn run_connected_session<S>(
+    socket: WebSocketStream<S>,
+    request: RealtimeSamplesRequest,
+    mut commands: mpsc::UnboundedReceiver<ConnectionCommand>,
+    on_partial: RealtimePartialCallback,
+    shared_failure: Arc<Mutex<Option<TranscriptionFailure>>>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let (mut writer, mut reader) = socket.split();
     let configuration =
         configuration_message(request.language.whisper_code(), request.dictionary.prompt());
@@ -279,10 +292,11 @@ async fn connection_loop(
     let mut committed_path: Option<PathBuf> = None;
     let mut committed_audio_duration_ms = 0;
     let mut final_deadline: Option<Instant> = None;
+    let mut command_channel_open = true;
     loop {
         let deadline = final_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
         tokio::select! {
-            command = commands.recv() => match command {
+            command = commands.recv(), if command_channel_open => match command {
                 Some(ConnectionCommand::Append(audio)) => {
                     let event = json!({ "type": "input_audio_buffer.append", "audio": audio });
                     if writer.send(Message::Text(event.to_string().into())).await.is_err() {
@@ -297,9 +311,17 @@ async fn connection_loop(
                     let event = json!({ "type": "input_audio_buffer.commit" });
                     let _ = writer.send(Message::Text(event.to_string().into())).await;
                 }
+                // A close after commit means "no more audio", not "drop the
+                // result": the transcription worker is already waiting for this
+                // path, so keep the socket open until the transcript completes
+                // or the commit deadline fires. The manager closes a session as
+                // soon as the next chunk's samples arrive, which races completion.
                 Some(ConnectionCommand::Close) | None => {
-                    let _ = writer.close().await;
-                    return;
+                    command_channel_open = false;
+                    if committed_path.is_none() {
+                        let _ = writer.close().await;
+                        return;
+                    }
                 }
             },
             message = reader.next() => {
@@ -660,6 +682,8 @@ fn store_shared_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::duplex;
+    use tokio_tungstenite::tungstenite::protocol::Role;
 
     #[test]
     fn openai_realtime_uses_the_transcription_transport() {
@@ -795,5 +819,91 @@ mod tests {
             })),
             ServerEvent::CommitEmpty
         );
+    }
+
+    #[tokio::test]
+    async fn openai_realtime_delivers_committed_result_when_closed_before_completion() {
+        // Same race as Soniox: the manager closes the previous chunk's session
+        // when the next chunk's samples arrive, which can precede the completed
+        // transcript. The committed chunk must still publish its result.
+        let audio_path = PathBuf::from("/tmp/wakenote-openai-closed-before-completion.wav");
+        let _ = realtime_result_store().try_take(&audio_path);
+        let (client_io, server_io) = duplex(1_048_576);
+        let client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
+        let mut server = WebSocketStream::from_raw_socket(server_io, Role::Server, None).await;
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        command_tx
+            .send(ConnectionCommand::Append("AAA=".into()))
+            .expect("append command");
+        command_tx
+            .send(ConnectionCommand::Commit {
+                audio_path: audio_path.clone(),
+                audio_duration_ms: 20,
+            })
+            .expect("commit command");
+        command_tx
+            .send(ConnectionCommand::Close)
+            .expect("close command");
+
+        let request = RealtimeSamplesRequest {
+            source_key: "microphone:test".into(),
+            source_label: "Test microphone".into(),
+            microphone_slot: None,
+            chunk_id: 1,
+            model_id: OPENAI_GPT_LIVE_TRANSCRIBE_MODEL.into(),
+            language: crate::settings::TranscriptionLanguage::Ko,
+            dictionary: crate::dictionary::DictionaryContext::default(),
+            sample_rate: REALTIME_SAMPLE_RATE,
+            samples: Arc::new(vec![0.0]),
+            credentials: crate::cloud_transcription::TranscriptionCredentials::default(),
+        };
+        let shared_failure = Arc::new(Mutex::new(None));
+        let client_task = tokio::spawn(run_connected_session(
+            client,
+            request,
+            command_rx,
+            Arc::new(|_| {}),
+            shared_failure,
+        ));
+        let server_task = tokio::spawn(async move {
+            for expected in [
+                "session.update",
+                "input_audio_buffer.append",
+                "input_audio_buffer.commit",
+            ] {
+                let Some(Ok(Message::Text(message))) = server.next().await else {
+                    panic!("expected {expected} event")
+                };
+                let event = serde_json::from_str::<Value>(&message).expect("client event");
+                assert_eq!(event["type"], expected);
+            }
+            for event in [
+                json!({ "type": "conversation.item.created", "item": { "id": "item-1" } }),
+                json!({
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "item_id": "item-1",
+                    "transcript": "hello there"
+                }),
+            ] {
+                let _ = server.send(Message::Text(event.to_string().into())).await;
+            }
+            // Stay connected until the client publishes and closes the socket.
+            while let Some(Ok(message)) = server.next().await {
+                if matches!(message, Message::Close(_)) {
+                    break;
+                }
+            }
+        });
+
+        let (client_result, server_result) = tokio::join!(client_task, server_task);
+        client_result.expect("client task");
+        server_result.expect("server task");
+        let Some(RealtimeStoredResult::Completed(result)) =
+            realtime_result_store().try_take(&audio_path)
+        else {
+            panic!("committed result must be published even when closed before completion")
+        };
+        assert_eq!(result.text, "hello there");
+        assert_eq!(result.usage.map(|usage| usage.audio_duration_ms), Some(20));
     }
 }
