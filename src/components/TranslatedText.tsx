@@ -15,7 +15,6 @@ export function TranslatedText({
   preferences: TranslationPreferences;
 }) {
   const { enabled, language, model, configured } = preferences;
-  const [requested, setRequested] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [state, setState] = useState<{
@@ -26,7 +25,7 @@ export function TranslatedText({
   }>({ key: "", loading: false });
   const key = JSON.stringify([text, language, model]);
   const current =
-    state.key === key && (enabled || requested)
+    state.key === key && enabled
       ? state
       : { key, loading: false };
   const languageName =
@@ -34,7 +33,7 @@ export function TranslatedText({
     language;
 
   useEffect(() => {
-    if ((!enabled && !requested) || !configured || !text.trim()) return;
+    if (!enabled || !configured || !text.trim()) return;
     let disposed = false;
     setState({ key, loading: true });
     const request = requestTranslation(text, language, model);
@@ -55,7 +54,7 @@ export function TranslatedText({
       disposed = true;
       request.cancel();
     };
-  }, [key, text, enabled, requested, language, model, configured, attempt]);
+  }, [key, text, enabled, language, model, configured, attempt]);
 
   return (
     <div className="grid min-w-0 gap-1">
@@ -73,57 +72,54 @@ export function TranslatedText({
           {current.error}
         </p>
       ) : null}
-      <div className="flex items-center gap-2">
-        {current.loading ? (
-          <span
-            role="status"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground"
-          >
-            <Spinner /> Translating…
-          </span>
-        ) : !current.text ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!configured || !text.trim()}
-            title={
-              configured
-                ? "Translate this text with OpenRouter"
-                : "Add an OpenRouter API key in Integrations"
-            }
-            onClick={() => {
-              setRequested(true);
-              setAttempt((value) => value + 1);
-            }}
-          >
-            {current.error
-              ? "Retry translation"
-              : `Translate to ${languageName}`}
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={async () => {
-              try {
-                if (!navigator.clipboard?.writeText)
-                  throw new Error("Clipboard access is unavailable");
-                await navigator.clipboard.writeText(current.text!);
-                setCopiedKey(key);
-                setState((latest) => latest.key === key ? { ...latest, error: undefined } : latest);
-              } catch (error) {
-                setState((latest) => latest.key === key ? {
-                  ...latest,
-                  error: error instanceof Error ? error.message : String(error),
-                  loading: false,
-                } : latest);
+      {current.loading || current.error || current.text ? (
+        <div className="flex items-center gap-2">
+          {current.loading ? (
+            <span
+              role="status"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground"
+            >
+              <Spinner /> Translating…
+            </span>
+          ) : !current.text ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!configured || !text.trim()}
+              title={
+                configured
+                  ? "Translate this text with OpenRouter"
+                  : "Add an OpenRouter API key in Integrations"
               }
-            }}
-          >
-            {copiedKey === key ? "Copied" : "Copy translation"}
-          </Button>
-        )}
-      </div>
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              Retry translation
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                try {
+                  if (!navigator.clipboard?.writeText)
+                    throw new Error("Clipboard access is unavailable");
+                  await navigator.clipboard.writeText(current.text!);
+                  setCopiedKey(key);
+                  setState((latest) => latest.key === key ? { ...latest, error: undefined } : latest);
+                } catch (error) {
+                  setState((latest) => latest.key === key ? {
+                    ...latest,
+                    error: error instanceof Error ? error.message : String(error),
+                    loading: false,
+                  } : latest);
+                }
+              }}
+            >
+              {copiedKey === key ? "Copied" : "Copy translation"}
+            </Button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

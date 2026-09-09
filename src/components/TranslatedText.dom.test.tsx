@@ -21,13 +21,7 @@ afterEach(() => {
 });
 
 describe("transcript translation", () => {
-  it("waits for an explicit request when automatic translation is off and retains the original", async () => {
-    vi.mocked(transformText).mockResolvedValue({
-      kind: "translate",
-      text: "첫 번역",
-      target_language: "ko",
-      model: "model",
-    });
+  it("shows only the original text when automatic translation is off", () => {
     render(
       <TranslatedText
         text="Original one"
@@ -40,10 +34,7 @@ describe("transcript translation", () => {
       />,
     );
     expect(transformText).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Translate to Korean" }),
-    );
-    expect(await screen.findByText("첫 번역")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("Original one")).toBeTruthy();
   });
 
