@@ -419,13 +419,25 @@ Use **Settings › Advanced › Live Transcription Webhook** to send newly final
 live transcript chunks to one HTTP(S) endpoint. Choose **Text Only** or **JSON**,
 enable the switch, and select **Save webhook settings**. JSON shares the saved
 recording metadata format; neither mode uploads audio. The feature starts off,
-does not send test requests on save, and never replays past transcripts.
+does not send test requests on save, and never automatically replays past transcripts.
 
 Delivery runs in the background with a 15-second timeout per attempt and up to
 three retries after 1, 2, and 4 seconds. HTTPS is recommended. Delivery may fail,
 arrive out of order, or be duplicated; receivers can deduplicate using
 `X-Transcription-Event-Id`. Disabling or changing the endpoint/format cancels
 unfinished deliveries. See [the payload contract and verification guide](docs/live-transcription-webhook.md).
+
+Open **Webhooks**, below **Activity**, to review the last 24 hours of delivery
+results. The page has status filters, summary counts, and 50 requests per page.
+Select failed or queue-full requests on the current page and choose **Retry
+selected**. Retries preserve the original request content and event ID; enable
+the webhook with the original endpoint and format before retrying.
+
+**Automatically delete old webhook history**, in the same Advanced settings
+card, defaults to on and removes history and saved request content after 24 hours.
+Turn it off and save to retain older records locally. Results at least 24 hours
+old are always hidden and cannot be retried; manual retry does not reset their
+age. Changing automatic deletion does not interrupt delivery.
 
 ### Realtime auto-type
 
