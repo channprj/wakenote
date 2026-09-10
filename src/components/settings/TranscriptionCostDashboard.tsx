@@ -11,9 +11,14 @@ import type {
 } from "@/lib/types";
 import { SettingsCard } from "./settings-controls";
 
-export function TranscriptionCostDashboard() {
-  const [snapshot, setSnapshot] =
-    useState<TranscriptionCostSnapshot | null>(null);
+export function TranscriptionCostDashboard({
+  onDetails,
+}: {
+  onDetails?: () => void;
+}) {
+  const [snapshot, setSnapshot] = useState<TranscriptionCostSnapshot | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +61,7 @@ export function TranscriptionCostDashboard() {
       loading={loading}
       error={error}
       onRefresh={() => void refresh()}
+      onDetails={onDetails}
     />
   );
 }
@@ -65,20 +71,32 @@ export function TranscriptionCostDashboardView({
   loading,
   error,
   onRefresh,
+  onDetails,
 }: {
   snapshot: TranscriptionCostSnapshot | null;
   loading: boolean;
   error: string | null;
   onRefresh: () => void;
+  onDetails?: () => void;
 }) {
   return (
     <SettingsCard
       title="Transcription API cost"
-      description="Local estimates grouped by your current calendar period."
+      description="Recorded estimates by calendar period. Details also offers Soniox reference estimates."
     >
       <div className="transcription-cost-dashboard">
         <div className="transcription-cost-dashboard__head">
           <span>{error ?? snapshot?.disclosure ?? "Loading local usage…"}</span>
+          {onDetails ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onDetails}
+            >
+              Details
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -121,7 +139,8 @@ function CostPeriod({
       <span>{label}</span>
       <strong>${value.estimated_cost_usd.toFixed(4)}</strong>
       <small>
-        {formatUsageDuration(value.audio_duration_ms)} · {value.request_count} requests
+        {formatUsageDuration(value.audio_duration_ms)} · {value.request_count}{" "}
+        requests
         {value.unpriced_request_count > 0
           ? ` · ${value.unpriced_request_count} unpriced`
           : ""}

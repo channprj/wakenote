@@ -11,6 +11,7 @@ const routes: PrimaryRoute[] = [
   "reports",
   "activity",
   "webhooks",
+  "costs",
   "settings",
 ];
 

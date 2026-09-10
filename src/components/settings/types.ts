@@ -15,6 +15,7 @@ export interface SettingsActions {
   onResumeDictationShortcut: () => void | Promise<void>;
   onPressedModifierShortcut: () => Promise<string | null>;
   onOpenDictationHistory?: (entry?: RecentTranscript) => void;
+  onOpenTranscriptionCosts?: () => void;
   onChooseSaveRoot: () => void;
   onRevealSaveFolder: () => void;
   onChooseModelDirectory: () => void;

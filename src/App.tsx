@@ -1,6 +1,6 @@
 import { CircleAlertIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AppPageRouter } from "./components/AppPageRouter";
 import { MeetingTranscriptionPanel } from "./components/MeetingTranscriptionPanel";
 import { QueuePanel } from "./components/QueuePanel";
@@ -12,6 +12,7 @@ import { AppFrame } from "./components/shell/AppFrame";
 import { PageHeader } from "./components/shell/PageHeader";
 import { RecordingStatusRail } from "./components/shell/RecordingStatusRail";
 import { SettingsPage } from "./components/settings/SettingsPage";
+import { EmptyState } from "./components/ui/empty-state";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { newestTranscriptTextEntries } from "./lib/live-transcripts";
 import { formatLocalTimestamp } from "./lib/transcript-history";
@@ -87,6 +88,10 @@ import {
   type PermissionFeature,
 } from "./lib/permission-guidance";
 import { shouldHandleFrontendHideShortcut } from "./lib/window-shortcuts";
+
+const TranscriptionCostsPage = lazy(
+  () => import("./components/TranscriptionCostsPage"),
+);
 
 const launchAutoStartPollWindowMs = 130_000;
 
@@ -803,6 +808,11 @@ export default function App() {
         />
       </WorkspacePage>
     ),
+    costs: (
+      <Suspense fallback={<EmptyState title="Loading API usage…" />}>
+        <TranscriptionCostsPage onBack={() => openSettings("models")} />
+      </Suspense>
+    ),
     settings: (
       <SettingsPage
         section={activeSettingsSection}
@@ -811,6 +821,7 @@ export default function App() {
         actions={{
           onPatch: patchSettings,
           onSavePatch: commitSettingsPatch,
+          onOpenTranscriptionCosts: () => setActiveRoute("costs"),
           onPermissionRequired: ensurePermission,
           onPreviewSubtitle: (patch) => previewSubtitle(patch),
           onSetMicrophoneInputVolume: (deviceId, volumePercent) =>

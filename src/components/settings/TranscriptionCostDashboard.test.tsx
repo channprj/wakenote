@@ -1,12 +1,26 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranscriptionCostDashboardView } from "./TranscriptionCostDashboard";
 
 afterEach(cleanup);
 
 describe("TranscriptionCostDashboardView", () => {
+  it("opens the dedicated usage page from Details", () => {
+    const onDetails = vi.fn();
+    render(
+      <TranscriptionCostDashboardView
+        snapshot={null}
+        loading={false}
+        error={null}
+        onRefresh={vi.fn()}
+        onDetails={onDetails}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(onDetails).toHaveBeenCalledOnce();
+  });
   it("shows daily weekly and monthly local API cost estimates", () => {
     render(
       <TranscriptionCostDashboardView

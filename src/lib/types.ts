@@ -685,6 +685,24 @@ export interface TranscriptionCostPeriod {
   unpriced_request_count: number;
 }
 
+export interface TranscriptionCostEntry {
+  source_id: string;
+  recorded_at: string;
+  provider: string;
+  model_id: string;
+  audio_duration_ms: number;
+  estimated_cost_usd: number | null;
+  request_count: number;
+  unpriced_request_count: number;
+}
+
+export interface TranscriptionCostDetails {
+  currency: "USD";
+  generated_at: string;
+  entries: TranscriptionCostEntry[];
+  entry_limit: number;
+}
+
 export interface TranscriptionCostSnapshot {
   currency: "USD";
   generated_at: string;

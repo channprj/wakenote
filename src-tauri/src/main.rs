@@ -118,8 +118,8 @@ use wakenote::transcription::{
     model_supports_live_partials,
 };
 use wakenote::transcription_cost::{
-    TranscriptionCostEntry, TranscriptionCostLedger, TranscriptionCostSnapshot,
-    estimated_provider_cost_usd, ledger_path,
+    TranscriptionCostDetails, TranscriptionCostEntry, TranscriptionCostLedger,
+    TranscriptionCostSnapshot, estimated_provider_cost_usd, ledger_path,
 };
 use wakenote::voice_leveling::{
     ServiceHardwareLevelControl, VoiceAwareMicrophoneProcessor, VoiceLevelingPolicy,
@@ -5022,6 +5022,16 @@ fn transcription_cost_snapshot(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn transcription_cost_details(
+    state: State<'_, TranscriptionCostState>,
+) -> Result<TranscriptionCostDetails, String> {
+    state
+        .lock()
+        .map(|ledger| ledger.details())
+        .map_err(|error| error.to_string())
+}
+
 fn upsert_transcription_cost(app: &AppHandle, entry: TranscriptionCostEntry) {
     let Some(state) = app.try_state::<TranscriptionCostState>() else {
         return;
@@ -5077,6 +5087,8 @@ fn record_meeting_transcription_cost(app: &AppHandle, save_root: &Path, id: &str
         "OpenAI"
     } else if record.model_id.starts_with("openrouter-") {
         "OpenRouter"
+    } else if record.model_id.starts_with("soniox-") {
+        "Soniox"
     } else {
         return;
     };
@@ -5088,7 +5100,8 @@ fn record_meeting_transcription_cost(app: &AppHandle, save_root: &Path, id: &str
             provider: provider.to_string(),
             model_id: record.model_id,
             audio_duration_ms: record.api_audio_duration_ms,
-            estimated_cost_usd: (record.api_cost_microusd > 0)
+            estimated_cost_usd: (record.api_cost_microusd > 0
+                || record.api_unpriced_request_count == 0)
                 .then_some(record.api_cost_microusd as f64 / 1_000_000.0),
             request_count: record.api_request_count,
             unpriced_request_count: record.api_unpriced_request_count,
@@ -9167,6 +9180,7 @@ fn main() {
             reveal_save_folder,
             process_next_transcription,
             transcription_cost_snapshot,
+            transcription_cost_details,
             start_live_capture,
             stop_live_capture,
             list_recognized_sources,

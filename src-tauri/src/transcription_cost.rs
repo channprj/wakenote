@@ -39,6 +39,14 @@ pub struct TranscriptionCostSnapshot {
     pub disclosure: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranscriptionCostDetails {
+    pub currency: String,
+    pub generated_at: DateTime<Utc>,
+    pub entries: Vec<TranscriptionCostEntry>,
+    pub entry_limit: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedLedger {
     version: u32,
@@ -51,6 +59,21 @@ pub struct TranscriptionCostLedger {
 }
 
 impl TranscriptionCostLedger {
+    pub fn details(&self) -> TranscriptionCostDetails {
+        TranscriptionCostDetails {
+            currency: "USD".to_string(),
+            generated_at: Utc::now(),
+            entries: self
+                .entries
+                .iter()
+                .rev()
+                .take(MAX_LEDGER_ENTRIES)
+                .cloned()
+                .collect(),
+            entry_limit: MAX_LEDGER_ENTRIES,
+        }
+    }
+
     pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let entries = fs::read(&path)
@@ -237,6 +260,42 @@ mod tests {
 
         assert_eq!(snapshot.entry_count, 1);
         assert!((snapshot.today.estimated_cost_usd - 0.012).abs() < f64::EPSILON);
+        let details = reloaded.details();
+        assert_eq!(details.currency, "USD");
+        assert_eq!(details.entry_limit, 10_000);
+        assert_eq!(details.entries.len(), 1);
+        assert_eq!(details.entries[0].estimated_cost_usd, Some(0.012));
+    }
+
+    #[test]
+    fn details_preserves_historical_models_and_unknown_costs_newest_first() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut ledger = TranscriptionCostLedger::load(temp.path().join("costs.json"));
+        let older = Utc::now() - Duration::days(400);
+        let mut unknown = entry("older", older, None);
+        unknown.provider = "Soniox".into();
+        unknown.model_id = "soniox-async".into();
+        ledger.upsert(unknown.clone()).unwrap();
+        ledger
+            .upsert(entry("newer", Utc::now(), Some(0.006)))
+            .unwrap();
+        let details = ledger.details();
+        assert_eq!(details.entries[0].source_id, "newer");
+        assert_eq!(details.entries[1], unknown);
+    }
+
+    #[test]
+    fn details_is_bounded_even_when_loading_an_oversized_legacy_ledger() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = TranscriptionCostLedger {
+            path: temp.path().join("costs.json"),
+            entries: (0..10_005)
+                .map(|index| entry(&index.to_string(), Utc::now(), None))
+                .collect(),
+        };
+        let details = ledger.details();
+        assert_eq!(details.entries.len(), MAX_LEDGER_ENTRIES);
+        assert_eq!(details.entries.last().unwrap().source_id, "5");
     }
 
     #[test]

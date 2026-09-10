@@ -83,7 +83,9 @@ export function ModelsSettings({
         onPatch={actions.onPatch}
       />
 
-      <TranscriptionCostDashboard />
+      <TranscriptionCostDashboard
+        onDetails={actions.onOpenTranscriptionCosts}
+      />
 
       <ModelManager
         models={models}

@@ -60,6 +60,8 @@ import type {
   MeetingDetail,
   MeetingTranscriptionRequest,
   TranscriptionCostSnapshot,
+  TranscriptionCostDetails,
+  TranscriptionCostEntry,
   ManualMeetingRecordingStatus,
   LlmGenerateRequest,
   LlmProgressEvent,
@@ -79,6 +81,13 @@ import type {
   DictationStatePayload,
 } from "./types";
 import type { DevFixtures } from "./dev-fixtures";
+import {
+  aggregateCosts,
+  defaultCostFilters,
+  localDateKey,
+} from "./transcription-costs";
+
+let browserCostEntries: TranscriptionCostEntry[] = [];
 
 declare global {
   interface Window {
@@ -297,6 +306,7 @@ export function seedBrowserFixtures(fixtures: DevFixtures) {
   };
   browserOpenRouterApiKey = fixtures.openrouterApiKey;
   browserOpenAiApiKey = fixtures.openaiApiKey;
+  browserCostEntries = fixtures.costEntries ?? [];
   browserLlmReportHistory.splice(
     0,
     browserLlmReportHistory.length,
@@ -2918,20 +2928,30 @@ function updateBrowserMeetingStatus(
   return browserMeetingSummary(next);
 }
 
-function emptyTranscriptionCostSnapshot(): TranscriptionCostSnapshot {
-  const empty = {
-    estimated_cost_usd: 0,
-    audio_duration_ms: 0,
-    request_count: 0,
-    unpriced_request_count: 0,
+function browserTranscriptionCostSnapshot(): TranscriptionCostSnapshot {
+  const now = new Date();
+  const week = new Date(now);
+  week.setDate(week.getDate() - ((week.getDay() + 6) % 7));
+  const period = (start: string) => {
+    const { total } = aggregateCosts(browserCostEntries, {
+      ...defaultCostFilters(now),
+      start,
+      includeReferenceEstimates: false,
+    });
+    return {
+      estimated_cost_usd: total.cost,
+      audio_duration_ms: total.duration,
+      request_count: total.requests,
+      unpriced_request_count: total.unpriced,
+    };
   };
   return {
     currency: "USD",
     generated_at: new Date().toISOString(),
-    today: { ...empty },
-    week: { ...empty },
-    month: { ...empty },
-    entry_count: 0,
+    today: period(localDateKey(now)),
+    week: period(localDateKey(week)),
+    month: period(localDateKey(new Date(now.getFullYear(), now.getMonth(), 1))),
+    entry_count: browserCostEntries.length,
     disclosure:
       "Local estimate; verify final charges in your provider billing dashboard.",
   };
@@ -2939,9 +2959,21 @@ function emptyTranscriptionCostSnapshot(): TranscriptionCostSnapshot {
 
 export async function loadTranscriptionCostSnapshot(): Promise<TranscriptionCostSnapshot> {
   if (!isTauriRuntime()) {
-    return emptyTranscriptionCostSnapshot();
+    return browserTranscriptionCostSnapshot();
   }
   return invoke<TranscriptionCostSnapshot>("transcription_cost_snapshot");
+}
+
+export async function loadTranscriptionCostDetails(): Promise<TranscriptionCostDetails> {
+  if (!isTauriRuntime()) {
+    return {
+      currency: "USD",
+      generated_at: new Date().toISOString(),
+      entries: browserCostEntries,
+      entry_limit: 10_000,
+    };
+  }
+  return invoke<TranscriptionCostDetails>("transcription_cost_details");
 }
 
 export async function subscribeTranscriptionCostUpdates(

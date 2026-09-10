@@ -5,6 +5,7 @@ export type PrimaryRoute =
   | "reports"
   | "activity"
   | "webhooks"
+  | "costs"
   | "settings";
 
 export type SettingsSection =

@@ -198,6 +198,13 @@ function mockInvoke(command: string) {
         language: "ko",
         error: null,
       });
+    case "transcription_cost_details":
+      return Promise.resolve({
+        currency: "USD",
+        generated_at: "2026-09-11T00:00:00Z",
+        entries: [],
+        entry_limit: 10_000,
+      });
     case "transcription_cost_snapshot":
       return Promise.resolve({
         currency: "USD",
@@ -502,6 +509,16 @@ describe("tauri runtime client snapshots", () => {
 
     expect(snapshot.today.estimated_cost_usd).toBe(0.006);
     expect(mocks.invoke).toHaveBeenCalledWith("transcription_cost_snapshot");
+  });
+
+  it("loads detailed cost history through a separate bounded command", async () => {
+    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    mocks.invoke.mockImplementation(mockInvoke);
+    const { loadTranscriptionCostDetails } = await import("./tauri-client");
+    const details = await loadTranscriptionCostDetails();
+    expect(details.entry_limit).toBe(10_000);
+    expect(details.entries).toEqual([]);
+    expect(mocks.invoke).toHaveBeenCalledWith("transcription_cost_details");
   });
 
   it("loads recent transcripts through a separate bounded command", async () => {

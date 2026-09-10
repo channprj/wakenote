@@ -43,6 +43,7 @@ export function AppSidebar({
   queueAttentionTone: "warning" | "danger";
   onNavigate: (route: PrimaryRoute) => void;
 }) {
+  const settingsActive = activeRoute === "settings" || activeRoute === "costs";
   return (
     <TooltipProvider delayDuration={300}>
       <aside className="app-sidebar">
@@ -94,12 +95,12 @@ export function AppSidebar({
               <Button
                 type="button"
                 size="sm"
-                variant={activeRoute === "settings" ? "secondary" : "ghost"}
+                variant={settingsActive ? "secondary" : "ghost"}
                 className="app-sidebar__nav-item"
                 data-route="settings"
-                data-active={activeRoute === "settings"}
+                data-active={settingsActive}
                 aria-label="Settings"
-                aria-current={activeRoute === "settings" ? "page" : undefined}
+                aria-current={settingsActive ? "page" : undefined}
                 onClick={() => onNavigate("settings")}
               >
                 <Settings2Icon data-icon="inline-start" />

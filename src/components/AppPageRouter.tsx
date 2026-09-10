@@ -21,6 +21,8 @@ export function AppPageRouter({
       return pages.activity;
     case "webhooks":
       return pages.webhooks;
+    case "costs":
+      return pages.costs;
     case "settings":
       return pages.settings;
   }

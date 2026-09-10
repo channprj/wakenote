@@ -18,6 +18,7 @@ import type {
   ModelDescriptor,
   RecentTranscript,
   SettingsPatch,
+  TranscriptionCostEntry,
 } from "./types";
 import { mockModels } from "./app-state";
 
@@ -30,6 +31,7 @@ export interface DevFixtures {
   meetings: MeetingDetail[];
   openrouterApiKey: string;
   openaiApiKey: string;
+  costEntries?: TranscriptionCostEntry[];
 }
 
 const saveRoot = "~/Documents/WakeNote";
@@ -639,7 +641,54 @@ export function devFixtures(now: Date = new Date()): DevFixtures {
     reports,
     runs: fixtureRuns(now, reports),
     meetings: fixtureMeetings(now),
+    costEntries: fixtureCosts(now),
     openrouterApiKey: "sk-or-browser-preview",
     openaiApiKey: "sk-openai-browser-preview",
   };
+}
+
+function fixtureCosts(now: Date): TranscriptionCostEntry[] {
+  return Array.from({ length: 180 }, (_, day) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() - day);
+    date.setHours(9, 15, 0, 0);
+    const minutes = 24 + ((day * 17) % 110);
+    return [
+      {
+        provider: "OpenAI",
+        model: "openai-gpt-transcribe",
+        cost: minutes * 0.006,
+        requests: 8 + (day % 6),
+      },
+      {
+        provider: "OpenAI",
+        model: "openai-gpt-4o-transcribe-diarize",
+        cost: minutes * 0.006,
+        requests: 3,
+      },
+      {
+        provider: "OpenRouter",
+        model: "openrouter-qwen3-asr-flash",
+        cost: null,
+        requests: 2 + (day % 4),
+      },
+      {
+        provider: "Soniox",
+        model: "soniox-realtime-v5",
+        cost: null,
+        requests: 4 + (day % 3),
+      },
+    ]
+      .filter((_, index) => (day + index) % 7 !== 0)
+      .map(({ provider, model, cost, requests }, index) => ({
+        source_id: `meeting:cost-preview-${day}-${index}`,
+        recorded_at: date.toISOString(),
+        provider,
+        model_id: model,
+        audio_duration_ms: minutes * 60_000,
+        estimated_cost_usd: cost,
+        request_count: requests,
+        unpriced_request_count: cost === null ? requests : 0,
+      }));
+  }).flat();
 }
