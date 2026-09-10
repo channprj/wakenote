@@ -130,13 +130,24 @@ export function LiveWebhookSettings({
             : "Send only the finalized text, preserving punctuation and line breaks."
         }
       />
+      <SettingSwitch
+        label="Automatically delete old webhook history"
+        description="Delete history and saved request content after 24 hours. When off, older history stays on this Mac but remains hidden in Webhooks."
+        checked={draft.auto_delete_history}
+        disabled={saving}
+        onCheckedChange={(auto_delete_history) =>
+          patch({ auto_delete_history })
+        }
+      />
       <div className="settings-row space-y-3">
         <p className="text-xs text-muted-foreground">
           Enabling sends transcript content to the configured endpoint. JSON
           also sends metadata. Delivery and order are not guaranteed. Receivers
           can use X-Transcription-Event-Id to handle duplicates. Disabling or
-          changing settings cancels unfinished deliveries; data already sent
-          cannot be recalled.
+          changing the endpoint or format cancels unfinished deliveries; data
+          already sent cannot be recalled. Requests are saved locally for manual
+          retries in Webhooks. Changing automatic deletion does not interrupt
+          delivery.
         </p>
         {saveError ? (
           <p role="alert" className="text-sm text-destructive">

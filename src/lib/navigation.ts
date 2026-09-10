@@ -4,6 +4,7 @@ export type PrimaryRoute =
   | "transcripts"
   | "reports"
   | "activity"
+  | "webhooks"
   | "settings";
 
 export type SettingsSection =
@@ -22,6 +23,7 @@ export const PRIMARY_NAV = [
   { id: "transcripts", label: "Transcripts" },
   { id: "reports", label: "Reports" },
   { id: "activity", label: "Activity" },
+  { id: "webhooks", label: "Webhooks" },
 ] as const satisfies ReadonlyArray<{
   id: Exclude<PrimaryRoute, "settings">;
   label: string;

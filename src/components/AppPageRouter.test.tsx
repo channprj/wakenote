@@ -10,6 +10,7 @@ const routes: PrimaryRoute[] = [
   "transcripts",
   "reports",
   "activity",
+  "webhooks",
   "settings",
 ];
 

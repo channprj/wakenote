@@ -5,6 +5,7 @@ import {
   FilesIcon,
   FileTextIcon,
   Settings2Icon,
+  WebhookIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import appIcon from "@/assets/wakenote-app.png";
@@ -24,6 +25,7 @@ const NAV_ICONS: Record<(typeof PRIMARY_NAV)[number]["id"], LucideIcon> = {
   transcripts: FilesIcon,
   reports: FileTextIcon,
   activity: ActivityIcon,
+  webhooks: WebhookIcon,
 };
 
 function attentionCountLabel(count: number): string {

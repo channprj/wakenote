@@ -9,6 +9,7 @@ describe("navigation", () => {
       "transcripts",
       "reports",
       "activity",
+      "webhooks",
     ]);
     const labels: readonly string[] = PRIMARY_NAV.map((item) => item.label);
     expect(labels).not.toContain("Library");

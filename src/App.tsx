@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppPageRouter } from "./components/AppPageRouter";
 import { MeetingTranscriptionPanel } from "./components/MeetingTranscriptionPanel";
 import { QueuePanel } from "./components/QueuePanel";
+import { WebhooksPanel } from "./components/WebhooksPanel";
 import { ReportHistoryPanel } from "./components/ReportHistoryPanel";
 import { TranscriptsPanel } from "./components/TranscriptsPanel";
 import { CapturePage } from "./components/capture/CapturePage";
@@ -786,6 +787,19 @@ export default function App() {
           onReprocess={(ids, modelId) =>
             runAction(() => reprocessJobs(ids, modelId))
           }
+        />
+      </WorkspacePage>
+    ),
+    webhooks: (
+      <WorkspacePage
+        slot="webhooks-page"
+        eyebrow="Delivery history"
+        title="Webhooks"
+        description="Review deliveries from the last 24 hours and retry failed requests."
+      >
+        <WebhooksPanel
+          settings={snapshot.settings.live_transcription_webhook}
+          onOpenSettings={() => openSettings("advanced")}
         />
       </WorkspacePage>
     ),

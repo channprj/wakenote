@@ -19,7 +19,7 @@ describe("AppSidebar", () => {
     expect(markup).toContain(">Transcripts</span>");
     expect(markup).not.toContain(">Library<");
     expect(markup).toMatch(
-      /aria-label="Primary navigation"[\s\S]*data-route="activity"[\s\S]*data-route="settings"[\s\S]*<\/nav>/,
+      /aria-label="Primary navigation"[\s\S]*data-route="activity"[\s\S]*data-route="webhooks"[\s\S]*data-route="settings"[\s\S]*<\/nav>/,
     );
     expect(markup).toContain(`v${__APP_VERSION__}`);
   });
@@ -56,6 +56,7 @@ describe("AppSidebar", () => {
       "Transcripts",
       "Reports",
       "Activity",
+      "Webhooks",
       "Settings",
     ]) {
       expect(markup).toContain(`aria-label="${label}"`);

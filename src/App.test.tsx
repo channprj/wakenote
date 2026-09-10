@@ -20,6 +20,7 @@ describe("App information architecture", () => {
       "transcripts",
       "reports",
       "activity",
+      "webhooks",
       "settings",
     ]) {
       expect(markup).toContain(`data-route="${route}"`);

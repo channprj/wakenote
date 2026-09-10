@@ -22,6 +22,30 @@ function changeUrl(value: string) {
 }
 
 describe("Live Transcription Webhook settings", () => {
+  it("defaults automatic history deletion on and persists an opt out without enabling delivery", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<LiveWebhookSettings settings={initial()} onSave={onSave} />);
+    const toggle = screen.getByRole("switch", {
+      name: "Automatically delete old webhook history",
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save webhook settings" }),
+    );
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledExactlyOnceWith({
+        live_transcription_webhook: {
+          ...initial(),
+          auto_delete_history: false,
+        },
+      }),
+    );
+    expect(
+      screen.getByText(/older history stays on this Mac but remains hidden/),
+    ).toBeTruthy();
+  });
+
   it("starts disabled with Text Only and does not save or send on mount", () => {
     const onSave = vi.fn();
     render(<LiveWebhookSettings settings={initial()} onSave={onSave} />);
@@ -184,9 +208,11 @@ describe("Live Transcription Webhook settings", () => {
         onSave={onSave}
       />,
     );
-    expect(screen.getByRole("switch", { name: "Enable Webhook" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
+    expect(
+      screen
+        .getByRole("switch", { name: "Enable Webhook" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
     expect(screen.getByText("JSON")).toBeTruthy();
     expect(
       (screen.getByLabelText("Endpoint URL") as HTMLInputElement).value,
