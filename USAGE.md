@@ -413,6 +413,20 @@ The top-center feedback bubble remains available even when Subtitle is off. Micr
 
 **View in Transcripts** opens that entry's date with the dictation filter selected. **View all dictations** opens the same daily browser at the latest result. You can also choose **Source › Dictations** directly on the **Transcripts** page. The filter stays selected while changing dates or switching visible/hidden records, including days with no dictations. Choose **All sources** to show other captures again.
 
+### Live Transcription Webhook
+
+Use **Settings › Advanced › Live Transcription Webhook** to send newly finalized
+live transcript chunks to one HTTP(S) endpoint. Choose **Text Only** or **JSON**,
+enable the switch, and select **Save webhook settings**. JSON shares the saved
+recording metadata format; neither mode uploads audio. The feature starts off,
+does not send test requests on save, and never replays past transcripts.
+
+Delivery runs in the background with a 15-second timeout per attempt and up to
+three retries after 1, 2, and 4 seconds. HTTPS is recommended. Delivery may fail,
+arrive out of order, or be duplicated; receivers can deduplicate using
+`X-Transcription-Event-Id`. Disabling or changing the endpoint/format cancels
+unfinished deliveries. See [the payload contract and verification guide](docs/live-transcription-webhook.md).
+
 ### Realtime auto-type
 
 Enable **Settings › Advanced › Auto-type transcripts into cursor** and select an **Auto-type model** independently from archival transcription. Choose an installed Whisper model or a configured compatible realtime cloud model; leaving the selection at the default follows the transcription model.
