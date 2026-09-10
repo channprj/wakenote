@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WakeNote",
-  "version": "0.260911.4",
+  "version": "0.260911.5",
   "identifier": "com.chann.wakenote",
   "build": {
     "beforeDevCommand": "pnpm native:preflight && pnpm dev",
