@@ -25,8 +25,8 @@ use crate::manual_meeting_capture::{
 };
 use crate::meeting::{MeetingFinishedEvent, MeetingStatus, start_manual_recorded_meeting_capture};
 use crate::models::{
-    ModelDescriptor, ModelStatus, ModelStore, default_model_registry,
-    model_supports_reprocessing, validate_model_options,
+    ModelDescriptor, ModelStatus, ModelStore, default_model_registry, model_supports_reprocessing,
+    validate_model_options,
 };
 use crate::multi_capture::{MicrophoneMixMode, MicrophoneMixer};
 use crate::persistence::{
@@ -587,6 +587,7 @@ pub struct StartedTranscriptionJob {
     pub job: crate::queue::QueueJob,
     pub model_directory: std::path::PathBuf,
     pub language: TranscriptionLanguage,
+    pub language_hints: Vec<TranscriptionLanguage>,
     pub suppress_low_confidence_transcripts: bool,
     pub dictionary: DictionaryContext,
     pub transcription_options: TranscriptionOptions,
@@ -2803,7 +2804,8 @@ impl AppBackend {
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
             },
             started.dictionary,
-        );
+        )
+        .with_language_hints(&started.language_hints);
         let outcome = worker
             .process_started_job_with_final(
                 &started.job,
@@ -2841,7 +2843,8 @@ impl AppBackend {
                     .suppress_low_confidence_transcripts,
             },
             DictionaryContext::from_settings(&self.settings),
-        );
+        )
+        .with_language_hints(&self.settings.transcription_language_hints);
         let outcome = worker
             .process_started_job_with_final(&job, self.live_final_callback(live_metadata))
             .unwrap_or_else(|error| TranscriptionJobOutcome::failed(job.id, error.to_string()));
@@ -2861,7 +2864,8 @@ impl AppBackend {
                         .suppress_low_confidence_transcripts,
                 },
                 started.dictionary,
-            );
+            )
+            .with_language_hints(&started.language_hints);
             let outcome = worker
                 .process_started_job_with_final(
                     &started.job,
@@ -2946,6 +2950,7 @@ impl AppBackend {
                 job,
                 model_directory: model_directory.clone(),
                 language,
+                language_hints: self.settings.transcription_language_hints.clone(),
                 suppress_low_confidence_transcripts,
                 dictionary: dictionary.clone(),
                 transcription_options,

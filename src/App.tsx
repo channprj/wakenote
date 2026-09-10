@@ -714,6 +714,9 @@ export default function App() {
           models={snapshot.models}
           meetingModelId={snapshot.settings.meeting_model}
           selectedModelId={snapshot.settings.selected_model}
+          transcriptionLanguageHints={
+            snapshot.settings.transcription_language_hints
+          }
           onMeetingModelChange={(meeting_model) =>
             void patchSettings({ meeting_model })
           }

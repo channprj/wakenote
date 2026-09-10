@@ -61,8 +61,8 @@ use wakenote::live_capture::{
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
-use wakenote::live_webhook::{LiveWebhookTranscript, WebhookService, WebhookStats};
 use wakenote::live_webhook::history::{HistoryDetail, HistoryFilter, HistoryPage, RetryResult};
+use wakenote::live_webhook::{LiveWebhookTranscript, WebhookService, WebhookStats};
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
@@ -544,6 +544,8 @@ struct ManualMeetingRecordingStatus {
 struct StartMeetingTranscriptionRequest {
     model_id: String,
     language: TranscriptionLanguage,
+    #[serde(default)]
+    language_hints: Option<Vec<TranscriptionLanguage>>,
     streaming_enabled: bool,
     speaker_separation_enabled: bool,
 }
@@ -2642,6 +2644,7 @@ fn process_dictation_recording(
                     chunk_id,
                     model_id: dictation_model.clone(),
                     language: settings.dictation_language,
+                    language_hints: settings.transcription_language_hints.clone(),
                     dictionary: dictionary.clone(),
                     sample_rate: recording.sample_rate,
                     samples: Arc::new(recording.samples.clone()),
@@ -2667,6 +2670,7 @@ fn process_dictation_recording(
                         &recording,
                         &dictation_model,
                         settings.dictation_language,
+                        &settings.transcription_language_hints,
                         &dictionary,
                         transcriber,
                     )
@@ -2699,6 +2703,7 @@ fn process_dictation_recording(
                 &recording,
                 &dictation_model,
                 settings.dictation_language,
+                &settings.transcription_language_hints,
                 &dictionary,
                 transcriber,
             );
@@ -5473,6 +5478,7 @@ fn meeting_realtime_replay(app: &AppHandle) -> Option<MeetingRealtimeReplay> {
             chunk_id,
             model_id: request.model_id.clone(),
             language: request.language,
+            language_hints: request.language_hints,
             dictionary: request.dictionary,
             sample_rate: request.sample_rate,
             samples: request.samples,
@@ -5614,6 +5620,12 @@ fn validate_meeting_transcription_request(
     Ok(MeetingTranscriptionRequest {
         model_id: model.id.clone(),
         language: request.language,
+        language_hints: wakenote::settings::normalize_language_hints(
+            &request
+                .language_hints
+                .clone()
+                .unwrap_or_else(wakenote::settings::default_transcription_language_hints),
+        ),
         streaming_enabled,
         speaker_separation_enabled: request.speaker_separation_enabled,
     })
@@ -5625,11 +5637,14 @@ fn start_meeting_transcription(
     state: State<'_, BackendState>,
     meeting_state: State<'_, MeetingState>,
     id: String,
-    request: StartMeetingTranscriptionRequest,
+    mut request: StartMeetingTranscriptionRequest,
 ) -> Result<MeetingSummary, String> {
     let (save_root, model_directory, model) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
+        if request.language_hints.is_none() {
+            request.language_hints = Some(settings.transcription_language_hints.clone());
+        }
         let model = backend
             .model_registry()
             .into_iter()
@@ -7352,7 +7367,8 @@ fn wire_live_transcription(
                 );
                 eprintln!(
                     "[wakenote] live partial -> FE chunk_id={} text_len={}",
-                    result.chunk_id, result.text.len()
+                    result.chunk_id,
+                    result.text.len()
                 );
                 if result.microphone_slot != Some(MicrophoneSlot::Secondary)
                     && let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>()
@@ -7630,13 +7646,14 @@ fn wire_live_transcription(
                 preview_model_id.as_str(),
                 "openai-gpt-live-transcribe" | "soniox-realtime-v5"
             ) {
-                let (dictionary, credentials) = app_for_handler
+                let (dictionary, credentials, language_hints) = app_for_handler
                     .try_state::<BackendState>()
                     .and_then(|state| {
                         state.lock().ok().map(|backend| {
                             (
                                 DictionaryContext::from_settings(&backend.settings()),
                                 backend.transcription_credentials().unwrap_or_default(),
+                                backend.settings().transcription_language_hints.clone(),
                             )
                         })
                     })
@@ -7648,6 +7665,7 @@ fn wire_live_transcription(
                     chunk_id,
                     model_id: preview_model_id.clone(),
                     language,
+                    language_hints,
                     dictionary,
                     sample_rate,
                     samples,
@@ -7868,7 +7886,10 @@ fn spawn_transcription_job(
 ) {
     thread::spawn(move || {
         let audio_path = started.job.audio_path.clone();
-        let live_transcript = started.live_metadata.clone().map(LiveWebhookTranscript::new);
+        let live_transcript = started
+            .live_metadata
+            .clone()
+            .map(LiveWebhookTranscript::new);
         eprintln!(
             "[wakenote] queue worker: processing job id={} path={} model={}",
             started.job.id,
@@ -7934,7 +7955,8 @@ fn spawn_transcription_job(
                 suppress_low_confidence_transcripts: started.suppress_low_confidence_transcripts,
             },
             started.dictionary,
-        );
+        )
+        .with_language_hints(&started.language_hints);
         let outcome = worker
             .process_started_job_with_final(&started.job, |execution| {
                 if let Some(transcript) = &live_transcript
@@ -11022,6 +11044,7 @@ mod tests {
             .clone();
         unready.status = ModelStatus::Missing;
         let request = StartMeetingTranscriptionRequest {
+            language_hints: None,
             model_id: realtime.id.clone(),
             language: TranscriptionLanguage::Auto,
             streaming_enabled: true,
@@ -11031,6 +11054,7 @@ mod tests {
         assert_eq!(
             validate_meeting_transcription_request(realtime, tmp.path(), &request),
             Ok(MeetingTranscriptionRequest {
+                language_hints: wakenote::settings::default_transcription_language_hints(),
                 model_id: realtime.id.clone(),
                 language: TranscriptionLanguage::Auto,
                 streaming_enabled: true,
@@ -11042,6 +11066,7 @@ mod tests {
                 &unready,
                 tmp.path(),
                 &StartMeetingTranscriptionRequest {
+                    language_hints: None,
                     model_id: unready.id.clone(),
                     ..request.clone()
                 },
@@ -11061,6 +11086,7 @@ mod tests {
                 &unloaded,
                 tmp.path(),
                 &StartMeetingTranscriptionRequest {
+                    language_hints: None,
                     model_id: unloaded.id.clone(),
                     ..request
                 },
@@ -11079,6 +11105,7 @@ mod tests {
             .find(|model| model.id == "openai-gpt-4o-transcribe-diarize")
             .expect("diarization model");
         let request = StartMeetingTranscriptionRequest {
+            language_hints: None,
             model_id: model.id.clone(),
             language: TranscriptionLanguage::Ko,
             streaming_enabled: true,
@@ -11088,6 +11115,7 @@ mod tests {
         assert_eq!(
             validate_meeting_transcription_request(&model, tmp.path(), &request),
             Ok(MeetingTranscriptionRequest {
+                language_hints: wakenote::settings::default_transcription_language_hints(),
                 model_id: model.id,
                 language: TranscriptionLanguage::Ko,
                 streaming_enabled: true,
@@ -11116,6 +11144,7 @@ mod tests {
             tmp.path(),
             &imported.id,
             MeetingTranscriptionRequest {
+                language_hints: wakenote::settings::default_transcription_language_hints(),
                 model_id: "soniox-async-v5".into(),
                 language: TranscriptionLanguage::Ko,
                 streaming_enabled: false,
@@ -11231,6 +11260,7 @@ mod tests {
                 tmp.path(),
                 id,
                 MeetingTranscriptionRequest {
+                    language_hints: wakenote::settings::default_transcription_language_hints(),
                     model_id: "record-model".into(),
                     language: wakenote::settings::TranscriptionLanguage::Ko,
                     streaming_enabled: false,
@@ -11305,6 +11335,7 @@ mod tests {
                 tmp.path(),
                 &record.id,
                 MeetingTranscriptionRequest {
+                    language_hints: wakenote::settings::default_transcription_language_hints(),
                     model_id: "record-model".into(),
                     language: wakenote::settings::TranscriptionLanguage::Ko,
                     streaming_enabled: false,
@@ -11317,6 +11348,7 @@ mod tests {
             tmp.path(),
             &before_launch.id,
             MeetingTranscriptionRequest {
+                language_hints: wakenote::settings::default_transcription_language_hints(),
                 model_id: "record-model".into(),
                 language: wakenote::settings::TranscriptionLanguage::Ko,
                 streaming_enabled: false,

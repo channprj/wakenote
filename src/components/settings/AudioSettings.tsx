@@ -46,6 +46,8 @@ import {
 } from "./settings-controls";
 import type { SettingsActions } from "./types";
 import { TranslationControls } from "./TranslationControls";
+import { LanguageHintsControl } from "@/components/LanguageHintsControl";
+import { modelSupportsMultipleLanguageHints } from "@/lib/models";
 
 const durationFields = [
   ["attack_ms", "Attack", 50, 2_000],
@@ -213,21 +215,29 @@ export function AudioSettings({
             actions.onPatch({ input_monitoring_enabled })
           }
         />
-        <SettingSelect
-          label="Transcription Language"
-          value={settings.transcription_language}
-          options={[
-            { value: "auto", label: "Auto-detect" },
-            { value: "ko", label: "Korean" },
-            { value: "en", label: "English" },
-            { value: "ja", label: "Japanese" },
-            { value: "zh", label: "Chinese" },
-            { value: "es", label: "Spanish" },
-            { value: "fr", label: "French" },
-            { value: "de", label: "German" },
-          ]}
-          onValueChange={(transcription_language) =>
-            actions.onPatch({ transcription_language })
+        {!modelSupportsMultipleLanguageHints(settings.selected_model) ? (
+          <SettingSelect
+            label="Transcription Language"
+            value={settings.transcription_language}
+            options={[
+              { value: "auto", label: "Auto-detect" },
+              { value: "ko", label: "Korean" },
+              { value: "en", label: "English" },
+              { value: "ja", label: "Japanese" },
+              { value: "zh", label: "Chinese" },
+              { value: "es", label: "Spanish" },
+              { value: "fr", label: "French" },
+              { value: "de", label: "German" },
+            ]}
+            onValueChange={(transcription_language) =>
+              actions.onPatch({ transcription_language })
+            }
+          />
+        ) : null}
+        <LanguageHintsControl
+          value={settings.transcription_language_hints}
+          onChange={(transcription_language_hints) =>
+            actions.onPatch({ transcription_language_hints })
           }
         />
         <TranslationControls

@@ -34,6 +34,7 @@ import type {
   MeetingProgressPayload,
   MeetingSummary,
   ModelDescriptor,
+  TranscriptionLanguage,
 } from "../lib/types";
 import type { ListVisibilityMode } from "./ListVisibilityToolbar";
 import { MeetingTranscriptionView } from "./meetings/MeetingTranscriptionView";
@@ -52,12 +53,14 @@ export function MeetingTranscriptionPanel({
   models,
   meetingModelId,
   selectedModelId,
+  transcriptionLanguageHints,
   onMeetingModelChange,
 }: {
   onPermissionRequired: (feature: PermissionFeature) => Promise<boolean>;
   models: ModelDescriptor[];
   meetingModelId: string;
   selectedModelId: string;
+  transcriptionLanguageHints?: TranscriptionLanguage[];
   onMeetingModelChange: (modelId: string) => void;
 }) {
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
@@ -479,6 +482,7 @@ export function MeetingTranscriptionPanel({
       models={models}
       meetingModelId={meetingModelId}
       selectedModelId={selectedModelId}
+      transcriptionLanguageHints={transcriptionLanguageHints}
       configurationInitiallyOpen={
         selectedId !== null && selectedId === configureOnOpenId
       }

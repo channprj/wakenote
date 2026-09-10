@@ -109,6 +109,8 @@ pub struct MeetingSegment {
 pub struct MeetingTranscriptionRequest {
     pub model_id: String,
     pub language: TranscriptionLanguage,
+    #[serde(default = "crate::settings::default_transcription_language_hints")]
+    pub language_hints: Vec<TranscriptionLanguage>,
     pub streaming_enabled: bool,
     pub speaker_separation_enabled: bool,
 }
@@ -343,6 +345,7 @@ pub struct MeetingRealtimeReplayRequest {
     pub chunk_id: u64,
     pub model_id: String,
     pub language: TranscriptionLanguage,
+    pub language_hints: Vec<TranscriptionLanguage>,
     pub dictionary: DictionaryContext,
     pub sample_rate: u32,
     pub samples: Arc<Vec<f32>>,
@@ -1194,6 +1197,7 @@ pub fn run_meeting_job(
             .unwrap_or_else(|| MeetingTranscriptionRequest {
                 model_id: record.model_id.clone(),
                 language: record.language,
+                language_hints: crate::settings::default_transcription_language_hints(),
                 streaming_enabled: false,
                 speaker_separation_enabled: false,
             });
@@ -1459,6 +1463,7 @@ pub fn run_meeting_job(
                                 chunk_id: idx as u64 + 1,
                                 model_id: record.model_id.clone(),
                                 language,
+                                language_hints: transcription_request.language_hints.clone(),
                                 dictionary: dictionary.clone(),
                                 sample_rate: 16_000,
                                 samples: Arc::new(samples.clone()),
@@ -1486,6 +1491,7 @@ pub fn run_meeting_job(
                                 audio_path: &segment_wav,
                                 model_id: &record.model_id,
                                 language,
+                                language_hints: &transcription_request.language_hints,
                                 dictionary,
                             })
                     }
@@ -1747,6 +1753,7 @@ mod tests {
             temp.path(),
             &imported.id,
             MeetingTranscriptionRequest {
+                language_hints: crate::settings::default_transcription_language_hints(),
                 model_id: "soniox-realtime-v5".into(),
                 language: TranscriptionLanguage::Ko,
                 streaming_enabled: true,
@@ -1823,6 +1830,7 @@ mod tests {
             temp.path(),
             &imported.id,
             MeetingTranscriptionRequest {
+                language_hints: crate::settings::default_transcription_language_hints(),
                 model_id: "openai-gpt-live-transcribe".into(),
                 language: TranscriptionLanguage::Auto,
                 streaming_enabled: true,
@@ -1978,6 +1986,7 @@ mod tests {
             temp.path(),
             &record.id,
             MeetingTranscriptionRequest {
+                language_hints: crate::settings::default_transcription_language_hints(),
                 model_id: "openai-gpt-4o-transcribe-diarize".into(),
                 language: TranscriptionLanguage::Ko,
                 streaming_enabled: true,
@@ -1991,6 +2000,7 @@ mod tests {
         assert_eq!(
             updated.transcription_request,
             Some(MeetingTranscriptionRequest {
+                language_hints: crate::settings::default_transcription_language_hints(),
                 model_id: "openai-gpt-4o-transcribe-diarize".into(),
                 language: TranscriptionLanguage::Ko,
                 streaming_enabled: true,

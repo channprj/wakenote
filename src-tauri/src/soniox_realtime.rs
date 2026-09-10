@@ -267,7 +267,7 @@ async fn run_connected_session<S>(
     let configuration = configuration_message(
         api_key,
         request.sample_rate,
-        request.language.whisper_code(),
+        &request.language_hints,
         request.dictionary.canonical_terms().to_vec(),
     );
     if writer
@@ -390,7 +390,7 @@ fn end_of_audio_message() -> Message {
 fn configuration_message(
     api_key: &str,
     sample_rate: u32,
-    language: Option<&str>,
+    language_hints: &[crate::settings::TranscriptionLanguage],
     terms: Vec<String>,
 ) -> Value {
     let mut configuration = json!({
@@ -401,8 +401,12 @@ fn configuration_message(
         "sample_rate": sample_rate,
         "client_reference_id": format!("WakeNote/{}", env!("CARGO_PKG_VERSION")),
     });
-    if let Some(language) = language {
-        configuration["language_hints"] = json!([language]);
+    let hints: Vec<_> = crate::settings::normalize_language_hints(language_hints)
+        .into_iter()
+        .filter_map(crate::settings::TranscriptionLanguage::whisper_code)
+        .collect();
+    if !hints.is_empty() {
+        configuration["language_hints"] = json!(hints);
     }
     if !terms.is_empty() {
         configuration["context"] = json!({ "terms": terms });
@@ -666,17 +670,24 @@ mod tests {
 
     #[test]
     fn soniox_realtime_builds_documented_configuration_and_pcm_frames() {
-        let configuration =
-            configuration_message("secret", 16_000, Some("ko"), vec!["WakeNote".into()]);
+        let configuration = configuration_message(
+            "secret",
+            16_000,
+            &[
+                crate::settings::TranscriptionLanguage::En,
+                crate::settings::TranscriptionLanguage::Ko,
+            ],
+            vec!["WakeNote".into()],
+        );
         assert_eq!(configuration["api_key"], "secret");
         assert_eq!(configuration["model"], "stt-rt-v5");
         assert_eq!(configuration["audio_format"], "pcm_s16le");
         assert_eq!(configuration["num_channels"], 1);
         assert_eq!(configuration["sample_rate"], 16_000);
-        assert_eq!(configuration["language_hints"], json!(["ko"]));
+        assert_eq!(configuration["language_hints"], json!(["en", "ko"]));
         assert_eq!(configuration["context"]["terms"], json!(["WakeNote"]));
 
-        let automatic = configuration_message("secret", 48_000, None, Vec::new());
+        let automatic = configuration_message("secret", 48_000, &[], Vec::new());
         assert!(automatic.get("language_hints").is_none());
         assert!(automatic.get("context").is_none());
 
@@ -838,6 +849,7 @@ mod tests {
         drop(command_tx);
 
         let request = RealtimeSamplesRequest {
+            language_hints: crate::settings::default_transcription_language_hints(),
             source_key: "microphone:test".into(),
             source_label: "Test microphone".into(),
             microphone_slot: None,
@@ -865,6 +877,10 @@ mod tests {
             assert_eq!(
                 serde_json::from_str::<Value>(&configuration).expect("configuration")["model"],
                 SONIOX_REALTIME_MODEL
+            );
+            assert_eq!(
+                serde_json::from_str::<Value>(&configuration).expect("configuration")["language_hints"],
+                json!(["en", "ko"])
             );
             assert!(matches!(server.next().await, Some(Ok(Message::Binary(_)))));
             assert!(matches!(
@@ -919,6 +935,7 @@ mod tests {
             .expect("close command");
 
         let request = RealtimeSamplesRequest {
+            language_hints: vec![crate::settings::TranscriptionLanguage::Ko],
             source_key: "microphone:test".into(),
             source_label: "Test microphone".into(),
             microphone_slot: None,

@@ -536,6 +536,10 @@ impl Transcriber for UsageTranscriber {
         &self,
         request: TranscriptionRequest<'_>,
     ) -> Result<TranscriptionExecution, TranscriptionError> {
+        assert_eq!(
+            request.language_hints,
+            &[TranscriptionLanguage::En, TranscriptionLanguage::Ko]
+        );
         Ok(TranscriptionExecution {
             text: "wake note".to_string(),
             speaker_turns: Vec::new(),
@@ -1411,6 +1415,7 @@ fn dictation_transcription_preserves_usage_while_applying_the_dictionary() {
         &recording,
         "openai-gpt-transcribe",
         TranscriptionLanguage::Auto,
+        &[TranscriptionLanguage::En, TranscriptionLanguage::Ko],
         &dictionary,
         UsageTranscriber,
     )

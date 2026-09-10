@@ -1335,14 +1335,22 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
     dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<String>, String> {
-    transcribe_dictation_recording_execution(recording, model_id, language, dictionary, transcriber)
-        .map(|execution| execution.map(|execution| execution.text))
+    transcribe_dictation_recording_execution(
+        recording,
+        model_id,
+        language,
+        &[language],
+        dictionary,
+        transcriber,
+    )
+    .map(|execution| execution.map(|execution| execution.text))
 }
 
 pub fn transcribe_dictation_recording_execution<T: Transcriber>(
     recording: &DictationRecording,
     model_id: &str,
     language: TranscriptionLanguage,
+    language_hints: &[TranscriptionLanguage],
     dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<TranscriptionExecution>, String> {
@@ -1356,6 +1364,7 @@ pub fn transcribe_dictation_recording_execution<T: Transcriber>(
             audio_path: &path,
             model_id,
             language,
+            language_hints,
             dictionary,
         })
         .map_err(|error| error.to_string())

@@ -19,7 +19,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { meetingTranscriptionModels } from "@/lib/models";
+import {
+  meetingTranscriptionModels,
+  modelSupportsMultipleLanguageHints,
+} from "@/lib/models";
+import { LanguageHintsControl } from "@/components/LanguageHintsControl";
+import { DEFAULT_TRANSCRIPTION_LANGUAGE_HINTS } from "@/lib/transcription-languages";
 import type {
   MeetingTranscriptionRequest,
   ModelDescriptor,
@@ -32,6 +37,7 @@ export interface MeetingTranscriptionDialogProps {
   models: ModelDescriptor[];
   initialModelId: string;
   initialLanguage: TranscriptionLanguage;
+  initialLanguageHints?: TranscriptionLanguage[];
   targetCount: number;
   busy: boolean;
   error?: string | null;
@@ -53,6 +59,7 @@ export function MeetingTranscriptionDialog({
   models,
   initialModelId,
   initialLanguage,
+  initialLanguageHints = DEFAULT_TRANSCRIPTION_LANGUAGE_HINTS,
   targetCount,
   busy,
   error = null,
@@ -69,6 +76,7 @@ export function MeetingTranscriptionDialog({
   const [modelId, setModelId] = useState(resolvedInitialModelId);
   const [language, setLanguage] =
     useState<TranscriptionLanguage>(initialLanguage);
+  const [languageHints, setLanguageHints] = useState(initialLanguageHints);
   const [streamingEnabled, setStreamingEnabled] = useState(false);
   const [speakerSeparationEnabled, setSpeakerSeparationEnabled] =
     useState(false);
@@ -89,12 +97,12 @@ export function MeetingTranscriptionDialog({
     );
     setModelId(resolvedInitialModelId);
     setLanguage(initialLanguage);
-    setStreamingEnabled(
-      initialModel?.capabilities.streaming === "required",
-    );
+    setLanguageHints(initialLanguageHints);
+    setStreamingEnabled(initialModel?.capabilities.streaming === "required");
     setSpeakerSeparationEnabled(false);
   }, [
     initialLanguage,
+    initialLanguageHints,
     meetingModels,
     open,
     resolvedInitialModelId,
@@ -104,8 +112,7 @@ export function MeetingTranscriptionDialog({
   const streamingRequired =
     selectedModel?.capabilities.streaming === "required";
   const streamingAvailable =
-    selectedModel?.capabilities.streaming === "optional" ||
-    streamingRequired;
+    selectedModel?.capabilities.streaming === "optional" || streamingRequired;
   const speakerSeparationAvailable =
     selectedModel?.capabilities.diarization ?? false;
   const active = busy || submitting;
@@ -118,9 +125,7 @@ export function MeetingTranscriptionDialog({
       meetingModels.find((model) => model.id === resolvedInitialModelId) ??
       meetingModels[0];
     setModelId(fallbackModel.id);
-    setStreamingEnabled(
-      fallbackModel.capabilities.streaming === "required",
-    );
+    setStreamingEnabled(fallbackModel.capabilities.streaming === "required");
     setSpeakerSeparationEnabled(false);
   }, [meetingModels, open, resolvedInitialModelId, selectedModel]);
 
@@ -146,6 +151,9 @@ export function MeetingTranscriptionDialog({
       const succeeded = await onSubmit({
         model_id: selectedModel.id,
         language,
+        ...(modelSupportsMultipleLanguageHints(selectedModel.id)
+          ? { language_hints: languageHints }
+          : {}),
         streaming_enabled: streamingRequired || streamingEnabled,
         speaker_separation_enabled:
           speakerSeparationAvailable && speakerSeparationEnabled,
@@ -207,34 +215,44 @@ export function MeetingTranscriptionDialog({
               </SelectContent>
             </Select>
           </label>
-          <label>
-            <span>Language</span>
-            <Select
-              value={language}
-              onValueChange={(value) =>
-                setLanguage(value as TranscriptionLanguage)
-              }
+          {modelSupportsMultipleLanguageHints(modelId) ? (
+            <LanguageHintsControl
+              label="Meeting transcription language hints"
+              description="Start with your shared Soniox hints, or choose different languages for this transcription."
+              value={languageHints}
+              onChange={setLanguageHints}
               disabled={active}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full"
-                aria-label="Meeting transcription language"
+            />
+          ) : (
+            <label>
+              <span>Language</span>
+              <Select
+                value={language}
+                onValueChange={(value) =>
+                  setLanguage(value as TranscriptionLanguage)
+                }
+                disabled={active}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto detect</SelectItem>
-                <SelectItem value="ko">Korean</SelectItem>
-                <SelectItem value="en">English</SelectItem>
-                <SelectItem value="ja">Japanese</SelectItem>
-                <SelectItem value="zh">Chinese</SelectItem>
-                <SelectItem value="es">Spanish</SelectItem>
-                <SelectItem value="fr">French</SelectItem>
-                <SelectItem value="de">German</SelectItem>
-              </SelectContent>
-            </Select>
-          </label>
+                <SelectTrigger
+                  size="sm"
+                  className="w-full"
+                  aria-label="Meeting transcription language"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto detect</SelectItem>
+                  <SelectItem value="ko">Korean</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="ja">Japanese</SelectItem>
+                  <SelectItem value="zh">Chinese</SelectItem>
+                  <SelectItem value="es">Spanish</SelectItem>
+                  <SelectItem value="fr">French</SelectItem>
+                  <SelectItem value="de">German</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          )}
           <label className="meeting-transcription-option">
             <span>
               <strong>Streaming</strong>
@@ -268,9 +286,7 @@ export function MeetingTranscriptionDialog({
             <Switch
               size="sm"
               aria-label="Speaker separation"
-              checked={
-                speakerSeparationAvailable && speakerSeparationEnabled
-              }
+              checked={speakerSeparationAvailable && speakerSeparationEnabled}
               disabled={active || !speakerSeparationAvailable}
               onCheckedChange={setSpeakerSeparationEnabled}
             />
@@ -291,10 +307,7 @@ export function MeetingTranscriptionDialog({
             onClick={() => void submit()}
           >
             {active ? (
-              <Loader2Icon
-                data-icon="inline-start"
-                className="meeting-spin"
-              />
+              <Loader2Icon data-icon="inline-start" className="meeting-spin" />
             ) : null}
             {plural
               ? `Start ${targetCount} transcriptions`

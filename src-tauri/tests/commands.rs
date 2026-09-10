@@ -148,19 +148,24 @@ fn live_preview_model_accepts_each_ready_cloud_realtime_model() {
 #[derive(Clone)]
 struct StaticTranscriber {
     expected_language: TranscriptionLanguage,
+    expected_language_hints: Vec<TranscriptionLanguage>,
 }
 
 impl Default for StaticTranscriber {
     fn default() -> Self {
         Self {
             expected_language: TranscriptionLanguage::Ko,
+            expected_language_hints: vec![TranscriptionLanguage::En, TranscriptionLanguage::Ko],
         }
     }
 }
 
 impl StaticTranscriber {
     fn expecting_language(expected_language: TranscriptionLanguage) -> Self {
-        Self { expected_language }
+        Self {
+            expected_language,
+            ..Self::default()
+        }
     }
 }
 
@@ -168,6 +173,7 @@ impl Transcriber for StaticTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
         assert_eq!(request.model_id, "whisper-medium");
         assert_eq!(request.language, self.expected_language);
+        assert_eq!(request.language_hints, self.expected_language_hints);
         assert!(request.audio_path.exists());
         Ok("queued transcript".to_string())
     }
@@ -2628,14 +2634,19 @@ fn backend_passes_configured_transcription_language_to_worker() {
         model_directory: Some(model_directory.to_string_lossy().to_string()),
         selected_model: Some("whisper-medium".to_string()),
         transcription_language: Some(TranscriptionLanguage::Ko),
+        transcription_language_hints: Some(vec![
+            TranscriptionLanguage::Ja,
+            TranscriptionLanguage::En,
+        ]),
         ..SettingsPatch::default()
     });
     backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
 
     backend
-        .process_next_transcription_with(StaticTranscriber::expecting_language(
-            TranscriptionLanguage::Ko,
-        ))
+        .process_next_transcription_with(StaticTranscriber {
+            expected_language: TranscriptionLanguage::Ko,
+            expected_language_hints: vec![TranscriptionLanguage::Ja, TranscriptionLanguage::En],
+        })
         .expect("process transcription");
 }
 

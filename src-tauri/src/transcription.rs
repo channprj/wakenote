@@ -25,10 +25,10 @@ use crate::models::{
     default_model_registry,
 };
 use crate::queue::{QueueIssueCode, QueueJobIssue, QueueJobStatus, TranscriptionQueue};
+use crate::recorded_realtime::{RecordedRealtimeOptions, transcribe_recorded_realtime};
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, RecorderError, TranscriptionSidecar,
 };
-use crate::recorded_realtime::{RecordedRealtimeOptions, transcribe_recorded_realtime};
 use crate::settings::{TranscriptionLanguage, expand_user_path};
 use crate::soniox_async::SonioxAsyncClient;
 use crate::transcription_cost::estimated_provider_cost_usd;
@@ -53,6 +53,7 @@ pub struct TranscriptionRequest<'a> {
     pub audio_path: &'a Path,
     pub model_id: &'a str,
     pub language: TranscriptionLanguage,
+    pub language_hints: &'a [TranscriptionLanguage],
     pub dictionary: &'a DictionaryContext,
 }
 
@@ -387,6 +388,7 @@ impl TranscriptionJobOutcome {
 pub struct TranscriptionWorker<T> {
     transcriber: T,
     language: TranscriptionLanguage,
+    language_hints: Vec<TranscriptionLanguage>,
     suppress_low_confidence_transcripts: bool,
     dictionary: DictionaryContext,
 }
@@ -402,6 +404,7 @@ impl<T> TranscriptionWorker<T> {
         Self {
             transcriber,
             language: TranscriptionLanguage::Auto,
+            language_hints: Vec::new(),
             suppress_low_confidence_transcripts: true,
             dictionary: DictionaryContext::default(),
         }
@@ -421,6 +424,7 @@ impl<T> TranscriptionWorker<T> {
         Self {
             transcriber,
             language: options.language,
+            language_hints: Vec::new(),
             suppress_low_confidence_transcripts: options.suppress_low_confidence_transcripts,
             dictionary: DictionaryContext::default(),
         }
@@ -434,9 +438,14 @@ impl<T> TranscriptionWorker<T> {
         Self {
             transcriber,
             language: options.language,
+            language_hints: Vec::new(),
             suppress_low_confidence_transcripts: options.suppress_low_confidence_transcripts,
             dictionary,
         }
+    }
+    pub fn with_language_hints(mut self, hints: &[TranscriptionLanguage]) -> Self {
+        self.language_hints = crate::settings::normalize_language_hints(hints);
+        self
     }
 }
 
@@ -460,6 +469,7 @@ impl<T: Transcriber> TranscriptionWorker<T> {
             audio_path: &job.audio_path,
             model_id: &job.model_id,
             language: self.language,
+            language_hints: &self.language_hints,
             dictionary: &self.dictionary,
         };
 
@@ -1142,7 +1152,11 @@ impl Transcriber for RuntimeTranscriber {
                     .map(|execution| execution.text),
                 "soniox-async-stt" => self
                     .soniox_async
-                    .transcribe(request.audio_path, request.language, request.dictionary)
+                    .transcribe(
+                        request.audio_path,
+                        request.language_hints,
+                        request.dictionary,
+                    )
                     .map_err(|error| TranscriptionError::Failure(error.into_failure())),
                 _ => {
                     let mut transcriber = WhisperTranscriber::new(&self.model_directory);
@@ -1237,7 +1251,11 @@ impl Transcriber for RuntimeTranscriber {
             let model_id = request.model_id.to_string();
             return self
                 .soniox_async
-                .transcribe(request.audio_path, request.language, request.dictionary)
+                .transcribe(
+                    request.audio_path,
+                    request.language_hints,
+                    request.dictionary,
+                )
                 .map(|text| TranscriptionExecution {
                     text,
                     speaker_turns: Vec::new(),
@@ -2168,6 +2186,7 @@ mod tests {
 
         let execution = fallback
             .transcribe_execution(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio,
                 model_id: "openai-gpt-transcribe",
                 language: TranscriptionLanguage::Ko,
@@ -2206,6 +2225,7 @@ mod tests {
                 diarization_required,
             );
             let result = fallback.transcribe_execution(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: Path::new("/tmp/audio.wav"),
                 model_id: "openai-gpt-transcribe",
                 language: TranscriptionLanguage::Auto,
@@ -2229,6 +2249,7 @@ mod tests {
         );
         let error = fallback
             .transcribe_execution(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: Path::new("/tmp/audio.wav"),
                 model_id: "openai-gpt-transcribe",
                 language: TranscriptionLanguage::Auto,
@@ -2403,6 +2424,7 @@ mod tests {
         );
         let text = RuntimeTranscriber::new(tmp.path())
             .transcribe(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio,
                 model_id: "qwen3-asr-0.6b",
                 language: TranscriptionLanguage::Ko,

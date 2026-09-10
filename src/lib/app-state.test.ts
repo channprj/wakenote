@@ -482,6 +482,10 @@ describe("app state derivation", () => {
     expect(snapshot.settings.min_chunk_ms).toBe(800);
     expect(snapshot.settings.max_chunk_ms).toBe(180_000);
     expect(snapshot.settings.transcription_language).toBe("ko");
+    expect(snapshot.settings.transcription_language_hints).toEqual([
+      "en",
+      "ko",
+    ]);
     expect(snapshot.settings.suppress_low_confidence_transcripts).toBe(true);
     expect(snapshot.settings.show_dock_icon).toBe(true);
     expect(snapshot.settings.show_tray_icon).toBe(true);

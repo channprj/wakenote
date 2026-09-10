@@ -149,6 +149,7 @@ export function defaultSettings(): AppSettings {
     recording_enabled: true,
     transcription_enabled: true,
     transcription_language: "ko",
+    transcription_language_hints: ["en", "ko"],
     suppress_low_confidence_transcripts: true,
     pause_all: false,
     selected_microphone: "default",

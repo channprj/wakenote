@@ -67,9 +67,7 @@ describe("MeetingTranscriptionDialog", () => {
     await userEvent.click(
       screen.getByRole("switch", { name: "Speaker separation" }),
     );
-    await userEvent.click(
-      screen.getByRole("switch", { name: "Streaming" }),
-    );
+    await userEvent.click(screen.getByRole("switch", { name: "Streaming" }));
 
     rerender(<MeetingTranscriptionDialog {...props} models={[...models]} />);
     await userEvent.click(
@@ -96,11 +94,7 @@ describe("MeetingTranscriptionDialog", () => {
       onSubmit,
     };
     const { rerender } = render(
-      <MeetingTranscriptionDialog
-        {...baseProps}
-        open
-        initialLanguage="auto"
-      />,
+      <MeetingTranscriptionDialog {...baseProps} open initialLanguage="auto" />,
     );
 
     await userEvent.click(
@@ -115,11 +109,7 @@ describe("MeetingTranscriptionDialog", () => {
       />,
     );
     rerender(
-      <MeetingTranscriptionDialog
-        {...baseProps}
-        open
-        initialLanguage="en"
-      />,
+      <MeetingTranscriptionDialog {...baseProps} open initialLanguage="en" />,
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Start transcription" }),
@@ -160,9 +150,7 @@ describe("MeetingTranscriptionDialog", () => {
     await userEvent.click(
       screen.getByRole("switch", { name: "Speaker separation" }),
     );
-    await userEvent.click(
-      screen.getByRole("switch", { name: "Streaming" }),
-    );
+    await userEvent.click(screen.getByRole("switch", { name: "Streaming" }));
 
     rerender(
       <MeetingTranscriptionDialog
@@ -250,7 +238,44 @@ describe("MeetingTranscriptionDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       model_id: "soniox-realtime-v5",
       language: "auto",
+      language_hints: ["en", "ko"],
       streaming_enabled: true,
+      speaker_separation_enabled: false,
+    });
+  });
+
+  it("uses configured Soniox hints and can request automatic detection", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    render(
+      <MeetingTranscriptionDialog
+        open
+        onOpenChange={vi.fn()}
+        models={readyModels()}
+        initialModelId="soniox-async-v5"
+        initialLanguage="auto"
+        initialLanguageHints={["ja", "en"]}
+        targetCount={1}
+        busy={false}
+        onSubmit={onSubmit}
+      />,
+    );
+    const hints = screen.getByRole("button", {
+      name: "Meeting transcription language hints",
+    });
+    expect(hints.textContent).toBe("English, Japanese");
+    await user.click(hints);
+    await user.click(
+      screen.getByRole("menuitem", { name: "Auto-detect (no hints)" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Start transcription" }),
+    );
+    expect(onSubmit).toHaveBeenCalledWith({
+      model_id: "soniox-async-v5",
+      language: "auto",
+      language_hints: [],
+      streaming_enabled: false,
       speaker_separation_enabled: false,
     });
   });

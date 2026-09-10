@@ -141,6 +141,7 @@ pub struct RealtimeSamplesRequest {
     pub chunk_id: u64,
     pub model_id: String,
     pub language: TranscriptionLanguage,
+    pub language_hints: Vec<TranscriptionLanguage>,
     pub dictionary: DictionaryContext,
     pub sample_rate: u32,
     pub samples: Arc<Vec<f32>>,

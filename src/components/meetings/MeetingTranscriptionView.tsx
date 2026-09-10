@@ -55,6 +55,7 @@ import type {
   MeetingProgressPayload,
   MeetingSummary,
   ModelDescriptor,
+  TranscriptionLanguage,
 } from "@/lib/types";
 
 export interface MeetingTranscriptionViewProps {
@@ -69,6 +70,7 @@ export interface MeetingTranscriptionViewProps {
   models: ModelDescriptor[];
   meetingModelId: string;
   selectedModelId: string;
+  transcriptionLanguageHints?: TranscriptionLanguage[];
   configurationInitiallyOpen: boolean;
   transcriptionBusy: boolean;
   error: string | null;
@@ -280,8 +282,7 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
             type="button"
             size="sm"
             disabled={
-              eligibleSelectedMeetings.length === 0 ||
-              props.transcriptionBusy
+              eligibleSelectedMeetings.length === 0 || props.transcriptionBusy
             }
             onClick={() => setBulkDialogOpen(true)}
           >
@@ -297,6 +298,7 @@ export function MeetingTranscriptionView(props: MeetingTranscriptionViewProps) {
         models={props.models}
         initialModelId={resolvedMeetingModelId}
         initialLanguage="auto"
+        initialLanguageHints={props.transcriptionLanguageHints}
         targetCount={eligibleSelectedMeetings.length}
         busy={props.transcriptionBusy}
         error={props.error}
@@ -523,6 +525,7 @@ function MeetingDetailView({
   models,
   meetingModelId,
   selectedModelId,
+  transcriptionLanguageHints,
   configurationInitiallyOpen,
   transcriptionBusy,
   progressById,
@@ -636,10 +639,7 @@ function MeetingDetailView({
                 <strong className="meeting-detail__percent">
                   {percent}% complete
                 </strong>
-                <Progress
-                  value={percent}
-                  aria-label={`${percent}% complete`}
-                />
+                <Progress value={percent} aria-label={`${percent}% complete`} />
                 <div className="meeting-detail__progress-meta">
                   <span>
                     Segment {segmentsDone}/{segmentsTotal || "?"}
@@ -769,9 +769,7 @@ function MeetingDetailView({
                   <RadioIcon aria-hidden="true" />
                   Live edge
                 </span>
-                <p>
-                  {liveText || "Waiting for the first processed segment."}
-                </p>
+                <p>{liveText || "Waiting for the first processed segment."}</p>
               </section>
             ) : null}
           </div>
@@ -784,6 +782,10 @@ function MeetingDetailView({
         models={models}
         initialModelId={initialModelId}
         initialLanguage={record.language}
+        initialLanguageHints={
+          record.transcription_request?.language_hints ??
+          transcriptionLanguageHints
+        }
         targetCount={1}
         busy={transcriptionBusy}
         error={error}

@@ -846,6 +846,7 @@ mod tests {
             .expect("close command");
 
         let request = RealtimeSamplesRequest {
+            language_hints: vec![crate::settings::TranscriptionLanguage::Ko],
             source_key: "microphone:test".into(),
             source_label: "Test microphone".into(),
             microphone_slot: None,

@@ -168,6 +168,7 @@ export interface AppSettings {
   recording_enabled: boolean;
   transcription_enabled: boolean;
   transcription_language: TranscriptionLanguage;
+  transcription_language_hints: TranscriptionLanguage[];
   suppress_low_confidence_transcripts: boolean;
   pause_all: boolean;
   selected_microphone: string;
@@ -644,6 +645,7 @@ export interface SpeakerTurn {
 export interface MeetingTranscriptionRequest {
   model_id: string;
   language: TranscriptionLanguage;
+  language_hints?: TranscriptionLanguage[];
   streaming_enabled: boolean;
   speaker_separation_enabled: boolean;
 }

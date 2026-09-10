@@ -6,6 +6,10 @@ import type {
 
 type ModelLabelSource = Pick<ModelDescriptor, "id" | "display_name">;
 
+export function modelSupportsMultipleLanguageHints(modelId: string) {
+  return ["soniox-async-v5", "soniox-realtime-v5"].includes(modelId);
+}
+
 export interface ModelLocationGroup<T> {
   kind: "local" | "api";
   label: "Local models" | "API models";

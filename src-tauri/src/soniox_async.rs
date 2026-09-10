@@ -174,7 +174,7 @@ impl SonioxAsyncClient {
     pub fn transcribe(
         &self,
         audio_path: &Path,
-        language: TranscriptionLanguage,
+        language_hints: &[TranscriptionLanguage],
         dictionary: &DictionaryContext,
     ) -> Result<String, CloudTranscriptionError> {
         let api_key = self
@@ -196,7 +196,7 @@ impl SonioxAsyncClient {
                 method: SonioxRestMethod::Post,
                 url: format!("{SONIOX_API_BASE_URL}/transcriptions"),
                 api_key: api_key.clone(),
-                body: Some(create_body(&file_id, language, dictionary)),
+                body: Some(create_body(&file_id, language_hints, dictionary)),
             })?;
             let id = response_id(&create.body)?;
             transcription_id = Some(id.clone());
@@ -289,7 +289,7 @@ impl SonioxAsyncClient {
 
 fn create_body(
     file_id: &str,
-    language: TranscriptionLanguage,
+    language_hints: &[TranscriptionLanguage],
     dictionary: &DictionaryContext,
 ) -> Value {
     let mut body = json!({
@@ -297,8 +297,12 @@ fn create_body(
         "file_id": file_id,
         "client_reference_id": format!("WakeNote/{}", env!("CARGO_PKG_VERSION")),
     });
-    if let Some(language) = language.whisper_code() {
-        body["language_hints"] = json!([language]);
+    let hints: Vec<_> = crate::settings::normalize_language_hints(language_hints)
+        .into_iter()
+        .filter_map(TranscriptionLanguage::whisper_code)
+        .collect();
+    if !hints.is_empty() {
+        body["language_hints"] = json!(hints);
     }
     let terms = dictionary.canonical_terms();
     if !terms.is_empty() {
@@ -506,7 +510,11 @@ mod tests {
         );
 
         let text = client(transport.clone(), Some("soniox-secret"))
-            .transcribe(&audio_path, TranscriptionLanguage::Ko, &dictionary)
+            .transcribe(
+                &audio_path,
+                &[TranscriptionLanguage::En, TranscriptionLanguage::Ko],
+                &dictionary,
+            )
             .expect("transcript");
 
         assert_eq!(text, "WakeNote works");
@@ -520,7 +528,7 @@ mod tests {
         };
         assert_eq!(body["model"], "stt-async-v5");
         assert_eq!(body["file_id"], "file-1");
-        assert_eq!(body["language_hints"], json!(["ko"]));
+        assert_eq!(body["language_hints"], json!(["en", "ko"]));
         assert_eq!(body["context"]["terms"], json!(["WakeNote"]));
         assert!(matches!(
             &requests[6],
@@ -546,11 +554,7 @@ mod tests {
             Ok(empty_response(204)),
         ]);
         client(transport.clone(), Some("key"))
-            .transcribe(
-                &audio_path,
-                TranscriptionLanguage::Auto,
-                &DictionaryContext::default(),
-            )
+            .transcribe(&audio_path, &[], &DictionaryContext::default())
             .expect("transcript");
         let requests = transport.requests.lock().expect("requests");
         let SonioxRestRequest::Json {
@@ -567,7 +571,7 @@ mod tests {
         assert_eq!(
             client(missing_transport.clone(), None).transcribe(
                 Path::new("/definitely/missing.wav"),
-                TranscriptionLanguage::Auto,
+                &[],
                 &DictionaryContext::default(),
             ),
             Err(CloudTranscriptionError::MissingKey("Soniox"))
@@ -599,7 +603,7 @@ mod tests {
             assert_eq!(
                 client(transport, Some("key")).transcribe(
                     &audio_path,
-                    TranscriptionLanguage::Auto,
+                    &[],
                     &DictionaryContext::default(),
                 ),
                 Err(expected)
@@ -623,11 +627,7 @@ mod tests {
             Ok(empty_response(204)),
         ]);
         let error = client(transport, Some("key"))
-            .transcribe(
-                &audio_path,
-                TranscriptionLanguage::Auto,
-                &DictionaryContext::default(),
-            )
+            .transcribe(&audio_path, &[], &DictionaryContext::default())
             .expect_err("provider error");
         let CloudTranscriptionError::Failure(failure) = error else {
             panic!("typed failure")
@@ -655,11 +655,7 @@ mod tests {
 
         assert_eq!(
             client(transport.clone(), Some("key"))
-                .transcribe(
-                    &audio_path,
-                    TranscriptionLanguage::Auto,
-                    &DictionaryContext::default(),
-                )
+                .transcribe(&audio_path, &[], &DictionaryContext::default(),)
                 .expect("successful transcript"),
             "kept"
         );
@@ -688,11 +684,7 @@ mod tests {
             ))]);
 
             let error = client(transport, Some("key"))
-                .transcribe(
-                    &audio_path,
-                    TranscriptionLanguage::Auto,
-                    &DictionaryContext::default(),
-                )
+                .transcribe(&audio_path, &[], &DictionaryContext::default())
                 .expect_err("provider error");
             let CloudTranscriptionError::Failure(failure) = error else {
                 panic!("typed failure")
@@ -715,11 +707,7 @@ mod tests {
             Ok(empty_response(204)),
         ]);
         let timeout = client_with_max_polls(timeout_transport.clone(), Some("key"), 1)
-            .transcribe(
-                &audio_path,
-                TranscriptionLanguage::Auto,
-                &DictionaryContext::default(),
-            )
+            .transcribe(&audio_path, &[], &DictionaryContext::default())
             .expect_err("poll timeout");
         let CloudTranscriptionError::Failure(failure) = timeout else {
             panic!("typed failure")
@@ -738,7 +726,7 @@ mod tests {
         assert_eq!(
             client(unknown_transport.clone(), Some("key")).transcribe(
                 &audio_path,
-                TranscriptionLanguage::Auto,
+                &[],
                 &DictionaryContext::default(),
             ),
             Err(CloudTranscriptionError::InvalidResponse("Soniox"))
@@ -756,11 +744,7 @@ mod tests {
         ]);
 
         client(transport.clone(), Some("key"))
-            .transcribe(
-                &audio_path,
-                TranscriptionLanguage::Auto,
-                &DictionaryContext::default(),
-            )
+            .transcribe(&audio_path, &[], &DictionaryContext::default())
             .expect_err("creation failure");
 
         let requests = transport.requests.lock().unwrap();

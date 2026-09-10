@@ -483,7 +483,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
+    const shortcut = screen.getByRole("button", {
+      name: "Hold-to-dictate hotkey",
+    });
     await user.click(shortcut);
     expect(actions.onSuspendDictationShortcut).toHaveBeenCalledOnce();
 
@@ -507,7 +509,11 @@ describe("SettingsPage interactions", () => {
     });
 
     expect(actions.onPatch).not.toHaveBeenCalled();
-    fireEvent.keyUp(shortcut, { code: "ShiftLeft", key: "Shift", ctrlKey: true });
+    fireEvent.keyUp(shortcut, {
+      code: "ShiftLeft",
+      key: "Shift",
+      ctrlKey: true,
+    });
 
     expect(actions.onPatch).toHaveBeenCalledOnce();
     expect(actions.onPatch).toHaveBeenCalledWith({
@@ -563,7 +569,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
+    const shortcut = screen.getByRole("button", {
+      name: "Hold-to-dictate hotkey",
+    });
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, {
       code: "ControlLeft",
@@ -600,7 +608,9 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    const shortcut = screen.getByRole("button", { name: "Hold-to-dictate hotkey" });
+    const shortcut = screen.getByRole("button", {
+      name: "Hold-to-dictate hotkey",
+    });
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, { code: "Escape", key: "Escape" });
 
@@ -1015,6 +1025,51 @@ describe("SettingsPage interactions", () => {
     expect(actions.onPatch).toHaveBeenCalledWith({
       dictation_translation_language: "en",
     });
+  });
+
+  it("uses shared multiple language hints for Soniox transcription and dictation", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.selected_model = "soniox-async-v5";
+    snapshot.settings.dictation_model = "soniox-realtime-v5";
+    snapshot.settings.dictation_enabled = true;
+    const { rerender } = render(
+      <SettingsPage
+        section="audio"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Transcription Language" }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Transcription language hints" }),
+    );
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "Japanese" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      transcription_language_hints: ["en", "ko", "ja"],
+    });
+    await user.keyboard("{Escape}");
+    rerender(
+      <SettingsPage
+        section="dictation"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Dictation language" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Dictation language hints" })
+        .textContent,
+    ).toBe("English, Korean");
   });
 
   it.each([

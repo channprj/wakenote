@@ -11,6 +11,8 @@ import {
   formatDictationShortcut,
 } from "@/lib/dictation-shortcut";
 import { groupModelsByLocation, modelSupportsContext } from "@/lib/models";
+import { LanguageHintsControl } from "@/components/LanguageHintsControl";
+import { modelSupportsMultipleLanguageHints } from "@/lib/models";
 import type {
   AppSettings,
   AppSnapshot,
@@ -455,16 +457,30 @@ export function DictationSettings({
           Click a hotkey and press your keys. For a modifier chord or one
           physical modifier, release the keys to save.
         </p>
-        <SettingSelect
-          label="Dictation language"
-          description="Auto-detect is independent of the archival transcription language."
-          value={settings.dictation_language}
-          options={DICTATION_LANGUAGES}
-          disabled={!settings.dictation_enabled}
-          onValueChange={(dictation_language) =>
-            void actions.onPatch({ dictation_language })
-          }
-        />
+        {modelSupportsMultipleLanguageHints(
+          settings.dictation_model || settings.selected_model,
+        ) ? (
+          <LanguageHintsControl
+            label="Dictation language hints"
+            description="Soniox uses the same language hints as Transcription and Meetings. Clear all hints for automatic detection."
+            value={settings.transcription_language_hints}
+            disabled={!settings.dictation_enabled}
+            onChange={(transcription_language_hints) =>
+              actions.onPatch({ transcription_language_hints })
+            }
+          />
+        ) : (
+          <SettingSelect
+            label="Dictation language"
+            description="Auto-detect is independent of the archival transcription language."
+            value={settings.dictation_language}
+            options={DICTATION_LANGUAGES}
+            disabled={!settings.dictation_enabled}
+            onValueChange={(dictation_language) =>
+              void actions.onPatch({ dictation_language })
+            }
+          />
+        )}
         <SettingSelect
           label="Dictation model"
           description="Use the default transcription model or choose another compatible model only for Dictation."

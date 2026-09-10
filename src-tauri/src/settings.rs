@@ -146,6 +146,30 @@ pub fn default_openrouter_model() -> String {
 pub fn default_translation_language() -> TranscriptionLanguage {
     TranscriptionLanguage::Ko
 }
+
+pub fn default_transcription_language_hints() -> Vec<TranscriptionLanguage> {
+    vec![TranscriptionLanguage::En, TranscriptionLanguage::Ko]
+}
+
+pub fn normalize_language_hints(hints: &[TranscriptionLanguage]) -> Vec<TranscriptionLanguage> {
+    let mut normalized = Vec::new();
+    for &language in hints {
+        if language != TranscriptionLanguage::Auto && !normalized.contains(&language) {
+            normalized.push(language);
+        }
+    }
+    normalized
+}
+
+fn deserialize_language_hints<'de, D>(
+    deserializer: D,
+) -> Result<Vec<TranscriptionLanguage>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<TranscriptionLanguage>::deserialize(deserializer)
+        .map(|hints| normalize_language_hints(&hints))
+}
 pub fn default_enhance_prompt_shortcut() -> String {
     "ctrl+alt+space".into()
 }
@@ -468,6 +492,11 @@ pub struct AppSettings {
     pub recording_enabled: bool,
     pub transcription_enabled: bool,
     pub transcription_language: TranscriptionLanguage,
+    #[serde(
+        default = "default_transcription_language_hints",
+        deserialize_with = "deserialize_language_hints"
+    )]
+    pub transcription_language_hints: Vec<TranscriptionLanguage>,
     pub suppress_low_confidence_transcripts: bool,
     pub pause_all: bool,
     pub selected_microphone: String,
@@ -650,6 +679,7 @@ pub struct SettingsPatch {
     pub recording_enabled: Option<bool>,
     pub transcription_enabled: Option<bool>,
     pub transcription_language: Option<TranscriptionLanguage>,
+    pub transcription_language_hints: Option<Vec<TranscriptionLanguage>>,
     pub suppress_low_confidence_transcripts: Option<bool>,
     pub pause_all: Option<bool>,
     pub selected_microphone: Option<String>,
@@ -1278,6 +1308,9 @@ impl AppSettings {
         if let Some(value) = patch.transcription_language {
             self.transcription_language = value;
         }
+        if let Some(value) = patch.transcription_language_hints {
+            self.transcription_language_hints = normalize_language_hints(&value);
+        }
         if let Some(value) = patch.suppress_low_confidence_transcripts {
             self.suppress_low_confidence_transcripts = value;
         }
@@ -1615,6 +1648,7 @@ impl Default for AppSettings {
             recording_enabled: true,
             transcription_enabled: true,
             transcription_language: TranscriptionLanguage::Ko,
+            transcription_language_hints: default_transcription_language_hints(),
             suppress_low_confidence_transcripts: true,
             pause_all: false,
             selected_microphone: "default".to_string(),
@@ -1829,6 +1863,52 @@ impl AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_hints_default_for_new_and_legacy_settings() {
+        let settings = AppSettings::default();
+        let expected = vec![TranscriptionLanguage::En, TranscriptionLanguage::Ko];
+        assert_eq!(settings.transcription_language_hints, expected);
+        let mut legacy = serde_json::to_value(settings).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("transcription_language_hints");
+        let restored: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.transcription_language_hints, expected);
+    }
+
+    #[test]
+    fn language_hints_preserve_explicit_auto_detection_and_normalize_patches() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            transcription_language_hints: Some(vec![
+                TranscriptionLanguage::Ja,
+                TranscriptionLanguage::Auto,
+                TranscriptionLanguage::En,
+                TranscriptionLanguage::Ja,
+            ]),
+            ..SettingsPatch::default()
+        });
+        assert_eq!(
+            settings.transcription_language_hints,
+            vec![TranscriptionLanguage::Ja, TranscriptionLanguage::En]
+        );
+        settings.apply_patch(SettingsPatch {
+            transcription_language_hints: Some(Vec::new()),
+            ..SettingsPatch::default()
+        });
+        let restored: AppSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(restored.transcription_language_hints.is_empty());
+        let mut stored = serde_json::to_value(settings).unwrap();
+        stored["transcription_language_hints"] = serde_json::json!(["en", "auto", "ko", "en"]);
+        let restored: AppSettings = serde_json::from_value(stored).unwrap();
+        assert_eq!(
+            restored.transcription_language_hints,
+            default_transcription_language_hints()
+        );
+    }
 
     #[test]
     fn patch_sets_system_audio_enabled() {

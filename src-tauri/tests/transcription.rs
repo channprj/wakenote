@@ -104,7 +104,8 @@ fn finalized_live_text_is_available_before_saving_and_survives_sidecar_failure()
 }
 
 #[test]
-fn finalized_callback_runs_once_with_dictionary_corrections_and_never_for_empty_or_failed_results() {
+fn finalized_callback_runs_once_with_dictionary_corrections_and_never_for_empty_or_failed_results()
+{
     use std::cell::Cell;
     let tmp = tempfile::tempdir().unwrap();
     let audio_path = tmp.path().join("live.wav");
@@ -127,12 +128,15 @@ fn finalized_callback_runs_once_with_dictionary_corrections_and_never_for_empty_
             language: TranscriptionLanguage::Auto,
             suppress_low_confidence_transcripts: false,
         },
-        DictionaryContext::compile(true, &[DictionaryEntry {
-            id: "wake".into(),
-            term: "WakeNote".into(),
-            aliases: vec!["wake note".into()],
-            enabled: true,
-        }]),
+        DictionaryContext::compile(
+            true,
+            &[DictionaryEntry {
+                id: "wake".into(),
+                term: "WakeNote".into(),
+                aliases: vec!["wake note".into()],
+                enabled: true,
+            }],
+        ),
     );
     let count = Cell::new(0);
     worker
@@ -785,6 +789,7 @@ fn whisper_transcriber_reports_missing_model_before_running_inference() {
 
     let error = transcriber
         .transcribe(TranscriptionRequest {
+            language_hints: &[],
             audio_path: &audio_path,
             model_id: "whisper-medium",
             language: TranscriptionLanguage::Auto,
@@ -806,6 +811,7 @@ fn whisper_transcriber_expands_tilde_model_directory() {
 
     let error = transcriber
         .transcribe(TranscriptionRequest {
+            language_hints: &[],
             audio_path: &audio_path,
             model_id: "missing-model-for-tilde-expansion",
             language: TranscriptionLanguage::Auto,
@@ -867,6 +873,7 @@ fn runtime_transcriber_runs_external_command_models_with_audio_environment() {
     let transcriber = RuntimeTranscriber::new(&model_directory);
     let transcript = transcriber
         .transcribe(TranscriptionRequest {
+            language_hints: &[],
             audio_path: &audio_path,
             model_id: "parakeet-tdt-0.6b-v3",
             language: TranscriptionLanguage::Auto,
@@ -894,6 +901,7 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
     ] {
         let error = transcriber
             .transcribe(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &missing_audio,
                 model_id,
                 language: TranscriptionLanguage::Auto,
@@ -935,6 +943,7 @@ fn runtime_transcriber_consumes_the_realtime_result_without_reuploading_audio() 
 
         let result = transcriber
             .transcribe_execution(TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio_path,
                 model_id,
                 language: TranscriptionLanguage::Auto,

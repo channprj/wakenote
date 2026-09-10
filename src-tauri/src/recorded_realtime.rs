@@ -74,6 +74,7 @@ fn samples_request(request: MeetingRealtimeReplayRequest) -> RealtimeSamplesRequ
         chunk_id: request.chunk_id,
         model_id: request.model_id,
         language: request.language,
+        language_hints: request.language_hints,
         dictionary: request.dictionary,
         sample_rate: request.sample_rate,
         samples: request.samples,
@@ -113,6 +114,7 @@ fn replay_recorded_audio(
             chunk_id: 1,
             model_id: request.model_id.into(),
             language: request.language,
+            language_hints: request.language_hints.to_vec(),
             dictionary: request.dictionary.clone(),
             sample_rate: 16_000,
             samples: Arc::new(samples),
@@ -191,6 +193,10 @@ mod tests {
                 assert_eq!(request.samples.len(), 16_000);
                 assert!(request.samples[0] > 0.2);
                 assert_eq!(request.language, TranscriptionLanguage::Ko);
+                assert_eq!(
+                    request.language_hints,
+                    vec![TranscriptionLanguage::Ja, TranscriptionLanguage::En]
+                );
                 submitted_paths
                     .lock()
                     .unwrap()
@@ -219,6 +225,7 @@ mod tests {
             );
             let result = replay_recorded_audio(
                 TranscriptionRequest {
+                    language_hints: &[TranscriptionLanguage::Ja, TranscriptionLanguage::En],
                     audio_path: &audio_path,
                     model_id,
                     language: TranscriptionLanguage::Ko,
@@ -258,6 +265,7 @@ mod tests {
         );
         let result = replay_recorded_audio(
             TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio_path,
                 model_id: "soniox-realtime-v5",
                 language: TranscriptionLanguage::Auto,
@@ -288,6 +296,7 @@ mod tests {
         );
         let result = replay_recorded_audio(
             TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio_path,
                 model_id: "openai-gpt-live-transcribe",
                 language: TranscriptionLanguage::Auto,
@@ -321,6 +330,7 @@ mod tests {
             );
             let dictionary = DictionaryContext::default();
             let request = TranscriptionRequest {
+                language_hints: &[],
                 audio_path: &audio_path,
                 model_id,
                 language: TranscriptionLanguage::Auto,
