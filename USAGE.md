@@ -422,7 +422,9 @@ recording metadata format; neither mode uploads audio. The feature starts off,
 does not send test requests on save, and never automatically replays past transcripts.
 
 Delivery runs in the background with a 15-second timeout per attempt and up to
-three retries after 1, 2, and 4 seconds. HTTPS is recommended. Delivery may fail,
+three retries after 1, 2, and 4 seconds. Up to four requests can be sent at once
+across new deliveries and all retries; additional requests wait in the queue.
+HTTPS is recommended. Delivery may fail,
 arrive out of order, or be duplicated; receivers can deduplicate using
 `X-Transcription-Event-Id`. Disabling or changing the endpoint/format cancels
 unfinished deliveries. See [the payload contract and verification guide](docs/live-transcription-webhook.md).
