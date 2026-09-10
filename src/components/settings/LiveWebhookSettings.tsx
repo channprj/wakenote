@@ -13,6 +13,25 @@ import {
   SettingsCard,
 } from "./settings-controls";
 
+const URL_DEBOUNCE_MS = 700;
+const SAVE_INTERVAL_MS = 1_000;
+
+function normalized(settings: LiveTranscriptionWebhookSettings) {
+  return { ...settings, endpoint_url: settings.endpoint_url.trim() };
+}
+
+function sameSettings(
+  a: LiveTranscriptionWebhookSettings,
+  b: LiveTranscriptionWebhookSettings,
+) {
+  return (
+    a.enabled === b.enabled &&
+    a.endpoint_url === b.endpoint_url &&
+    a.payload_format === b.payload_format &&
+    a.auto_delete_history === b.auto_delete_history
+  );
+}
+
 export function LiveWebhookSettings({
   settings,
   onSave,
@@ -25,45 +44,120 @@ export function LiveWebhookSettings({
   const [baseline, setBaseline] = useState(settings);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [composing, setComposing] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [saveError, setSaveError] = useState(false);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+  const mounted = useRef(false);
+  const draftRef = useRef(draft);
+  const baselineRef = useRef(baseline);
+  const inFlight = useRef<LiveTranscriptionWebhookSettings | null>(null);
+  const onSaveRef = useRef(onSave);
+  const errorRef = useRef(false);
+  const composingRef = useRef(false);
+  const urlEditedAt = useRef(-Infinity);
+  const lastSaveAt = useRef(-Infinity);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  onSaveRef.current = onSave;
+  const dirty = !sameSettings(draft, baseline);
   const urlError = attempted ? webhookUrlError(draft) : null;
 
   useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+      const next = normalized(draftRef.current);
+      // App's settings writer serializes these patches, including across page
+      // changes. Enqueue the latest valid edit before a new editor can mount.
+      // Never re-enqueue the same in-flight value or retry a known failed edit.
+      if (
+        !composingRef.current &&
+        !errorRef.current &&
+        !webhookUrlError(next) &&
+        !sameSettings(next, inFlight.current ?? baselineRef.current)
+      ) {
+        void (async () => {
+          await onSaveRef.current({ live_transcription_webhook: next });
+        })().catch(() => {});
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!dirty && !savingRef.current) {
+      draftRef.current = settings;
+      baselineRef.current = settings;
       setDraft(settings);
       setBaseline(settings);
     }
   }, [settings]);
 
   function patch(change: Partial<LiveTranscriptionWebhookSettings>) {
-    setDraft((current) => ({ ...current, ...change }));
+    draftRef.current = { ...draftRef.current, ...change };
+    if (change.endpoint_url !== undefined) {
+      urlEditedAt.current = Date.now();
+      setAttempted(false);
+    }
+    setDraft(draftRef.current);
+    errorRef.current = false;
     setSaveError(false);
   }
 
   async function save() {
     if (savingRef.current) return;
+    const submitted = draftRef.current;
     setAttempted(true);
-    if (webhookUrlError(draft)) return;
-    const next = { ...draft, endpoint_url: draft.endpoint_url.trim() };
+    if (webhookUrlError(submitted)) return;
+    const next = normalized(submitted);
+    if (sameSettings(next, baselineRef.current)) {
+      draftRef.current = next;
+      setDraft(next);
+      return;
+    }
     savingRef.current = true;
+    inFlight.current = next;
+    lastSaveAt.current = Date.now();
     setSaving(true);
+    errorRef.current = false;
     setSaveError(false);
     try {
-      await onSave({ live_transcription_webhook: next });
-      setDraft(next);
+      await onSaveRef.current({ live_transcription_webhook: next });
+      if (!mounted.current) return;
+      baselineRef.current = next;
       setBaseline(next);
-      setAttempted(false);
+      // Keep text entered while persistence was in progress. Its own debounce
+      // and the save interval determine when the newest draft is sent next.
+      if (sameSettings(draftRef.current, submitted)) {
+        draftRef.current = next;
+        setDraft(next);
+        setAttempted(false);
+      }
     } catch {
-      // Persistence errors may contain paths or endpoint secrets. Keep them
-      // out of this UI and preserve the draft for another save attempt.
-      setSaveError(true);
+      if (mounted.current) {
+        // Don't expose paths or endpoint secrets, and don't endlessly retry an
+        // unchanged failed edit. A newer draft still gets its scheduled save.
+        errorRef.current = sameSettings(draftRef.current, submitted);
+        setSaveError(errorRef.current);
+      }
     } finally {
       savingRef.current = false;
-      setSaving(false);
+      inFlight.current = null;
+      if (mounted.current) setSaving(false);
     }
   }
+
+  useEffect(() => {
+    if (!dirty || saving || saveError || composing) return;
+    const due = Math.max(
+      urlEditedAt.current + URL_DEBOUNCE_MS,
+      lastSaveAt.current + SAVE_INTERVAL_MS,
+    );
+    timer.current = setTimeout(
+      () => void save(),
+      Math.max(0, due - Date.now()),
+    );
+    return () => clearTimeout(timer.current);
+  }, [draft, baseline, saving, saveError, composing]);
 
   return (
     <SettingsCard
@@ -72,9 +166,8 @@ export function LiveWebhookSettings({
     >
       <SettingSwitch
         label="Enable Webhook"
-        description="Save to apply. Only transcripts finalized after enabling are sent; saving does not send a test request."
+        description="Changes save automatically. Only transcripts finalized after enabling are sent; changing settings does not send a test request."
         checked={draft.enabled}
-        disabled={saving}
         onCheckedChange={(enabled) => patch({ enabled })}
       />
       <Field className="settings-row" data-invalid={Boolean(urlError)}>
@@ -86,24 +179,27 @@ export function LiveWebhookSettings({
           autoComplete="off"
           spellCheck={false}
           value={draft.endpoint_url}
-          disabled={saving}
           aria-invalid={Boolean(urlError)}
           aria-describedby={`${id}-help${urlError ? ` ${id}-error` : ""}`}
           onChange={(event) =>
             patch({ endpoint_url: event.currentTarget.value })
           }
           onBlur={() => setAttempted(true)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && dirty) {
-              event.preventDefault();
-              void save();
-            }
+          onCompositionStart={() => {
+            composingRef.current = true;
+            setComposing(true);
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+            urlEditedAt.current = Date.now();
+            setComposing(false);
           }}
         />
         <FieldDescription id={`${id}-help`}>
           {draft.endpoint_url.trim().toLowerCase().startsWith("http://")
             ? "HTTP sends transcripts without encryption. Use HTTPS for external services."
-            : "HTTPS is recommended. HTTP is also supported for local and internal services."}
+            : "HTTPS is recommended. HTTP is also supported for local and internal services."}{" "}
+          The URL saves automatically after you pause typing.
         </FieldDescription>
         {urlError ? (
           <p
@@ -118,7 +214,6 @@ export function LiveWebhookSettings({
       <SettingSelect
         label="Payload Format"
         value={draft.payload_format}
-        disabled={saving}
         options={[
           { value: "text_only", label: "Text Only" },
           { value: "json", label: "JSON" },
@@ -134,7 +229,6 @@ export function LiveWebhookSettings({
         label="Automatically delete old webhook history"
         description="Delete history and saved request content after 24 hours. When off, older history stays on this Mac but remains hidden in Webhooks."
         checked={draft.auto_delete_history}
-        disabled={saving}
         onCheckedChange={(auto_delete_history) =>
           patch({ auto_delete_history })
         }
@@ -155,33 +249,34 @@ export function LiveWebhookSettings({
             again.
           </p>
         ) : null}
-        {dirty && JSON.stringify(settings) !== JSON.stringify(baseline) ? (
+        {dirty && !sameSettings(settings, baseline) ? (
           <p className="text-xs text-muted-foreground">
             The saved settings changed elsewhere. Your draft is preserved.
           </p>
         ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            disabled={!dirty || saving}
-            onClick={() => void save()}
-          >
-            {saving ? "Saving…" : "Save webhook settings"}
-          </Button>
+        <p role="status" className="text-xs text-muted-foreground">
+          {saving
+            ? "Saving…"
+            : saveError
+              ? "Changes not saved."
+              : dirty
+                ? urlError
+                  ? "Enter a valid endpoint to save your changes."
+                  : "Waiting to save…"
+                : "Settings saved automatically."}
+        </p>
+        {saveError ? (
           <Button
             size="sm"
             variant="outline"
-            disabled={!dirty || saving}
             onClick={() => {
-              setDraft(settings);
-              setBaseline(settings);
-              setAttempted(false);
+              errorRef.current = false;
               setSaveError(false);
             }}
           >
-            Cancel changes
+            Retry saving
           </Button>
-        </div>
+        ) : null}
       </div>
     </SettingsCard>
   );
