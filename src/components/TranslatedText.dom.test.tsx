@@ -118,3 +118,88 @@ describe("transcript translation", () => {
     expect(await screen.findByText("재시도 성공")).toBeTruthy();
   });
 });
+
+describe("unset transcript translation language", () => {
+  const preferences = {
+    enabled: true,
+    language: "ko" as const,
+    configured: true,
+    model: "model",
+  };
+
+  it.each([null, "auto"] as const)(
+    "preserves source text without requesting translation for %s",
+    (language) => {
+      render(
+        <TranslatedText
+          text="Unset target source"
+          preferences={{ ...preferences, language }}
+        />,
+      );
+      expect(screen.getByText("Unset target source")).toBeTruthy();
+      expect(transformText).not.toHaveBeenCalled();
+      expect(screen.queryByRole("status")).toBeNull();
+    },
+  );
+
+  it("cancels pending work and ignores its result when the target is cleared", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof transformText>>) => void;
+    vi.mocked(transformText).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { rerender } = render(
+      <TranslatedText text="Pending target source" preferences={preferences} />,
+    );
+    await waitFor(() => expect(transformText).toHaveBeenCalledOnce());
+    expect(screen.getByText("Translating…")).toBeTruthy();
+    rerender(
+      <TranslatedText
+        text="Pending target source"
+        preferences={{ ...preferences, language: null }}
+      />,
+    );
+    expect(cancelTextTransform).toHaveBeenCalledOnce();
+    await act(async () =>
+      finish({
+        kind: "translate",
+        text: "Late translation",
+        target_language: "ko",
+        model: "model",
+      }),
+    );
+    expect(screen.queryByText("Late translation")).toBeNull();
+    expect(screen.getByText("Pending target source")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(transformText).toHaveBeenCalledOnce();
+  });
+
+  it("hides an existing translation when the target is cleared", async () => {
+    vi.mocked(transformText).mockResolvedValueOnce({
+      kind: "translate",
+      text: "Completed translation",
+      target_language: "ko",
+      model: "model",
+    });
+    const { rerender } = render(
+      <TranslatedText
+        text="Completed target source"
+        preferences={preferences}
+      />,
+    );
+    expect(await screen.findByText("Completed translation")).toBeTruthy();
+    rerender(
+      <TranslatedText
+        text="Completed target source"
+        preferences={{ ...preferences, language: null }}
+      />,
+    );
+    expect(screen.queryByText("Completed translation")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Copy translation" }),
+    ).toBeNull();
+    expect(screen.getByText("Completed target source")).toBeTruthy();
+  });
+});

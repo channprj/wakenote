@@ -31,19 +31,39 @@ export function TranslationControls({
   }[scope];
   const enabled = `${scope}_translation_enabled` as const;
   const language = `${scope}_translation_language` as const;
+  const target = settings[language];
+  const hasTarget = target !== null && target !== "auto";
   return (
     <>
       <SettingSwitch
         label={`Translate ${label}`}
-        checked={settings[enabled]}
-        description="Sends text to your OpenRouter model. Provider charges may apply. Original transcripts are preserved."
+        checked={settings[enabled] && hasTarget}
+        disabled={!hasTarget}
+        description={
+          hasTarget
+            ? "Sends text to your OpenRouter model. Provider charges may apply. Original transcripts are preserved."
+            : "Choose a translation language to enable translation. Original transcripts are preserved."
+        }
         onCheckedChange={(value) => onPatch({ [enabled]: value })}
       />
       <SettingSelect
         label={`${label[0].toUpperCase()}${label.slice(1)} translation language`}
-        value={settings[language]}
-        options={TRANSLATION_LANGUAGES}
-        onValueChange={(value) => onPatch({ [language]: value })}
+        value={hasTarget ? target : "none"}
+        options={
+          scope === "transcription"
+            ? [{ value: "none", label: "Not set" }, ...TRANSLATION_LANGUAGES]
+            : TRANSLATION_LANGUAGES
+        }
+        onValueChange={(value) => {
+          if (scope === "transcription" && value === "none") {
+            onPatch({
+              transcription_translation_language: null,
+              transcription_translation_enabled: false,
+            });
+          } else {
+            onPatch({ [language]: value });
+          }
+        }}
       />
     </>
   );

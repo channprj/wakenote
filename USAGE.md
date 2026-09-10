@@ -286,6 +286,8 @@ Settings patches are clamped or normalized by the Rust backend.
 | Recording | `on` | `on` / `off` |
 | Transcription | `on` | `on` / `off` |
 | Language | `ko` | `auto`, `ko`, `en`, `ja`, `zh`, `es`, `fr`, `de` |
+| Soniox language hints | English, Korean | Select several languages in Settings › Audio. Shared with Soniox Dictation; Meetings can override them per transcription. Clear all hints for automatic detection. |
+| Transcript translation language | Not set | Select a target language before enabling transcript translation. |
 | Primary microphone | `System Default` | one available input |
 | Secondary microphone | none | one distinct physical input |
 | Microphone processing | Merge Audio | Separate recordings / Merge Audio / Priority Audio |
@@ -489,7 +491,7 @@ WakeNote does not backspace over text already inserted. If a model revises that 
 Save an OpenRouter key under **Settings › Integrations**. **Translation & prompt model** accepts a separate compatible OpenRouter model ID; blank uses the report model. These features send text to OpenRouter, can incur provider charges, and are disabled by default. Local ASR does not make this optional text processing local.
 
 - **Subtitles:** enable **Translate subtitles** and choose the target language in Settings › Subtitles. Original captions appear while translation is pending or unavailable. Requests are coalesced and stale results discarded; a completed translated caption receives its normal reading time.
-- **Transcripts:** enable **Translate transcripts** in Settings › Audio for automatic translation of displayed rows. Translation is shown separately with its own copy/retry controls. Audio and original transcript files are never replaced; translations are cached only for the current app session.
+- **Transcripts:** choose a target language in Settings › Audio, then enable **Translate transcripts** for automatic translation of displayed rows. The target defaults to **Not set**; choosing **Not set** again turns translation off and cancels pending requests. Existing saved targets are preserved. Translation is shown separately with its own copy/retry controls. Audio and original transcript files are never replaced; translations are cached only for the current app session.
 - **Dictation:** enable **Translate dictation** in Settings › Dictation. When recording finishes, the translated text is inserted at the cursor. Failed processing does not paste an untranslated substitute; the original transcript remains saved.
 - **Enhanced Prompt:** enable the mode in Settings › Dictation and hold its separate shortcut (default **Control+Option+Space**) while speaking. Release to rewrite the draft as a usable prompt without executing it. Normal Dictation keeps its own shortcut and behavior. Overlapping shortcuts are rejected. If Dictation translation is enabled, the enhanced prompt uses that target language too.
 

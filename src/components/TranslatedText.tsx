@@ -24,16 +24,16 @@ export function TranslatedText({
     loading: boolean;
   }>({ key: "", loading: false });
   const key = JSON.stringify([text, language, model]);
+  const canTranslate = enabled && language !== null && language !== "auto";
   const current =
-    state.key === key && enabled
-      ? state
-      : { key, loading: false };
+    state.key === key && canTranslate ? state : { key, loading: false };
   const languageName =
     TRANSLATION_LANGUAGES.find((item) => item.value === language)?.label ??
     language;
 
   useEffect(() => {
-    if (!enabled || !configured || !text.trim()) return;
+    if (!canTranslate || language === null || !configured || !text.trim())
+      return;
     let disposed = false;
     setState({ key, loading: true });
     const request = requestTranslation(text, language, model);
@@ -54,7 +54,7 @@ export function TranslatedText({
       disposed = true;
       request.cancel();
     };
-  }, [key, text, enabled, language, model, configured, attempt]);
+  }, [key, text, canTranslate, language, model, configured, attempt]);
 
   return (
     <div className="grid min-w-0 gap-1">
@@ -105,13 +105,24 @@ export function TranslatedText({
                     throw new Error("Clipboard access is unavailable");
                   await navigator.clipboard.writeText(current.text!);
                   setCopiedKey(key);
-                  setState((latest) => latest.key === key ? { ...latest, error: undefined } : latest);
+                  setState((latest) =>
+                    latest.key === key
+                      ? { ...latest, error: undefined }
+                      : latest,
+                  );
                 } catch (error) {
-                  setState((latest) => latest.key === key ? {
-                    ...latest,
-                    error: error instanceof Error ? error.message : String(error),
-                    loading: false,
-                  } : latest);
+                  setState((latest) =>
+                    latest.key === key
+                      ? {
+                          ...latest,
+                          error:
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                          loading: false,
+                        }
+                      : latest,
+                  );
                 }
               }}
             >

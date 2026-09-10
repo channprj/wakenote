@@ -11,6 +11,15 @@ import {
 } from "./app-state";
 
 describe("app state derivation", () => {
+  it("leaves the transcript translation language unset by default", () => {
+    expect(defaultSettings()).toMatchObject({
+      transcription_translation_language: null,
+      transcription_translation_enabled: false,
+      subtitle_translation_language: "ko",
+      dictation_translation_language: "ko",
+    });
+  });
+
   it("merges two microphone inputs by default", () => {
     expect(defaultSettings().merge_microphone_inputs).toBe(true);
     expect(defaultSettings().priority_microphone_inputs).toBe(false);

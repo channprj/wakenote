@@ -193,7 +193,7 @@ export function defaultSettings(): AppSettings {
     subtitle_translation_enabled: false,
     subtitle_translation_language: "ko",
     transcription_translation_enabled: false,
-    transcription_translation_language: "ko",
+    transcription_translation_language: null,
     dictation_translation_enabled: false,
     dictation_translation_language: "ko",
     enhance_prompt_enabled: false,

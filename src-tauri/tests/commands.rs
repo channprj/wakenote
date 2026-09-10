@@ -160,15 +160,6 @@ impl Default for StaticTranscriber {
     }
 }
 
-impl StaticTranscriber {
-    fn expecting_language(expected_language: TranscriptionLanguage) -> Self {
-        Self {
-            expected_language,
-            ..Self::default()
-        }
-    }
-}
-
 impl Transcriber for StaticTranscriber {
     fn transcribe(&self, request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
         assert_eq!(request.model_id, "whisper-medium");

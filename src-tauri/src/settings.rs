@@ -147,6 +147,26 @@ pub fn default_translation_language() -> TranscriptionLanguage {
     TranscriptionLanguage::Ko
 }
 
+fn deserialize_translation_language<'de, D>(
+    deserializer: D,
+) -> Result<Option<TranscriptionLanguage>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<TranscriptionLanguage>::deserialize(deserializer)
+        .map(|language| language.filter(|value| *value != TranscriptionLanguage::Auto))
+}
+
+// An omitted patch preserves the preference; explicit null clears it.
+fn deserialize_translation_language_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<TranscriptionLanguage>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_translation_language(deserializer).map(Some)
+}
+
 pub fn default_transcription_language_hints() -> Vec<TranscriptionLanguage> {
     vec![TranscriptionLanguage::En, TranscriptionLanguage::Ko]
 }
@@ -564,8 +584,8 @@ pub struct AppSettings {
     pub subtitle_translation_language: TranscriptionLanguage,
     #[serde(default)]
     pub transcription_translation_enabled: bool,
-    #[serde(default = "default_translation_language")]
-    pub transcription_translation_language: TranscriptionLanguage,
+    #[serde(default, deserialize_with = "deserialize_translation_language")]
+    pub transcription_translation_language: Option<TranscriptionLanguage>,
     #[serde(default)]
     pub dictation_translation_enabled: bool,
     #[serde(default = "default_translation_language")]
@@ -719,7 +739,12 @@ pub struct SettingsPatch {
     pub subtitle_translation_enabled: Option<bool>,
     pub subtitle_translation_language: Option<TranscriptionLanguage>,
     pub transcription_translation_enabled: Option<bool>,
-    pub transcription_translation_language: Option<TranscriptionLanguage>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_translation_language_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub transcription_translation_language: Option<Option<TranscriptionLanguage>>,
     pub dictation_translation_enabled: Option<bool>,
     pub dictation_translation_language: Option<TranscriptionLanguage>,
     pub enhance_prompt_enabled: Option<bool>,
@@ -1266,11 +1291,11 @@ impl AppSettings {
             self.transcription_translation_enabled = *value;
         }
         if let Some(value) = patch.transcription_translation_language.as_ref() {
-            self.transcription_translation_language = if *value == TranscriptionLanguage::Auto {
-                default_translation_language()
-            } else {
-                *value
-            };
+            self.transcription_translation_language =
+                value.filter(|language| *language != TranscriptionLanguage::Auto);
+        }
+        if self.transcription_translation_language.is_none() {
+            self.transcription_translation_enabled = false;
         }
         if let Some(value) = patch.dictation_translation_enabled.as_ref() {
             self.dictation_translation_enabled = *value;
@@ -1689,7 +1714,7 @@ impl Default for AppSettings {
             subtitle_translation_enabled: false,
             subtitle_translation_language: default_translation_language(),
             transcription_translation_enabled: false,
-            transcription_translation_language: default_translation_language(),
+            transcription_translation_language: None,
             dictation_translation_enabled: false,
             dictation_translation_language: default_translation_language(),
             enhance_prompt_enabled: false,
@@ -1863,6 +1888,88 @@ impl AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_translation_defaults_to_not_set_and_preserves_saved_targets() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.transcription_translation_language, None);
+        assert!(!settings.transcription_translation_enabled);
+        let mut stored = serde_json::to_value(settings).unwrap();
+        stored
+            .as_object_mut()
+            .unwrap()
+            .remove("transcription_translation_language");
+        let restored: AppSettings = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(restored.transcription_translation_language, None);
+        stored["transcription_translation_language"] = serde_json::json!("ja");
+        stored["transcription_translation_enabled"] = serde_json::json!(true);
+        let restored: AppSettings = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(
+            restored.transcription_translation_language,
+            Some(TranscriptionLanguage::Ja)
+        );
+        assert!(restored.transcription_translation_enabled);
+        stored["transcription_translation_language"] = serde_json::json!("auto");
+        let restored: AppSettings = serde_json::from_value(stored).unwrap();
+        assert_eq!(restored.transcription_translation_language, None);
+    }
+
+    #[test]
+    fn transcript_translation_distinguishes_omitted_and_null_patches() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(
+            serde_json::from_value(serde_json::json!({
+                "transcription_translation_language": "en",
+                "transcription_translation_enabled": true,
+            }))
+            .unwrap(),
+        );
+        settings.apply_patch(
+            serde_json::from_value(serde_json::json!({
+                "launch_at_login": true,
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            settings.transcription_translation_language,
+            Some(TranscriptionLanguage::En)
+        );
+        assert!(settings.transcription_translation_enabled);
+        assert!(
+            serde_json::to_value(SettingsPatch::default())
+                .unwrap()
+                .get("transcription_translation_language")
+                .is_none()
+        );
+        let clear: SettingsPatch = serde_json::from_value(serde_json::json!({
+            "transcription_translation_language": null,
+        }))
+        .unwrap();
+        assert_eq!(clear.transcription_translation_language, Some(None));
+        assert_eq!(
+            serde_json::to_value(&clear).unwrap()["transcription_translation_language"],
+            serde_json::Value::Null
+        );
+        settings.apply_patch(clear);
+        assert_eq!(settings.transcription_translation_language, None);
+        assert!(!settings.transcription_translation_enabled);
+        let restored: AppSettings =
+            serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+        assert_eq!(restored.transcription_translation_language, None);
+        settings.apply_patch(SettingsPatch {
+            transcription_translation_enabled: Some(true),
+            ..SettingsPatch::default()
+        });
+        assert!(!settings.transcription_translation_enabled);
+        assert_eq!(
+            settings.subtitle_translation_language,
+            TranscriptionLanguage::Ko
+        );
+        assert_eq!(
+            settings.dictation_translation_language,
+            TranscriptionLanguage::Ko
+        );
+    }
 
     #[test]
     fn language_hints_default_for_new_and_legacy_settings() {

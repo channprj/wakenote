@@ -1079,10 +1079,12 @@ describe("SettingsPage interactions", () => {
     "configures translation for %s without changing source recognition",
     async (section, label, scope) => {
       const actions = makeActions();
+      const snapshot = mockSnapshot();
+      snapshot.settings.transcription_translation_language = "ko";
       render(
         <SettingsPage
           section={section}
-          snapshot={mockSnapshot()}
+          snapshot={snapshot}
           actions={actions}
           onSectionChange={() => {}}
         />,
@@ -1101,6 +1103,62 @@ describe("SettingsPage interactions", () => {
       });
     },
   );
+
+  it("defaults transcript translation to Not set and disables it when the target is cleared", async () => {
+    const user = userEvent.setup();
+    const snapshot = mockSnapshot();
+    const actions = makeActions();
+    const { rerender } = render(
+      <SettingsPage
+        section="audio"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    const target = () =>
+      screen.getByRole("combobox", {
+        name: "Transcripts translation language",
+      });
+    const toggle = () =>
+      screen.getByRole("switch", { name: "Translate transcripts" });
+    expect(target().textContent).toBe("Not set");
+    expect(toggle().hasAttribute("disabled")).toBe(true);
+    await user.click(target());
+    await user.click(screen.getByRole("option", { name: "Japanese" }));
+    expect(actions.onPatch).toHaveBeenLastCalledWith({
+      transcription_translation_language: "ja",
+    });
+    snapshot.settings.transcription_translation_language = "ja";
+    rerender(
+      <SettingsPage
+        section="audio"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    expect(toggle().hasAttribute("disabled")).toBe(false);
+    await user.click(toggle());
+    expect(actions.onPatch).toHaveBeenLastCalledWith({
+      transcription_translation_enabled: true,
+    });
+    snapshot.settings.transcription_translation_enabled = true;
+    rerender(
+      <SettingsPage
+        section="audio"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    await user.click(target());
+    await user.click(screen.getByRole("option", { name: "Not set" }));
+    expect(actions.onPatch).toHaveBeenLastCalledWith({
+      transcription_translation_language: null,
+      transcription_translation_enabled: false,
+    });
+  });
 
   it("keeps the compact Dictionary editor in Dictation instead of Models", async () => {
     const user = userEvent.setup();

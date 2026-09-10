@@ -209,7 +209,7 @@ export interface AppSettings {
   subtitle_translation_enabled: boolean;
   subtitle_translation_language: TranscriptionLanguage;
   transcription_translation_enabled: boolean;
-  transcription_translation_language: TranscriptionLanguage;
+  transcription_translation_language: TranscriptionLanguage | null;
   dictation_translation_enabled: boolean;
   dictation_translation_language: TranscriptionLanguage;
   enhance_prompt_enabled: boolean;

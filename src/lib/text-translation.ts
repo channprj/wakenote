@@ -7,7 +7,7 @@ import type { TranscriptionLanguage } from "./types";
 
 export interface TranslationPreferences {
   enabled: boolean;
-  language: TranscriptionLanguage;
+  language: TranscriptionLanguage | null;
   model: string;
   configured: boolean;
 }
