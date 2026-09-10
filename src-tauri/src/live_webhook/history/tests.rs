@@ -97,10 +97,14 @@ fn pages_are_bounded_stable_filtered_and_hide_the_exact_24_hour_boundary() {
     );
     assert_eq!((failed.counts.failed, failed.counts.succeeded), (62, 61));
     let public = serde_json::to_string(&failed).unwrap();
-    for secret in ["secret", "/private", "token=hidden", "exact body", "user:"] {
+    for secret in ["secret", "/private", "token=hidden", "user:"] {
         assert!(!public.contains(secret));
     }
     assert!(public.contains("https://example.com"));
+    assert_eq!(
+        failed.entries[0].transcript_preview.as_deref(),
+        Some("한글 🙂 exact body")
+    );
     assert!(
         failed
             .entries
@@ -339,6 +343,103 @@ async fn storage_failure_returns_a_safe_error_without_panicking_or_exposing_priv
     assert_eq!(error, UNAVAILABLE);
     assert!(!error.contains("private-endpoint-secret"));
     assert!(store.claim(vec!["failed".into()], config()).await.is_err());
+    assert_eq!(
+        store.detail("failed".into()).await.unwrap_err(),
+        UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn previews_are_bounded_and_details_preserve_text_and_json_without_endpoint_secrets() {
+    let root = tempfile::tempdir().unwrap();
+    let store = HistoryStore::open(root.path().join("history.sqlite3"), false);
+    let now = chrono::Utc::now().timestamp_millis();
+    let transcript = format!(
+        "한글 🙂\n{}\nEND OF FULL TRANSCRIPT",
+        "더 긴 전사 텍스트 ".repeat(1000)
+    );
+    for (id, format, payload) in [
+        ("plain", WebhookPayloadFormat::TextOnly, transcript.clone()),
+        (
+            "json",
+            WebhookPayloadFormat::Json,
+            serde_json::json!({ "transcript_text": transcript, "source": "microphone" })
+                .to_string(),
+        ),
+    ] {
+        let mut record = entry(id, now - 1, HistoryStatus::Succeeded);
+        record.payload_format = format;
+        record.body = Arc::new(payload.as_bytes().to_vec());
+        store.insert(record);
+        let detail = store.detail(id.into()).await.unwrap().unwrap();
+        assert_eq!(detail.transcript_text.as_deref(), Some(transcript.as_str()));
+        assert_eq!(detail.payload, payload);
+        assert_eq!(detail.event_id, id);
+        let serialized = serde_json::to_string(&detail).unwrap();
+        assert!(!serialized.contains("token=hidden"));
+        assert!(!serialized.contains("user:secret"));
+    }
+    let page = store.page(1, HistoryFilter::All, config()).await.unwrap();
+    assert_eq!(page.entries.len(), 2);
+    for item in &page.entries {
+        let preview = item.transcript_preview.as_deref().unwrap();
+        assert!(preview.starts_with("한글 🙂 "));
+        assert!(!preview.contains('\n'));
+        assert!(preview.chars().count() <= PREVIEW_CHARS);
+    }
+    let serialized = serde_json::to_string(&page).unwrap();
+    assert!(!serialized.contains("END OF FULL TRANSCRIPT"));
+    assert!(!serialized.contains("microphone"));
+}
+
+#[test]
+fn detail_uses_the_same_24_hour_window_and_handles_json_without_transcription() {
+    let root = tempfile::tempdir().unwrap();
+    let database = Database::open(&root.path().join("history.sqlite3")).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    for (id, created) in [
+        ("boundary", now - HISTORY_WINDOW_MS),
+        ("future", now + 1),
+        ("recent", now - 1),
+    ] {
+        database
+            .insert(entry(id, created, HistoryStatus::Failed))
+            .unwrap();
+    }
+    for id in ["boundary", "future", "missing", "' OR 1=1 --"] {
+        assert!(database.detail(id, now).unwrap().is_none());
+    }
+    assert!(database.detail("recent", now).unwrap().is_some());
+    assert!(
+        database
+            .detail("recent", now + HISTORY_WINDOW_MS)
+            .unwrap()
+            .is_none()
+    );
+    for (id, payload) in [
+        ("null", r#"{"transcript_text":null}"#),
+        ("missing-text", r#"{"source":"microphone"}"#),
+        ("bad-json", "invalid json"),
+        ("wrong-type", r#"{"transcript_text":42}"#),
+    ] {
+        let mut record = entry(id, now - 1, HistoryStatus::Succeeded);
+        record.payload_format = WebhookPayloadFormat::Json;
+        record.body = Arc::new(payload.as_bytes().to_vec());
+        database.insert(record).unwrap();
+        let detail = database.detail(id, now).unwrap().unwrap();
+        assert!(detail.transcript_text.is_none());
+        assert_eq!(detail.payload, payload);
+    }
+    let page = database
+        .page(1, HistoryFilter::All, &config(), now)
+        .unwrap();
+    assert_eq!(page.total, 5);
+    assert!(
+        page.entries
+            .iter()
+            .filter(|item| item.event_id != "recent")
+            .all(|item| item.transcript_preview.is_none())
+    );
 }
 
 #[test]

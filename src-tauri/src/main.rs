@@ -62,7 +62,7 @@ use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
 use wakenote::live_webhook::{LiveWebhookTranscript, WebhookService, WebhookStats};
-use wakenote::live_webhook::history::{HistoryFilter, HistoryPage, RetryResult};
+use wakenote::live_webhook::history::{HistoryDetail, HistoryFilter, HistoryPage, RetryResult};
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
@@ -1430,6 +1430,14 @@ async fn list_webhook_history(
     filter: HistoryFilter,
 ) -> Result<HistoryPage, String> {
     service.list_history(page, filter).await
+}
+
+#[tauri::command]
+async fn get_webhook_history_detail(
+    service: State<'_, Arc<WebhookService>>,
+    event_id: String,
+) -> Result<Option<HistoryDetail>, String> {
+    service.history_detail(event_id).await
 }
 
 #[tauri::command]
@@ -9081,6 +9089,7 @@ fn main() {
             get_settings,
             get_live_webhook_stats,
             list_webhook_history,
+            get_webhook_history_detail,
             retry_webhook_history,
             dictionary_file_status,
             open_dictionary_file,

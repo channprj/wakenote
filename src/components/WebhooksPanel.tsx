@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,17 +10,27 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { StatusTone } from "@/lib/status-summary";
 import type { LiveTranscriptionWebhookSettings } from "@/lib/types";
 import {
   isRecentWebhook,
+  getWebhookHistoryDetail,
   listWebhookHistory,
   retryWebhookHistory,
   webhookReason,
   WEBHOOK_HISTORY_WINDOW_MS,
   type WebhookFilter,
   type WebhookHistoryPage,
+  type WebhookHistoryEntry,
+  type WebhookHistoryDetail,
   type WebhookStatus,
 } from "@/lib/webhook-history";
 
@@ -66,6 +76,10 @@ export function WebhooksPanel({
   const [retrying, setRetrying] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(Date.now);
+  const [inspection, setInspection] = useState<{
+    id: string;
+    mode: "text" | "details";
+  } | null>(null);
   const request = useRef(0);
   const loadingRef = useRef(false);
   const retryBusy = useRef(false);
@@ -126,6 +140,7 @@ export function WebhooksPanel({
   useEffect(() => {
     setData(null);
     setSelected(new Set());
+    setInspection(null);
     void refresh();
     const interval = window.setInterval(() => void refresh(), 5_000);
     return () => {
@@ -168,6 +183,7 @@ export function WebhooksPanel({
         ["failed", "dropped"].includes(entry.status),
     )
     .map((entry) => entry.event_id);
+  const inspected = entries.find((entry) => entry.event_id === inspection?.id);
   const selectedIds = eligibleIds.filter((id) => selected.has(id));
   const allSelected =
     eligibleIds.length > 0 && selectedIds.length === eligibleIds.length;
@@ -380,109 +396,240 @@ export function WebhooksPanel({
                     }
                   />
                 </th>
-                <th>Request</th>
+                <th>Request / transcript</th>
                 <th>Status</th>
                 <th>Result</th>
                 <th>Attempts</th>
                 <th>Created</th>
+                <th>Details</th>
               </tr>
             </thead>
             <tbody>
               {entries.map((entry) => {
                 const state = statuses[entry.status];
                 const canRetry = eligibleIds.includes(entry.event_id);
+                const expanded =
+                  inspection?.mode === "text" &&
+                  inspection.id === entry.event_id;
                 return (
-                  <tr key={entry.event_id} data-event-id={entry.event_id}>
-                    <td className="webhooks-select">
-                      <Checkbox
-                        aria-label={`Select webhook ${entry.event_id}`}
-                        checked={canRetry && selected.has(entry.event_id)}
-                        disabled={!canRetry || loading || retrying}
-                        onCheckedChange={(checked) =>
-                          setSelected((current) => {
-                            const next = new Set(current);
-                            if (checked === true) next.add(entry.event_id);
-                            else next.delete(entry.event_id);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <strong
-                        className="webhooks-endpoint"
-                        title={entry.endpoint_origin}
-                      >
-                        {entry.endpoint_origin}
-                      </strong>
-                      <small>
-                        {entry.payload_format === "json" ? "JSON" : "Text Only"}{" "}
-                        · {entry.body_bytes.toLocaleString()} bytes
-                      </small>
-                      <code
-                        className="webhooks-event-id"
-                        title={entry.event_id}
-                      >
-                        {entry.event_id}
-                      </code>
-                    </td>
-                    <td>
-                      <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
-                      {["failed", "dropped"].includes(entry.status) &&
-                      entry.retry_blocked_reason &&
-                      settings.enabled ? (
+                  <Fragment key={entry.event_id}>
+                    <tr data-event-id={entry.event_id}>
+                      <td className="webhooks-select">
+                        <Checkbox
+                          aria-label={`Select webhook ${entry.event_id}`}
+                          checked={canRetry && selected.has(entry.event_id)}
+                          disabled={!canRetry || loading || retrying}
+                          onCheckedChange={(checked) =>
+                            setSelected((current) => {
+                              const next = new Set(current);
+                              if (checked === true) next.add(entry.event_id);
+                              else next.delete(entry.event_id);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <strong
+                          className="webhooks-endpoint"
+                          title={entry.endpoint_origin}
+                        >
+                          {entry.endpoint_origin}
+                        </strong>
+                        <div className="webhooks-preview">
+                          <span className="webhooks-preview-text">
+                            {entry.transcript_preview ||
+                              "No transcription text"}
+                          </span>
+                          {entry.transcript_preview ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`${expanded ? "Less" : "More"} transcription for webhook ${entry.event_id}`}
+                              aria-expanded={expanded}
+                              aria-controls={`webhook-text-${entry.event_id}`}
+                              onClick={() =>
+                                setInspection(
+                                  expanded
+                                    ? null
+                                    : { id: entry.event_id, mode: "text" },
+                                )
+                              }
+                            >
+                              {expanded ? "Less" : "More"}
+                            </Button>
+                          ) : null}
+                        </div>
                         <small>
-                          {webhookReason(entry.retry_blocked_reason)}
+                          {entry.payload_format === "json"
+                            ? "JSON"
+                            : "Text Only"}{" "}
+                          · {entry.body_bytes.toLocaleString()} bytes
                         </small>
-                      ) : null}
-                    </td>
-                    <td>
-                      <span>
-                        {entry.http_status
-                          ? `HTTP ${entry.http_status}`
-                          : entry.error_kind
-                            ? webhookReason(entry.error_kind)
-                            : "—"}
-                      </span>
-                      {entry.elapsed_ms !== null ? (
+                        <code
+                          className="webhooks-event-id"
+                          title={entry.event_id}
+                        >
+                          {entry.event_id}
+                        </code>
+                      </td>
+                      <td>
+                        <StatusBadge tone={state.tone}>
+                          {state.label}
+                        </StatusBadge>
+                        {["failed", "dropped"].includes(entry.status) &&
+                        entry.retry_blocked_reason &&
+                        settings.enabled ? (
+                          <small>
+                            {webhookReason(entry.retry_blocked_reason)}
+                          </small>
+                        ) : null}
+                      </td>
+                      <td>
+                        <span>
+                          {entry.http_status
+                            ? `HTTP ${entry.http_status}`
+                            : entry.error_kind
+                              ? webhookReason(entry.error_kind)
+                              : "—"}
+                        </span>
+                        {entry.elapsed_ms !== null ? (
+                          <small>
+                            Last attempt: {entry.elapsed_ms.toLocaleString()} ms
+                          </small>
+                        ) : null}
+                        {entry.http_status &&
+                        entry.error_kind &&
+                        entry.error_kind !== "http" ? (
+                          <small>{webhookReason(entry.error_kind)}</small>
+                        ) : null}
+                      </td>
+                      <td>
+                        <span>{entry.attempt_count} total</span>
                         <small>
-                          Last attempt: {entry.elapsed_ms.toLocaleString()} ms
+                          {entry.manual_retries} manual{" "}
+                          {entry.manual_retries === 1 ? "retry" : "retries"}
                         </small>
-                      ) : null}
-                      {entry.http_status &&
-                      entry.error_kind &&
-                      entry.error_kind !== "http" ? (
-                        <small>{webhookReason(entry.error_kind)}</small>
-                      ) : null}
-                    </td>
-                    <td>
-                      <span>{entry.attempt_count} total</span>
-                      <small>
-                        {entry.manual_retries} manual{" "}
-                        {entry.manual_retries === 1 ? "retry" : "retries"}
-                      </small>
-                    </td>
-                    <td>
-                      <time
-                        dateTime={new Date(entry.created_at_ms).toISOString()}
-                      >
-                        {new Date(entry.created_at_ms).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })}
-                      </time>
-                      <small>
-                        {new Date(entry.created_at_ms).toLocaleDateString()}
-                      </small>
-                    </td>
-                  </tr>
+                      </td>
+                      <td>
+                        <time
+                          dateTime={new Date(entry.created_at_ms).toISOString()}
+                        >
+                          {new Date(entry.created_at_ms).toLocaleTimeString(
+                            [],
+                            {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            },
+                          )}
+                        </time>
+                        <small>
+                          {new Date(entry.created_at_ms).toLocaleDateString()}
+                        </small>
+                      </td>
+                      <td className="webhooks-actions">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Details for webhook ${entry.event_id}`}
+                          onClick={() =>
+                            setInspection({
+                              id: entry.event_id,
+                              mode: "details",
+                            })
+                          }
+                        >
+                          Details
+                        </Button>
+                      </td>
+                    </tr>
+                    {expanded ? (
+                      <tr className="webhooks-expanded-row">
+                        <td colSpan={7}>
+                          <div id={`webhook-text-${entry.event_id}`}>
+                            <WebhookContent
+                              key={entry.event_id}
+                              entry={entry}
+                              showPayload={false}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>
           </table>
         </div>
       )}
+      <Dialog
+        open={Boolean(inspected && inspection?.mode === "details")}
+        onOpenChange={(open) => {
+          if (!open) setInspection(null);
+        }}
+      >
+        {inspected && inspection?.mode === "details" ? (
+          <DialogContent className="webhooks-detail-dialog">
+            <DialogHeader>
+              <DialogTitle>Webhook details</DialogTitle>
+              <DialogDescription>{inspected.endpoint_origin}</DialogDescription>
+            </DialogHeader>
+            <div className="webhooks-detail-body">
+              <dl className="webhooks-detail-meta">
+                <div>
+                  <dt>Status</dt>
+                  <dd>
+                    <StatusBadge tone={statuses[inspected.status].tone}>
+                      {statuses[inspected.status].label}
+                    </StatusBadge>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Result</dt>
+                  <dd>
+                    {inspected.http_status
+                      ? `HTTP ${inspected.http_status}`
+                      : inspected.error_kind
+                        ? webhookReason(inspected.error_kind)
+                        : "Awaiting delivery"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Attempts</dt>
+                  <dd>
+                    {inspected.attempt_count} total · {inspected.manual_retries}{" "}
+                    manual retries
+                  </dd>
+                </div>
+                <div>
+                  <dt>Created</dt>
+                  <dd>{new Date(inspected.created_at_ms).toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt>Format</dt>
+                  <dd>
+                    {inspected.payload_format === "json" ? "JSON" : "Text Only"}{" "}
+                    · {inspected.body_bytes.toLocaleString()} bytes
+                  </dd>
+                </div>
+                <div>
+                  <dt>Event ID</dt>
+                  <dd>
+                    <code>{inspected.event_id}</code>
+                  </dd>
+                </div>
+              </dl>
+              <WebhookContent
+                key={inspected.event_id}
+                entry={inspected}
+                showPayload
+              />
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
       {data && data.total > 0 ? (
         <nav className="queue-pagination" aria-label="Webhook history pages">
           <span className="queue-pagination__range">
@@ -519,5 +666,85 @@ export function WebhooksPanel({
         </nav>
       ) : null}
     </div>
+  );
+}
+
+function WebhookContent({
+  entry,
+  showPayload,
+}: {
+  entry: WebhookHistoryEntry;
+  showPayload: boolean;
+}) {
+  const [detail, setDetail] = useState<WebhookHistoryDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    setDetail(null);
+    void getWebhookHistoryDetail(entry.event_id)
+      .then((result) => {
+        if (!active) return;
+        if (
+          !result ||
+          result.event_id !== entry.event_id ||
+          !isRecentWebhook(result, Date.now())
+        ) {
+          setError(
+            "This webhook is no longer available. History is limited to the last 24 hours.",
+          );
+        } else {
+          setDetail(result);
+        }
+      })
+      .catch(() => {
+        if (active) setError("Could not load webhook content. Try again.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [entry.event_id, reload]);
+
+  return (
+    <section
+      className="webhooks-content"
+      aria-label={`Transcription for webhook ${entry.event_id}`}
+      aria-busy={loading}
+    >
+      <h3>Transcription</h3>
+      {loading ? (
+        <p role="status">Loading transcription…</p>
+      ) : error ? (
+        <div>
+          <p role="alert">{error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setReload((value) => value + 1)}
+          >
+            Try again
+          </Button>
+        </div>
+      ) : detail ? (
+        <>
+          <p className="webhooks-full-transcript">
+            {detail.transcript_text ||
+              "No transcription text was included in this request."}
+          </p>
+          {showPayload && entry.payload_format === "json" ? (
+            <details className="webhooks-payload">
+              <summary>Request payload (JSON)</summary>
+              <pre>{detail.payload}</pre>
+            </details>
+          ) : null}
+        </>
+      ) : null}
+    </section>
   );
 }

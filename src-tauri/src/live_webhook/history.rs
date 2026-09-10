@@ -16,6 +16,13 @@ pub const HISTORY_PAGE_SIZE: u32 = 50;
 const MAILBOX_CAPACITY: usize = 8_192;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const UNAVAILABLE: &str = "Webhook history is unavailable. Delivery continues in the background.";
+// Read previews from existing payloads without a migration or sending full
+// transcripts across IPC on every page refresh. Cast BLOBs explicitly for JSON.
+const TRANSCRIPT_SQL: &str = "CASE WHEN payload_format = 'text_only' THEN CAST(payload AS TEXT)
+    WHEN json_valid(CAST(payload AS TEXT)) THEN
+        CASE WHEN json_type(CAST(payload AS TEXT), '$.transcript_text') = 'text'
+        THEN json_extract(CAST(payload AS TEXT), '$.transcript_text') END END";
+const PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +111,7 @@ pub struct HistoryEntry {
     pub endpoint_origin: String,
     pub payload_format: WebhookPayloadFormat,
     pub body_bytes: u64,
+    pub transcript_preview: Option<String>,
     pub attempt_count: u32,
     pub cycle_attempt: u8,
     pub manual_retries: u32,
@@ -111,6 +119,14 @@ pub struct HistoryEntry {
     pub error_kind: Option<String>,
     pub elapsed_ms: Option<u64>,
     pub retry_blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HistoryDetail {
+    pub event_id: String,
+    pub created_at_ms: i64,
+    pub transcript_text: Option<String>,
+    pub payload: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +198,10 @@ enum Command {
         LiveTranscriptionWebhookSettings,
         i64,
         oneshot::Sender<Result<HistoryPage, String>>,
+    ),
+    Detail(
+        String,
+        oneshot::Sender<Result<Option<HistoryDetail>, String>>,
     ),
     Claim(
         Vec<String>,
@@ -275,6 +295,14 @@ impl HistoryStore {
         rx.await.map_err(|_| UNAVAILABLE.to_string())?
     }
 
+    pub async fn detail(&self, id: String) -> Result<Option<HistoryDetail>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .try_send(Command::Detail(id, tx))
+            .map_err(|_| UNAVAILABLE.to_string())?;
+        rx.await.map_err(|_| UNAVAILABLE.to_string())?
+    }
+
     pub fn release(&self, record: &RetryRecord) {
         self.record(Command::Release(
             record.event_id.clone(),
@@ -322,6 +350,9 @@ fn history_worker(
                 Command::Claim(_, _, _, reply) => {
                     let _ = reply.send(Err(UNAVAILABLE.into()));
                 }
+                Command::Detail(_, reply) => {
+                    let _ = reply.send(Err(UNAVAILABLE.into()));
+                }
                 _ => {}
             }
             continue;
@@ -348,6 +379,14 @@ fn history_worker(
                         .map_err(|_| UNAVAILABLE.to_string())
                 };
                 let _ = reply.send(result);
+                Ok(())
+            }
+            Command::Detail(id, reply) => {
+                let _ = reply.send(
+                    database
+                        .detail(&id, chrono::Utc::now().timestamp_millis())
+                        .map_err(|_| UNAVAILABLE.to_string()),
+                );
                 Ok(())
             }
             Command::Wake => Ok(()),
@@ -471,7 +510,8 @@ impl Database {
             .min(u64::from(u32::MAX)) as u32;
         let page = requested_page.clamp(1, page_count);
         let mut statement = self.0.prepare(&format!(
-            "SELECT event_id,created_at_ms,updated_at_ms,status,endpoint_url,payload_format,length(payload),attempt_count,cycle_attempt,manual_retries,http_status,error_kind,elapsed_ms
+            "SELECT event_id,created_at_ms,updated_at_ms,status,endpoint_url,payload_format,length(payload),attempt_count,cycle_attempt,manual_retries,http_status,error_kind,elapsed_ms,
+             substr(({TRANSCRIPT_SQL}), 1, {PREVIEW_CHARS})
              FROM webhook_history WHERE created_at_ms > ?1 AND created_at_ms <= ?2 AND {predicate}
              ORDER BY created_at_ms DESC,event_id DESC LIMIT ?3 OFFSET ?4"
         ))?;
@@ -495,6 +535,9 @@ impl Database {
                         endpoint_origin: endpoint_origin(&endpoint),
                         payload_format: format,
                         body_bytes: row.get::<_, i64>(6)? as u64,
+                        transcript_preview: row
+                            .get::<_, Option<String>>(13)?
+                            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" ")),
                         attempt_count: row.get(7)?,
                         cycle_attempt: row.get(8)?,
                         manual_retries: row.get(9)?,
@@ -519,6 +562,26 @@ impl Database {
             now_ms,
             storage_warning: false,
         })
+    }
+
+    fn detail(&self, id: &str, now_ms: i64) -> rusqlite::Result<Option<HistoryDetail>> {
+        self.0
+            .query_row(
+                &format!(
+                    "SELECT event_id,created_at_ms,({TRANSCRIPT_SQL}),CAST(payload AS TEXT)
+             FROM webhook_history WHERE event_id=?1 AND created_at_ms > ?2 AND created_at_ms <= ?3"
+                ),
+                params![id, now_ms - HISTORY_WINDOW_MS, now_ms],
+                |row| {
+                    Ok(HistoryDetail {
+                        event_id: row.get(0)?,
+                        created_at_ms: row.get(1)?,
+                        transcript_text: row.get(2)?,
+                        payload: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     fn claim(

@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "@/lib/app-state";
@@ -16,11 +17,16 @@ import {
 } from "@/lib/webhook-history";
 import { WebhooksPanel } from "./WebhooksPanel";
 
-const api = vi.hoisted(() => ({ list: vi.fn(), retry: vi.fn() }));
+const api = vi.hoisted(() => ({
+  list: vi.fn(),
+  retry: vi.fn(),
+  detail: vi.fn(),
+}));
 vi.mock("@/lib/webhook-history", async (original) => ({
   ...(await original<typeof import("@/lib/webhook-history")>()),
   listWebhookHistory: api.list,
   retryWebhookHistory: api.retry,
+  getWebhookHistoryDetail: api.detail,
 }));
 const settings = {
   ...defaultSettings().live_transcription_webhook,
@@ -39,6 +45,7 @@ function entry(
     endpoint_origin: "https://example.com",
     payload_format: "text_only",
     body_bytes: 42,
+    transcript_preview: "A short transcription preview",
     attempt_count: 4,
     cycle_attempt: 4,
     manual_retries: 0,
@@ -92,6 +99,7 @@ function mount(patch: Partial<typeof settings> = {}) {
 beforeEach(() => {
   api.list.mockReset();
   api.retry.mockReset();
+  api.detail.mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -99,6 +107,162 @@ afterEach(() => {
 });
 
 describe("Webhook delivery history", () => {
+  it("loads full multiline text only on More, collapses it, and shows request content in Details", async () => {
+    const transcript =
+      "First line of the transcript.\n한글과 이모지 🙂\n<script>literal text</script>";
+    const payload = JSON.stringify({
+      transcript_text: transcript,
+      source: "microphone",
+    });
+    api.list.mockResolvedValue(
+      page([entry("one", { payload_format: "json" })]),
+    );
+    api.detail.mockResolvedValue({
+      event_id: "one",
+      created_at_ms: Date.now() - 1000,
+      transcript_text: transcript,
+      payload,
+    });
+    mount();
+    await screen.findByText("A short transcription preview");
+    expect(api.detail).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More transcription for webhook one",
+      }),
+    );
+    const content = await screen.findByText(
+      (_, element) => element?.className === "webhooks-full-transcript",
+    );
+    expect(content.textContent).toBe(transcript);
+    expect(content.querySelector("script")).toBeNull();
+    expect(api.detail).toHaveBeenCalledExactlyOnceWith("one");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Less transcription for webhook one",
+      }),
+    );
+    expect(screen.queryByText("Transcription")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Details for webhook one" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Webhook details" });
+    expect(within(dialog).getByText("HTTP 503")).toBeTruthy();
+    await waitFor(() =>
+      expect(within(dialog).getByText("Request payload (JSON)")).toBeTruthy(),
+    );
+    expect(dialog.querySelector("pre")?.textContent).toBe(payload);
+    expect(dialog.textContent).toContain("4 total · 0 manual retries");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("ignores a delayed detail after another row is opened and does not refetch on refresh", async () => {
+    let resolve!: (result: unknown) => void;
+    api.list.mockResolvedValue(page([entry("one"), entry("two")]));
+    api.detail
+      .mockReturnValueOnce(
+        new Promise((done) => {
+          resolve = done;
+        }),
+      )
+      .mockResolvedValue({
+        event_id: "two",
+        created_at_ms: Date.now() - 1000,
+        transcript_text: "Current full text",
+        payload: "Current full text",
+      });
+    mount();
+    await screen.findByText("one");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More transcription for webhook one",
+      }),
+    );
+    expect(screen.getByText("Loading transcription…")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "More transcription for webhook two",
+      }),
+    );
+    await screen.findByText("Current full text");
+    await act(async () => {
+      resolve({
+        event_id: "one",
+        created_at_ms: Date.now() - 1000,
+        transcript_text: "Stale full text",
+        payload: "Stale full text",
+      });
+    });
+    expect(screen.queryByText("Stale full text")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(api.list).toHaveBeenCalledTimes(2));
+    expect(api.detail).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Current full text")).toBeTruthy();
+  });
+
+  it("offers a safe retry for failed content loads and explains missing transcripts", async () => {
+    api.list.mockResolvedValue(
+      page([
+        entry("one", { payload_format: "json", transcript_preview: null }),
+      ]),
+    );
+    api.detail
+      .mockRejectedValueOnce(new Error("/private/history.sqlite3"))
+      .mockResolvedValue({
+        event_id: "one",
+        created_at_ms: Date.now() - 1000,
+        transcript_text: null,
+        payload: '{"transcript_text":null}',
+      });
+    mount();
+    await screen.findByText("No transcription text");
+    expect(
+      screen.queryByRole("button", { name: /^More transcription/ }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Details for webhook one" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Could not load webhook content. Try again.",
+    );
+    expect(document.body.textContent).not.toContain("/private/history.sqlite3");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText(
+      "No transcription text was included in this request.",
+    );
+    expect(api.detail).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes open details at expiry even if subsequent history refreshes fail", async () => {
+    vi.useFakeTimers();
+    const created = Date.now() - WEBHOOK_HISTORY_WINDOW_MS + 1000;
+    api.list
+      .mockResolvedValueOnce(
+        page([entry("expiring", { created_at_ms: created })]),
+      )
+      .mockRejectedValue(new Error("offline"));
+    api.detail.mockResolvedValue({
+      event_id: "expiring",
+      created_at_ms: created,
+      transcript_text: "Expiring full text",
+      payload: "Expiring full text",
+    });
+    mount();
+    await act(async () => {});
+    fireEvent.click(
+      screen.getByRole("button", { name: "Details for webhook expiring" }),
+    );
+    await act(async () => {});
+    expect(screen.getByText("Expiring full text")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("Expiring full text")).toBeNull();
+  });
+
   it("waits for a slow history query instead of superseding it on every refresh interval", async () => {
     vi.useFakeTimers();
     let resolve!: (result: WebhookHistoryPage) => void;

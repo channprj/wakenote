@@ -19,8 +19,8 @@ use crate::transcription::TranscriptionExecution;
 
 pub mod history;
 use history::{
-    HISTORY_WINDOW_MS, HistoryFilter, HistoryPage, HistoryStatus, HistoryStore, HistoryUpdate,
-    NewHistoryEntry, RetryResult, RetrySkipped,
+    HISTORY_WINDOW_MS, HistoryDetail, HistoryFilter, HistoryPage, HistoryStatus, HistoryStore,
+    HistoryUpdate, NewHistoryEntry, RetryResult, RetrySkipped,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -229,6 +229,13 @@ impl WebhookService {
             .settings
             .clone();
         self.inner.history.page(page, filter, settings).await
+    }
+
+    pub async fn history_detail(&self, id: String) -> Result<Option<HistoryDetail>, String> {
+        if id.is_empty() || id.len() > 160 {
+            return Err("Select a recent webhook event.".into());
+        }
+        self.inner.history.detail(id).await
     }
 
     pub async fn retry_history(&self, ids: Vec<String>) -> Result<RetryResult, String> {

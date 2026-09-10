@@ -25,6 +25,7 @@ export interface WebhookHistoryEntry {
   endpoint_origin: string;
   payload_format: LiveTranscriptionWebhookSettings["payload_format"];
   body_bytes: number;
+  transcript_preview: string | null;
   attempt_count: number;
   cycle_attempt: number;
   manual_retries: number;
@@ -32,6 +33,12 @@ export interface WebhookHistoryEntry {
   error_kind: string | null;
   elapsed_ms: number | null;
   retry_blocked_reason: string | null;
+}
+export interface WebhookHistoryDetail {
+  event_id: string;
+  created_at_ms: number;
+  transcript_text: string | null;
+  payload: string;
 }
 export interface WebhookHistoryPage {
   entries: WebhookHistoryEntry[];
@@ -48,7 +55,7 @@ export interface WebhookRetryResult {
   skipped: { event_id: string; reason: string }[];
 }
 
-export function isRecentWebhook(entry: WebhookHistoryEntry, now: number) {
+export function isRecentWebhook(entry: { created_at_ms: number }, now: number) {
   return (
     entry.created_at_ms > now - WEBHOOK_HISTORY_WINDOW_MS &&
     entry.created_at_ms <= now
@@ -79,10 +86,12 @@ export function webhookReason(reason: string): string {
 // Browser development fixtures never make webhook requests. The desktop app
 // always uses its persisted history through the commands below.
 let browserEntries: WebhookHistoryEntry[] = [];
+const browserDetails = new Map<string, WebhookHistoryDetail>();
 const fixtureEndpoint = "https://example.com/hook";
 
 export function seedBrowserWebhookHistory() {
   const now = Date.now();
+  browserDetails.clear();
   const statuses: WebhookStatus[] = [
     "succeeded",
     "failed",
@@ -95,14 +104,36 @@ export function seedBrowserWebhookHistory() {
     const created =
       now -
       (index === 75 ? WEBHOOK_HISTORY_WINDOW_MS + 1 : (index + 1) * 60_000);
+    const eventId = `preview-webhook-${String(index + 1).padStart(3, "0")}`;
+    const transcript = `Let's review the launch checklist for meeting ${index + 1}. Design will confirm the final screens today, and engineering will check the release build.\n\n다음 회의에서는 사용자 피드백과 남은 작업을 함께 확인하겠습니다. Please share any blockers before Friday so we can agree on the next steps.`;
+    const format = index % 2 === 0 ? "json" : "text_only";
+    const payload =
+      format === "json"
+        ? JSON.stringify(
+            { transcript_text: transcript, source: "microphone" },
+            null,
+            2,
+          )
+        : transcript;
+    browserDetails.set(eventId, {
+      event_id: eventId,
+      created_at_ms: created,
+      transcript_text: transcript,
+      payload,
+    });
     return {
-      event_id: `preview-webhook-${String(index + 1).padStart(3, "0")}`,
+      event_id: eventId,
       created_at_ms: created,
       updated_at_ms: created + 500,
       status,
       endpoint_origin: "https://example.com",
-      payload_format: "text_only",
-      body_bytes: 120 + index * 17,
+      payload_format: format,
+      body_bytes: new TextEncoder().encode(payload).length,
+      transcript_preview: [...transcript]
+        .slice(0, 240)
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim(),
       attempt_count: status === "failed" ? 4 : status === "dropped" ? 0 : 1,
       cycle_attempt: status === "failed" ? 4 : status === "dropped" ? 0 : 1,
       manual_retries: 0,
@@ -175,6 +206,15 @@ export async function listWebhookHistory(
     now_ms: now,
     storage_warning: false,
   };
+}
+
+export async function getWebhookHistoryDetail(
+  eventId: string,
+): Promise<WebhookHistoryDetail | null> {
+  if (isTauriRuntime())
+    return invoke("get_webhook_history_detail", { eventId });
+  const detail = browserDetails.get(eventId);
+  return detail && isRecentWebhook(detail, Date.now()) ? { ...detail } : null;
 }
 
 export async function retryWebhookHistory(
