@@ -52,7 +52,7 @@ export function TranscriptionCostTables({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table tabIndex={0} aria-label="API and model cost comparison">
             <TableCaption>
               USD estimates for {filters.start} through {filters.end}. “Not
               priced” means the cost is unknown.
@@ -117,7 +117,7 @@ export function TranscriptionCostTables({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <Table>
+          <Table tabIndex={0} aria-label="Cost period breakdown">
             <TableHeader>
               <TableRow>
                 <TableHead>Period</TableHead>

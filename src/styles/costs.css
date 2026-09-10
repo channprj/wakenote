@@ -45,6 +45,11 @@
   overflow-wrap: anywhere;
 }
 
+.cost-details-page [data-slot="table"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 .transcription-cost-dashboard__head > span {
   flex: 1;
 }

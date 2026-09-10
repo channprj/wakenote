@@ -128,6 +128,14 @@ describe("transcription cost details page", () => {
       screen.getByLabelText("Cumulative estimated cost trend"),
     ).toBeTruthy();
     expect(screen.getByText("$0.3600")).toBeTruthy();
+    for (const name of [
+      "API and model cost comparison",
+      "Cost period breakdown",
+    ]) {
+      const table = screen.getByRole("table", { name });
+      table.focus();
+      expect(document.activeElement).toBe(table);
+    }
     expect(screen.getAllByText("Not priced").length).toBeGreaterThan(0);
     expect(
       screen.getByText(/missing prices do not mean free usage/),
