@@ -29,7 +29,8 @@ const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(2),
     Duration::from_secs(4),
 ];
-const MAX_REQUESTS: usize = 3;
+// New deliveries and automatic/manual retries share these request slots.
+const MAX_REQUESTS: usize = 4;
 const MAX_EVENTS: usize = 1_000;
 
 /// One handle per captured chunk, consumed only by its first live decode.

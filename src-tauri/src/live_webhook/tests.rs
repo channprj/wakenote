@@ -13,6 +13,7 @@ struct Request {
 #[derive(Clone, Copy)]
 enum Response {
     Status(u16),
+    GatedStatus(u16),
     StallHeaders,
     StallBody,
     Disconnect,
@@ -21,6 +22,7 @@ enum Response {
 struct Server {
     url: String,
     requests: Arc<Mutex<Vec<Request>>>,
+    response_permits: Arc<tokio::sync::Semaphore>,
     stop: CancellationToken,
 }
 
@@ -33,6 +35,8 @@ impl Server {
         );
         let requests = Arc::new(Mutex::new(Vec::new()));
         let received = requests.clone();
+        let response_permits = Arc::new(tokio::sync::Semaphore::new(0));
+        let permits = response_permits.clone();
         let stop = CancellationToken::new();
         let cancelled = stop.clone();
         tokio::spawn(async move {
@@ -43,6 +47,7 @@ impl Server {
                 };
                 let received = received.clone();
                 let responses = responses.clone();
+                let permits = permits.clone();
                 let cancelled = cancelled.clone();
                 tokio::spawn(async move {
                     let work = async {
@@ -87,6 +92,10 @@ impl Server {
                         let response = responses[index.min(responses.len() - 1)];
                         let status = match response {
                             Response::Status(status) => status,
+                            Response::GatedStatus(status) => {
+                                permits.acquire().await.unwrap().forget();
+                                status
+                            }
                             Response::StallBody => 200,
                             Response::StallHeaders => {
                                 let _ = socket.read(&mut [0]).await;
@@ -120,6 +129,7 @@ impl Server {
         Self {
             url,
             requests,
+            response_permits,
             stop,
         }
     }
@@ -446,6 +456,91 @@ async fn retry_success_stops_and_backoff_releases_the_slot() {
 }
 
 #[tokio::test]
+async fn all_deliveries_share_four_request_slots() {
+    // Four exhausted events become manual retries later. Every subsequent
+    // response waits for an explicit permit so the actual HTTP overlap is visible.
+    let mut responses = vec![Response::Status(503); 16];
+    responses.extend([Response::GatedStatus(503), Response::GatedStatus(200)]);
+    let server = Server::start(responses).await;
+    let (service, _logs, _) = start(
+        settings(&server.url),
+        Policy {
+            timeout: REQUEST_TIMEOUT,
+            ..fast_policy()
+        },
+    );
+    for id in 0..4 {
+        submit(&service, id, "manual retry snapshot");
+    }
+    until(|| service.stats().failed == 4).await;
+    let failed_ids: Vec<_> = service
+        .list_history(1, HistoryFilter::NeedsRetry)
+        .await
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.event_id)
+        .collect();
+    assert_eq!(failed_ids.len(), 4);
+    assert_eq!(server.requests().len(), 16);
+
+    for id in 100..110 {
+        submit(&service, id, "new live result");
+    }
+    until(|| server.requests().len() >= 20).await;
+    assert_eq!(service.stats().in_flight, 4);
+    let retried = service.retry_history(failed_ids.clone()).await.unwrap();
+    assert_eq!(retried.queued_ids.len(), 4);
+    assert!(retried.skipped.is_empty());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        server.requests().len(),
+        20,
+        "manual retries must wait for a slot"
+    );
+    assert_eq!(service.stats().pending, 14);
+
+    // Complete exactly one held request at a time. The first fails and its
+    // automatic retry also waits behind the same four active request slots.
+    for completed in 1..=15 {
+        server.response_permits.add_permits(1);
+        if completed == 1 {
+            until(|| service.stats().retries == 13).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        } else {
+            until(|| service.stats().succeeded == completed - 1).await;
+        }
+        let expected_requests = 16 + (4 + completed as usize).min(15);
+        until(|| server.requests().len() >= expected_requests).await;
+        assert_eq!(server.requests().len(), expected_requests);
+        assert_eq!(service.stats().in_flight, (15 - completed as usize).min(4));
+    }
+    assert_eq!(service.stats().pending, 0);
+    assert_eq!(service.stats().succeeded, 14);
+    assert_eq!(service.stats().failed, 4);
+
+    let requests = server.requests();
+    let automatic_id = header(&requests[16], "x-transcription-event-id");
+    let automatic_attempts: Vec<_> = requests
+        .iter()
+        .filter(|request| header(request, "x-transcription-event-id") == automatic_id)
+        .map(|request| header(request, "x-transcription-attempt"))
+        .collect();
+    assert_eq!(automatic_attempts, ["1", "2"]);
+    let history = service.list_history(1, HistoryFilter::All).await.unwrap();
+    for id in failed_ids {
+        let entry = history
+            .entries
+            .iter()
+            .find(|entry| entry.event_id == id)
+            .unwrap();
+        assert_eq!(entry.status, HistoryStatus::Succeeded);
+        assert_eq!(entry.manual_retries, 1);
+        assert_eq!(entry.attempt_count, 5);
+    }
+}
+
+#[tokio::test]
 async fn capacity_includes_waiting_active_and_retrying_events_without_blocking() {
     let server = Server::start(vec![Response::StallHeaders]).await;
     let logs = tempfile::tempdir().unwrap();
@@ -457,8 +552,8 @@ async fn capacity_includes_waiting_active_and_retrying_events_without_blocking()
     assert_eq!(service.stats().pending, 1000);
     assert_eq!(service.stats().dropped, 1);
     let task = tokio::spawn(run(service.inner.clone()));
-    until(|| server.requests().len() == 3).await;
-    assert_eq!(service.stats().in_flight, 3);
+    until(|| server.requests().len() == 4).await;
+    assert_eq!(service.stats().in_flight, 4);
     assert_eq!(service.stats().pending, 1000);
     submit(&service, 1001, "also dropped");
     assert_eq!(service.stats().dropped, 2);
@@ -482,7 +577,7 @@ async fn changing_url_mode_or_disabling_cancels_old_work_instead_of_retargeting_
         for id in 0..6 {
             submit(&service, id, "old setting");
         }
-        until(|| old.requests().len() == 3).await;
+        until(|| old.requests().len() == 4).await;
         let mut config = settings(&old.url);
         match change {
             "url" => config.endpoint_url = new.url.clone(),
@@ -498,7 +593,7 @@ async fn changing_url_mode_or_disabling_cancels_old_work_instead_of_retargeting_
         submit(&service, 10, "new setting");
         until(|| service.stats().succeeded == 1).await;
         assert_eq!(new.requests()[0].body, b"new setting");
-        assert_eq!(old.requests().len(), 3);
+        assert_eq!(old.requests().len(), 4);
     }
 }
 
