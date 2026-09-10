@@ -431,6 +431,11 @@ unfinished deliveries. See [the payload contract and verification guide](docs/li
 
 Open **Webhooks**, below **Activity**, to review the last 24 hours of delivery
 results. The page has status filters, summary counts, and 50 requests per page.
+Each request shows a one-line transcription preview. Choose **More** to expand
+the full text with its original line breaks, and **Less** to collapse it.
+**Details** shows the transcription alongside the delivery status, HTTP result,
+attempts, creation time, format, and event ID. JSON requests also offer an
+expandable **Request payload (JSON)** section with the saved request body.
 Select failed or queue-full requests on the current page and choose **Retry
 selected**. Retries preserve the original request content and event ID; enable
 the webhook with the original endpoint and format before retrying.
