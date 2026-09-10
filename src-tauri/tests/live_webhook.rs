@@ -10,6 +10,7 @@ fn webhook_defaults_and_settings_persistence_restore_without_a_queue() {
     let persistence = AppPersistence::new(root.path());
     let mut settings = AppSettings::default();
     assert!(!settings.live_transcription_webhook.enabled);
+    assert!(settings.live_transcription_webhook.auto_delete_history);
     assert!(settings.live_transcription_webhook.endpoint_url.is_empty());
     assert_eq!(
         settings.live_transcription_webhook.payload_format,
@@ -19,6 +20,7 @@ fn webhook_defaults_and_settings_persistence_restore_without_a_queue() {
         enabled: true,
         endpoint_url: "https://example.com/hook".into(),
         payload_format: WebhookPayloadFormat::Json,
+        ..Default::default()
     };
     persistence.save_settings(&settings).unwrap();
     assert_eq!(
@@ -43,6 +45,21 @@ fn webhook_defaults_and_settings_persistence_restore_without_a_queue() {
 }
 
 #[test]
+fn legacy_webhook_settings_enable_cleanup_and_preserve_an_explicit_opt_out() {
+    let legacy = serde_json::json!({
+        "enabled": true,
+        "endpoint_url": "https://example.com/hook",
+        "payload_format": "json"
+    });
+    let mut settings: LiveTranscriptionWebhookSettings = serde_json::from_value(legacy).unwrap();
+    assert!(settings.auto_delete_history);
+    settings.auto_delete_history = false;
+    let restored: LiveTranscriptionWebhookSettings =
+        serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(!restored.auto_delete_history);
+}
+
+#[test]
 fn invalid_enabled_webhook_is_rejected_without_mutating_or_persisting_settings() {
     let root = tempfile::tempdir().unwrap();
     let mut backend = AppBackend::load_from_dir(root.path()).unwrap();
@@ -58,6 +75,7 @@ fn invalid_enabled_webhook_is_rejected_without_mutating_or_persisting_settings()
                 enabled: true,
                 endpoint_url: endpoint.into(),
                 payload_format: WebhookPayloadFormat::Json,
+                ..Default::default()
             }),
             ..Default::default()
         });
@@ -74,6 +92,7 @@ fn invalid_enabled_webhook_is_rejected_without_mutating_or_persisting_settings()
         enabled: true,
         endpoint_url: " http://[::1]:8765/hook ".into(),
         payload_format: WebhookPayloadFormat::Json,
+        ..Default::default()
     };
     backend
         .try_update_settings(SettingsPatch {

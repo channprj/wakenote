@@ -62,6 +62,7 @@ use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
 use wakenote::live_webhook::{LiveWebhookTranscript, WebhookService, WebhookStats};
+use wakenote::live_webhook::history::{HistoryFilter, HistoryPage, RetryResult};
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
@@ -1420,6 +1421,23 @@ fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
 #[tauri::command]
 fn get_live_webhook_stats(service: State<'_, Arc<WebhookService>>) -> WebhookStats {
     service.stats()
+}
+
+#[tauri::command]
+async fn list_webhook_history(
+    service: State<'_, Arc<WebhookService>>,
+    page: u32,
+    filter: HistoryFilter,
+) -> Result<HistoryPage, String> {
+    service.list_history(page, filter).await
+}
+
+#[tauri::command]
+async fn retry_webhook_history(
+    service: State<'_, Arc<WebhookService>>,
+    event_ids: Vec<String>,
+) -> Result<RetryResult, String> {
+    service.retry_history(event_ids).await
 }
 
 #[tauri::command]
@@ -8862,6 +8880,7 @@ fn main() {
             let live_webhook = Arc::new(WebhookService::new(
                 initial_settings_for_runtime.live_transcription_webhook.clone(),
                 wakenote::settings::expand_user_path(&initial_settings_for_runtime.save_root),
+                app_data_dir.join("webhook-history.sqlite3"),
             ));
             if let Ok(mut backend) = backend_state.lock() {
                 backend.set_live_webhook(live_webhook.clone());
@@ -9061,6 +9080,8 @@ fn main() {
             cancel_text_transform,
             get_settings,
             get_live_webhook_stats,
+            list_webhook_history,
+            retry_webhook_history,
             dictionary_file_status,
             open_dictionary_file,
             reload_dictionary_file,

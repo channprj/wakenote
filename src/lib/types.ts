@@ -160,6 +160,7 @@ export interface LiveTranscriptionWebhookSettings {
   enabled: boolean;
   endpoint_url: string;
   payload_format: "text_only" | "json";
+  auto_delete_history: boolean;
 }
 
 export interface AppSettings {

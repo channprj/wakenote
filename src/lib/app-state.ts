@@ -186,6 +186,7 @@ export function defaultSettings(): AppSettings {
       enabled: false,
       endpoint_url: "",
       payload_format: "text_only",
+      auto_delete_history: true,
     },
     text_transform_model: "",
     subtitle_translation_enabled: false,

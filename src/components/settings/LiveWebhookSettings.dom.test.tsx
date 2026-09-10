@@ -63,6 +63,7 @@ describe("Live Transcription Webhook settings", () => {
           enabled: true,
           endpoint_url: "https://example.com/hook?token=test",
           payload_format: "text_only",
+          auto_delete_history: true,
         },
       }),
     );
@@ -178,11 +179,12 @@ describe("Live Transcription Webhook settings", () => {
           enabled: true,
           endpoint_url: "https://example.com/hook",
           payload_format: "json",
+          auto_delete_history: true,
         }}
         onSave={onSave}
       />,
     );
-    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
+    expect(screen.getByRole("switch", { name: "Enable Webhook" }).getAttribute("aria-checked")).toBe(
       "true",
     );
     expect(screen.getByText("JSON")).toBeTruthy();

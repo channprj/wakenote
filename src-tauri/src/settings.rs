@@ -405,12 +405,24 @@ pub enum WebhookPayloadFormat {
     Json,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LiveTranscriptionWebhookSettings {
     pub enabled: bool,
     pub endpoint_url: String,
     pub payload_format: WebhookPayloadFormat,
+    pub auto_delete_history: bool,
+}
+
+impl Default for LiveTranscriptionWebhookSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint_url: String::new(),
+            payload_format: WebhookPayloadFormat::TextOnly,
+            auto_delete_history: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for LiveTranscriptionWebhookSettings {
@@ -419,6 +431,7 @@ impl std::fmt::Debug for LiveTranscriptionWebhookSettings {
             .field("enabled", &self.enabled)
             .field("endpoint_url", &"<redacted>")
             .field("payload_format", &self.payload_format)
+            .field("auto_delete_history", &self.auto_delete_history)
             .finish()
     }
 }

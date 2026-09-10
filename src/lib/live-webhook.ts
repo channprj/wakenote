@@ -1,7 +1,7 @@
 import type { LiveTranscriptionWebhookSettings } from "./types";
 
 export function webhookUrlError(
-  settings: LiveTranscriptionWebhookSettings,
+  settings: Pick<LiveTranscriptionWebhookSettings, "enabled" | "endpoint_url" | "payload_format">,
 ): string | null {
   if (!settings.enabled) return null;
   const value = settings.endpoint_url.trim();

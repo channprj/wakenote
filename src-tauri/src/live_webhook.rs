@@ -17,6 +17,12 @@ use crate::recorder::ChunkMetadata;
 use crate::settings::{LiveTranscriptionWebhookSettings, WebhookPayloadFormat};
 use crate::transcription::TranscriptionExecution;
 
+pub mod history;
+use history::{
+    HISTORY_WINDOW_MS, HistoryFilter, HistoryPage, HistoryStatus, HistoryStore, HistoryUpdate,
+    NewHistoryEntry, RetryResult, RetrySkipped,
+};
+
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(1),
@@ -96,8 +102,13 @@ struct Event {
     sequence: u64,
     id: String,
     endpoint: String,
-    body: Vec<u8>,
+    body: Arc<Vec<u8>>,
     content_type: &'static str,
+    payload_format: WebhookPayloadFormat,
+    created_at_ms: i64,
+    manual_retries: u32,
+    attempt_count: u32,
+    cycle_attempt: u8,
     attempt: u8,
     ready_at: Instant,
     cancel: CancellationToken,
@@ -114,6 +125,7 @@ struct State {
 
 struct Inner {
     state: Mutex<State>,
+    history: HistoryStore,
     notify: Notify,
     shutdown: CancellationToken,
     instance_id: String,
@@ -125,19 +137,36 @@ pub struct WebhookService {
 }
 
 impl WebhookService {
-    pub fn new(settings: LiveTranscriptionWebhookSettings, log_root: PathBuf) -> Self {
-        let service = Self::unstarted(settings, log_root, Policy::default());
+    pub fn new(
+        settings: LiveTranscriptionWebhookSettings,
+        log_root: PathBuf,
+        history_path: PathBuf,
+    ) -> Self {
+        let service = Self::build(settings, log_root, Policy::default(), history_path);
         tauri::async_runtime::spawn(run(service.inner.clone()));
         service
     }
 
+    #[cfg(test)]
     fn unstarted(
         settings: LiveTranscriptionWebhookSettings,
         log_root: PathBuf,
         policy: Policy,
     ) -> Self {
+        let history_path = log_root.join("webhook-history.sqlite3");
+        Self::build(settings, log_root, policy, history_path)
+    }
+
+    fn build(
+        settings: LiveTranscriptionWebhookSettings,
+        log_root: PathBuf,
+        policy: Policy,
+        history_path: PathBuf,
+    ) -> Self {
+        let history = HistoryStore::open(history_path, settings.auto_delete_history);
         Self {
             inner: Arc::new(Inner {
+                history,
                 state: Mutex::new(State {
                     settings,
                     generation: CancellationToken::new(),
@@ -163,12 +192,16 @@ impl WebhookService {
         let Ok(mut state) = self.inner.state.lock() else {
             return;
         };
-        if state.settings != settings {
+        if state.settings.enabled != settings.enabled
+            || state.settings.endpoint_url != settings.endpoint_url
+            || state.settings.payload_format != settings.payload_format
+        {
             state.generation.cancel();
-            cancel_waiting(&mut state);
+            cancel_waiting(&self.inner, &mut state);
             state.generation = CancellationToken::new();
-            state.settings = settings;
         }
+        self.inner.history.configure(settings.auto_delete_history);
+        state.settings = settings;
         state.log_root = log_root;
         drop(state);
         self.inner.notify.notify_one();
@@ -182,11 +215,101 @@ impl WebhookService {
             .unwrap_or_default()
     }
 
+    pub async fn list_history(
+        &self,
+        page: u32,
+        filter: HistoryFilter,
+    ) -> Result<HistoryPage, String> {
+        let settings = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "Webhook settings are unavailable.".to_string())?
+            .settings
+            .clone();
+        self.inner.history.page(page, filter, settings).await
+    }
+
+    pub async fn retry_history(&self, ids: Vec<String>) -> Result<RetryResult, String> {
+        if ids.is_empty() || ids.len() > 100 || ids.iter().any(|id| id.is_empty() || id.len() > 160)
+        {
+            return Err("Select between 1 and 100 recent failed webhook events.".into());
+        }
+        let settings = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "Webhook settings are unavailable.".to_string())?
+            .settings
+            .clone();
+        let claimed = self.inner.history.claim(ids, settings).await?;
+        let mut result = RetryResult {
+            queued_ids: Vec::new(),
+            skipped: claimed.skipped,
+        };
+        let Ok(mut state) = self.inner.state.lock() else {
+            for record in &claimed.records {
+                self.inner.history.release(record);
+            }
+            return Err("Webhook settings are unavailable.".into());
+        };
+        for record in claimed.records {
+            let now = chrono::Utc::now().timestamp_millis();
+            let blocked = if self.inner.shutdown.is_cancelled() {
+                Some("shutting_down")
+            } else if !state.settings.enabled {
+                Some("disabled")
+            } else if state.settings.endpoint_url != record.endpoint_url
+                || state.settings.payload_format != record.payload_format
+            {
+                Some("settings_changed")
+            } else if record.created_at_ms <= now - HISTORY_WINDOW_MS || record.created_at_ms > now
+            {
+                Some("expired")
+            } else if state.stats.pending >= self.inner.policy.max_events {
+                Some("queue_full")
+            } else {
+                None
+            };
+            if let Some(reason) = blocked {
+                self.inner.history.release(&record);
+                result.skipped.push(RetrySkipped {
+                    event_id: record.event_id,
+                    reason: reason.into(),
+                });
+                continue;
+            }
+            let sequence = state.next_sequence;
+            state.next_sequence += 1;
+            result.queued_ids.push(record.event_id.clone());
+            let event = Event {
+                sequence,
+                id: record.event_id,
+                endpoint: record.endpoint_url,
+                body: record.body,
+                content_type: content_type(record.payload_format),
+                payload_format: record.payload_format,
+                created_at_ms: record.created_at_ms,
+                manual_retries: record.manual_retries,
+                attempt_count: record.attempt_count,
+                cycle_attempt: 0,
+                attempt: 1,
+                ready_at: Instant::now(),
+                cancel: state.generation.clone(),
+            };
+            state.queue.insert(sequence, event);
+            state.stats.pending += 1;
+        }
+        drop(state);
+        self.inner.notify.notify_one();
+        Ok(result)
+    }
+
     pub fn shutdown(&self) {
         self.inner.shutdown.cancel();
         if let Ok(mut state) = self.inner.state.lock() {
             state.generation.cancel();
-            cancel_waiting(&mut state);
+            cancel_waiting(&self.inner, &mut state);
         }
         self.inner.notify.notify_one();
     }
@@ -202,11 +325,6 @@ impl WebhookService {
             return;
         }
         let id = format!("{}-{chunk_id}", self.inner.instance_id);
-        if state.stats.pending >= self.inner.policy.max_events {
-            state.stats.dropped += 1;
-            record(&state, &id, 0, "queue_full", None, 0);
-            return;
-        }
         let (body, content_type) = match state.settings.payload_format {
             WebhookPayloadFormat::TextOnly => (
                 metadata
@@ -231,13 +349,36 @@ impl WebhookService {
         let event = Event {
             sequence,
             id,
-            body,
+            body: Arc::new(body),
             content_type,
+            payload_format: state.settings.payload_format,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            manual_retries: 0,
+            attempt_count: 0,
+            cycle_attempt: 0,
             endpoint: state.settings.endpoint_url.clone(),
             attempt: 1,
             ready_at: Instant::now(),
             cancel: state.generation.clone(),
         };
+        let full = state.stats.pending >= self.inner.policy.max_events;
+        self.inner.history.insert(NewHistoryEntry {
+            event_id: event.id.clone(),
+            created_at_ms: event.created_at_ms,
+            endpoint_url: event.endpoint.clone(),
+            payload_format: event.payload_format,
+            body: event.body.clone(),
+            status: if full {
+                HistoryStatus::Dropped
+            } else {
+                HistoryStatus::Queued
+            },
+        });
+        if full {
+            state.stats.dropped += 1;
+            record(&state, &event.id, 0, "queue_full", None, 0);
+            return;
+        }
         state.queue.insert(sequence, event);
         state.stats.pending += 1;
         drop(state);
@@ -251,11 +392,12 @@ impl Drop for WebhookService {
     }
 }
 
-fn cancel_waiting(state: &mut State) {
+fn cancel_waiting(inner: &Inner, state: &mut State) {
     let waiting = std::mem::take(&mut state.queue);
     for event in waiting.into_values() {
         state.stats.pending -= 1;
         state.stats.cancelled += 1;
+        remember(inner, &event, HistoryStatus::Cancelled, None, None, None);
         record(state, &event.id, event.attempt, "cancelled", None, 0);
     }
 }
@@ -291,10 +433,17 @@ enum AttemptResult {
 }
 
 async fn send(
+    inner: Arc<Inner>,
     client: reqwest::Client,
-    event: Event,
+    mut event: Event,
     limit: Duration,
 ) -> (Event, AttemptResult, Duration) {
+    if event.cancel.is_cancelled() {
+        return (event, AttemptResult::Cancelled, Duration::ZERO);
+    }
+    event.attempt_count += 1;
+    event.cycle_attempt = event.attempt;
+    remember(&inner, &event, HistoryStatus::Sending, None, None, None);
     let started = Instant::now();
     let result = tokio::select! {
         biased;
@@ -303,7 +452,7 @@ async fn send(
             .header(reqwest::header::CONTENT_TYPE, event.content_type)
             .header("X-Transcription-Event-Id", &event.id)
             .header("X-Transcription-Attempt", event.attempt.to_string())
-            .body(event.body.clone()).send()) => {
+            .body(event.body.as_ref().clone()).send()) => {
             match result {
                 // send resolves at response headers. Drop the response without
                 // reading the body, including a body that never finishes.
@@ -329,6 +478,14 @@ fn complete(inner: &Inner, mut event: Event, result: AttemptResult, elapsed: Dur
     if event.cancel.is_cancelled() || matches!(result, AttemptResult::Cancelled) {
         state.stats.cancelled += 1;
         state.stats.pending -= 1;
+        remember(
+            inner,
+            &event,
+            HistoryStatus::Cancelled,
+            status,
+            None,
+            Some(elapsed),
+        );
         record(
             &state,
             &event.id,
@@ -340,6 +497,14 @@ fn complete(inner: &Inner, mut event: Event, result: AttemptResult, elapsed: Dur
     } else if status.is_some_and(|status| (200..300).contains(&status)) {
         state.stats.succeeded += 1;
         state.stats.pending -= 1;
+        remember(
+            inner,
+            &event,
+            HistoryStatus::Succeeded,
+            status,
+            None,
+            Some(elapsed),
+        );
         record(
             &state,
             &event.id,
@@ -359,6 +524,14 @@ fn complete(inner: &Inner, mut event: Event, result: AttemptResult, elapsed: Dur
             .get(usize::from(event.attempt - 1))
         {
             state.stats.retries += 1;
+            remember(
+                inner,
+                &event,
+                HistoryStatus::Retrying,
+                status,
+                Some(error),
+                Some(elapsed),
+            );
             record(
                 &state,
                 &event.id,
@@ -373,6 +546,14 @@ fn complete(inner: &Inner, mut event: Event, result: AttemptResult, elapsed: Dur
         } else {
             state.stats.failed += 1;
             state.stats.pending -= 1;
+            remember(
+                inner,
+                &event,
+                HistoryStatus::Failed,
+                status,
+                Some(error),
+                Some(elapsed),
+            );
             record(
                 &state,
                 &event.id,
@@ -397,7 +578,7 @@ async fn run(inner: Arc<Inner>) {
             // TLS/resolver initialization failure must not affect capture.
             inner.shutdown.cancel();
             if let Ok(mut state) = inner.state.lock() {
-                cancel_waiting(&mut state);
+                cancel_waiting(&inner, &mut state);
                 record(&state, "none", 0, "client_initialization", None, 0);
             }
             return;
@@ -419,7 +600,12 @@ async fn run(inner: Arc<Inner>) {
                     break;
                 };
                 state.stats.in_flight += 1;
-                active.push(send(client.clone(), event, inner.policy.timeout));
+                active.push(send(
+                    inner.clone(),
+                    client.clone(),
+                    event,
+                    inner.policy.timeout,
+                ));
             }
             if active.len() < inner.policy.max_requests {
                 state.queue.values().map(|event| event.ready_at).min()
@@ -450,6 +636,33 @@ async fn run(inner: Arc<Inner>) {
             } => {},
         }
     }
+}
+
+fn content_type(format: WebhookPayloadFormat) -> &'static str {
+    match format {
+        WebhookPayloadFormat::TextOnly => "text/plain; charset=utf-8",
+        WebhookPayloadFormat::Json => "application/json; charset=utf-8",
+    }
+}
+
+fn remember(
+    inner: &Inner,
+    event: &Event,
+    status: HistoryStatus,
+    http_status: Option<u16>,
+    error_kind: Option<&str>,
+    elapsed: Option<Duration>,
+) {
+    inner.history.update(HistoryUpdate {
+        event_id: event.id.clone(),
+        manual_retries: event.manual_retries,
+        status,
+        attempt_count: event.attempt_count,
+        cycle_attempt: event.cycle_attempt,
+        http_status,
+        error_kind: error_kind.map(str::to_string),
+        elapsed_ms: elapsed.map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64),
+    });
 }
 
 #[cfg(test)]

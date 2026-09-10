@@ -159,6 +159,7 @@ fn settings(url: &str) -> LiveTranscriptionWebhookSettings {
         enabled: true,
         endpoint_url: url.into(),
         payload_format: WebhookPayloadFormat::TextOnly,
+        ..Default::default()
     }
 }
 
@@ -686,4 +687,187 @@ async fn captured_audio_keeps_processing_and_saving_while_delivery_stalls_even_a
         .await
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn manual_retry_preserves_snapshot_and_only_one_concurrent_selection_is_admitted() {
+    for format in [WebhookPayloadFormat::TextOnly, WebhookPayloadFormat::Json] {
+        let server = Server::start(vec![
+            Response::Status(500),
+            Response::Status(500),
+            Response::Status(500),
+            Response::Status(500),
+            Response::Status(204),
+        ])
+        .await;
+        let mut config = settings(&server.url);
+        config.payload_format = format;
+        let (service, _logs, _) = start(config, fast_policy());
+        submit(&service, 1, "원래 본문 🙂\nnew line");
+        until(|| service.stats().failed == 1).await;
+        let before = service.list_history(1, HistoryFilter::All).await.unwrap();
+        assert_eq!(before.entries.len(), 1);
+        let id = before.entries[0].event_id.clone();
+        assert_eq!(before.entries[0].status, HistoryStatus::Failed);
+        assert_eq!(before.entries[0].attempt_count, 4);
+        let (first, second) = tokio::join!(
+            service.retry_history(vec![id.clone()]),
+            service.retry_history(vec![id.clone()])
+        );
+        let (first, second) = (first.unwrap(), second.unwrap());
+        assert_eq!(first.queued_ids.len() + second.queued_ids.len(), 1);
+        assert_eq!(first.skipped.len() + second.skipped.len(), 1);
+        until(|| service.stats().succeeded == 1).await;
+        let after = service.list_history(1, HistoryFilter::All).await.unwrap();
+        assert_eq!(after.entries.len(), 1);
+        assert_eq!(after.entries[0].status, HistoryStatus::Succeeded);
+        assert_eq!(after.entries[0].attempt_count, 5);
+        assert_eq!(after.entries[0].manual_retries, 1);
+        assert_eq!(
+            after.entries[0].created_at_ms,
+            before.entries[0].created_at_ms
+        );
+        let requests = server.requests();
+        assert_eq!(requests.len(), 5);
+        assert_eq!(requests[0].body, requests[4].body);
+        assert_eq!(
+            header(&requests[0], "x-transcription-event-id"),
+            header(&requests[4], "x-transcription-event-id")
+        );
+        assert_eq!(header(&requests[4], "x-transcription-attempt"), "1");
+    }
+}
+
+#[tokio::test]
+async fn failed_history_survives_restart_but_waits_for_explicit_manual_retry() {
+    let server = Server::start(vec![
+        Response::Status(500),
+        Response::Status(500),
+        Response::Status(500),
+        Response::Status(500),
+        Response::Status(200),
+    ])
+    .await;
+    let logs = tempfile::tempdir().unwrap();
+    let config = settings(&server.url);
+    let id;
+    {
+        let service = WebhookService::unstarted(config.clone(), logs.path().into(), fast_policy());
+        let task = tokio::spawn(run(service.inner.clone()));
+        submit(&service, 1, "restart-safe snapshot");
+        until(|| service.stats().failed == 1).await;
+        id = service
+            .list_history(1, HistoryFilter::All)
+            .await
+            .unwrap()
+            .entries[0]
+            .event_id
+            .clone();
+        service.shutdown();
+        task.await.unwrap();
+        service.list_history(1, HistoryFilter::All).await.unwrap();
+    }
+    let restarted = WebhookService::unstarted(config, logs.path().into(), fast_policy());
+    let task = tokio::spawn(run(restarted.inner.clone()));
+    let page = restarted
+        .list_history(1, HistoryFilter::NeedsRetry)
+        .await
+        .unwrap();
+    assert_eq!(page.entries[0].event_id, id);
+    assert_eq!(restarted.stats().pending, 0);
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert_eq!(server.requests().len(), 4);
+    assert_eq!(
+        restarted
+            .retry_history(vec![id.clone()])
+            .await
+            .unwrap()
+            .queued_ids,
+        [id]
+    );
+    until(|| restarted.stats().succeeded == 1).await;
+    assert_eq!(server.requests()[4].body, server.requests()[0].body);
+    restarted.shutdown();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn changing_cleanup_preference_does_not_cancel_in_flight_requests() {
+    let server = Server::start(vec![Response::StallHeaders]).await;
+    let config = settings(&server.url);
+    let (service, logs, _) = start(config.clone(), Policy::default());
+    submit(&service, 1, "still sending");
+    until(|| service.stats().in_flight == 1).await;
+    let mut changed = config;
+    changed.auto_delete_history = false;
+    service.configure(changed, logs.path().into());
+    let page = service.list_history(1, HistoryFilter::All).await.unwrap();
+    assert_eq!(page.total, 1);
+    assert_eq!(service.stats().pending, 1);
+    assert_eq!(service.stats().cancelled, 0);
+    assert_eq!(service.stats().retries, 0);
+}
+
+#[tokio::test]
+async fn full_delivery_queue_releases_manual_retry_claim_without_losing_the_failure() {
+    let server = Server::start(vec![
+        Response::Status(500),
+        Response::Status(500),
+        Response::Status(500),
+        Response::Status(500),
+        Response::StallHeaders,
+    ])
+    .await;
+    let (service, _logs, _) = start(
+        settings(&server.url),
+        Policy {
+            max_events: 1,
+            ..fast_policy()
+        },
+    );
+    submit(&service, 1, "failed first");
+    until(|| service.stats().failed == 1).await;
+    let id = service
+        .list_history(1, HistoryFilter::NeedsRetry)
+        .await
+        .unwrap()
+        .entries[0]
+        .event_id
+        .clone();
+    submit(&service, 2, "occupies the only slot");
+    let result = service.retry_history(vec![id.clone()]).await.unwrap();
+    assert!(result.queued_ids.is_empty());
+    assert_eq!(result.skipped[0].reason, "queue_full");
+    let page = service
+        .list_history(1, HistoryFilter::NeedsRetry)
+        .await
+        .unwrap();
+    let entry = page
+        .entries
+        .iter()
+        .find(|entry| entry.event_id == id)
+        .unwrap();
+    assert_eq!(entry.status, HistoryStatus::Failed);
+    assert_eq!(entry.manual_retries, 0);
+}
+
+#[tokio::test]
+async fn delivery_continues_when_history_storage_is_unavailable() {
+    let server = Server::start(vec![Response::Status(200)]).await;
+    let logs = tempfile::tempdir().unwrap();
+    let invalid_path = logs.path().join("directory-not-a-database");
+    std::fs::create_dir(&invalid_path).unwrap();
+    let service = WebhookService::build(
+        settings(&server.url),
+        logs.path().into(),
+        fast_policy(),
+        invalid_path,
+    );
+    let task = tokio::spawn(run(service.inner.clone()));
+    submit(&service, 1, "delivery remains independent");
+    until(|| service.stats().succeeded == 1).await;
+    assert!(service.list_history(1, HistoryFilter::All).await.is_err());
+    assert_eq!(server.requests().len(), 1);
+    service.shutdown();
+    task.await.unwrap();
 }
