@@ -583,6 +583,7 @@ pub struct TrashTranscriptsResult {
 
 #[derive(Debug, Clone)]
 pub struct StartedTranscriptionJob {
+    pub live_metadata: Option<Arc<ChunkMetadata>>,
     pub job: crate::queue::QueueJob,
     pub model_directory: std::path::PathBuf,
     pub language: TranscriptionLanguage,
@@ -620,6 +621,8 @@ struct SystemMeetingCapture {
 }
 
 pub struct AppBackend {
+    live_webhook: Option<Arc<crate::live_webhook::WebhookService>>,
+    pending_live_metadata: HashMap<u64, Arc<ChunkMetadata>>,
     settings: AppSettings,
     queue: TranscriptionQueue,
     capture: Option<CaptureController>,
@@ -723,6 +726,8 @@ impl std::fmt::Debug for AppBackend {
 impl Default for AppBackend {
     fn default() -> Self {
         Self {
+            live_webhook: None,
+            pending_live_metadata: HashMap::new(),
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
             capture: None,
@@ -769,6 +774,8 @@ impl AppBackend {
             &settings.transcription_options,
         );
         Ok(Self {
+            live_webhook: None,
+            pending_live_metadata: HashMap::new(),
             settings,
             queue: persistence.load_queue()?.unwrap_or_default(),
             capture: None,
@@ -888,6 +895,14 @@ impl AppBackend {
         self.settings.clone()
     }
 
+    pub fn set_live_webhook(&mut self, service: Arc<crate::live_webhook::WebhookService>) {
+        service.configure(
+            self.settings.live_transcription_webhook.clone(),
+            self.save_root_path(),
+        );
+        self.live_webhook = Some(service);
+    }
+
     pub fn update_settings(&mut self, patch: SettingsPatch) -> AppSettings {
         self.try_update_settings(patch).unwrap_or_else(|error| {
             eprintln!("[settings] could not save settings: {error}");
@@ -927,6 +942,7 @@ impl AppBackend {
         }
         let mut candidate = self.settings.clone();
         candidate.apply_patch(patch);
+        candidate.live_transcription_webhook.validate()?;
         let models = model_registry_snapshot(expand_user_path(&candidate.model_directory));
         candidate.transcription_options = validate_model_options(
             &models,
@@ -939,6 +955,12 @@ impl AppBackend {
                 .map_err(|error| format!("Could not save settings: {error}"))?;
         }
         self.settings = candidate;
+        if let Some(service) = &self.live_webhook {
+            service.configure(
+                self.settings.live_transcription_webhook.clone(),
+                self.save_root_path(),
+            );
+        }
         self.sync_capture_settings();
         Ok(self.settings.clone())
     }
@@ -2246,6 +2268,9 @@ impl AppBackend {
                             .queue
                             .enqueue_file_if_new(chunk.audio_path.clone(), model_id.clone());
                         if inserted {
+                            if let Some(metadata) = &chunk.metadata {
+                                self.pending_live_metadata.insert(job_id, metadata.clone());
+                            }
                             let _ = self.queue.set_transcription_options(
                                 job_id,
                                 self.settings.transcription_options.clone(),
@@ -2780,7 +2805,10 @@ impl AppBackend {
             started.dictionary,
         );
         let outcome = worker
-            .process_started_job(&started.job)
+            .process_started_job_with_final(
+                &started.job,
+                self.live_final_callback(started.live_metadata),
+            )
             .unwrap_or_else(|error| {
                 TranscriptionJobOutcome::failed(started.job.id, error.to_string())
             });
@@ -2800,6 +2828,10 @@ impl AppBackend {
             return Ok(self.queue.snapshot());
         };
         self.active_transcription_jobs.insert(job.id);
+        let live_metadata = self
+            .pending_live_metadata
+            .remove(&job.id)
+            .filter(|_| !job.replay_recorded_audio);
         let worker = TranscriptionWorker::with_options_and_dictionary(
             transcriber,
             TranscriptionWorkerOptions {
@@ -2811,7 +2843,7 @@ impl AppBackend {
             DictionaryContext::from_settings(&self.settings),
         );
         let outcome = worker
-            .process_started_job(&job)
+            .process_started_job_with_final(&job, self.live_final_callback(live_metadata))
             .unwrap_or_else(|error| TranscriptionJobOutcome::failed(job.id, error.to_string()));
         self.finish_transcription_job(outcome)
     }
@@ -2831,7 +2863,10 @@ impl AppBackend {
                 started.dictionary,
             );
             let outcome = worker
-                .process_started_job(&started.job)
+                .process_started_job_with_final(
+                    &started.job,
+                    self.live_final_callback(started.live_metadata),
+                )
                 .unwrap_or_else(|error| {
                     TranscriptionJobOutcome::failed(started.job.id, error.to_string())
                 });
@@ -2839,6 +2874,19 @@ impl AppBackend {
         }
 
         Ok(self.queue.snapshot())
+    }
+
+    fn live_final_callback(
+        &self,
+        metadata: Option<Arc<ChunkMetadata>>,
+    ) -> impl FnOnce(&crate::transcription::TranscriptionExecution) + use<> {
+        let service = self.live_webhook.clone();
+        let transcript = metadata.map(crate::live_webhook::LiveWebhookTranscript::new);
+        move |execution| {
+            if let (Some(service), Some(transcript)) = (service, transcript) {
+                transcript.finalize(&service, execution);
+            }
+        }
     }
 
     pub fn should_process_transcriptions(&self) -> bool {
@@ -2891,6 +2939,10 @@ impl AppBackend {
                 .find(|model| model.id == job.model_id)
                 .is_some_and(|model| model.capabilities.diarization);
             started_jobs.push(StartedTranscriptionJob {
+                live_metadata: self
+                    .pending_live_metadata
+                    .remove(&job.id)
+                    .filter(|_| !job.replay_recorded_audio),
                 job,
                 model_directory: model_directory.clone(),
                 language,
@@ -3063,6 +3115,11 @@ impl AppBackend {
     }
 
     fn persist_queue(&mut self) {
+        self.pending_live_metadata.retain(|id, _| {
+            self.queue.job(*id).is_some_and(|job| {
+                job.status == QueueJobStatus::Pending && !job.replay_recorded_audio
+            })
+        });
         self.queue
             .prune_completed_history(COMPLETED_JOB_HISTORY_LIMIT);
         if let Some(persistence) = &self.persistence {
@@ -3316,6 +3373,9 @@ impl AppBackend {
                             .queue
                             .enqueue_file_if_new(chunk.audio_path.clone(), model_id.clone());
                         if inserted {
+                            if let Some(metadata) = &chunk.metadata {
+                                self.pending_live_metadata.insert(job_id, metadata.clone());
+                            }
                             let _ = self.queue.set_transcription_options(
                                 job_id,
                                 self.settings.transcription_options.clone(),
@@ -3359,6 +3419,10 @@ impl AppBackend {
     }
 
     fn transcription_model_for_completed_chunk(&self, chunk: &RecordedChunk) -> Option<String> {
+        if let Some(metadata) = &chunk.metadata {
+            return (metadata.transcription_status == TranscriptionStatus::Queued)
+                .then(|| metadata.model_id.clone());
+        }
         let metadata = std::fs::read_to_string(&chunk.metadata_path)
             .ok()
             .and_then(|contents| serde_json::from_str::<ChunkMetadata>(&contents).ok());
@@ -4466,6 +4530,51 @@ pub fn with_live_runtime_warning(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_webhook_metadata_is_memory_only_and_consumed_by_the_first_live_job() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_test_registry(tmp.path(), "local-ready");
+        std::fs::write(tmp.path().join("local-ready.bin"), b"model").unwrap();
+        let mut backend = AppBackend::default();
+        backend.settings.model_directory = tmp.path().to_string_lossy().into();
+        backend.settings.selected_model = "local-ready".into();
+        let mut metadata: ChunkMetadata =
+            serde_json::from_str(include_str!("../tests/fixtures/live-transcript.json")).unwrap();
+        metadata.model_id = "local-ready".into();
+        let mut chunk = RecordedChunk::from_audio_path(tmp.path().join("live.wav"));
+        chunk.metadata = Some(Arc::new(metadata));
+        std::fs::write(&chunk.audio_path, b"audio").unwrap();
+        // No JSON file exists, and duplicate committed callbacks must not
+        // manufacture a second live job or a second metadata handle.
+        for _ in 0..2 {
+            backend.handle_capture_events(vec![CaptureControllerEvent::ChunkCompleted {
+                chunk_id: 1,
+                chunk: chunk.clone(),
+            }]);
+        }
+        assert_eq!(backend.pending_live_metadata.len(), 1);
+        let started = backend.start_next_transcription_job().unwrap();
+        assert!(started.live_metadata.is_some());
+        assert!(!chunk.metadata_path.exists());
+        assert!(backend.pending_live_metadata.is_empty());
+        backend
+            .finish_transcription_job(TranscriptionJobOutcome::completed(started.job.id))
+            .unwrap();
+        backend.retry_job(started.job.id).unwrap();
+        let retried = backend.start_next_transcription_job().unwrap();
+        assert!(retried.live_metadata.is_none());
+        backend
+            .finish_transcription_job(TranscriptionJobOutcome::completed(retried.job.id))
+            .unwrap();
+        // File imports and recovered backlog do not acquire live metadata.
+        let imported = tmp.path().join("imported.wav");
+        std::fs::write(&imported, b"audio").unwrap();
+        backend.queue.enqueue_file(&imported, "local-ready");
+        let imported_jobs = backend.start_transcription_jobs_up_to(3);
+        assert_eq!(imported_jobs.len(), 1);
+        assert!(imported_jobs[0].live_metadata.is_none());
+    }
 
     fn write_test_registry(model_directory: &std::path::Path, model_id: &str) {
         std::fs::create_dir_all(model_directory).expect("model dir");

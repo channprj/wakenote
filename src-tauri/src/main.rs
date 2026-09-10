@@ -61,6 +61,7 @@ use wakenote::live_capture::{
 use wakenote::live_transcription::{
     LivePartialEvent, LivePartialRequest, LiveTranscriptionService,
 };
+use wakenote::live_webhook::{LiveWebhookTranscript, WebhookService, WebhookStats};
 use wakenote::llm_runs::{LlmReportRunSnapshot, LlmRunRuntime, LlmRunStore};
 use wakenote::manual_meeting_capture::{
     MANUAL_MEETING_SAMPLE_RATE, ManualMeetingSource, ManualMeetingWriter,
@@ -1414,6 +1415,11 @@ struct SonioxKeyStatus {
 fn get_settings(state: State<'_, BackendState>) -> Result<AppSettings, String> {
     let backend = state.lock().map_err(|error| error.to_string())?;
     Ok(backend.settings())
+}
+
+#[tauri::command]
+fn get_live_webhook_stats(service: State<'_, Arc<WebhookService>>) -> WebhookStats {
+    service.stats()
 }
 
 #[tauri::command]
@@ -7306,8 +7312,8 @@ fn wire_live_transcription(
                     AutoTypeUpdate::Partial(result.text.clone()),
                 );
                 eprintln!(
-                    "[wakenote] live partial -> FE chunk_id={} text='{}'",
-                    result.chunk_id, result.text
+                    "[wakenote] live partial -> FE chunk_id={} text_len={}",
+                    result.chunk_id, result.text.len()
                 );
                 if result.microphone_slot != Some(MicrophoneSlot::Secondary)
                     && let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>()
@@ -7823,6 +7829,7 @@ fn spawn_transcription_job(
 ) {
     thread::spawn(move || {
         let audio_path = started.job.audio_path.clone();
+        let live_transcript = started.live_metadata.clone().map(LiveWebhookTranscript::new);
         eprintln!(
             "[wakenote] queue worker: processing job id={} path={} model={}",
             started.job.id,
@@ -7890,7 +7897,19 @@ fn spawn_transcription_job(
             started.dictionary,
         );
         let outcome = worker
-            .process_started_job(&started.job)
+            .process_started_job_with_final(&started.job, |execution| {
+                if let Some(transcript) = &live_transcript
+                    && let Some(service) = app.try_state::<Arc<WebhookService>>()
+                {
+                    // Serialize setting changes, cancellation, and finalization
+                    // at the same boundary. No disk/network work in this lock.
+                    if let Ok(backend) = backend_state.lock()
+                        && !backend.transcription_job_was_cancelled(started.job.id)
+                    {
+                        transcript.finalize(&service, execution);
+                    }
+                }
+            })
             .unwrap_or_else(|error| {
                 eprintln!("[wakenote] queue worker: process_started_job error: {error}");
                 TranscriptionJobOutcome::failed(started.job.id, error.to_string())
@@ -8840,6 +8859,14 @@ fn main() {
                 Arc::new(Mutex::new(DictationModifierShortcuts::default()));
             let dictation_shortcut_dispatcher =
                 spawn_dictation_shortcut_worker(app.handle().clone())?;
+            let live_webhook = Arc::new(WebhookService::new(
+                initial_settings_for_runtime.live_transcription_webhook.clone(),
+                wakenote::settings::expand_user_path(&initial_settings_for_runtime.save_root),
+            ));
+            if let Ok(mut backend) = backend_state.lock() {
+                backend.set_live_webhook(live_webhook.clone());
+            }
+            app.manage(live_webhook);
             app.manage(backend_state.clone());
             app.manage(dictionary_state.clone());
             app.manage(transcription_state.clone());
@@ -9033,6 +9060,7 @@ fn main() {
             transform_text,
             cancel_text_transform,
             get_settings,
+            get_live_webhook_stats,
             dictionary_file_status,
             open_dictionary_file,
             reload_dictionary_file,
@@ -9128,6 +9156,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build WakeNote")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(service) = app.try_state::<Arc<WebhookService>>()
+            {
+                service.shutdown();
+            }
             #[cfg(target_os = "macos")]
             match event {
                 tauri::RunEvent::Reopen { .. } => {

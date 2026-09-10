@@ -445,6 +445,16 @@ impl<T: Transcriber> TranscriptionWorker<T> {
         &self,
         job: &crate::queue::QueueJob,
     ) -> Result<TranscriptionJobOutcome, TranscriptionWorkerError> {
+        self.process_started_job_with_final(job, |_| {})
+    }
+
+    /// Final text is available before any sidecar write. The caller only
+    /// registers background work here; it must not wait for network delivery.
+    pub fn process_started_job_with_final(
+        &self,
+        job: &crate::queue::QueueJob,
+        on_final: impl FnOnce(&TranscriptionExecution),
+    ) -> Result<TranscriptionJobOutcome, TranscriptionWorkerError> {
         let chunk = RecordedChunk::from_audio_path(job.audio_path.clone());
         let request = TranscriptionRequest {
             audio_path: &job.audio_path,
@@ -492,9 +502,11 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                         format!("Low-confidence transcript: {}", reason.code()),
                     ));
                 }
+                execution.text = transcript;
+                on_final(&execution);
                 TranscriptionSidecar::write_success_with_provenance(
                     &chunk,
-                    &transcript,
+                    &execution.text,
                     &execution.requested_model_id,
                     &execution.effective_model_id,
                     execution.fallback_from_model_id.as_deref(),

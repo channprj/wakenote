@@ -79,6 +79,77 @@ fn transcription_worker_writes_txt_and_marks_job_completed() {
 }
 
 #[test]
+fn finalized_live_text_is_available_before_saving_and_survives_sidecar_failure() {
+    use std::cell::Cell;
+    let tmp = tempfile::tempdir().unwrap();
+    let audio_path = tmp.path().join("live.wav");
+    std::fs::write(&audio_path, b"audio").unwrap();
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let job = queue.start_next().unwrap();
+    let worker = TranscriptionWorker::new(StaticTranscriber::success("한글 🙂\nnext line"));
+    // A directory at the text sidecar path forces the subsequent save to fail.
+    std::fs::create_dir(audio_path.with_extension("txt")).unwrap();
+    let called = Cell::new(false);
+    let result = worker.process_started_job_with_final(&job, |execution| {
+        called.set(true);
+        assert_eq!(execution.text, "한글 🙂\nnext line");
+        assert!(!audio_path.with_extension("json").exists());
+    });
+    assert!(called.get());
+    assert!(
+        result.is_err(),
+        "the existing save error remains visible independently of delivery"
+    );
+}
+
+#[test]
+fn finalized_callback_runs_once_with_dictionary_corrections_and_never_for_empty_or_failed_results() {
+    use std::cell::Cell;
+    let tmp = tempfile::tempdir().unwrap();
+    let audio_path = tmp.path().join("live.wav");
+    std::fs::write(&audio_path, b"audio").unwrap();
+    let mut queue = TranscriptionQueue::new();
+    queue.enqueue_file(&audio_path, "whisper-medium");
+    let job = queue.start_next().unwrap();
+    for transcriber in [
+        StaticTranscriber::success(" \n\t"),
+        StaticTranscriber::failure("provider failure"),
+    ] {
+        let worker = TranscriptionWorker::new(transcriber);
+        worker
+            .process_started_job_with_final(&job, |_| panic!("no finalized transcript"))
+            .unwrap();
+    }
+    let worker = TranscriptionWorker::with_options_and_dictionary(
+        StaticTranscriber::success("wake note is ready"),
+        TranscriptionWorkerOptions {
+            language: TranscriptionLanguage::Auto,
+            suppress_low_confidence_transcripts: false,
+        },
+        DictionaryContext::compile(true, &[DictionaryEntry {
+            id: "wake".into(),
+            term: "WakeNote".into(),
+            aliases: vec!["wake note".into()],
+            enabled: true,
+        }]),
+    );
+    let count = Cell::new(0);
+    worker
+        .process_started_job_with_final(&job, |execution| {
+            count.set(count.get() + 1);
+            assert_eq!(execution.text, "WakeNote is ready");
+            assert!(!audio_path.with_extension("txt").exists());
+        })
+        .unwrap();
+    assert_eq!(count.get(), 1);
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).unwrap(),
+        "WakeNote is ready\n"
+    );
+}
+
+#[test]
 fn transcription_worker_writes_dictionary_corrected_text() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230710.wav");

@@ -156,7 +156,14 @@ export interface DictionaryFileStatus {
   in_sync: boolean;
 }
 
+export interface LiveTranscriptionWebhookSettings {
+  enabled: boolean;
+  endpoint_url: string;
+  payload_format: "text_only" | "json";
+}
+
 export interface AppSettings {
+  live_transcription_webhook: LiveTranscriptionWebhookSettings;
   recording_enabled: boolean;
   transcription_enabled: boolean;
   transcription_language: TranscriptionLanguage;

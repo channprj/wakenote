@@ -15,6 +15,7 @@ pub mod dictionary_file;
 pub mod input_monitor;
 pub mod live_capture;
 pub mod live_transcription;
+pub mod live_webhook;
 pub mod llm;
 pub mod llm_runs;
 pub mod manual_meeting_capture;

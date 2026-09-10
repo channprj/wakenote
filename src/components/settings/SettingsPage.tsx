@@ -119,6 +119,7 @@ export function SettingsSectionContent({
           settings={snapshot.settings}
           models={snapshot.models}
           onPatch={actions.onPatch}
+          onSavePatch={actions.onSavePatch}
         />
       );
   }

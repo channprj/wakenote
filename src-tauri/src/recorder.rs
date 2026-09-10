@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,29 @@ pub struct ChunkMetadata {
     pub transcript_text: Option<String>,
 }
 
+impl ChunkMetadata {
+    /// Shared by archival JSON and the live webhook snapshot.
+    pub fn json_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec_pretty(self)
+    }
+
+    pub fn complete_transcription(
+        &mut self,
+        transcript: &str,
+        requested_model_id: &str,
+        effective_model_id: &str,
+        fallback_from_model_id: Option<&str>,
+        transcribed_at: DateTime<Utc>,
+    ) {
+        self.transcription_status = TranscriptionStatus::Completed;
+        self.transcript_text = Some(transcript.to_string());
+        self.transcribed_at = Some(transcribed_at);
+        self.requested_model_id = Some(requested_model_id.to_string());
+        self.effective_model_id = Some(effective_model_id.to_string());
+        self.fallback_from_model_id = fallback_from_model_id.map(str::to_string);
+    }
+}
+
 #[derive(Debug)]
 pub struct RecordingRequest<'a> {
     pub save_root: &'a Path,
@@ -105,8 +129,10 @@ pub struct RecordingRequest<'a> {
     pub microphone_inputs: Option<&'a [CaptureMicrophoneEntry]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordedChunk {
+    /// Present only for fresh capture. Never hydrate this from archival files.
+    pub metadata: Option<Arc<ChunkMetadata>>,
     pub audio_path: std::path::PathBuf,
     pub metadata_path: std::path::PathBuf,
     pub transcript_path: std::path::PathBuf,
@@ -117,6 +143,7 @@ impl RecordedChunk {
     pub fn from_audio_path(audio_path: impl Into<std::path::PathBuf>) -> Self {
         let audio_path = audio_path.into();
         Self {
+            metadata: None,
             metadata_path: audio_path.with_extension("json"),
             transcript_path: audio_path.with_extension("txt"),
             error_path: audio_path.with_extension("error.txt"),
@@ -230,9 +257,19 @@ impl Recorder {
             transcribed_at: None,
             transcript_text: None,
         };
-        write_metadata(&target.metadata_path, &metadata)?;
+        if let Err(error) = write_metadata(&target.metadata_path, &metadata) {
+            if metadata.live_capture_chunk_id.is_none() {
+                return Err(error);
+            }
+            crate::debug_log::append_debug_log_nonblocking(
+                request.save_root,
+                "[capture] metadata_write_failed; continuing with in-memory live metadata",
+            );
+        }
 
-        Ok(recorded_chunk(target))
+        let mut chunk = recorded_chunk(target);
+        chunk.metadata = Some(Arc::new(metadata));
+        Ok(chunk)
     }
 }
 
@@ -282,13 +319,23 @@ impl TranscriptionSidecar {
         effective_model_id: &str,
         fallback_from_model_id: Option<&str>,
     ) -> Result<(), RecorderError> {
-        Self::write_success(chunk, transcript)?;
-        update_metadata_provenance_if_present(
-            &chunk.metadata_path,
+        if transcript.trim().is_empty() {
+            return Err(RecorderError::EmptyTranscript);
+        }
+        write_text_sidecar(&chunk.transcript_path, transcript)?;
+        remove_file_if_present(&chunk.error_path)?;
+        if !chunk.metadata_path.exists() {
+            return Ok(());
+        }
+        let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(&chunk.metadata_path)?)?;
+        metadata.complete_transcription(
+            transcript,
             requested_model_id,
             effective_model_id,
             fallback_from_model_id,
-        )
+            Utc::now(),
+        );
+        write_metadata(&chunk.metadata_path, &metadata)
     }
 
     pub fn write_error(chunk: &RecordedChunk, error: &str) -> Result<(), RecorderError> {
@@ -328,6 +375,7 @@ impl TranscriptionSidecar {
 
 fn recorded_chunk(target: OutputTarget) -> RecordedChunk {
     RecordedChunk {
+        metadata: None,
         audio_path: target.audio_path,
         metadata_path: target.metadata_path,
         transcript_path: target.transcript_path,
@@ -430,7 +478,7 @@ fn write_mp3(
 }
 
 fn write_metadata(path: &Path, metadata: &ChunkMetadata) -> Result<(), RecorderError> {
-    let bytes = serde_json::to_vec_pretty(metadata)?;
+    let bytes = metadata.json_bytes()?;
     fs::write(path, bytes)?;
     Ok(())
 }
@@ -475,22 +523,6 @@ fn update_metadata_status(
         metadata.effective_model_id = None;
         metadata.fallback_from_model_id = None;
     }
-    write_metadata(path, &metadata)
-}
-
-fn update_metadata_provenance_if_present(
-    path: &Path,
-    requested_model_id: &str,
-    effective_model_id: &str,
-    fallback_from_model_id: Option<&str>,
-) -> Result<(), RecorderError> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut metadata: ChunkMetadata = serde_json::from_slice(&fs::read(path)?)?;
-    metadata.requested_model_id = Some(requested_model_id.to_string());
-    metadata.effective_model_id = Some(effective_model_id.to_string());
-    metadata.fallback_from_model_id = fallback_from_model_id.map(str::to_string);
     write_metadata(path, &metadata)
 }
 

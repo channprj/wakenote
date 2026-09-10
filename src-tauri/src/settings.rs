@@ -397,8 +397,61 @@ pub struct DictionaryEntry {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookPayloadFormat {
+    #[default]
+    TextOnly,
+    Json,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LiveTranscriptionWebhookSettings {
+    pub enabled: bool,
+    pub endpoint_url: String,
+    pub payload_format: WebhookPayloadFormat,
+}
+
+impl std::fmt::Debug for LiveTranscriptionWebhookSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveTranscriptionWebhookSettings")
+            .field("enabled", &self.enabled)
+            .field("endpoint_url", &"<redacted>")
+            .field("payload_format", &self.payload_format)
+            .finish()
+    }
+}
+
+impl LiveTranscriptionWebhookSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let raw = self.endpoint_url.trim();
+        let url = reqwest::Url::parse(raw).ok();
+        let http_scheme = raw
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+            || raw
+                .get(..8)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"));
+        if !http_scheme
+            || raw.chars().any(char::is_whitespace)
+            || !url.is_some_and(|url| {
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+            })
+        {
+            return Err("Enter a valid http:// or https:// webhook URL.".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub live_transcription_webhook: LiveTranscriptionWebhookSettings,
     pub recording_enabled: bool,
     pub transcription_enabled: bool,
     pub transcription_language: TranscriptionLanguage,
@@ -580,6 +633,7 @@ pub struct AppSettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SettingsPatch {
+    pub live_transcription_webhook: Option<LiveTranscriptionWebhookSettings>,
     pub recording_enabled: Option<bool>,
     pub transcription_enabled: Option<bool>,
     pub transcription_language: Option<TranscriptionLanguage>,
@@ -1349,6 +1403,10 @@ impl AppSettings {
         if let Some(value) = patch.auto_transcript_input_enabled {
             self.auto_transcript_input_enabled = value;
         }
+        if let Some(mut value) = patch.live_transcription_webhook {
+            value.endpoint_url = value.endpoint_url.trim().to_string();
+            self.live_transcription_webhook = value;
+        }
         if let Some(value) = patch.auto_transcript_input_trailing_space {
             self.auto_transcript_input_trailing_space = value;
         }
@@ -1540,6 +1598,7 @@ impl AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            live_transcription_webhook: LiveTranscriptionWebhookSettings::default(),
             recording_enabled: true,
             transcription_enabled: true,
             transcription_language: TranscriptionLanguage::Ko,

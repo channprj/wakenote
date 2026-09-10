@@ -1,4 +1,5 @@
 import { CustomSourceSettings } from "./CustomSourceSettings";
+import { LiveWebhookSettings } from "./LiveWebhookSettings";
 import {
   SettingSelect,
   SettingSwitch,
@@ -11,10 +12,12 @@ import type { AppSettings, ModelDescriptor } from "@/lib/types";
 export function AdvancedSettings({
   settings,
   onPatch,
+  onSavePatch,
   models = [],
 }: {
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => void;
+  onSavePatch?: (patch: Partial<AppSettings>) => void | Promise<void>;
   models?: ModelDescriptor[];
 }) {
   const compatibleModels = models.filter(
@@ -43,6 +46,10 @@ export function AdvancedSettings({
   }
   return (
     <SettingsGrid maxColumns={2}>
+      <LiveWebhookSettings
+        settings={settings.live_transcription_webhook}
+        onSave={onSavePatch ?? onPatch}
+      />
       <SettingsCard
         title="Text output"
         description="Type stable speech into the active application while you speak."

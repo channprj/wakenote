@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { webhookUrlError } from "./live-webhook";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   normalizeDictationShortcut,
@@ -846,6 +847,14 @@ export async function saveSettingsPatch(
     }
 
     const settings = { ...previousSettings, ...safePatch };
+    if (safePatch.live_transcription_webhook) {
+      settings.live_transcription_webhook = {
+        ...safePatch.live_transcription_webhook,
+        endpoint_url: safePatch.live_transcription_webhook.endpoint_url.trim(),
+      };
+    }
+    const webhookError = webhookUrlError(settings.live_transcription_webhook);
+    if (webhookError) throw new Error(webhookError);
     validateDictationHotkeys(settings);
     const dictionaryFileStatus = safePatch.dictionary
       ? {

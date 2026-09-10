@@ -182,6 +182,11 @@ export function defaultSettings(): AppSettings {
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,
     auto_transcript_input_model: "",
+    live_transcription_webhook: {
+      enabled: false,
+      endpoint_url: "",
+      payload_format: "text_only",
+    },
     text_transform_model: "",
     subtitle_translation_enabled: false,
     subtitle_translation_language: "ko",
