@@ -362,6 +362,33 @@ Selecting a cloud model sends audio and supported context to that provider. Conn
 
 **Cost-limit fallback** is opt-in. For a cloud model, choose an installed compatible on-device model and enable the switch. WakeNote retries once only when the primary API response is classified as an exhausted balance or spend limit. Other authentication, provider, transport, decoding, and content failures do not trigger fallback. Requested, effective, and fallback model IDs are stored in provenance metadata.
 
+### Transcription API usage and cost
+
+Open **Settings › Models › Transcription API cost › Details** for the dedicated
+**API usage & cost** page. Choose start/end dates and **Daily**, **Weekly**, or
+**Monthly** grouping, then filter by API provider and model. Quick ranges cover
+the last 7, 30, or 90 days and the last year. Weeks start on Monday in this Mac's
+time zone; ranges can span up to 732 days.
+
+The stacked bar chart shows estimated cost by provider. The line chart switches
+between cumulative estimated cost and audio minutes. The comparison table shows
+requests, audio time, estimated USD, cost per audio hour, and unpriced requests
+for each API/model. The paginated period table exposes exact chart values.
+
+**Include Soniox reference estimates** starts on in Details. It estimates missing
+Soniox V5 prices from saved duration using the published approximate equivalents
+of $0.10/hour for async and $0.12/hour for realtime, checked September 11, 2026.
+Soniox bills by tokens, so these are comparison estimates rather than invoices.
+Turn it off to match recorded-only costs in the compact Settings card. Original
+usage records are never rewritten. Unsupported or missing prices remain **Not
+priced**; partial known charges are marked **+ unknown**. Cost per audio hour is
+omitted when a model group still contains unpriced requests.
+
+WakeNote retains up to 10,000 local usage records. The page warns when the selected
+range reaches the oldest day of a full ledger. Other applications, unrecorded
+failures and charges without usage records are excluded. See
+[cost accounting and reference-rate details](docs/transcription-api-costs.md).
+
 ### Shared Dictionary
 
 Use **Settings › Models › Dictionary** or edit `dictionary.txt` through the provided action. The text format is:
@@ -417,9 +444,12 @@ The top-center feedback bubble remains available even when Subtitle is off. Micr
 
 Use **Settings › Advanced › Live Transcription Webhook** to send newly finalized
 live transcript chunks to one HTTP(S) endpoint. Choose **Text Only** or **JSON**,
-enable the switch, and select **Save webhook settings**. JSON shares the saved
+enable the switch, and changes save automatically. URL edits save after a 700ms
+pause; successive settings writes are spaced at least one second apart. JSON shares the saved
 recording metadata format; neither mode uploads audio. The feature starts off,
 does not send test requests on save, and never automatically replays past transcripts.
+The status indicates pending, saving, saved, or failed changes. Failed edits stay
+available with **Retry saving**. Valid pending edits are queued when leaving the page.
 
 Delivery runs in the background with a 15-second timeout per attempt and up to
 three retries after 1, 2, and 4 seconds. Up to four requests can be sent at once
