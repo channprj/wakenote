@@ -109,6 +109,7 @@ type RegenerationModel = Pick<
 
 const ALL_SOURCE_FILTER = "all";
 export const TRANSCRIPT_PAGE_SIZE = 50;
+const TRANSCRIPT_PAGE_SIZE_OPTIONS = [30, 50, 100, 200] as const;
 
 export interface TranscriptSourceFilterOption {
   id: string;
@@ -332,6 +333,7 @@ export function TranscriptsView({
   const [sourceFilter, setSourceFilter] = useState(initialSourceFilter);
   const [sortOrder, setSortOrder] = useState<HistorySortOrder>("newest");
   const [requestedPage, setRequestedPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(TRANSCRIPT_PAGE_SIZE);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -371,7 +373,7 @@ export function TranscriptsView({
     () => filterTranscriptsBySource(activeEntries, effectiveSourceFilter),
     [activeEntries, effectiveSourceFilter],
   );
-  const pagination = transcriptPage(filteredEntries, requestedPage);
+  const pagination = transcriptPage(filteredEntries, requestedPage, pageSize);
   const pageEntries = pagination.entries;
 
   const usableRegenerationModels = useMemo(
@@ -413,7 +415,13 @@ export function TranscriptsView({
     setSelectedPaths(new Set());
     lastSelectionAnchorRef.current = null;
     setCopyToast(null);
-  }, [effectiveActiveDay, visibilityMode, sortOrder, pagination.page]);
+  }, [
+    effectiveActiveDay,
+    visibilityMode,
+    sortOrder,
+    pagination.page,
+    pageSize,
+  ]);
 
   useEffect(() => {
     if (!sourceFilterOptions.some((option) => option.id === sourceFilter)) {
@@ -545,6 +553,15 @@ export function TranscriptsView({
     setRequestedPage(1);
     setSelectedPaths(new Set());
     lastSelectionAnchorRef.current = null;
+  };
+
+  const handlePageSizeChange = (value: string) => {
+    const nextSize = TRANSCRIPT_PAGE_SIZE_OPTIONS.find(
+      (size) => String(size) === value,
+    );
+    if (nextSize === undefined) return;
+    setPageSize(nextSize);
+    setRequestedPage(1);
   };
 
   const writeToClipboard = useCallback(
@@ -971,6 +988,24 @@ export function TranscriptsView({
               <SelectContent>
                 <SelectItem value="newest">Newest first</SelectItem>
                 <SelectItem value="oldest">Oldest first</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="transcript-source-filter">
+            <span>Per page</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={handlePageSizeChange}
+            >
+              <SelectTrigger size="sm" aria-label="Transcripts per page">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSCRIPT_PAGE_SIZE_OPTIONS.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </label>

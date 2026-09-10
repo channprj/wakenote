@@ -363,6 +363,85 @@ describe("TranscriptsView recoverable deletion", () => {
 });
 
 describe("TranscriptsView pagination and order", () => {
+  it.each([30, 50, 100, 200])(
+    "shows %i rows per page and resets later pages when the size changes",
+    async (size) => {
+      const user = userEvent.setup();
+      const entries = Array.from({ length: 201 }, (_, index) => ({
+        ...entry,
+        transcript_path: `/tmp/WakeNote/20260510/transcript-${index}.txt`,
+        recorded_at: new Date(
+          Date.parse("2026-05-10T01:00:00+09:00") + index * 1000,
+        ).toISOString(),
+        text: `Transcript ${index + 1}`,
+      }));
+      const { container } = render(
+        <TranscriptsView
+          today={new Date("2026-05-10T12:00:00+09:00")}
+          days={[{ day, count: entries.length }]}
+          entriesByDay={new Map([[day, entries]])}
+        />,
+      );
+      const visibleRows = () => container.querySelectorAll(".transcript-entry");
+      expect(visibleRows()).toHaveLength(50);
+
+      if (size === 50) {
+        await user.click(
+          screen.getByRole("combobox", { name: "Transcripts per page" }),
+        );
+        await user.click(screen.getByRole("option", { name: "30" }));
+      }
+      await user.click(
+        screen.getByRole("button", { name: "Next Transcript page" }),
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Transcripts per page" }),
+      );
+      expect(
+        screen.getAllByRole("option").map((option) => option.textContent),
+      ).toEqual(["30", "50", "100", "200"]);
+      await user.click(screen.getByRole("option", { name: String(size) }));
+
+      expect(visibleRows()).toHaveLength(size);
+      expect(screen.getByText(`1–${size} of 201`)).toBeTruthy();
+      expect(
+        screen.getByText(`Page 1 of ${Math.ceil(201 / size)}`),
+      ).toBeTruthy();
+      expect(visibleRows()[0].textContent).toContain("Transcript 201");
+      if (size === 200) {
+        await user.click(
+          screen.getByRole("button", { name: "Next Transcript page" }),
+        );
+        expect(visibleRows()).toHaveLength(1);
+        expect(screen.getByText("201–201 of 201")).toBeTruthy();
+      }
+    },
+  );
+
+  it("keeps the page size control available for one page and clears selection on change", async () => {
+    const user = userEvent.setup();
+    renderVisibilityView(vi.fn());
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select transcript 2026-05-10 01:02:03",
+      }),
+    );
+    expect(screen.getByText("1 selected")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Transcripts per page" }),
+    );
+    await user.click(screen.getByRole("option", { name: "30" }));
+    expect(screen.queryByText("1 selected")).toBeNull();
+    expect(
+      screen.queryByRole("navigation", { name: "Transcript pages" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Transcripts per page" })
+        .textContent,
+    ).toBe("30");
+  });
+
   it("renders 50 rows per page and resets to page one when order changes", async () => {
     const user = userEvent.setup();
     const entries = Array.from({ length: 51 }, (_, index) => {
