@@ -42,11 +42,11 @@ export function formatTranscriptForCopy(
 ): string {
   const timestamp =
     formatLocalTimestamp(entry.recorded_at) || entry.recorded_at;
-  return `${timestamp} [${transcriptSourceLabel(entry, sourceLabels)}] - ${entry.text}`;
+  return `${timestamp} [${transcriptSourceLabel(entry, sourceLabels)}] - ${entry.text.trim()}`;
 }
 
 export function formatTranscriptsForCopy(
-  entries: RecentTranscript[],
+  entries: readonly RecentTranscript[],
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
   return entries
@@ -59,9 +59,7 @@ export function formatTranscriptsForTextExport(
   sourceLabels: Readonly<Record<string, string>> = {},
 ): string {
   if (entries.length === 0) return "";
-  return `${entries
-    .map((entry) => formatTranscriptForCopy(entry, sourceLabels))
-    .join("\n\n")}\n`;
+  return `${formatTranscriptsForCopy(entries, sourceLabels)}\n`;
 }
 
 export function transcriptSourceLabel(

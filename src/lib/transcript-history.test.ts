@@ -1220,19 +1220,19 @@ describe("formatTranscriptForCopy", () => {
 });
 
 describe("formatTranscriptsForCopy", () => {
-  it("joins entries with newlines in the requested format", () => {
+  it("joins entries with single newlines even when text has surrounding whitespace", () => {
     const entries: RecentTranscript[] = [
       {
         transcript_path: "/tmp/WakeNote/20260519/155323.txt",
         audio_path: "/tmp/WakeNote/20260519/155323.m4a",
         recorded_at: "2026-05-19T15:53:23+09:00",
-        text: "슬립~",
+        text: "슬립~\n\n",
       },
       {
         transcript_path: "/tmp/WakeNote/20260519/155330.txt",
         audio_path: "/tmp/WakeNote/20260519/155330.m4a",
         recorded_at: "2026-05-19T15:53:30+09:00",
-        text: "여보세요?",
+        text: "\r\n여보세요?\r\n",
       },
     ];
 
@@ -1247,26 +1247,26 @@ describe("formatTranscriptsForCopy", () => {
 });
 
 describe("formatTranscriptsForTextExport", () => {
-  it("separates chronological entries with blank lines and ends with one newline", () => {
+  it("separates chronological entries with single newlines and ends with one newline", () => {
     const entries: RecentTranscript[] = [
       {
         transcript_path: "/tmp/WakeNote/20260824/090000.txt",
         audio_path: "/tmp/WakeNote/20260824/090000.m4a",
         recorded_at: "2026-08-24T09:00:00+09:00",
-        text: "First thought",
+        text: "First thought\n\n",
       },
       {
         transcript_path: "/tmp/WakeNote/20260824/100000-youtube.txt",
         audio_path: "/tmp/WakeNote/20260824/100000-youtube.m4a",
         recorded_at: "2026-08-24T10:00:00+09:00",
-        text: "Second thought",
+        text: "\r\nSecond thought\r\n",
         source: "system",
         source_label: "youtube",
       },
     ];
 
     expect(formatTranscriptsForTextExport(entries)).toBe(
-      "2026-08-24 09:00:00 [Mic] - First thought\n\n" +
+      "2026-08-24 09:00:00 [Mic] - First thought\n" +
         "2026-08-24 10:00:00 [YouTube] - Second thought\n",
     );
   });

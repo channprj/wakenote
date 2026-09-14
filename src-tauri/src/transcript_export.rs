@@ -228,11 +228,11 @@ fn format_transcript_day(
                 "{} [{}] - {}",
                 local_timestamp(&entry.recorded_at),
                 transcript_source_label(entry, &custom_labels),
-                entry.text,
+                entry.text.trim(),
             )
         })
         .collect::<Vec<_>>()
-        .join("\n\n");
+        .join("\n");
     if !output.is_empty() {
         output.push('\n');
     }
@@ -346,10 +346,10 @@ mod tests {
     }
 
     #[test]
-    fn formats_entries_with_local_timestamps_custom_labels_and_blank_lines() {
+    fn formats_entries_with_local_timestamps_custom_labels_and_single_newlines() {
         let entries = vec![
-            system_entry("2026-08-24T01:02:03+09:00", "meet", "첫 번째"),
-            system_entry("2026-08-24T02:03:04+09:00", "youtube", "두 번째"),
+            system_entry("2026-08-24T01:02:03+09:00", "meet", "첫 번째\n\n"),
+            system_entry("2026-08-24T02:03:04+09:00", "youtube", "\r\n두 번째\r\n"),
         ];
         let custom_sources = vec![CustomSourceEntry {
             id: "meet".into(),
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(
             format_transcript_day(&entries, &custom_sources),
             concat!(
-                "2026-08-24 01:02:03 [Team call] - 첫 번째\n\n",
+                "2026-08-24 01:02:03 [Team call] - 첫 번째\n",
                 "2026-08-24 02:03:04 [YouTube] - 두 번째\n",
             ),
         );
@@ -441,7 +441,6 @@ mod tests {
             )
             .expect("first file")
             .lines()
-            .filter(|line| !line.is_empty())
             .map(|line| line.rsplit(" - ").next().unwrap_or_default())
             .collect::<Vec<_>>(),
             vec!["morning", "uploaded"],
@@ -496,7 +495,8 @@ mod tests {
         assert_eq!(result.transcript_count, 2);
         assert_eq!(result.destination_path, destination_path.to_string_lossy());
         let original = fs::read_to_string(&destination_path).expect("exported day");
-        assert!(original.contains(" - morning\n\n"), "{original}");
+        assert!(original.contains(" - morning\n"), "{original}");
+        assert!(!original.contains("\n\n"), "{original}");
         assert!(original.ends_with(" - evening\n"), "{original}");
 
         let error = export_transcript_day(source.path(), "2026-08-24", &destination_path, &[])
