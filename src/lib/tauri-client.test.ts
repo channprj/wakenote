@@ -1579,7 +1579,7 @@ describe("transcript text export browser fallback", () => {
         "WakeNote-2026-08-24.txt",
       ]);
       await expect(downloads[1].blob.text()).resolves.toBe(
-        "2026-08-24 09:00:00 [Mic] - Earlier\n\n" +
+        "2026-08-24 09:00:00 [Mic] - Earlier\n" +
           "2026-08-24 10:00:00 [Team room] - Later\n",
       );
       expect(revokeObjectURL).toHaveBeenCalledTimes(3);
