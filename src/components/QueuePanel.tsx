@@ -76,6 +76,7 @@ import {
 } from "./DatePagePicker";
 
 export const ACTIVITY_PAGE_SIZE = 50;
+const REPROCESSING_MODEL_STORAGE_KEY = "wakenote.activity.reprocessing-model";
 export type ActivityView = "all" | "issues" | "attention" | "resolved";
 export type ActivityKindFilter = "all" | QueueActivityKind;
 export type ActivityStatusFilter = "hide_successful" | "all" | QueueJobStatus;
@@ -176,6 +177,8 @@ export function preferredReprocessingModelId(
   selectedModelId: string,
 ): string {
   const available = reprocessingModels(models);
+  const sonioxAsync = available.find((model) => model.id === "soniox-async-v5");
+  if (sonioxAsync) return sonioxAsync.id;
   return available.some((model) => model.id === selectedModelId)
     ? selectedModelId
     : (available[0]?.id ?? "");
@@ -357,11 +360,24 @@ export function QueuePanel({
     () => new Set(),
   );
   const [requestedReprocessingModelId, setRequestedReprocessingModelId] =
-    useState("");
+    useState(() => {
+      try {
+        return window.localStorage.getItem(REPROCESSING_MODEL_STORAGE_KEY) ?? "";
+      } catch {
+        return "";
+      }
+    });
 
-  useEffect(() => {
-    setRequestedReprocessingModelId("");
-  }, [selectedModelId]);
+  const handleReprocessingModelChange = (modelId: string) => {
+    setRequestedReprocessingModelId(modelId);
+    try {
+      // Persist explicit choices only; a temporarily unavailable model must
+      // not lose its preference to the fallback shown by a snapshot update.
+      window.localStorage.setItem(REPROCESSING_MODEL_STORAGE_KEY, modelId);
+    } catch {
+      // Keep the choice for this visit when browser storage is unavailable.
+    }
+  };
 
   const [reprocessing, setReprocessing] = useState(false);
   const [trashing, setTrashing] = useState(false);
@@ -757,7 +773,7 @@ export function QueuePanel({
               <>
                 <Select
                   value={reprocessingModelId || undefined}
-                  onValueChange={setRequestedReprocessingModelId}
+                  onValueChange={handleReprocessingModelChange}
                   disabled={
                     availableReprocessingModels.length === 0 || reprocessing
                   }

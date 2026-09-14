@@ -1,13 +1,24 @@
 // @vitest-environment jsdom
+/// <reference types="vitest/jsdom" />
 
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelDescriptor, QueueJob } from "../lib/types";
 import { mockModels } from "../lib/app-state";
 import { QueuePanel } from "./QueuePanel";
 
-afterEach(cleanup);
+beforeEach(() => {
+  // Node's native storage can shadow jsdom's browser storage in Vitest.
+  vi.stubGlobal("localStorage", jsdom.window.localStorage);
+  window.localStorage.clear();
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  window.localStorage.clear();
+  vi.unstubAllGlobals();
+});
 
 Object.defineProperties(HTMLElement.prototype, {
   hasPointerCapture: {
@@ -669,11 +680,12 @@ describe("QueuePanel pagination", () => {
   }, 15_000);
 
   it.each(["soniox-realtime-v5", "openai-gpt-live-transcribe"])(
-    "follows the default %s when settings change after a manual choice",
+    "remembers the Re-run model across remounts and global model changes to %s",
     async (defaultModelId) => {
       const user = userEvent.setup();
       const onReprocess = vi.fn().mockResolvedValue(true);
       const defaultModel = mockModels().find((model) => model.id === defaultModelId)!;
+      const sonioxAsync = mockModels().find((model) => model.id === "soniox-async-v5")!;
       const props = {
         nowMs: Date.parse("2026-08-04T12:00:00.000Z"),
         queue: {
@@ -693,6 +705,7 @@ describe("QueuePanel pagination", () => {
           readyFileModel("whisper-small", "Whisper Small"),
           readyFileModel("whisper-medium", "Whisper Medium"),
           { ...defaultModel, status: "ready" as const },
+          sonioxAsync,
         ],
         selectedModelId: "whisper-medium",
         canProcessTranscription: true,
@@ -705,11 +718,11 @@ describe("QueuePanel pagination", () => {
         onSkip: () => {},
         onReprocess,
       };
-      const { rerender } = render(<QueuePanel {...props} />);
+      const { rerender, unmount } = render(<QueuePanel {...props} />);
       const selectedModelLabel = () =>
         screen.getByRole("combobox", { name: "Reprocessing model" }).textContent;
 
-      expect(selectedModelLabel()).toBe("Whisper Medium");
+      expect(selectedModelLabel()).toBe(sonioxAsync.display_name);
       await user.click(
         screen.getByRole("combobox", { name: "Reprocessing model" }),
       );
@@ -727,13 +740,26 @@ describe("QueuePanel pagination", () => {
       await user.click(screen.getByRole("checkbox", { name: "Select one.wav" }));
 
       rerender(<QueuePanel {...props} selectedModelId={defaultModelId} />);
-      expect(selectedModelLabel()).toBe(defaultModel.display_name);
+      expect(selectedModelLabel()).toBe("Whisper Small");
       await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
-      expect(onReprocess).toHaveBeenCalledWith([1], defaultModelId);
+      expect(onReprocess).toHaveBeenCalledWith([1], "whisper-small");
 
-      // Returning to an earlier default must not revive the old manual choice.
-      rerender(<QueuePanel {...props} />);
-      expect(selectedModelLabel()).toBe("Whisper Medium");
+      // Fall back while the chosen model is unavailable without erasing it.
+      rerender(
+        <QueuePanel
+          {...props}
+          models={props.models.filter((model) => model.id !== "whisper-small")}
+        />,
+      );
+      expect(selectedModelLabel()).toBe(sonioxAsync.display_name);
+
+      unmount();
+      const reopened = render(<QueuePanel {...props} models={[]} />);
+      reopened.rerender(<QueuePanel {...props} />);
+      expect(selectedModelLabel()).toBe("Whisper Small");
+      await user.click(screen.getByRole("checkbox", { name: "Select one.wav" }));
+      await user.click(screen.getByRole("button", { name: "Reprocess 1" }));
+      expect(onReprocess).toHaveBeenLastCalledWith([1], "whisper-small");
     },
   );
 

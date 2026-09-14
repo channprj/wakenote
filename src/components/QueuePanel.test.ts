@@ -254,7 +254,7 @@ describe("Activity issue reprocessing", () => {
     ]);
   });
 
-  it("offers runnable reprocessing models and prefers the current model", () => {
+  it("offers runnable reprocessing models and falls back to the current model without Soniox Async", () => {
     const models = [
       model("ready-file", "ready", ["file"]),
       model("installed-file", "installed", ["file"]),
@@ -272,6 +272,23 @@ describe("Activity issue reprocessing", () => {
     expect(preferredReprocessingModelId(models, "missing-file")).toBe(
       "ready-file",
     );
+  });
+
+  it("defaults to Soniox Async when available regardless of the global model", () => {
+    const models = [
+      model("ready-file", "ready", ["file"]),
+      model("soniox-async-v5", "ready", ["file"]),
+    ];
+
+    expect(preferredReprocessingModelId(models, "ready-file")).toBe(
+      "soniox-async-v5",
+    );
+    expect(
+      preferredReprocessingModelId(
+        models.map((candidate) => ({ ...candidate, status: "missing" })),
+        "ready-file",
+      ),
+    ).toBe("");
   });
 });
 
