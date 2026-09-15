@@ -1160,6 +1160,7 @@ fn dictation_runtime_returns_one_recording_from_two_priority_slots() {
         &result.recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        true,
         &DictionaryContext::default(),
         OrderedFakeTranscriber {
             events: events.clone(),
@@ -1332,6 +1333,7 @@ fn dictation_transcription_uses_ephemeral_16khz_wav_and_requested_language() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        true,
         &DictionaryContext::default(),
         transcriber,
     )
@@ -1383,6 +1385,7 @@ fn dictation_transcription_applies_the_shared_dictionary() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        true,
         &dictionary,
         transcriber,
     )
@@ -1416,6 +1419,7 @@ fn dictation_transcription_preserves_usage_while_applying_the_dictionary() {
         "openai-gpt-transcribe",
         TranscriptionLanguage::Auto,
         &[TranscriptionLanguage::En, TranscriptionLanguage::Ko],
+        true,
         &dictionary,
         UsageTranscriber,
     )
@@ -1424,6 +1428,65 @@ fn dictation_transcription_preserves_usage_while_applying_the_dictionary() {
 
     assert_eq!(execution.text, "WakeNote");
     assert_eq!(execution.usage.expect("usage").audio_duration_ms, 1_000);
+}
+
+#[test]
+fn dictation_transcription_suppresses_hallucination_artifacts() {
+    let started_at = Utc::now();
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
+    };
+    let transcriber = OrderedFakeTranscriber {
+        events: Arc::new(Mutex::new(Vec::new())),
+        text: "시청해주셔서 감사합니다".into(),
+    };
+
+    let execution = transcribe_dictation_recording_execution(
+        &recording,
+        "openai-gpt-transcribe",
+        TranscriptionLanguage::Auto,
+        &[TranscriptionLanguage::Ko],
+        true,
+        &DictionaryContext::default(),
+        transcriber,
+    )
+    .expect("transcription succeeds");
+
+    assert!(execution.is_none(), "hallucinated artifact must be dropped");
+}
+
+#[test]
+fn dictation_transcription_keeps_artifacts_when_suppression_is_disabled() {
+    let started_at = Utc::now();
+    let recording = DictationRecording {
+        samples: vec![0.1; 16_000],
+        sample_rate: 16_000,
+        started_at,
+        ended_at: started_at + chrono::Duration::seconds(1),
+        microphone_inputs: vec![dictation_input(MicrophoneSlot::Primary, "primary", "Wired")],
+    };
+    let transcriber = OrderedFakeTranscriber {
+        events: Arc::new(Mutex::new(Vec::new())),
+        text: "시청해주셔서 감사합니다".into(),
+    };
+
+    let execution = transcribe_dictation_recording_execution(
+        &recording,
+        "openai-gpt-transcribe",
+        TranscriptionLanguage::Auto,
+        &[TranscriptionLanguage::Ko],
+        false,
+        &DictionaryContext::default(),
+        transcriber,
+    )
+    .expect("transcription succeeds")
+    .expect("speech result");
+
+    assert_eq!(execution.text, "시청해주셔서 감사합니다");
 }
 
 #[test]
@@ -1447,6 +1510,7 @@ fn dictation_types_only_after_transcription_returns() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        true,
         &DictionaryContext::default(),
         transcriber,
         move |text| {
@@ -1488,6 +1552,7 @@ fn quiet_dictation_never_calls_the_text_sink() {
         &recording,
         "whisper-medium",
         TranscriptionLanguage::Auto,
+        true,
         &DictionaryContext::default(),
         transcriber,
         |_| panic!("quiet audio must not type"),

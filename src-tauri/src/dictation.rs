@@ -18,7 +18,7 @@ use crate::settings::{
 };
 use crate::transcription::{
     Transcriber, TranscriptionExecution, TranscriptionRequest, resample_linear,
-    should_skip_low_signal_audio,
+    should_skip_low_signal_audio, should_suppress_transcript_artifact,
 };
 use crate::voice_leveling::AudioFrameProcessor;
 
@@ -1332,6 +1332,7 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
     recording: &DictationRecording,
     model_id: &str,
     language: TranscriptionLanguage,
+    suppress_low_confidence_transcripts: bool,
     dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<String>, String> {
@@ -1340,6 +1341,7 @@ pub fn transcribe_dictation_recording<T: Transcriber>(
         model_id,
         language,
         &[language],
+        suppress_low_confidence_transcripts,
         dictionary,
         transcriber,
     )
@@ -1351,6 +1353,7 @@ pub fn transcribe_dictation_recording_execution<T: Transcriber>(
     model_id: &str,
     language: TranscriptionLanguage,
     language_hints: &[TranscriptionLanguage],
+    suppress_low_confidence_transcripts: bool,
     dictionary: &DictionaryContext,
     transcriber: T,
 ) -> Result<Option<TranscriptionExecution>, String> {
@@ -1370,6 +1373,11 @@ pub fn transcribe_dictation_recording_execution<T: Transcriber>(
         .map_err(|error| error.to_string())
         .map(|mut execution| {
             execution.text = dictionary.correct(&execution.text);
+            if suppress_low_confidence_transcripts
+                && should_suppress_transcript_artifact(&execution.text)
+            {
+                execution.text = String::new();
+            }
             (!execution.text.trim().is_empty()).then_some(execution)
         });
     let _ = std::fs::remove_file(&path);
@@ -1380,6 +1388,7 @@ pub fn transcribe_and_type_dictation_recording<T, F>(
     recording: &DictationRecording,
     model_id: &str,
     language: TranscriptionLanguage,
+    suppress_low_confidence_transcripts: bool,
     dictionary: &DictionaryContext,
     transcriber: T,
     type_text: F,
@@ -1388,8 +1397,14 @@ where
     T: Transcriber,
     F: FnOnce(&str) -> Result<(), String>,
 {
-    let Some(text) =
-        transcribe_dictation_recording(recording, model_id, language, dictionary, transcriber)?
+    let Some(text) = transcribe_dictation_recording(
+        recording,
+        model_id,
+        language,
+        suppress_low_confidence_transcripts,
+        dictionary,
+        transcriber,
+    )?
     else {
         return Ok(DictationProcessOutcome::NoSpeech);
     };

@@ -2671,6 +2671,7 @@ fn process_dictation_recording(
                         &dictation_model,
                         settings.dictation_language,
                         &settings.transcription_language_hints,
+                        settings.suppress_low_confidence_transcripts,
                         &dictionary,
                         transcriber,
                     )
@@ -2704,6 +2705,7 @@ fn process_dictation_recording(
                 &dictation_model,
                 settings.dictation_language,
                 &settings.transcription_language_hints,
+                settings.suppress_low_confidence_transcripts,
                 &dictionary,
                 transcriber,
             );
