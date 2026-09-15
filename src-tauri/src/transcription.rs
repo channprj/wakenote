@@ -1122,7 +1122,7 @@ impl Transcriber for RuntimeTranscriber {
                 runtime.as_str(),
                 "openrouter-stt" | "openai-stt" | "soniox-async-stt"
             ) && let Some(execution) =
-                silent_audio_execution(request.audio_path, request.model_id)?
+                silent_audio_execution(request.audio_path, request.model_id)
             {
                 return Ok(execution.text);
             }
@@ -1191,7 +1191,7 @@ impl Transcriber for RuntimeTranscriber {
         if matches!(
             runtime.as_str(),
             "openrouter-stt" | "openai-stt" | "soniox-async-stt"
-        ) && let Some(execution) = silent_audio_execution(request.audio_path, request.model_id)?
+        ) && let Some(execution) = silent_audio_execution(request.audio_path, request.model_id)
         {
             return Ok(execution);
         }
@@ -1679,23 +1679,24 @@ pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
 /// Decodes the audio and reports an empty NoSpeech execution when it is
 /// effectively silent, so cloud runtimes can skip the API call instead of
 /// paying to transcribe (and hallucinate on) silence. Returns `None` when the
-/// audio is loud enough to transcribe.
-fn silent_audio_execution(
-    audio_path: &Path,
-    model_id: &str,
-) -> Result<Option<TranscriptionExecution>, TranscriptionError> {
-    let samples = decode_audio_for_whisper(audio_path)?;
+/// audio should be transcribed normally — including when a local decode is
+/// impossible (e.g. missing file), so the cloud call keeps reporting its own
+/// errors such as missing API keys.
+fn silent_audio_execution(audio_path: &Path, model_id: &str) -> Option<TranscriptionExecution> {
+    let Ok(samples) = decode_audio_for_whisper(audio_path) else {
+        return None;
+    };
     if !should_skip_low_signal_audio(&samples) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(TranscriptionExecution::direct_with_issue(
+    Some(TranscriptionExecution::direct_with_issue(
         String::new(),
         model_id,
         Some(QueueJobIssue::warning(
             QueueIssueCode::NoSpeech,
             "No speech detected",
         )),
-    )))
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2226,7 +2227,6 @@ mod tests {
         write_test_wav(&audible_path, 0.3);
 
         let silent = silent_audio_execution(&silent_path, "openai-gpt-transcribe")
-            .expect("decoding succeeds")
             .expect("silent audio is skipped");
         assert_eq!(silent.text, "");
         assert_eq!(
@@ -2236,10 +2236,14 @@ mod tests {
         assert_eq!(silent.effective_model_id, "openai-gpt-transcribe");
 
         assert!(
-            silent_audio_execution(&audible_path, "openai-gpt-transcribe")
-                .expect("decoding succeeds")
-                .is_none(),
+            silent_audio_execution(&audible_path, "openai-gpt-transcribe").is_none(),
             "audible audio must not be skipped"
+        );
+
+        let missing_path = tmp.path().join("missing.wav");
+        assert!(
+            silent_audio_execution(&missing_path, "openai-gpt-transcribe").is_none(),
+            "undecodable audio must defer to the cloud call's own errors"
         );
     }
 
