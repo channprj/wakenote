@@ -1117,7 +1117,16 @@ impl Transcriber for RuntimeTranscriber {
         if command_path.exists() {
             ExternalCommandTranscriber::new(&self.model_directory).transcribe(request)
         } else {
-            match self.model_runtime(request.model_id).as_str() {
+            let runtime = self.model_runtime(request.model_id);
+            if matches!(
+                runtime.as_str(),
+                "openrouter-stt" | "openai-stt" | "soniox-async-stt"
+            ) && let Some(execution) =
+                silent_audio_execution(request.audio_path, request.model_id)?
+            {
+                return Ok(execution.text);
+            }
+            match runtime.as_str() {
                 "sherpa-onnx" => transcribe_with_sherpa(&self.model_directory, request),
                 "qwen3-asr" => Qwen3AsrTranscriber::new(&self.model_directory).transcribe(request),
                 "external-command" => {
@@ -1178,6 +1187,13 @@ impl Transcriber for RuntimeTranscriber {
             let mut transcriber = WhisperTranscriber::new(&self.model_directory);
             transcriber.suppress_low_confidence_decode = self.suppress_low_confidence_decode;
             return transcriber.transcribe_execution(request);
+        }
+        if matches!(
+            runtime.as_str(),
+            "openrouter-stt" | "openai-stt" | "soniox-async-stt"
+        ) && let Some(execution) = silent_audio_execution(request.audio_path, request.model_id)?
+        {
+            return Ok(execution);
         }
         if matches!(runtime.as_str(), "openai-realtime" | "soniox-realtime") {
             return self.wait_for_realtime_result(request);
@@ -1658,6 +1674,28 @@ pub fn should_skip_low_signal_audio(samples: &[f32]) -> bool {
         .sum::<f32>()
         / samples.len() as f32;
     mean_square.sqrt() < MIN_TRANSCRIBABLE_RMS
+}
+
+/// Decodes the audio and reports an empty NoSpeech execution when it is
+/// effectively silent, so cloud runtimes can skip the API call instead of
+/// paying to transcribe (and hallucinate on) silence. Returns `None` when the
+/// audio is loud enough to transcribe.
+fn silent_audio_execution(
+    audio_path: &Path,
+    model_id: &str,
+) -> Result<Option<TranscriptionExecution>, TranscriptionError> {
+    let samples = decode_audio_for_whisper(audio_path)?;
+    if !should_skip_low_signal_audio(&samples) {
+        return Ok(None);
+    }
+    Ok(Some(TranscriptionExecution::direct_with_issue(
+        String::new(),
+        model_id,
+        Some(QueueJobIssue::warning(
+            QueueIssueCode::NoSpeech,
+            "No speech detected",
+        )),
+    )))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2158,6 +2196,51 @@ mod tests {
             safe_message: "OpenAI transcription failed with HTTP 500".into(),
             category: crate::cloud_transcription::FailureCategory::Provider,
         })
+    }
+
+    fn write_test_wav(path: &Path, amplitude: f32) {
+        let mut writer = hound::WavWriter::create(
+            path,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: 16_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .expect("test wav");
+        for index in 0..16_000 {
+            let sample = amplitude * (index as f32 * 0.05).sin();
+            let value = (sample * i16::MAX as f32) as i16;
+            writer.write_sample(value).expect("test sample");
+        }
+        writer.finalize().expect("test wav finalized");
+    }
+
+    #[test]
+    fn silent_audio_execution_reports_no_speech_for_silence_and_none_for_speech() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let silent_path = tmp.path().join("silent.wav");
+        write_test_wav(&silent_path, 0.0);
+        let audible_path = tmp.path().join("audible.wav");
+        write_test_wav(&audible_path, 0.3);
+
+        let silent = silent_audio_execution(&silent_path, "openai-gpt-transcribe")
+            .expect("decoding succeeds")
+            .expect("silent audio is skipped");
+        assert_eq!(silent.text, "");
+        assert_eq!(
+            silent.issue.expect("issue").code,
+            QueueIssueCode::NoSpeech
+        );
+        assert_eq!(silent.effective_model_id, "openai-gpt-transcribe");
+
+        assert!(
+            silent_audio_execution(&audible_path, "openai-gpt-transcribe")
+                .expect("decoding succeeds")
+                .is_none(),
+            "audible audio must not be skipped"
+        );
     }
 
     #[test]
