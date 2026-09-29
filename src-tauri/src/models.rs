@@ -499,9 +499,8 @@ impl ModelStore {
     }
 
     /// Download a sherpa-onnx model `.tar.bz2` and extract it in place so the
-    /// bundled engine can run it. Records Downloading/Extracting/Ready/Error so
-    /// the UI shows the same progress as a normal download. Extraction uses the
-    /// system `tar` (handles bzip2) — no extra Rust dependency.
+    /// bundled engine can run it. Verify the pinned archive digest before
+    /// extracting the expected data files in an isolated temporary directory.
     pub fn download_and_extract_sherpa_model(
         &self,
         model: &ModelDescriptor,
@@ -551,7 +550,7 @@ impl ModelStore {
         // Stream to disk. On any failure mid-download, clean up the partial
         // archive and record an Error status — otherwise the UI stays stuck on
         // "Downloading" and `prepare_model_download` rejects the retry as active.
-        let downloaded_bytes =
+        let (downloaded_bytes, actual_checksum) =
             match self.stream_sherpa_archive(&model.id, &mut reader, &archive_path, total_bytes) {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -562,6 +561,18 @@ impl ModelStore {
                     return Err(error);
                 }
             };
+
+        if let Some(expected) = &model.checksum_sha256
+            && !actual_checksum.eq_ignore_ascii_case(expected)
+        {
+            let error = ModelStoreError::ChecksumMismatch {
+                expected: expected.clone(),
+                actual: actual_checksum,
+            };
+            let _ = std::fs::remove_file(&archive_path);
+            self.record_download_error(&model.id, downloaded_bytes, total_bytes, &error);
+            return Err(error);
+        }
 
         let final_total = total_bytes.or(Some(downloaded_bytes));
         self.record_download_status(
@@ -578,7 +589,13 @@ impl ModelStore {
             downloaded_bytes,
             final_total,
             Path::new("/usr/bin/tar"),
-        )?;
+        )
+        .inspect_err(|error| {
+            let _ = std::fs::remove_file(&archive_path);
+            if !matches!(error, ModelStoreError::Cancelled { .. }) {
+                self.record_download_error(&model.id, downloaded_bytes, final_total, error);
+            }
+        })?;
 
         if !self.sherpa_model_ready(&model.id) {
             let message = "extracted archive is missing expected model files".to_string();
@@ -603,7 +620,7 @@ impl ModelStore {
     }
 
     /// Stream a sherpa archive response body to `archive_path`, recording
-    /// progress and honoring cancellation. Returns the byte count on success.
+    /// progress and honoring cancellation. Returns the byte count and SHA-256.
     /// The caller is responsible for cleaning up `archive_path` on error.
     fn stream_sherpa_archive(
         &self,
@@ -611,8 +628,9 @@ impl ModelStore {
         reader: &mut impl Read,
         archive_path: &Path,
         total_bytes: Option<u64>,
-    ) -> Result<u64, ModelStoreError> {
+    ) -> Result<(u64, String), ModelStoreError> {
         let mut file = std::fs::File::create(archive_path)?;
+        let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         let mut downloaded_bytes = 0_u64;
         let mut last_recorded = 0_u64;
@@ -623,6 +641,7 @@ impl ModelStore {
                 break;
             }
             std::io::Write::write_all(&mut file, &buffer[..read])?;
+            hasher.update(&buffer[..read]);
             downloaded_bytes += read as u64;
             if self.is_download_cancelled(model_id)? {
                 return Err(ModelStoreError::Cancelled {
@@ -635,7 +654,7 @@ impl ModelStore {
             }
         }
         std::io::Write::flush(&mut file)?;
-        Ok(downloaded_bytes)
+        Ok((downloaded_bytes, format!("{:x}", hasher.finalize())))
     }
 
     fn extract_sherpa_archive_with_tar(
@@ -653,11 +672,25 @@ impl ModelStore {
             });
         }
 
+        let spec = sherpa_model_spec(model_id)
+            .ok_or_else(|| ModelStoreError::NotFound(model_id.to_string()))?;
+        // Archive contents never write into the shared model/command directory.
+        // Select only known data files, then copy regular files into a clean
+        // directory before publishing. Links and extra archive members cannot
+        // become command overrides, registry entries, or Python runtime files.
+        let staging = tempfile::Builder::new()
+            .prefix(".wakenote-model-")
+            .tempdir_in(&self.model_directory)?;
         let mut child = Command::new(tar_path)
             .arg("xjf")
             .arg(archive_path)
             .arg("-C")
-            .arg(&self.model_directory)
+            .arg(staging.path())
+            .arg("--no-recursion")
+            .arg("--no-same-owner")
+            .arg("--no-same-permissions")
+            .arg("--")
+            .args(spec.files.iter().map(|file| format!("{}/{file}", spec.dir)))
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -704,14 +737,51 @@ impl ModelStore {
             return Err(ModelStoreError::Download(message));
         }
 
+        let extracted = staging.path().join(&spec.dir);
+        if !std::fs::symlink_metadata(&extracted)?.file_type().is_dir() {
+            return Err(ModelStoreError::Download(
+                "invalid model archive directory".into(),
+            ));
+        }
+        let verified = staging.path().join("verified");
+        std::fs::create_dir(&verified)?;
+        for file in &spec.files {
+            let source = extracted.join(file);
+            if !std::fs::symlink_metadata(&source)?.file_type().is_file() {
+                return Err(ModelStoreError::Download(
+                    "model archive contains a non-regular data file".into(),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if std::fs::symlink_metadata(&source)?.nlink() != 1 {
+                    return Err(ModelStoreError::Download(
+                        "model archive contains a hard link".into(),
+                    ));
+                }
+            }
+            std::fs::copy(source, verified.join(file))?;
+        }
+        if self.is_download_cancelled(model_id)? {
+            return Err(ModelStoreError::Cancelled {
+                model_id: model_id.to_string(),
+            });
+        }
+        let destination = self.model_directory.join(&spec.dir);
+        if destination.symlink_metadata().is_ok() {
+            if destination.symlink_metadata()?.file_type().is_symlink() {
+                std::fs::remove_file(&destination)?;
+            } else {
+                std::fs::remove_dir_all(&destination)?;
+            }
+        }
+        std::fs::rename(verified, destination)?;
         Ok(())
     }
 
-    fn cleanup_cancelled_sherpa_extract(&self, model_id: &str, archive_path: &Path) {
+    fn cleanup_cancelled_sherpa_extract(&self, _model_id: &str, archive_path: &Path) {
         let _ = std::fs::remove_file(archive_path);
-        if let Some(sherpa_dir) = self.sherpa_model_dir(model_id) {
-            let _ = std::fs::remove_dir_all(sherpa_dir);
-        }
     }
 
     pub fn model_path(&self, model_id: &str) -> PathBuf {
@@ -758,6 +828,16 @@ impl ModelStore {
             default_model_registry()
         };
         merge_builtin_cloud_models(&mut registry);
+        // Older user registries may retain built-in URLs without a checksum.
+        // Refresh pins only for official downloads; custom sources stay explicit.
+        for (id, builtin) in default_model_registry() {
+            if builtin.provider_runtime == "sherpa-onnx"
+                && let Some(model) = registry.get_mut(&id)
+                && model.download_url == builtin.download_url
+            {
+                model.checksum_sha256 = builtin.checksum_sha256;
+            }
+        }
         self.merge_local_whisper_cpp_models(&mut registry)?;
         Ok(registry)
     }
@@ -1756,7 +1836,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
                     .to_string(),
             ),
-            checksum_sha256: None,
+            checksum_sha256: Some("5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf".to_string()),
             size_mb: 660,
             languages: vec!["en".to_string(), "multi".to_string()],
             speed_score: 8,
@@ -1784,7 +1864,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
                     .to_string(),
             ),
-            checksum_sha256: None,
+            checksum_sha256: Some("7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e".to_string()),
             size_mb: 250,
             languages: vec![
                 "ko".to_string(),
@@ -1819,7 +1899,7 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2"
                     .to_string(),
             ),
-            checksum_sha256: None,
+            checksum_sha256: Some("adbdd5e9fef87300c37cebfcfc4f1ebe56845c860c8a760af0a1dd65ce9beed3".to_string()),
             size_mb: 650,
             languages: vec![
                 "ko".to_string(),
@@ -2172,6 +2252,11 @@ mod tests {
 
     #[cfg(unix)]
     fn build_sherpa_archive(model_id: &str) -> Vec<u8> {
+        build_sherpa_archive_with(model_id, |_| {})
+    }
+
+    #[cfg(unix)]
+    fn build_sherpa_archive_with(model_id: &str, prepare: impl FnOnce(&Path)) -> Vec<u8> {
         let tmp = tempfile::tempdir().expect("archive tempdir");
         let spec = sherpa_model_spec(model_id).expect("sherpa model spec");
         let model_root = tmp.path().join(&spec.dir);
@@ -2182,13 +2267,15 @@ mod tests {
             std::fs::write(path, b"fixture").expect("model fixture file");
         }
 
-        let archive = tmp.path().join("model.tar.bz2");
+        prepare(tmp.path());
+        let archive_dir = tempfile::tempdir().expect("archive output");
+        let archive = archive_dir.path().join("model.tar.bz2");
         let output = Command::new("/usr/bin/tar")
             .arg("cjf")
             .arg(&archive)
             .arg("-C")
             .arg(tmp.path())
-            .arg(&spec.dir)
+            .arg(".")
             .output()
             .expect("create tar archive");
         assert!(
@@ -2302,6 +2389,20 @@ mod tests {
             "large checksum must be 64 lowercase hex chars: {large_hash}",
         );
         assert_eq!(large_hash, WHISPER_LARGE_SHA256);
+
+        for model in registry
+            .values()
+            .filter(|model| model.provider_runtime == "sherpa-onnx")
+        {
+            assert!(
+                model
+                    .checksum_sha256
+                    .as_deref()
+                    .is_some_and(is_lowercase_hex_64),
+                "{} needs a pinned archive digest",
+                model.id
+            );
+        }
     }
 
     #[test]
@@ -2495,8 +2596,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let store = ModelStore::new(tmp.path().join("models"));
         let model_id = "sensevoice-small";
-        let url = serve_once(build_sherpa_archive(model_id));
-        let model = sherpa_descriptor(model_id, url);
+        let archive = build_sherpa_archive(model_id);
+        let checksum = hex_sha256(&archive);
+        let url = serve_once(archive);
+        let mut model = sherpa_descriptor(model_id, url);
+        model.checksum_sha256 = Some(checksum);
 
         let status = store
             .download_and_extract_sherpa_model(&model)
@@ -2610,5 +2714,82 @@ mod tests {
         let record = state.downloads.get(model_id).expect("cancelled record");
         assert_eq!(record.status, ModelStatus::Error);
         assert_eq!(record.error.as_deref(), Some("cancelled by user"));
+    }
+    #[test]
+    fn legacy_official_sherpa_registry_restores_archive_digest() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModelStore::new(temp.path());
+        let mut model = default_model_registry().remove("sensevoice-small").unwrap();
+        let expected = model.checksum_sha256.take();
+        std::fs::write(store.registry_path(), serde_json::to_vec(&vec![model]).unwrap()).unwrap();
+        assert_eq!(store.load_model_registry().unwrap()["sensevoice-small"].checksum_sha256, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sherpa_archive_installs_only_expected_regular_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModelStore::new(temp.path());
+        let id = "sensevoice-small";
+        let archive = build_sherpa_archive_with(id, |root| {
+            std::fs::write(root.join("unrelated.command"), "inert test data").unwrap();
+            std::fs::write(root.join("model-registry.json"), "inert test data").unwrap();
+            let dir = root.join(sherpa_model_spec(id).unwrap().dir);
+            std::fs::write(dir.join("unexpected.txt"), "inert test data").unwrap();
+        });
+        let model = sherpa_descriptor(id, serve_once(archive));
+        store.download_and_extract_sherpa_model(&model).unwrap();
+        assert!(!temp.path().join("unrelated.command").exists());
+        assert!(!temp.path().join("model-registry.json").exists());
+        assert!(
+            !store
+                .sherpa_model_dir(id)
+                .unwrap()
+                .join("unexpected.txt")
+                .exists()
+        );
+        assert!(store.sherpa_model_ready(id));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sherpa_archive_rejects_symlink_model_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModelStore::new(temp.path());
+        let id = "sensevoice-small";
+        let archive = build_sherpa_archive_with(id, |root| {
+            let spec = sherpa_model_spec(id).unwrap();
+            let file = root.join(&spec.dir).join(&spec.files[0]);
+            std::fs::remove_file(&file).unwrap();
+            std::os::unix::fs::symlink("tokens.txt", file).unwrap();
+        });
+        let model = sherpa_descriptor(id, serve_once(archive));
+        assert!(store.download_and_extract_sherpa_model(&model).is_err());
+        assert!(!store.sherpa_model_dir(id).unwrap().exists());
+        assert!(!store.temp_download_path(id).exists());
+        assert_eq!(
+            store.load_download_state().unwrap().downloads[id].status,
+            ModelStatus::Error
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sherpa_archive_checksum_mismatch_never_extracts() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ModelStore::new(temp.path());
+        let id = "sensevoice-small";
+        let mut model = sherpa_descriptor(id, serve_once(build_sherpa_archive(id)));
+        model.checksum_sha256 = Some("0".repeat(64));
+        assert!(matches!(
+            store.download_and_extract_sherpa_model(&model),
+            Err(ModelStoreError::ChecksumMismatch { .. })
+        ));
+        assert!(!store.sherpa_model_dir(id).unwrap().exists());
+        assert!(!store.temp_download_path(id).exists());
+        assert_eq!(
+            store.load_download_state().unwrap().downloads[id].status,
+            ModelStatus::Error
+        );
     }
 }
