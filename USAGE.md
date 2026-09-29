@@ -646,6 +646,7 @@ Run `pnpm dmg:downloads` directly. `pnpm build dmg:downloads` is invalid because
 - The product and packaging workflow are macOS-specific.
 - MP3 depends on `ffmpeg`; M4A depends on `/usr/bin/afconvert`.
 - Large Whisper and Qwen models can be slow or memory-heavy on lower-end Macs.
+- Whisper loads only the official model bytes pinned by WakeNote. Custom or modified `.bin` files are rejected before native parsing; a local registry checksum cannot override this check. Initial loading temporarily uses additional memory equal to the model file size. See [Security](SECURITY.md).
 - Cloud models send audio to their provider and are subject to external availability, retention, rate-limit, and billing policies.
 - Browser fixtures prove frontend behavior only.
 - No project license has been specified yet.
