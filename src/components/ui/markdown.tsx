@@ -26,6 +26,9 @@ export function MarkdownDocument({
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
+          // Generated images can encode private transcript text in their URL.
+          // Keep their description without making an automatic network request.
+          img: ({ alt }) => <span>{alt}</span>,
           // Wide tables scroll inside their own container: the page itself is
           // `overflow-x: hidden`, so an unwrapped table would be clipped.
           table: ({ node: _node, ...tableProps }) => (

