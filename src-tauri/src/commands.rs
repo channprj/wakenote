@@ -767,6 +767,7 @@ impl Default for AppBackend {
 impl AppBackend {
     pub fn load_from_dir(root: impl AsRef<std::path::Path>) -> Result<Self, PersistenceError> {
         let persistence = AppPersistence::new(root);
+        persistence.protect_private_storage()?;
         let mut settings = persistence.load_settings()?.unwrap_or_default();
         let models = model_registry_snapshot(expand_user_path(&settings.model_directory));
         settings.transcription_options = validate_model_options(

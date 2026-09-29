@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -12,17 +13,17 @@ pub struct AppPersistence {
     root: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct OpenRouterSecrets {
     api_key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct OpenAiSecrets {
     api_key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct SonioxSecrets {
     api_key: String,
 }
@@ -105,6 +106,23 @@ impl AppPersistence {
         Self {
             root: root.as_ref().to_path_buf(),
         }
+    }
+
+    /// Tighten older installations before any persisted settings or credentials
+    /// are loaded. Only this app's own state directory is changed.
+    pub fn protect_private_storage(&self) -> Result<(), PersistenceError> {
+        ensure_private_directory(&self.root)?;
+        for path in [
+            self.settings_path(),
+            self.queue_path(),
+            self.list_visibility_path(),
+            self.openai_secrets_path(),
+            self.openrouter_secrets_path(),
+            self.soniox_secrets_path(),
+        ] {
+            protect_existing_file(&path)?;
+        }
+        Ok(())
     }
 
     pub fn load_settings(&self) -> Result<Option<AppSettings>, PersistenceError> {
@@ -372,7 +390,7 @@ fn expand_leading_tilde(path: &Path) -> PathBuf {
 fn read_json_if_exists<T: serde::de::DeserializeOwned>(
     path: &Path,
 ) -> Result<Option<T>, PersistenceError> {
-    if !path.exists() {
+    if !protect_existing_file(path)? {
         return Ok(None);
     }
 
@@ -381,15 +399,69 @@ fn read_json_if_exists<T: serde::de::DeserializeOwned>(
     Ok(Some(value))
 }
 
-fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), PersistenceError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
     }
+    builder.create(path)?;
+    if !std::fs::symlink_metadata(path)?.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "app state directory must not be a symbolic link",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
 
-    let tmp_path = path.with_extension("tmp");
-    let bytes = serde_json::to_vec_pretty(value)?;
-    std::fs::write(&tmp_path, bytes)?;
-    std::fs::rename(tmp_path, path)?;
+fn protect_existing_file(path: &Path) -> std::io::Result<bool> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "app state must be a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.nlink() != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "app state must not be a hard link",
+            ));
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(true)
+}
+
+fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), PersistenceError> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "app state needs a parent directory",
+        )
+    })?;
+    ensure_private_directory(parent)?;
+    // NamedTempFile creates an exclusive, unpredictable 0600 file on Unix.
+    // A pre-existing <name>.tmp symlink cannot redirect or expose the write.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(&serde_json::to_vec_pretty(value)?)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 

@@ -683,3 +683,99 @@ fn list_visibility_rejects_unsupported_registry_version() {
             .contains("unsupported list visibility version 2")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn persistence_files_are_private_after_creation_and_overwrite() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("app-data");
+    let store = AppPersistence::new(&root);
+    for _ in 0..2 {
+        store.save_settings(&AppSettings::default()).unwrap();
+        store.save_openai_api_key("test-only").unwrap();
+        store.save_openrouter_api_key("test-only").unwrap();
+        store.save_soniox_api_key("test-only").unwrap();
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        for name in [
+            "settings.json",
+            "openai-secrets.json",
+            "openrouter-secrets.json",
+            "soniox-secrets.json",
+        ] {
+            let path = root.join(name);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn backend_startup_restricts_legacy_private_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("app-data");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for name in [
+        "openai-secrets.json",
+        "openrouter-secrets.json",
+        "soniox-secrets.json",
+    ] {
+        let path = root.join(name);
+        std::fs::write(&path, r#"{"api_key":"test-only"}"#).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    AppBackend::load_from_dir(&root).unwrap();
+    assert_eq!(
+        std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    for name in [
+        "openai-secrets.json",
+        "openrouter-secrets.json",
+        "soniox-secrets.json",
+    ] {
+        assert_eq!(
+            std::fs::metadata(root.join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_never_follows_a_predictable_temporary_symlink() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("app-data");
+    std::fs::create_dir(&root).unwrap();
+    let unrelated = temp.path().join("unrelated.txt");
+    std::fs::write(&unrelated, "untouched").unwrap();
+    std::os::unix::fs::symlink(&unrelated, root.join("settings.tmp")).unwrap();
+    AppPersistence::new(&root)
+        .save_settings(&AppSettings::default())
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(unrelated).unwrap(), "untouched");
+}
+
+#[cfg(unix)]
+#[test]
+fn backend_rejects_a_symlinked_private_storage_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("app-data");
+    let target = temp.path().join("other");
+    std::fs::create_dir(&target).unwrap();
+    std::os::unix::fs::symlink(target, &root).unwrap();
+    assert!(AppBackend::load_from_dir(root).is_err());
+}
