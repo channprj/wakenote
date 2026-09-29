@@ -1,5 +1,6 @@
 use std::ffi::{CStr, c_char, c_uint, c_void};
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,6 +8,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperSegment,
@@ -1841,6 +1843,44 @@ impl<T> ReusableContextCache<T> {
     }
 }
 
+// The bundled native parser does not safely reject every malformed GGML model
+// (upstream whisper.cpp issues #3787 and #3924). Only compiled-in model digests
+// may cross this boundary. An editable registry or adjacent checksum is not a
+// trust anchor. Parse the verified buffer itself to avoid reopening the path.
+fn load_verified_whisper_model<T>(
+    model_path: &Path,
+    trusted_checksums: &[String],
+    load: impl FnOnce(&[u8]) -> Result<T, TranscriptionError>,
+) -> Result<T, TranscriptionError> {
+    const MAX_MODEL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    let file = std::fs::File::open(model_path)
+        .map_err(|error| TranscriptionError::Engine(format!("Cannot read Whisper model: {error}")))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| TranscriptionError::Engine(format!("Cannot inspect Whisper model: {error}")))?;
+    let untrusted = || TranscriptionError::Engine(
+        "Whisper model is not a verified supported model. Install it from Settings > Models. Custom or modified Whisper files cannot be loaded.".to_string(),
+    );
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_MODEL_BYTES {
+        return Err(untrusted());
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(metadata.len() as usize).map_err(|_| {
+        TranscriptionError::Engine("Not enough memory to verify the Whisper model.".to_string())
+    })?;
+    file.take(MAX_MODEL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| TranscriptionError::Engine(format!("Cannot read Whisper model: {error}")))?;
+    if bytes.len() as u64 > MAX_MODEL_BYTES {
+        return Err(untrusted());
+    }
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    if !trusted_checksums.iter().any(|trusted| trusted == &digest) {
+        return Err(untrusted());
+    }
+    load(&bytes)
+}
+
 pub fn cached_whisper_context(
     model_path: &Path,
 ) -> Result<Arc<WhisperContext>, TranscriptionError> {
@@ -1861,9 +1901,15 @@ pub fn cached_whisper_context(
             "[wakenote] whisper: loading reusable context from {}",
             model_path.display()
         );
-        let context =
-            WhisperContext::new_with_params(model_path, default_whisper_context_parameters())
-                .map_err(|error| TranscriptionError::Engine(error.to_string()))?;
+        let trusted_checksums = default_model_registry()
+            .into_values()
+            .filter(|model| model.provider_runtime == "whisper-rs")
+            .filter_map(|model| model.checksum_sha256)
+            .collect::<Vec<_>>();
+        let context = load_verified_whisper_model(model_path, &trusted_checksums, |bytes| {
+            WhisperContext::new_from_buffer_with_params(bytes, default_whisper_context_parameters())
+                .map_err(|error| TranscriptionError::Engine(error.to_string()))
+        })?;
         eprintln!(
             "[wakenote] whisper: reusable context loaded in {:?}",
             started.elapsed()
@@ -2146,6 +2192,70 @@ pub fn resample_linear(samples: &[f32], source_rate: u32, target_rate: u32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whisper_rejects_untrusted_bytes_before_calling_the_native_loader() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("custom.bin");
+        std::fs::write(&model, b"untrusted model bytes").unwrap();
+        let result = load_verified_whisper_model::<()>(&model, &["0".repeat(64)], |_| {
+            panic!("untrusted data must never reach the native loader");
+        });
+        assert!(result.unwrap_err().to_string().contains("verified supported model"));
+    }
+
+    #[test]
+    fn whisper_parses_the_verified_buffer_even_if_the_file_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("fixture.bin");
+        let original = b"trusted synthetic fixture";
+        std::fs::write(&model, original).unwrap();
+        let digest = format!("{:x}", Sha256::digest(original));
+        load_verified_whisper_model(&model, &[digest.clone()], |bytes| {
+            std::fs::write(&model, b"replacement bytes").unwrap();
+            assert_eq!(bytes, original);
+            Ok(())
+        }).unwrap();
+        assert!(load_verified_whisper_model::<()>(&model, &[digest], |_| {
+            panic!("modified data must not reach the loader");
+        }).is_err());
+    }
+
+    #[test]
+    fn whisper_rejects_oversized_files_without_reading_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("oversized.bin");
+        std::fs::File::create(&model).unwrap().set_len(2 * 1024 * 1024 * 1024 + 1).unwrap();
+        assert!(load_verified_whisper_model::<()>(&model, &[], |_| {
+            panic!("oversized data must not reach the loader");
+        }).is_err());
+    }
+
+    #[test]
+    fn whisper_context_rejects_a_custom_model_even_with_a_self_supplied_registry_checksum() {
+        let directory = tempfile::tempdir().unwrap();
+        let model = directory.path().join("custom.bin");
+        let bytes = b"custom synthetic model";
+        std::fs::write(&model, bytes).unwrap();
+        let supplied_checksum = format!("{:x}", Sha256::digest(bytes));
+        std::fs::write(directory.path().join("model-registry.json"), serde_json::json!([{
+            "id": "custom",
+            "display_name": "Custom",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": supplied_checksum,
+            "size_mb": 1,
+            "languages": ["en"],
+            "speed_score": 1,
+            "accuracy_score": 1,
+            "offline": true
+        }]).to_string()).unwrap();
+        let registry = ModelStore::new(directory.path()).load_model_registry().unwrap();
+        assert_eq!(registry["custom"].checksum_sha256.as_deref(), Some(supplied_checksum.as_str()));
+        let error = cached_whisper_context(&model).err().expect("untrusted model rejected");
+        assert!(error.to_string().contains("verified supported model"));
+    }
 
     type TranscriptionCall = (PathBuf, String, TranscriptionLanguage, Option<String>);
 
