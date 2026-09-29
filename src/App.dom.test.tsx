@@ -445,3 +445,34 @@ describe("native permission guidance", () => {
     expect(mocks.focusMainWindow).toHaveBeenCalledOnce();
   });
 });
+
+describe("transcript event privacy", () => {
+  it.each(["live-transcript-partial", "live-transcript-final", "text-transform-error"])(
+    "does not write %s content to the console",
+    async (eventName) => {
+      const handlers = new Map<string, (event: { payload: unknown }) => void>();
+      mocks.listen.mockImplementation(async (name, handler) => {
+        handlers.set(name, handler);
+        return () => {};
+      });
+      mocks.loadSnapshot.mockResolvedValue(nativeSnapshot(true, null));
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        render(<App />);
+        await waitFor(() => expect(handlers.has(eventName)).toBe(true));
+        const marker = "PRIVATE_TRANSCRIPT_SENTINEL";
+        const payload = eventName === "text-transform-error" ? marker : {
+          source_key: "microphone",
+          source_label: "Microphone",
+          chunk_id: 1,
+          audio_path: "/tmp/fixture.wav",
+          text: marker,
+        };
+        await act(async () => handlers.get(eventName)!({ payload }));
+        expect(JSON.stringify(log.mock.calls)).not.toContain(marker);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+});

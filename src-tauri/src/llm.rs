@@ -257,17 +257,24 @@ impl OpenRouterClient for ReqwestOpenRouterClient {
             .send()
             .await
             .map_err(|error| error.to_string())?;
-        let status = response.status();
-        let body = response.text().await.map_err(|error| error.to_string())?;
-        if !status.is_success() {
-            return Err(format!(
-                "OpenRouter request failed with HTTP {}: {}",
-                status.as_u16(),
-                body
-            ));
-        }
-        Ok(body)
+        openrouter_response_body(response).await
     }
+}
+
+async fn openrouter_response_body(response: reqwest::Response) -> Result<String, String> {
+    let status = response.status();
+    if !status.is_success() {
+        // Moderation errors can echo submitted transcript text in their metadata.
+        // Only a status code is safe to persist in diagnostics and report history.
+        return Err(format!(
+            "OpenRouter request failed with HTTP {}",
+            status.as_u16()
+        ));
+    }
+    response
+        .text()
+        .await
+        .map_err(|_| "OpenRouter response could not be read".to_string())
 }
 
 async fn chat_or_cancel<C: OpenRouterClient>(
@@ -970,4 +977,55 @@ fn markdown_destination_path(destination_path: &str) -> Result<PathBuf, String> 
         destination.set_extension("md");
     }
     Ok(destination)
+}
+
+#[cfg(test)]
+mod response_privacy_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn response(status: u16, body: &str) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let message = format!(
+            "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            stream.read(&mut buffer).await.unwrap();
+            stream.write_all(message.as_bytes()).await.unwrap();
+        });
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn provider_failure_discards_private_moderation_and_raw_fields() {
+        let body = r#"{"error":{"metadata":{"flagged_input":"PRIVATE_TRANSCRIPT_SENTINEL","raw":"PRIVATE_PROVIDER_SENTINEL"}}}"#;
+        let error = openrouter_response_body(response(403, body).await)
+            .await
+            .unwrap_err();
+        assert!(error.contains("403"));
+        assert!(!error.contains("PRIVATE_"));
+        assert!(!error.contains("flagged_input"));
+    }
+
+    #[tokio::test]
+    async fn successful_response_keeps_the_requested_report_body() {
+        let body = r#"{"choices":[{"message":{"content":"Requested report"}}]}"#;
+        assert_eq!(
+            openrouter_response_body(response(200, body).await)
+                .await
+                .unwrap(),
+            body
+        );
+    }
 }

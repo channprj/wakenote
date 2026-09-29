@@ -404,8 +404,7 @@ export default function App() {
 
       for (const [eventName, parse] of subscriptions) {
         const unlisten = await listen(eventName, (rawEvent) => {
-          // eslint-disable-next-line no-console
-          console.log(`[wakenote FE] received ${eventName}:`, rawEvent.payload);
+          // Event payloads include private transcripts; never log their contents.
           const next = parse(rawEvent.payload);
           if (next) {
             dispatch(next);
