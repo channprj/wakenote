@@ -56,11 +56,6 @@ pnpm release:publish
 
 - [사용법](USAGE.md) — 설치, 명령, 설정, model capability, 예제, 문제 해결
 - [아키텍처](ARCHITECTURE.md) — component, data flow, 영속성 경계, 설계 결정
-- [제품 요구사항](PRD.md) — 한국어 제품 specification과 acceptance criteria
-- [보안](SECURITY.md) — 제보 방법, 로컬 검사, 데이터 저장과 모델 신뢰 경계
-- [소스·이력 감사](docs/security-audit-2026-09-29.md) — 2026-09-29 점검과 보완 기록
-- [감사 커밋·검증 기록](docs/security-audit-2026-09-29-commits.md) — 단계별 변경과 테스트 결과
-- [서드파티 고지](THIRD_PARTY_NOTICES.md) — 포함된 외부 소스와 모델의 라이선스 범위
 
 ## 라이선스
 

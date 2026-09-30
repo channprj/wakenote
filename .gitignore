@@ -11,6 +11,15 @@ src-tauri/target/
 .reviews/
 .security-audit/
 
+# Internal planning and review material excluded from the repository.
+/.bug-hunts/
+/docs/
+/memory/
+/tasks/
+/SECURITY.md
+/PRD.md
+/THIRD_PARTY_NOTICES.md
+
 # Local credentials, signing material, and environment overrides.
 .env
 .env.*

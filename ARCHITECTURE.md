@@ -233,7 +233,6 @@ wakenote/
 ├── README.md / README.ko.md    Project front doors
 ├── USAGE.md                    Operational and development reference
 ├── ARCHITECTURE.md             This document
-├── PRD.md                      Product requirements
 ├── package.json                pnpm scripts and frontend dependencies
 ├── scripts/                    Build, install, and DMG orchestration
 ├── src/

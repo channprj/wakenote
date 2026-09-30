@@ -54,10 +54,6 @@ The default archive root is `~/Documents/WakeNote`; the default local model is `
 
 - [Usage](USAGE.md) — installation, commands, configuration, model capabilities, examples, and troubleshooting
 - [Architecture](ARCHITECTURE.md) — components, data flows, persistence boundaries, and design decisions
-- [Product requirements](PRD.md) — the Korean product specification and acceptance criteria
-- [Security](SECURITY.md) — disclosure, local checks, storage and model trust boundaries
-- [Source/history audit](docs/security-audit-2026-09-29.md) — the 2026-09-29 review and remediation record
-- [Third-party notices](THIRD_PARTY_NOTICES.md) — copied source and model licensing boundaries
 
 ## License
 

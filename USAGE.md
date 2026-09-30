@@ -388,8 +388,7 @@ omitted when a model group still contains unpriced requests.
 
 WakeNote retains up to 10,000 local usage records. The page warns when the selected
 range reaches the oldest day of a full ledger. Other applications, unrecorded
-failures and charges without usage records are excluded. See
-[cost accounting and reference-rate details](docs/transcription-api-costs.md).
+failures and charges without usage records are excluded.
 
 ### Shared Dictionary
 
@@ -459,7 +458,7 @@ across new deliveries and all retries; additional requests wait in the queue.
 HTTPS is recommended. Delivery may fail,
 arrive out of order, or be duplicated; receivers can deduplicate using
 `X-Transcription-Event-Id`. Disabling or changing the endpoint/format cancels
-unfinished deliveries. See [the payload contract and verification guide](docs/live-transcription-webhook.md).
+unfinished deliveries.
 
 Open **Webhooks**, below **Activity**, to review the last 24 hours of delivery
 results. The page has status filters, summary counts, and 50 requests per page.
@@ -646,7 +645,7 @@ Run `pnpm dmg:downloads` directly. `pnpm build dmg:downloads` is invalid because
 - The product and packaging workflow are macOS-specific.
 - MP3 depends on `ffmpeg`; M4A depends on `/usr/bin/afconvert`.
 - Large Whisper and Qwen models can be slow or memory-heavy on lower-end Macs.
-- Whisper loads only the official model bytes pinned by WakeNote. Custom or modified `.bin` files are rejected before native parsing; a local registry checksum cannot override this check. Initial loading temporarily uses additional memory equal to the model file size. See [Security](SECURITY.md).
+- Whisper loads only the official model bytes pinned by WakeNote. Custom or modified `.bin` files are rejected before native parsing; a local registry checksum cannot override this check. Initial loading temporarily uses additional memory equal to the model file size.
 - Cloud models send audio to their provider and are subject to external availability, retention, rate-limit, and billing policies.
 - Browser fixtures prove frontend behavior only.
 - No project license has been specified yet.
