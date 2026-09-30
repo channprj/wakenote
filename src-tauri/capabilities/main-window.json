@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Lets the main window show permission guidance, focus itself, and hide to the tray.",
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-hide"
+  ]
+}
