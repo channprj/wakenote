@@ -32,15 +32,14 @@ macOS 권한, 선택 모델별 추가 요구사항, release build, 로컬 설치
 
 ## 로컬 릴리스
 
-이 저장소의 GitHub Actions는 비활성화되어 있습니다. Mac에서 빌드한 뒤 명령을 직접 실행해 게시합니다.
+이 저장소의 GitHub Actions는 비활성화되어 있습니다. Mac에서 직접 게시하세요. 게시 명령은 현재 소스와 맞는 검증된 빌드가 있으면 그대로 쓰고, 없으면 먼저 빌드합니다.
 
 ```bash
-pnpm release:build
 pnpm release:publish --dry-run
 pnpm release:publish
 ```
 
-빌드 전에 버전을 동기화하고 커밋하세요. 게시 전에 브랜치와 annotated 버전 태그도 푸시해야 합니다. 산출물은 `release/v<version>/<architecture>/`에 저장되며, 현재 Mac의 아키텍처용으로 빌드됩니다. 앱은 ad-hoc 서명을 사용하고 공증되지 않습니다. 필요한 도구, 초안 릴리스와 실패 시 처리 방법은 [릴리스 절차](USAGE.md#local-build-and-manual-github-release)를 참고하세요.
+게시 전에 동기화한 버전을 커밋하고, 브랜치와 annotated 버전 태그를 푸시하세요. `--dry-run`은 빌드하거나 게시하지 않고 빌드가 필요한지만 알려 줍니다. 산출물만 따로 준비하려면 `pnpm release:build`를 쓰세요. 산출물은 `release/v<version>/<architecture>/`에 저장되며, 각 빌드는 현재 Mac의 아키텍처용으로만 만들어집니다. 앱은 ad-hoc 서명을 사용하고 공증되지 않습니다. 필요한 도구, 초안 릴리스와 실패 시 처리 방법은 [릴리스 절차](USAGE.md#local-build-and-manual-github-release)를 참고하세요.
 
 ## 빠른 시작
 
