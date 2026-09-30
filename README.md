@@ -21,7 +21,21 @@ WakeNote는 마이크 한두 개, 지원되는 시스템 오디오 소스, 가�
 
 ## 설치
 
-현재 WakeNote 문서는 소스 빌드를 기준으로 합니다. Node.js 20+, `pnpm` 10, stable Rust toolchain, Xcode Command Line Tools, CMake를 설치하세요. macOS에서는 `brew install cmake`로 CMake를 설치한 뒤 다음을 실행하세요.
+### 릴리스로 설치
+
+1. [최신 GitHub 릴리스](https://github.com/channprj/wakenote/releases/latest)에서 `WakeNote_<version>_aarch64.dmg`를 내려받으세요. 게시된 빌드는 macOS 15.5 이상의 Apple Silicon Mac용입니다.
+2. DMG를 열고 **WakeNote**를 **Applications**로 드래그하세요.
+3. 처음 설치했다면 앱을 열기 전에 터미널에서 다음 명령을 한 번 실행하세요.
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WakeNote.app
+```
+
+WakeNote는 ad-hoc 서명만 되어 있고 공증을 받지 않았습니다. 그래서 웹 브라우저로 내려받은 앱에는 macOS의 격리(quarantine) 표시가 붙고, Gatekeeper가 첫 실행을 막습니다. 이 표시를 한 번 지우면 정상적으로 열립니다. WakeNote 안에서 설치한 업데이트는 이 표시를 남기지 않으므로 명령을 다시 실행할 필요가 없습니다. DMG를 직접 내려받아 앱을 교체했을 때만 이 명령을 다시 실행하세요. 내려받은 파일을 `SHA256SUMS.txt`로 먼저 확인하려면 [릴리스 설치 절차](USAGE.md#install-a-published-release)를 참고하세요.
+
+### 소스에서 빌드
+
+Node.js 20+, `pnpm` 10, stable Rust toolchain, Xcode Command Line Tools, CMake를 설치하세요. macOS에서는 `brew install cmake`로 CMake를 설치한 뒤 다음을 실행하세요.
 
 ```bash
 pnpm install

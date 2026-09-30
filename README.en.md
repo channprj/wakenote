@@ -20,7 +20,21 @@ The desktop app uses Tauri 2 and Rust for capture, persistence, and transcriptio
 
 ## Installation
 
-WakeNote currently documents a source build. Install Node.js 20+, `pnpm` 10, the stable Rust toolchain, Xcode Command Line Tools, and CMake. On macOS, install CMake with `brew install cmake`, then run:
+### Install a release
+
+1. Download `WakeNote_<version>_aarch64.dmg` from the [latest GitHub release](https://github.com/channprj/wakenote/releases/latest). Published builds target Apple Silicon Macs running macOS 15.5 or later.
+2. Open the DMG and drag **WakeNote** into **Applications**.
+3. On the first install, run this once in Terminal before opening the app:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WakeNote.app
+```
+
+WakeNote is ad-hoc signed and not notarized, so Gatekeeper blocks the first launch of a copy downloaded in a web browser, which carries the macOS quarantine flag. Removing the flag once lets it open. Updates installed from inside WakeNote do not add the flag, so they do not need this step again; repeat it only after replacing the app with a DMG you downloaded yourself. To verify the download against `SHA256SUMS.txt` first, see [Install a published release](USAGE.md#install-a-published-release).
+
+### Build from source
+
+Install Node.js 20+, `pnpm` 10, the stable Rust toolchain, Xcode Command Line Tools, and CMake. On macOS, install CMake with `brew install cmake`, then run:
 
 ```bash
 pnpm install

@@ -2,9 +2,29 @@
 
 ## Installation
 
+### Install a published release
+
+1. Download `WakeNote_<version>_aarch64.dmg` and `SHA256SUMS.txt` from the [latest GitHub release](https://github.com/channprj/wakenote/releases/latest). Published builds target Apple Silicon Macs running macOS 15.5 or later; Intel Macs need a source build.
+2. Optionally verify the download from the folder that holds both files:
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+3. Open the DMG and drag **WakeNote** into **Applications**.
+4. On the first install, remove the macOS quarantine flag once before opening the app:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WakeNote.app
+```
+
+WakeNote is ad-hoc signed and not notarized, so Gatekeeper blocks the first launch of a copy downloaded in a web browser, which carries the macOS quarantine flag. Removing the flag once lets it open. Updates installed from inside WakeNote download, verify, and replace the bundle without adding the flag, so they do not need the command again. Run it again only after replacing the app with a DMG you downloaded yourself.
+
+The rest of this section covers building from source.
+
 ### Requirements
 
-- macOS 11.0 or later. The current bundle configuration and native capture paths are macOS-specific.
+- macOS 15.5 or later for app bundles built with `pnpm build` or `pnpm release:build`, which bundle a prebuilt ONNX Runtime that targets macOS 15.5. A development build (`pnpm tauri dev`) links ScreenCaptureKit and needs macOS 12.3 or later. System-audio capture needs macOS 13 or later. The bundle configuration and native capture paths are macOS-specific.
 - Node.js 20+ and `pnpm` 10. The repository pins `pnpm@10.33.4` in `package.json`.
 - The stable Rust toolchain; the crate uses Rust edition 2024.
 - Xcode Command Line Tools for Tauri builds and the native `/usr/bin/afconvert` M4A encoder.
@@ -117,7 +137,7 @@ pnpm release:publish --draft
 
 Publication checks all five versions, the clean source commit, checksums, the annotated tag, live remote branch/tag parity, and that Actions remains disabled. Remote prerequisites are checked before an automatic build and again afterward. `--dry-run` checks these prerequisites and reports whether artifacts will be reused or built; it never builds, changes local artifacts, or creates a release. `--draft` uses the same automatic build behavior. Publication refuses an existing release, including a draft, and never pushes refs or overwrites release assets. If an upload fails, inspect the release in GitHub before retrying; a partially uploaded draft may already exist. A draft created with `--draft` is published through GitHub, not by rerunning `release:publish`.
 
-The app uses **ad-hoc signing and is not notarized**. The release notes state this as well. Downloads can therefore require macOS approval before opening; verify their source and checksum first. This local workflow does not configure Developer ID signing or notarization.
+The app uses **ad-hoc signing and is not notarized**. The release notes state this as well. Downloads can therefore require macOS approval before opening; verify their source and checksum first, then clear the quarantine flag once as described in [Install a published release](#install-a-published-release). This local workflow does not configure Developer ID signing or notarization.
 
 To inspect the cost-control setting:
 
@@ -575,6 +595,16 @@ shasum -a 256 "$HOME/Downloads/WakeNote_<version>_aarch64.dmg"
 Use the actual generated filename for `<version>`.
 
 ## Troubleshooting
+
+### macOS will not open a downloaded WakeNote
+
+A copy installed from a DMG downloaded in a web browser keeps the macOS quarantine flag, and Gatekeeper blocks quarantined apps that are ad-hoc signed and not notarized. After checking the download against `SHA256SUMS.txt`, run once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WakeNote.app
+```
+
+Use the actual path if WakeNote is installed somewhere other than `/Applications`.
 
 ### The app cannot hear a microphone
 
