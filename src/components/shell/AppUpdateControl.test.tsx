@@ -58,6 +58,8 @@ describe("sidebar app updates", () => {
     expect(control.querySelector('[data-slot="badge"]')?.getAttribute("data-tone")).toBe("success");
     expect(screen.queryByText("Ahead of release")).toBeNull();
     expect(screen.queryByText("Up to date")).toBeNull();
+    open();
+    expect(screen.getByText("Newer than the latest release.")).toBeTruthy();
   });
 
   it("reports failed checks and retries without showing stale up-to-date status", async () => {

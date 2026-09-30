@@ -59,7 +59,7 @@ export function AppUpdateControl() {
     : update.checkFailed ? "The latest release could not be confirmed. Check your connection and try again."
     : update.info?.status === "available" ? `WakeNote ${update.info.latestVersion} is available. Install it to restart with the new version.`
     : update.info?.status === "up_to_date" ? "You're running the latest published version of WakeNote."
-    : update.info?.status === "ahead" ? "This build is newer than the latest published release."
+    : update.info?.status === "ahead" ? "Newer than the latest release."
     : update.info?.status === "no_release" ? "No public release is available yet."
     : "WakeNote automatically checks for new releases once a day.";
 
