@@ -47,7 +47,7 @@ export function AppUpdateControl() {
   else if (update.checkFailed) { label = "Check failed"; tone = "warning"; Icon = CircleAlertIcon; }
   else if (update.info?.status === "available") { label = "Update available"; tone = "primary"; Icon = ArrowDownToLineIcon; }
   else if (update.info?.status === "up_to_date") { label = "Up to date"; tone = "success"; Icon = CheckIcon; }
-  else if (update.info?.status === "ahead") { label = "Ahead of release"; Icon = CheckIcon; }
+  else if (update.info?.status === "ahead") { label = "Latest"; tone = "success"; Icon = CheckIcon; }
   else if (update.info?.status === "no_release") label = "No release yet";
 
   const progressLabel = update.progress?.phase === "verifying" ? "Verifying update…"

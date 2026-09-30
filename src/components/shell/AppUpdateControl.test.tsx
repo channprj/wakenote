@@ -45,7 +45,7 @@ describe("sidebar app updates", () => {
     expect(screen.getByText("You're running the latest published version of WakeNote.")).toBeTruthy();
   });
 
-  it("does not claim a browser preview or an unpublished build is the latest release", async () => {
+  it("does not claim a browser preview is current and marks a build ahead of release as Latest", async () => {
     api.supported.mockReturnValue(false);
     const first = mount();
     expect(screen.getByRole("button", { name: /Desktop app/ })).toBeTruthy();
@@ -54,7 +54,9 @@ describe("sidebar app updates", () => {
     api.supported.mockReturnValue(true);
     api.check.mockResolvedValue({ ...latest, status: "ahead" });
     mount();
-    await screen.findByRole("button", { name: /Ahead of release/ });
+    const control = await screen.findByRole("button", { name: /Latest.*Open updates/ });
+    expect(control.querySelector('[data-slot="badge"]')?.getAttribute("data-tone")).toBe("success");
+    expect(screen.queryByText("Ahead of release")).toBeNull();
     expect(screen.queryByText("Up to date")).toBeNull();
   });
 
