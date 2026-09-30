@@ -124,6 +124,9 @@ use wakenote::transcription_cost::{
 use wakenote::voice_leveling::{
     ServiceHardwareLevelControl, VoiceAwareMicrophoneProcessor, VoiceLevelingPolicy,
 };
+use wakenote::updater::RESTART_GATE;
+
+mod app_updater;
 
 type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
@@ -246,6 +249,7 @@ async fn transform_text(
     request_id: String,
     request: wakenote::text_transform::TextTransformRequest,
 ) -> Result<wakenote::text_transform::TextTransformResult, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     if request_id.is_empty() || request_id.len() > 128 {
         return Err("Invalid text-processing request id".into());
     }
@@ -3068,6 +3072,7 @@ fn start_dictation_capture(
     state: &DictationState,
     settings: AppSettings,
 ) -> Result<u64, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     clear_auto_type(app);
     let resolution = resolve_dictation_inputs(&settings);
     if resolution.ready.is_empty() {
@@ -3422,6 +3427,7 @@ fn update_settings(
     voice_leveling_policy: State<'_, VoiceLevelingPolicy>,
     mut patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     normalize_dictation_patch(&mut patch)?;
     let dictionary_was_patched = patch.dictionary.is_some();
     let (
@@ -4156,6 +4162,7 @@ async fn merge_transcript_audio(
     app: AppHandle,
     request: MergeAudioRequest,
 ) -> Result<AudioMergeResult, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let progress_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         merge_audio_to_m4a(request, move |progress| {
@@ -4186,6 +4193,7 @@ fn download_model(
     state: State<'_, BackendState>,
     model_id: String,
 ) -> Result<Vec<ModelDescriptor>, String> {
+    let update_activity = RESTART_GATE.activity()?;
     let prepared = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.prepare_model_download(&model_id)?
@@ -4193,6 +4201,7 @@ fn download_model(
     let model_directory = prepared.model_directory.clone();
     let model = prepared.model.clone();
     thread::spawn(move || {
+        let _update_activity = update_activity;
         let store = ModelStore::new(model_directory);
         // sherpa-onnx models download a .tar.bz2 and extract in place; whisper
         // models download a single .bin. Both paths record an Error status into
@@ -4568,6 +4577,7 @@ async fn start_llm_report(
     run_state: State<'_, LlmRunState>,
     request: wakenote::llm::LlmGenerateRequest,
 ) -> Result<LlmReportRunSnapshot, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (settings, api_key) = llm_settings_and_key(backend_state.inner())?;
     let store = LlmRunStore::new(expand_user_path(&settings.save_root));
     let max_iterations = clamp_llm_max_iterations(settings.llm_max_iterations);
@@ -4644,6 +4654,7 @@ async fn retry_llm_report(
     run_state: State<'_, LlmRunState>,
     run_id: String,
 ) -> Result<LlmReportRunSnapshot, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (settings, api_key) = llm_settings_and_key(backend_state.inner())?;
     let store = LlmRunStore::new(expand_user_path(&settings.save_root));
     let max_iterations = clamp_llm_max_iterations(settings.llm_max_iterations);
@@ -5015,6 +5026,7 @@ fn reveal_save_folder(state: State<'_, BackendState>) -> Result<(), String> {
 
 #[tauri::command]
 fn process_next_transcription(state: State<'_, BackendState>) -> Result<QueueSnapshot, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.process_next_transcription()
 }
@@ -5130,6 +5142,7 @@ fn finalize_manual_meeting_recording(
     generation: u64,
     reason: ManualMeetingStopReason,
 ) -> Result<ManualMeetingRecordingStatus, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let mut session = {
         let mut runtime = state.lock().map_err(|error| error.to_string())?;
         if runtime.session.as_ref().map(|session| session.generation) != Some(generation) {
@@ -5199,6 +5212,7 @@ fn start_manual_meeting_recording(
     state: State<'_, ManualMeetingRecordingState>,
     backend_state: State<'_, BackendState>,
 ) -> Result<ManualMeetingRecordingStatus, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let permission_snapshot = permissions::permission_snapshot();
     if permission_snapshot.microphone.status != permissions::PermissionGrantStatus::Granted {
         return Err("Microphone permission is required for Meeting Mode".to_string());
@@ -5525,6 +5539,7 @@ fn schedule_saved_meeting_job(
     id: String,
     queue_if_busy: bool,
 ) -> Result<MeetingJobScheduleOutcome, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let settings = {
         let backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.settings()
@@ -5790,6 +5805,7 @@ fn start_live_capture_runtime(
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, LiveCaptureStartError> {
+    let _update_activity = RESTART_GATE.activity().map_err(LiveCaptureStartError::Runtime)?;
     let settings = {
         let backend = backend_state
             .lock()
@@ -5910,6 +5926,7 @@ fn start_live_capture_slot_runtime(
     slot: MicrophoneSlot,
     requested_device: CaptureMicrophoneEntry,
 ) -> Result<(), String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let CaptureMicrophoneEntry {
         id: requested_device_id,
         label: requested_label,
@@ -6356,6 +6373,7 @@ fn attempt_source_capture_start(
     now: Instant,
     screen_recording_status: permissions::PermissionGrantStatus,
 ) -> Result<SourceCaptureAttemptResult, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let stream_running = source_capture_stream_is_healthy(system_capture_state);
     if stream_running {
         if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
@@ -6516,6 +6534,7 @@ fn start_source_capture_runtime(
     detected_source_state: &DetectedSourceState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let source = {
         let slot = detected_source_state.lock().map_err(|e| e.to_string())?;
         match slot.as_ref() {
@@ -7790,6 +7809,7 @@ fn kick_transcription_worker(
     backend_state: BackendState,
     transcription_state: AutoTranscriptionState,
 ) {
+    let Ok(update_activity) = RESTART_GATE.activity() else { return; };
     if transcription_state
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
@@ -7798,6 +7818,7 @@ fn kick_transcription_worker(
     }
 
     thread::spawn(move || {
+        let _update_activity = update_activity;
         eprintln!(
             "[wakenote] queue worker thread started max_parallel={MAX_PARALLEL_TRANSCRIPTIONS}"
         );
@@ -9120,6 +9141,10 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_updater::check_for_update,
+            app_updater::update_install_blocker,
+            app_updater::open_update_release,
+            app_updater::download_and_install_update,
             enhanced_dictation_event,
             transform_text,
             cancel_text_transform,

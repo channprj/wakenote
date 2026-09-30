@@ -12,6 +12,7 @@ import appIcon from "@/assets/wakenote-app.png";
 import { PRIMARY_NAV, type PrimaryRoute } from "@/lib/navigation";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { AppUpdateControl } from "./AppUpdateControl";
 import {
   Tooltip,
   TooltipContent,
@@ -114,7 +115,7 @@ export function AppSidebar({
         </nav>
 
         <div className="app-sidebar__utility">
-          <span className="app-sidebar__version">v{__APP_VERSION__}</span>
+          <AppUpdateControl />
         </div>
       </aside>
     </TooltipProvider>

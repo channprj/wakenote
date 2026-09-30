@@ -21,6 +21,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
+    "test:updater": "node --test scripts/self-update.node-test.mjs",
     "security:scan": "node scripts/security-scan.mjs",
     "security:test": "node --test scripts/security-scan.integration.mjs",
     "security:dependencies": "pnpm audit && cargo audit --file src-tauri/Cargo.lock",

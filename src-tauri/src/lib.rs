@@ -45,5 +45,6 @@ pub mod text_transform;
 pub mod transcript_export;
 pub mod transcription;
 pub mod transcription_cost;
+pub mod updater;
 pub mod trash;
 pub mod voice_leveling;
