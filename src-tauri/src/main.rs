@@ -4374,6 +4374,7 @@ async fn export_all_transcript_days(
     state: State<'_, BackendState>,
     destination_parent: String,
 ) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (save_root, custom_sources) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -4400,6 +4401,7 @@ async fn export_transcript_day(
     day: String,
     destination_path: String,
 ) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (save_root, custom_sources) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -4725,6 +4727,7 @@ async fn export_llm_report(
     report_id: String,
     destination_path: String,
 ) -> Result<String, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let save_root = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.settings().save_root
@@ -4754,6 +4757,7 @@ fn upload_audio_file(
     state: State<'_, BackendState>,
     source_path: String,
 ) -> Result<UploadedAudio, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let mut backend = state.lock().map_err(|error| error.to_string())?;
     backend.upload_audio_file(source_path, chrono::Local::now())
 }
@@ -5576,6 +5580,7 @@ fn import_meeting_recording(
     state: State<'_, BackendState>,
     source_path: String,
 ) -> Result<MeetingSummary, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (save_root, model_id, language) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -5656,6 +5661,7 @@ fn start_meeting_transcription(
     id: String,
     mut request: StartMeetingTranscriptionRequest,
 ) -> Result<MeetingSummary, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let (save_root, model_directory, model) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -5726,6 +5732,7 @@ fn resume_meeting(
     meeting_state: State<'_, MeetingState>,
     id: String,
 ) -> Result<MeetingSummary, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let save_root = meeting_save_root(&state)?;
     let outcome = schedule_saved_meeting_job(
         app,
@@ -6104,6 +6111,7 @@ fn stop_live_capture_slot_runtime(
     live_state: &LiveCaptureState,
     slot: MicrophoneSlot,
 ) -> Result<(), String> {
+    let _update_activity = RESTART_GATE.activity()?;
     live_state
         .lock()
         .map_err(|error| error.to_string())?
@@ -6139,6 +6147,7 @@ fn stop_live_capture_runtime(
     backend_state: &BackendState,
     live_state: &LiveCaptureState,
 ) -> Result<AppStatus, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     live_state
         .lock()
         .map_err(|error| error.to_string())?
@@ -6667,6 +6676,7 @@ fn stop_source_capture_runtime(
     detected_source_state: &DetectedSourceState,
     _meeting_state: &MeetingState,
 ) -> Result<AppStatus, String> {
+    let _update_activity = RESTART_GATE.activity()?;
     let stopped_source_id = detected_source_state
         .lock()
         .ok()

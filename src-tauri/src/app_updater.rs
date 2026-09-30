@@ -15,6 +15,13 @@ fn require_update_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
+fn capture_update_blocker(backend: &wakenote::commands::AppBackend) -> Option<String> {
+    backend
+        .app_status()
+        .live_input_active
+        .then(|| "Stop Capture input before installing the update.".into())
+}
+
 #[tauri::command]
 pub(crate) async fn check_for_update(
     app: AppHandle,
@@ -32,8 +39,8 @@ fn update_runtime_blocker(app: &AppHandle) -> Result<Option<String>, String> {
     let unavailable = |_| "Could not verify whether WakeNote is idle.".to_string();
     let backend_state = app.state::<BackendState>();
     let backend = backend_state.lock().map_err(unavailable)?;
-    if backend.app_status().live_input_active || backend.live_capture_should_run() {
-        return Ok(Some("Pause Capture before installing the update.".into()));
+    if let Some(reason) = capture_update_blocker(&backend) {
+        return Ok(Some(reason));
     }
     if backend.app_status().queue.running_count > 0
         || app
@@ -160,4 +167,28 @@ pub(crate) async fn download_and_install_update(
     std::mem::forget(gate);
     app.exit(0);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capture_update_blocker;
+    use wakenote::{commands::AppBackend, settings::SettingsPatch};
+
+    #[test]
+    fn stopping_capture_allows_update_without_changing_recording_preferences() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            save_root: Some(directory.path().to_string_lossy().into_owned()),
+            recording_enabled: Some(true),
+            pause_all: Some(false),
+            ..Default::default()
+        });
+        backend.start_capture_session_for_test(16_000).unwrap();
+        assert!(capture_update_blocker(&backend).is_some());
+
+        backend.stop_capture_session().unwrap();
+        assert!(backend.live_capture_should_run());
+        assert!(capture_update_blocker(&backend).is_none());
+    }
 }
