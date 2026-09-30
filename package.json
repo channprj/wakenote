@@ -1,5 +1,6 @@
 {
   "name": "wakenote",
+  "license": "MIT",
   "version": "0.260930.2",
   "private": true,
   "type": "module",

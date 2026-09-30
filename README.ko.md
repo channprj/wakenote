@@ -59,4 +59,4 @@ pnpm release:publish
 
 ## 라이선스
 
-아직 라이선스가 명시되지 않았습니다.
+WakeNote는 [MIT 라이선스](LICENSE)로 배포됩니다. 포함된 외부 구성 요소에는 각각의 라이선스가 적용됩니다.

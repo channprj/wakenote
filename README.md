@@ -57,4 +57,4 @@ The default archive root is `~/Documents/WakeNote`; the default local model is `
 
 ## License
 
-No license has been specified yet.
+WakeNote is licensed under the [MIT License](LICENSE). Bundled third-party components retain their own licenses.

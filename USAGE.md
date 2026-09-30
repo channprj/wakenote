@@ -648,4 +648,4 @@ Run `pnpm dmg:downloads` directly. `pnpm build dmg:downloads` is invalid because
 - Whisper loads only the official model bytes pinned by WakeNote. Custom or modified `.bin` files are rejected before native parsing; a local registry checksum cannot override this check. Initial loading temporarily uses additional memory equal to the model file size.
 - Cloud models send audio to their provider and are subject to external availability, retention, rate-limit, and billing policies.
 - Browser fixtures prove frontend behavior only.
-- No project license has been specified yet.
+- WakeNote is licensed under the [MIT License](LICENSE). Bundled third-party components retain their own licenses.
