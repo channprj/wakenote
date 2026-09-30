@@ -230,7 +230,7 @@ The default is `~/Documents/WakeNote`.
 
 ```text
 wakenote/
-├── README.md / README.ko.md    Project front doors
+├── README.md / README.en.md    Project front doors
 ├── USAGE.md                    Operational and development reference
 ├── ARCHITECTURE.md             This document
 ├── package.json                pnpm scripts and frontend dependencies
