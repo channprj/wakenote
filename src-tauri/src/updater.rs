@@ -10,7 +10,7 @@ use std::{
         Mutex,
         atomic::{AtomicBool, Ordering as AtomicOrdering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use reqwest::blocking::{Client, Response};
@@ -22,6 +22,7 @@ const API: &str = "https://api.github.com/repos/channprj/wakenote/releases/lates
 const RELEASES: &str = "https://github.com/channprj/wakenote/releases";
 const MAX_METADATA: u64 = 2 * 1024 * 1024;
 const MAX_DMG: u64 = 512 * 1024 * 1024;
+const CHECK_CACHE_TTL: Duration = Duration::from_secs(60);
 const INSTALL_SCRIPT: &str = include_str!("../scripts/self-update.sh");
 
 #[derive(Default)]
@@ -111,10 +112,10 @@ pub struct UpdateInfo {
 struct Asset {
     name: String,
     browser_download_url: String,
-    size: u64,
+    size: Option<u64>,
     digest: Option<String>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Release {
     tag_name: String,
     #[serde(default)]
@@ -126,6 +127,64 @@ struct Release {
     #[serde(default)]
     assets: Vec<Asset>,
 }
+
+#[derive(Deserialize)]
+struct ReleaseManifest {
+    version: String,
+    arch: String,
+    artifact: String,
+    sha256: String,
+}
+
+fn release_from_manifest(bytes: &[u8]) -> Result<Release, String> {
+    let manifest: ReleaseManifest = serde_json::from_slice(bytes)
+        .map_err(|_| "GitHub returned invalid release information.")?;
+    version(&manifest.version)?;
+    if manifest.version.starts_with('v') || !matches!(manifest.arch.as_str(), "aarch64" | "x64") {
+        return Err("The release installer metadata is invalid.".into());
+    }
+    let tag = format!("v{}", manifest.version);
+    let release = Release {
+        tag_name: tag.clone(),
+        draft: false,
+        prerelease: false,
+        body: None,
+        assets: vec![Asset {
+            browser_download_url: format!("{RELEASES}/download/{tag}/{}", manifest.artifact),
+            name: manifest.artifact,
+            // Existing published manifests have no size. Streaming still
+            // enforces MAX_DMG and SHA-256; HTTP length adds a check if present.
+            size: None,
+            digest: Some(format!("sha256:{}", manifest.sha256)),
+        }],
+    };
+    asset_for(&release, &manifest.arch)?;
+    Ok(release)
+}
+
+#[derive(Default)]
+struct ReleaseCache {
+    entry: Option<(Instant, Option<Release>)>,
+}
+
+impl ReleaseCache {
+    fn get_or_fetch(
+        &mut self,
+        now: Instant,
+        fetch: impl FnOnce() -> Result<Option<Release>, String>,
+    ) -> Result<Option<Release>, String> {
+        if let Some((checked_at, release)) = &self.entry
+            && now.saturating_duration_since(*checked_at) < CHECK_CACHE_TTL
+        {
+            return Ok(release.clone());
+        }
+        let release = fetch()?;
+        self.entry = Some((now, release.clone()));
+        Ok(release)
+    }
+}
+
+static RELEASE_CACHE: Mutex<ReleaseCache> = Mutex::new(ReleaseCache { entry: None });
 
 fn version(raw: &str) -> Result<(u64, u64, u64), String> {
     let core = raw.strip_prefix('v').unwrap_or(raw);
@@ -167,7 +226,9 @@ fn asset_for(release: &Release, arch: &str) -> Result<Asset, String> {
     }
     let asset = candidates[0];
     let expected_url = format!("{RELEASES}/download/{}/{name}", release.tag_name);
-    if asset.browser_download_url != expected_url || asset.size == 0 || asset.size > MAX_DMG {
+    if asset.browser_download_url != expected_url
+        || asset.size.is_some_and(|size| size == 0 || size > MAX_DMG)
+    {
         return Err("The release installer metadata is invalid.".into());
     }
     asset_digest(asset)?;
@@ -229,8 +290,34 @@ fn read_limited(response: Response, maximum: u64) -> Result<Vec<u8>, String> {
 }
 
 fn fetch_release(client: &Client) -> Result<Option<Release>, String> {
+    fetch_release_from(
+        client,
+        &format!("{RELEASES}/latest/download/release.json"),
+        API,
+    )
+}
+
+fn fetch_release_from(
+    client: &Client,
+    manifest_url: &str,
+    api_url: &str,
+) -> Result<Option<Release>, String> {
+    // Published artifacts do not consume the shared, unauthenticated REST API
+    // budget. The release script has shipped this manifest since 0.260929.0.
     let response = client
-        .get(API)
+        .get(manifest_url)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .map_err(|_| "Could not reach GitHub. Check your connection and try again.")?;
+    if response.status().is_success() {
+        return release_from_manifest(&read_limited(response, MAX_METADATA)?).map(Some);
+    }
+    if response.status() != reqwest::StatusCode::NOT_FOUND {
+        return Err("GitHub could not provide the release metadata. Try again later.".into());
+    }
+    // Compatibility for older/manual releases without a release.json asset.
+    let response = client
+        .get(api_url)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .timeout(Duration::from_secs(20))
@@ -295,7 +382,10 @@ fn info_for(current: &str, release: Option<&Release>, arch: &str) -> Result<Upda
 }
 
 pub fn check(current: &str) -> Result<UpdateInfo, String> {
-    let release = fetch_release(&client()?)?;
+    let release = RELEASE_CACHE
+        .lock()
+        .map_err(|_| "Could not check for updates.")?
+        .get_or_fetch(Instant::now(), || fetch_release(&client()?))?;
     let mut info = info_for(current, release.as_ref(), architecture())?;
     if info.can_install
         && let Err(reason) = installed_bundle()
@@ -378,23 +468,23 @@ fn copy_verified(
             break;
         }
         downloaded += size as u64;
-        if downloaded > asset.size || downloaded > MAX_DMG {
+        if asset.size.is_some_and(|size| downloaded > size) || downloaded > MAX_DMG {
             return Err("The installer size does not match the release.".into());
         }
         digest.update(&buffer[..size]);
         destination
             .write_all(&buffer[..size])
             .map_err(|_| "Could not save the update. Check available disk space.")?;
-        if downloaded - last_report >= 1024 * 1024 || downloaded == asset.size {
+        if downloaded - last_report >= 1024 * 1024 || Some(downloaded) == asset.size {
             progress(UpdateProgress {
                 phase: "downloading",
                 downloaded,
-                total: asset.size,
+                total: asset.size.unwrap_or(0),
             });
             last_report = downloaded;
         }
     }
-    if downloaded != asset.size
+    if asset.size.is_some_and(|size| downloaded != size)
         || !format!("{:x}", digest.finalize()).eq_ignore_ascii_case(asset_digest(asset)?)
     {
         return Err("The installer checksum does not match. The update was discarded.".into());
@@ -502,7 +592,7 @@ fn prepare_for_destination(
     if latest != expected || version(latest)? <= version(current)? {
         return Err("The release changed or is not newer. Check for updates again.".into());
     }
-    let asset = asset_for(&release, architecture())?;
+    let mut asset = asset_for(&release, architecture())?;
     let parent = destination
         .parent()
         .ok_or("Could not locate the installation folder.")?;
@@ -518,7 +608,7 @@ fn prepare_for_destination(
     progress(UpdateProgress {
         phase: "downloading",
         downloaded: 0,
-        total: asset.size,
+        total: asset.size.unwrap_or(0),
     });
     let response = client
         .get(&asset.browser_download_url)
@@ -527,14 +617,20 @@ fn prepare_for_destination(
     if !response.status().is_success() {
         return Err("The update download failed. Try again later.".into());
     }
+    if let Some(length) = response.content_length() {
+        if length == 0 || length > MAX_DMG || asset.size.is_some_and(|size| size != length) {
+            return Err("The installer size does not match the release.".into());
+        }
+        asset.size = Some(length);
+    }
     let mut file = File::create(&dmg).map_err(|_| "Could not save the update.")?;
     copy_verified(response, &mut file, &asset, &progress)?;
     file.sync_all().map_err(|_| "Could not save the update.")?;
     drop(file);
     progress(UpdateProgress {
         phase: "verifying",
-        downloaded: asset.size,
-        total: asset.size,
+        downloaded: asset.size.unwrap_or(0),
+        total: asset.size.unwrap_or(0),
     });
     let mount = download.path().join("volume");
     fs::create_dir(&mount).map_err(|_| "Could not create the installer mount point.")?;
@@ -591,6 +687,125 @@ impl PreparedUpdate {
 mod tests {
     use super::*;
 
+    fn serve_release_metadata() -> (String, std::thread::JoinHandle<String>) {
+        use std::net::TcpListener;
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (mut connection, _) = server.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let length = connection.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..length]).into_owned();
+            let (status, body) = if request.starts_with("GET /manifest ") {
+                (
+                    "200 OK",
+                    serde_json::json!({
+                        "version": "0.261001.0", "arch": "aarch64",
+                        "artifact": "WakeNote_0.261001.0_aarch64.dmg",
+                        "sha256": format!("{:x}", Sha256::digest(b"test")),
+                        "signing": "ad-hoc", "notarized": false
+                    })
+                    .to_string(),
+                )
+            } else {
+                (
+                    "403 Forbidden",
+                    "{\"message\":\"API rate limit exceeded\"}".into(),
+                )
+            };
+            write!(
+                connection,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            request
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn public_manifest_checks_and_installs_without_a_rest_api_budget() {
+        let (url, server) = serve_release_metadata();
+        let result = fetch_release_from(
+            &Client::new(),
+            &format!("{url}/manifest"),
+            &format!("{url}/api"),
+        );
+        let request = server.join().unwrap();
+        let release = result
+            .expect("a public manifest must work with an exhausted API budget")
+            .unwrap();
+        assert!(request.starts_with("GET /manifest "));
+        let info = info_for("0.260930.5", Some(&release), "aarch64").unwrap();
+        assert_eq!(info.status, "available");
+        assert!(info.can_install);
+        let asset = asset_for(&release, "aarch64").unwrap();
+        assert!(copy_verified(&b"test"[..], &mut Vec::new(), &asset, &|_| {}).is_ok());
+        assert!(copy_verified(&b"bad!"[..], &mut Vec::new(), &asset, &|_| {}).is_err());
+        assert!(copy_verified(&b"tes"[..], &mut Vec::new(), &asset, &|_| {}).is_err());
+        assert!(
+            !info_for("0.260930.5", Some(&release), "x64")
+                .unwrap()
+                .can_install
+        );
+    }
+
+    #[test]
+    fn public_manifests_reject_untrusted_installer_metadata() {
+        let valid = serde_json::json!({
+            "version": "0.261001.0", "arch": "aarch64",
+            "artifact": "WakeNote_0.261001.0_aarch64.dmg",
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        });
+        assert!(release_from_manifest(&serde_json::to_vec(&valid).unwrap()).is_ok());
+        for (field, value) in [
+            ("version", "0.261001.0-beta"),
+            ("version", "v0.261001.0"),
+            ("arch", "../../other"),
+            ("artifact", "../WakeNote_0.261001.0_aarch64.dmg"),
+            ("artifact", "https://evil.example/update.dmg"),
+            ("artifact", "WakeNote_0.261001.0_x64.dmg"),
+            ("sha256", "invalid"),
+        ] {
+            let mut malformed = valid.clone();
+            malformed[field] = value.into();
+            assert!(
+                release_from_manifest(&serde_json::to_vec(&malformed).unwrap()).is_err(),
+                "{field}: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_checks_reuse_recent_metadata_but_expired_checks_fail_honestly() {
+        let mut cache = ReleaseCache::default();
+        let now = Instant::now();
+        let first = cache
+            .get_or_fetch(now, || Ok(Some(release("0.261001.0", "aarch64"))))
+            .unwrap();
+        let repeated = cache
+            .get_or_fetch(now + Duration::from_secs(30), || {
+                panic!("duplicate request")
+            })
+            .unwrap();
+        assert_eq!(first.unwrap().tag_name, repeated.unwrap().tag_name);
+        let expired = now + Duration::from_secs(61);
+        assert_eq!(
+            cache
+                .get_or_fetch(expired, || Err("Offline".into()))
+                .unwrap_err(),
+            "Offline"
+        );
+        let fresh = cache
+            .get_or_fetch(expired, || Ok(Some(release("0.261002.0", "aarch64"))))
+            .unwrap();
+        assert_eq!(fresh.unwrap().tag_name, "v0.261002.0");
+    }
+
     #[test]
     #[ignore = "Downloads and verifies the current public macOS DMG; run explicitly when validating releases"]
     fn stages_real_public_release_without_changing_an_installed_app() {
@@ -635,7 +850,7 @@ mod tests {
             assets: vec![Asset {
                 browser_download_url: format!("{RELEASES}/download/v{version}/{name}"),
                 name,
-                size: 4,
+                size: Some(4),
                 digest: Some(format!("sha256:{:x}", Sha256::digest(b"test"))),
             }],
         }
