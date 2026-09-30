@@ -40,7 +40,9 @@ describe("sidebar app updates", () => {
   it("checks on launch and labels the confirmed latest version", async () => {
     mount();
     expect(screen.getByRole("button", { name: /Checking/ })).toBeTruthy();
-    await screen.findByRole("button", { name: /Up to date.*Open updates/ });
+    const control = await screen.findByRole("button", { name: /Latest.*Open updates/ });
+    expect(control.querySelector('[data-slot="badge"]')?.getAttribute("data-tone")).toBe("success");
+    expect(screen.queryByText("Up to date")).toBeNull();
     expect(api.check).toHaveBeenCalledTimes(1);
     open();
     expect(screen.getByText("You're running the latest published version of WakeNote.")).toBeTruthy();
@@ -58,22 +60,22 @@ describe("sidebar app updates", () => {
     const control = await screen.findByRole("button", { name: /Latest.*Open updates/ });
     expect(control.querySelector('[data-slot="badge"]')?.getAttribute("data-tone")).toBe("success");
     expect(screen.queryByText("Ahead of release")).toBeNull();
-    expect(screen.queryByText("Up to date")).toBeNull();
     open();
     expect(screen.getByText("Newer than the latest release.")).toBeTruthy();
+    expect(screen.queryByText("You're running the latest published version of WakeNote.")).toBeNull();
   });
 
-  it("reports failed checks and retries without showing stale up-to-date status", async () => {
+  it("reports failed checks and retries without showing a stale Latest status", async () => {
     mount();
-    await screen.findByRole("button", { name: /Up to date.*Open updates/ });
+    await screen.findByRole("button", { name: /Latest.*Open updates/ });
     open();
     api.check.mockRejectedValueOnce("Offline");
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("Check failed"));
-    expect(screen.queryByText("Up to date")).toBeNull();
+    expect(screen.queryByText("Latest")).toBeNull();
     expect(screen.getByRole("alert").textContent).toBe("Offline");
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("Up to date"));
+    await waitFor(() => expect(screen.getByRole("dialog").textContent).toContain("Latest"));
   });
 
   it("checks daily while open and retries a failed check after an hour", async () => {
