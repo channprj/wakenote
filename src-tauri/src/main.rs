@@ -131,6 +131,7 @@ mod app_updater;
 type BackendState = Arc<Mutex<AppBackend>>;
 type DictionaryFileState = Arc<Mutex<DictionaryFileStore>>;
 type LiveCaptureState = Mutex<MultiCaptureRuntime<CpalAudioInput>>;
+const UPDATE_PAUSE_MEETING_MIC_WAIT: Duration = Duration::from_secs(10);
 type DictationState = Arc<Mutex<DictationRuntime<CpalAudioInput>>>;
 type DictationShortcutDispatcher = mpsc::Sender<(DictationShortcutEvent, DictationHotkeyMode)>;
 type ModifierShortcutState = Arc<Mutex<DictationModifierShortcuts>>;
@@ -4162,7 +4163,7 @@ async fn merge_transcript_audio(
     app: AppHandle,
     request: MergeAudioRequest,
 ) -> Result<AudioMergeResult, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.long_activity()?;
     let progress_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         merge_audio_to_m4a(request, move |progress| {
@@ -4193,7 +4194,7 @@ fn download_model(
     state: State<'_, BackendState>,
     model_id: String,
 ) -> Result<Vec<ModelDescriptor>, String> {
-    let update_activity = RESTART_GATE.activity()?;
+    let update_activity = RESTART_GATE.long_activity()?;
     let prepared = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.prepare_model_download(&model_id)?
@@ -4374,7 +4375,7 @@ async fn export_all_transcript_days(
     state: State<'_, BackendState>,
     destination_parent: String,
 ) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.long_activity()?;
     let (save_root, custom_sources) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -4401,7 +4402,7 @@ async fn export_transcript_day(
     day: String,
     destination_path: String,
 ) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.long_activity()?;
     let (save_root, custom_sources) = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         let settings = backend.settings();
@@ -4727,7 +4728,7 @@ async fn export_llm_report(
     report_id: String,
     destination_path: String,
 ) -> Result<String, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.long_activity()?;
     let save_root = {
         let backend = state.lock().map_err(|error| error.to_string())?;
         backend.settings().save_root
@@ -5146,7 +5147,7 @@ fn finalize_manual_meeting_recording(
     generation: u64,
     reason: ManualMeetingStopReason,
 ) -> Result<ManualMeetingRecordingStatus, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.long_activity()?;
     let mut session = {
         let mut runtime = state.lock().map_err(|error| error.to_string())?;
         if runtime.session.as_ref().map(|session| session.generation) != Some(generation) {
@@ -5812,7 +5813,9 @@ fn start_live_capture_runtime(
     live_state: &LiveCaptureState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, LiveCaptureStartError> {
-    let _update_activity = RESTART_GATE.activity().map_err(LiveCaptureStartError::Runtime)?;
+    let _update_activity = RESTART_GATE
+        .capture_activity()
+        .map_err(LiveCaptureStartError::Runtime)?;
     let settings = {
         let backend = backend_state
             .lock()
@@ -5933,7 +5936,7 @@ fn start_live_capture_slot_runtime(
     slot: MicrophoneSlot,
     requested_device: CaptureMicrophoneEntry,
 ) -> Result<(), String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.capture_activity()?;
     let CaptureMicrophoneEntry {
         id: requested_device_id,
         label: requested_label,
@@ -6210,7 +6213,12 @@ fn ensure_source_meeting_microphone(
         return;
     }
 
-    let was_running = primary_live_capture_is_healthy(live_state.inner());
+    let mut was_running = primary_live_capture_is_healthy(live_state.inner());
+    if !was_running
+        && (RESTART_GATE.is_capture_suspended() || RESTART_GATE.is_capture_restore_pending())
+    {
+        was_running = wait_for_capture_after_update_pause(live_state.inner());
+    }
     let mut auto_started = false;
     if !was_running {
         match start_live_capture_runtime(
@@ -6251,6 +6259,19 @@ fn ensure_source_meeting_microphone(
             user_owned: was_running,
         });
     }
+}
+
+/// A meeting that started just before an update paused Capture input makes
+/// the update abandon the install and restore capture. Wait for that restore
+/// instead of racing it or recording the meeting as system audio only.
+fn wait_for_capture_after_update_pause(live_state: &LiveCaptureState) -> bool {
+    let deadline = Instant::now() + UPDATE_PAUSE_MEETING_MIC_WAIT;
+    while (RESTART_GATE.is_capture_suspended() || RESTART_GATE.is_capture_restore_pending())
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(50));
+    }
+    primary_live_capture_is_healthy(live_state)
 }
 
 fn promote_source_meeting_microphone_lease(app: &AppHandle) {
@@ -6543,7 +6564,7 @@ fn start_source_capture_runtime(
     detected_source_state: &DetectedSourceState,
     transcription_state: AutoTranscriptionState,
 ) -> Result<AppStatus, String> {
-    let _update_activity = RESTART_GATE.activity()?;
+    let _update_activity = RESTART_GATE.source_capture_activity()?;
     let source = {
         let slot = detected_source_state.lock().map_err(|e| e.to_string())?;
         match slot.as_ref() {
@@ -7837,6 +7858,11 @@ fn kick_transcription_worker(
 
         loop {
             let started_jobs = match backend_state.lock() {
+                // An update is draining work: finish only what cannot resume
+                // after the relaunch so the restart is not held by a backlog.
+                Ok(mut backend) if RESTART_GATE.is_capture_suspended() => {
+                    backend.start_unresumable_transcription_jobs_up_to(MAX_PARALLEL_TRANSCRIPTIONS)
+                }
                 Ok(mut backend) => {
                     backend.start_transcription_jobs_up_to(MAX_PARALLEL_TRANSCRIPTIONS)
                 }
@@ -7907,7 +7933,11 @@ fn kick_transcription_worker(
 
         transcription_state.store(false, Ordering::Release);
 
-        kick_transcription_worker_if_needed(app, backend_state, transcription_state);
+        // Pending jobs left behind by an update drain are kicked again if the
+        // update is abandoned, or resume after the relaunch.
+        if !RESTART_GATE.is_capture_suspended() {
+            kick_transcription_worker_if_needed(app, backend_state, transcription_state);
+        }
     });
 }
 
@@ -8304,6 +8334,11 @@ fn spawn_mic_recovery_watchdog(
     thread::spawn(move || {
         loop {
             thread::sleep(MIC_RECOVERY_TICK_INTERVAL);
+            // An update stopped Capture input on purpose, or an abandoned one
+            // is reopening it; recovery would only race it.
+            if RESTART_GATE.is_capture_suspended() || RESTART_GATE.is_capture_restore_pending() {
+                continue;
+            }
             let (live_running, runtime_error) = match app.try_state::<LiveCaptureState>() {
                 Some(state) => match state.lock() {
                     Ok(live) => live
@@ -9152,7 +9187,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_updater::check_for_update,
-            app_updater::update_install_blocker,
+            app_updater::update_install_readiness,
             app_updater::open_update_release,
             app_updater::download_and_install_update,
             enhanced_dictation_event,

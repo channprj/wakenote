@@ -12,9 +12,18 @@ export interface UpdateInfo {
 }
 
 export interface UpdateProgress {
-  phase: "downloading" | "verifying" | "restarting";
+  phase: "downloading" | "verifying" | "stopping_capture" | "finishing" | "restarting";
   downloaded: number;
   total: number;
+}
+
+export interface UpdateReadiness {
+  /** Work the user must finish first; installing stays disabled until then. */
+  blocker: string | null;
+  /** Installing pauses Capture input, which is running now. */
+  stopsCapture: boolean;
+  /** Capture input starts again automatically after the relaunch. */
+  resumesCapture: boolean;
 }
 
 export const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
@@ -28,8 +37,8 @@ export function checkForAppUpdate(): Promise<UpdateInfo> {
   return invoke("check_for_update");
 }
 
-export function updateInstallBlocker(): Promise<string | null> {
-  return invoke("update_install_blocker");
+export function updateInstallReadiness(): Promise<UpdateReadiness> {
+  return invoke("update_install_readiness");
 }
 
 export function openUpdateRelease(version: string | null): Promise<void> {

@@ -26,57 +26,246 @@ const CHECK_CACHE_TTL: Duration = Duration::from_secs(60);
 const INSTALL_SCRIPT: &str = include_str!("../scripts/self-update.sh");
 
 #[derive(Default)]
-pub struct RestartGate(Mutex<(usize, bool)>);
-pub static RESTART_GATE: RestartGate = RestartGate(Mutex::new((0, false)));
+struct GateState {
+    activities: usize,
+    /// Subset of `activities` that can run for minutes (model downloads,
+    /// exports). Updates are refused up front instead of waiting for these.
+    long_activities: usize,
+    restarting: bool,
+    capture_suspended: bool,
+    /// A live-capture start was refused during the suspension and must be
+    /// retried if the update is abandoned.
+    capture_start_deferred: bool,
+    /// An abandoned update is reopening Capture input; other starters wait
+    /// for it instead of racing it.
+    capture_restore_pending: bool,
+}
 
-pub struct ActivityGuard<'a>(&'a RestartGate);
+#[derive(Default)]
+pub struct RestartGate(Mutex<GateState>);
+pub static RESTART_GATE: RestartGate = RestartGate(Mutex::new(GateState {
+    activities: 0,
+    long_activities: 0,
+    restarting: false,
+    capture_suspended: false,
+    capture_start_deferred: false,
+    capture_restore_pending: false,
+}));
+
+pub struct ActivityGuard<'a> {
+    gate: &'a RestartGate,
+    long: bool,
+}
 pub struct RestartGuard<'a>(&'a RestartGate);
+pub struct CaptureSuspension<'a>(&'a RestartGate);
+pub struct CaptureRestore<'a>(&'a RestartGate);
+
+const RESTARTING: &str = "WakeNote is restarting to install an update.";
+const CAPTURE_SUSPENDED: &str = "Capture input is paused while WakeNote installs an update.";
+
 impl RestartGate {
-    pub fn is_busy(&self) -> Result<bool, String> {
-        let gate = self
-            .0
+    fn state(&self) -> Result<std::sync::MutexGuard<'_, GateState>, String> {
+        self.0
             .lock()
-            .map_err(|_| "Update safety lock unavailable")?;
-        Ok(gate.0 != 0 || gate.1)
+            .map_err(|_| "Update safety lock unavailable".into())
+    }
+    fn enter(&self, gate: &mut GateState, long: bool) -> ActivityGuard<'_> {
+        gate.activities += 1;
+        if long {
+            gate.long_activities += 1;
+        }
+        ActivityGuard { gate: self, long }
+    }
+    pub fn is_busy(&self) -> Result<bool, String> {
+        let gate = self.state()?;
+        Ok(gate.activities != 0 || gate.restarting)
     }
     /// Hold while starting work, or throughout work without a runtime record.
     pub fn activity(&self) -> Result<ActivityGuard<'_>, String> {
-        let mut gate = self
-            .0
-            .lock()
-            .map_err(|_| "Update safety lock unavailable")?;
-        if gate.1 {
-            return Err("WakeNote is restarting to install an update.".into());
+        let mut gate = self.state()?;
+        if gate.restarting {
+            return Err(RESTARTING.into());
         }
-        gate.0 += 1;
-        Ok(ActivityGuard(self))
+        Ok(self.enter(&mut gate, false))
+    }
+    /// Like `activity`, for work that can outlast an update's drain timeout.
+    pub fn long_activity(&self) -> Result<ActivityGuard<'_>, String> {
+        let mut gate = self.state()?;
+        if gate.restarting {
+            return Err(RESTARTING.into());
+        }
+        Ok(self.enter(&mut gate, true))
+    }
+    pub fn has_long_activity(&self) -> Result<bool, String> {
+        Ok(self.state()?.long_activities != 0)
+    }
+    /// Like `activity`, but also refused while an update keeps Capture input
+    /// stopped. Every path that starts live capture must use this.
+    pub fn capture_activity(&self) -> Result<ActivityGuard<'_>, String> {
+        let mut gate = self.state()?;
+        if gate.restarting {
+            return Err(RESTARTING.into());
+        }
+        if gate.capture_suspended {
+            gate.capture_start_deferred = true;
+            return Err(CAPTURE_SUSPENDED.into());
+        }
+        Ok(self.enter(&mut gate, false))
+    }
+    /// For starts that retry on their own (source meeting capture): refused
+    /// during the suspension without asking for a live-capture restart.
+    pub fn source_capture_activity(&self) -> Result<ActivityGuard<'_>, String> {
+        let mut gate = self.state()?;
+        if gate.restarting {
+            return Err(RESTARTING.into());
+        }
+        if gate.capture_suspended {
+            return Err(CAPTURE_SUSPENDED.into());
+        }
+        Ok(self.enter(&mut gate, false))
+    }
+    /// Keep watchdogs, settings and auto-start from reopening Capture input
+    /// while an update stops it and waits for the remaining work.
+    pub fn suspend_capture(&self) -> Result<CaptureSuspension<'_>, String> {
+        let mut gate = self.state()?;
+        if gate.restarting || gate.capture_suspended {
+            return Err("An update is already in progress.".into());
+        }
+        gate.capture_suspended = true;
+        gate.capture_start_deferred = false;
+        Ok(CaptureSuspension(self))
+    }
+    pub fn is_capture_suspended(&self) -> bool {
+        self.state().is_ok_and(|gate| gate.capture_suspended)
+    }
+    /// Whether a live-capture start was refused during the last suspension.
+    pub fn take_capture_start_deferred(&self) -> bool {
+        self.state()
+            .is_ok_and(|mut gate| std::mem::take(&mut gate.capture_start_deferred))
+    }
+    pub fn is_capture_restore_pending(&self) -> bool {
+        self.state().is_ok_and(|gate| gate.capture_restore_pending)
     }
     pub fn restart(&self) -> Result<RestartGuard<'_>, String> {
-        let mut gate = self
-            .0
-            .lock()
-            .map_err(|_| "Update safety lock unavailable")?;
-        if gate.1 || gate.0 != 0 {
+        let mut gate = self.state()?;
+        if gate.restarting || gate.activities != 0 {
             return Err(
                 "Wait for the current operation to finish, then try the update again.".into(),
             );
         }
-        gate.1 = true;
+        gate.restarting = true;
         Ok(RestartGuard(self))
     }
 }
 impl Drop for ActivityGuard<'_> {
     fn drop(&mut self) {
-        if let Ok(mut gate) = self.0.0.lock() {
-            gate.0 -= 1;
+        if let Ok(mut gate) = self.gate.0.lock() {
+            gate.activities -= 1;
+            if self.long {
+                gate.long_activities -= 1;
+            }
         }
     }
 }
 impl Drop for RestartGuard<'_> {
     fn drop(&mut self) {
         if let Ok(mut gate) = self.0.0.lock() {
-            gate.1 = false;
+            gate.restarting = false;
         }
+    }
+}
+impl<'a> CaptureSuspension<'a> {
+    /// End the suspension of an abandoned update. Returns a guard while
+    /// Capture input must be reopened: it was stopped for the update, or a
+    /// start was refused meanwhile. The restore is marked pending before
+    /// starts are allowed again, so nothing can slip in ahead of it.
+    pub fn release(self, capture_stopped: bool) -> Option<CaptureRestore<'a>> {
+        let gate = self.0;
+        let restore = gate.state().is_ok_and(|mut state| {
+            let restore = capture_stopped || std::mem::take(&mut state.capture_start_deferred);
+            state.capture_restore_pending |= restore;
+            state.capture_suspended = false;
+            restore
+        });
+        std::mem::forget(self);
+        if !restore {
+            // A poisoned lock leaves the flag set; clear it like Drop would.
+            if let Ok(mut state) = gate.0.lock() {
+                state.capture_suspended = false;
+            }
+        }
+        restore.then_some(CaptureRestore(gate))
+    }
+}
+impl Drop for CaptureSuspension<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut gate) = self.0.0.lock() {
+            gate.capture_suspended = false;
+        }
+    }
+}
+impl Drop for CaptureRestore<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut gate) = self.0.0.lock() {
+            gate.capture_restore_pending = false;
+        }
+    }
+}
+
+/// What an update needs from the running app while it waits to restart.
+pub trait RestartDrain {
+    /// User-owned or long work. Ends the wait at once; never stopped for the user.
+    fn hard_blocker(&self) -> Result<Option<String>, String>;
+    /// Everything that must be idle before exit, including hard blockers.
+    fn runtime_blocker(&self) -> Result<Option<String>, String>;
+    fn capture_active(&self) -> Result<bool, String>;
+    /// Stop Capture input, flushing the chunk being recorded.
+    fn stop_capture(&self) -> impl Future<Output = Result<(), String>> + Send;
+    fn progress(&self, phase: &'static str);
+}
+
+/// Stop Capture input, let work that already started finish, and close the
+/// restart gate once the app is idle. Call with capture starts suspended.
+/// `capture_stopped` reports whether capture must be restored on failure.
+pub async fn drain_for_restart<'g>(
+    gate: &'g RestartGate,
+    drain: &impl RestartDrain,
+    timeout: Duration,
+    poll: Duration,
+    capture_stopped: &mut bool,
+) -> Result<RestartGuard<'g>, String> {
+    let started = Instant::now();
+    let mut waiting = false;
+    loop {
+        if let Some(reason) = drain.hard_blocker()? {
+            return Err(reason);
+        }
+        if drain.capture_active()? {
+            drain.progress("stopping_capture");
+            waiting = false;
+            *capture_stopped = true;
+            drain.stop_capture().await?;
+        }
+        // Close the gate only when the app already looks idle; a closed gate
+        // makes unrelated work fail to start.
+        let reason = match drain.runtime_blocker()? {
+            Some(reason) => reason,
+            None => match gate.restart() {
+                Ok(guard) => match drain.runtime_blocker()? {
+                    None => return Ok(guard),
+                    Some(reason) => reason,
+                },
+                Err(reason) => reason,
+            },
+        };
+        if started.elapsed() >= timeout {
+            return Err(reason);
+        }
+        if !waiting {
+            drain.progress("finishing");
+            waiting = true;
+        }
+        tokio::time::sleep(poll).await;
     }
 }
 
@@ -960,5 +1149,227 @@ mod tests {
         assert!(gate.restart().is_err());
         drop(restart);
         assert!(gate.activity().is_ok());
+    }
+
+    #[test]
+    fn capture_suspension_blocks_only_capture_starts_until_released() {
+        let gate = RestartGate::default();
+        let suspended = gate.suspend_capture().unwrap();
+        assert!(gate.is_capture_suspended());
+        assert!(gate.suspend_capture().is_err());
+        assert!(gate.capture_activity().is_err());
+        // Stops and transcription must still run while the update drains work.
+        let stop = gate.activity().unwrap();
+        assert!(gate.restart().is_err());
+        drop(stop);
+        let restart = gate.restart().unwrap();
+        assert!(gate.capture_activity().is_err());
+        drop(restart);
+        drop(suspended);
+        assert!(!gate.is_capture_suspended());
+        assert!(gate.capture_activity().is_ok());
+        let restart = gate.restart().unwrap();
+        assert!(gate.suspend_capture().is_err());
+        drop(restart);
+    }
+
+    #[test]
+    fn long_work_is_visible_and_refused_starts_are_remembered() {
+        let gate = RestartGate::default();
+        let download = gate.long_activity().unwrap();
+        let short = gate.activity().unwrap();
+        assert!(gate.has_long_activity().unwrap());
+        drop(download);
+        assert!(!gate.has_long_activity().unwrap());
+        assert!(gate.restart().is_err());
+        drop(short);
+
+        let suspended = gate.suspend_capture().unwrap();
+        assert!(gate.source_capture_activity().is_err());
+        assert!(!gate.take_capture_start_deferred());
+        assert!(gate.capture_activity().is_err());
+        drop(suspended);
+        assert!(gate.take_capture_start_deferred());
+        assert!(!gate.take_capture_start_deferred());
+        let suspended = gate.suspend_capture().unwrap();
+        assert!(gate.capture_activity().is_err());
+        drop(suspended);
+        // A new update starts from a clean slate.
+        let suspended = gate.suspend_capture().unwrap();
+        assert!(!gate.take_capture_start_deferred());
+        assert!(suspended.release(false).is_none());
+        assert!(!gate.is_capture_suspended() && !gate.is_capture_restore_pending());
+
+        // Releasing marks the restore pending before starts are allowed again.
+        let suspended = gate.suspend_capture().unwrap();
+        assert!(gate.capture_activity().is_err());
+        let restore = suspended
+            .release(false)
+            .expect("a refused start is restored");
+        assert!(!gate.is_capture_suspended());
+        assert!(gate.is_capture_restore_pending());
+        assert!(!gate.take_capture_start_deferred());
+        drop(restore);
+        assert!(!gate.is_capture_restore_pending());
+        let restore = gate.suspend_capture().unwrap().release(true);
+        assert!(restore.is_some() && gate.is_capture_restore_pending());
+    }
+
+    #[derive(Default)]
+    struct FakeDrain {
+        /// Capture reports active until stopped this many times.
+        capture_restarts: std::sync::atomic::AtomicUsize,
+        capture_active: AtomicBool,
+        stops: std::sync::atomic::AtomicUsize,
+        /// Runtime checks answer busy this many times before idle.
+        busy_checks: std::sync::atomic::AtomicUsize,
+        busy_forever: bool,
+        hard_after_checks: Option<usize>,
+        checks: std::sync::atomic::AtomicUsize,
+        phases: Mutex<Vec<&'static str>>,
+    }
+
+    impl RestartDrain for FakeDrain {
+        fn hard_blocker(&self) -> Result<Option<String>, String> {
+            let checks = self.checks.load(AtomicOrdering::SeqCst);
+            Ok(self
+                .hard_after_checks
+                .is_some_and(|after| checks >= after)
+                .then(|| "Stop the meeting recording before installing.".into()))
+        }
+        fn runtime_blocker(&self) -> Result<Option<String>, String> {
+            self.checks.fetch_add(1, AtomicOrdering::SeqCst);
+            if self.busy_forever {
+                return Ok(Some(
+                    "Wait for transcription to finish before installing.".into(),
+                ));
+            }
+            let busy = self
+                .busy_checks
+                .fetch_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
+                    n.checked_sub(1)
+                })
+                .is_ok();
+            Ok(busy.then(|| "Wait for transcription to finish before installing.".into()))
+        }
+        fn capture_active(&self) -> Result<bool, String> {
+            Ok(self.capture_active.load(AtomicOrdering::SeqCst))
+        }
+        fn stop_capture(&self) -> impl Future<Output = Result<(), String>> + Send {
+            self.stops.fetch_add(1, AtomicOrdering::SeqCst);
+            // Something that started before the suspension reopens capture.
+            let reopened = self
+                .capture_restarts
+                .fetch_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
+                    n.checked_sub(1)
+                })
+                .is_ok();
+            self.capture_active.store(reopened, AtomicOrdering::SeqCst);
+            async { Ok(()) }
+        }
+        fn progress(&self, phase: &'static str) {
+            self.phases.lock().unwrap().push(phase);
+        }
+    }
+
+    const POLL: Duration = Duration::from_millis(1);
+
+    #[tokio::test]
+    async fn drain_stops_capture_then_closes_the_gate_once_work_finishes() {
+        let gate = RestartGate::default();
+        let drain = FakeDrain {
+            capture_active: AtomicBool::new(true),
+            busy_checks: 3.into(),
+            ..Default::default()
+        };
+        let mut stopped = false;
+        let guard = drain_for_restart(&gate, &drain, Duration::from_secs(5), POLL, &mut stopped)
+            .await
+            .unwrap();
+        assert!(stopped);
+        assert_eq!(drain.stops.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(
+            *drain.phases.lock().unwrap(),
+            ["stopping_capture", "finishing"]
+        );
+        assert!(
+            gate.activity().is_err(),
+            "the gate stays closed for the restart"
+        );
+        drop(guard);
+        assert!(gate.activity().is_ok());
+    }
+
+    #[tokio::test]
+    async fn drain_restops_capture_reopened_by_an_earlier_start() {
+        let gate = RestartGate::default();
+        let drain = FakeDrain {
+            capture_active: AtomicBool::new(true),
+            capture_restarts: 1.into(),
+            busy_checks: 2.into(),
+            ..Default::default()
+        };
+        let mut stopped = false;
+        drain_for_restart(&gate, &drain, Duration::from_secs(5), POLL, &mut stopped)
+            .await
+            .unwrap();
+        assert_eq!(drain.stops.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(
+            *drain.phases.lock().unwrap(),
+            [
+                "stopping_capture",
+                "finishing",
+                "stopping_capture",
+                "finishing"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_gives_up_without_holding_the_gate() {
+        let gate = RestartGate::default();
+        let drain = FakeDrain {
+            capture_active: AtomicBool::new(true),
+            busy_forever: true,
+            ..Default::default()
+        };
+        let mut stopped = false;
+        let error = drain_for_restart(&gate, &drain, Duration::from_millis(20), POLL, &mut stopped)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error, "Wait for transcription to finish before installing.");
+        assert!(stopped, "capture must be restored by the caller");
+        assert!(!gate.is_busy().unwrap());
+
+        let hard = FakeDrain {
+            capture_active: AtomicBool::new(true),
+            busy_forever: true,
+            hard_after_checks: Some(2),
+            ..Default::default()
+        };
+        let mut stopped = false;
+        let error = drain_for_restart(&gate, &hard, Duration::from_secs(5), POLL, &mut stopped)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error, "Stop the meeting recording before installing.");
+        assert!(stopped);
+        assert!(!gate.is_busy().unwrap());
+    }
+
+    #[tokio::test]
+    async fn drain_waits_for_running_work_and_reports_it_on_timeout() {
+        let gate = RestartGate::default();
+        let work = gate.activity().unwrap();
+        let drain = FakeDrain::default();
+        let mut stopped = false;
+        let error = drain_for_restart(&gate, &drain, Duration::from_millis(20), POLL, &mut stopped)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.starts_with("Wait for the current operation"));
+        assert!(!stopped, "capture was idle, so nothing needs restoring");
+        drop(work);
     }
 }

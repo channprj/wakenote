@@ -374,6 +374,7 @@ export default function App() {
         ["dictionary-changed", () => null],
         ["dictionary-file-error", () => null],
         ["microphone-input-levels-changed", () => null],
+        ["live-input-changed", () => null],
         [
           "text-transform-error",
           (payload) => {

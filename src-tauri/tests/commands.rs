@@ -2535,6 +2535,80 @@ fn backend_logs_backfilled_jobs_when_enqueueing_backlog() {
 }
 
 #[test]
+fn update_drain_leaves_resumable_and_imported_jobs_for_the_relaunch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let model_directory = tmp.path().join("models");
+    write_ready_local_model(&model_directory, "whisper-medium");
+    let day = tmp.path().join("20260506");
+    std::fs::create_dir_all(&day).expect("audio dir");
+    let local_audio = day.join("230912.wav");
+    let replay_audio = day.join("230913.wav");
+    let imported_audio = tmp.path().join("picked").join("long-meeting.wav");
+    std::fs::create_dir_all(imported_audio.parent().unwrap()).expect("picked dir");
+    for path in [&local_audio, &replay_audio, &imported_audio] {
+        std::fs::write(path, b"audio").expect("audio");
+    }
+    // Live chunks recorded before sidecars had a `source` field.
+    let mut legacy: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/live-transcript.json")).expect("fixture");
+    legacy.as_object_mut().expect("sidecar").remove("source");
+    for path in [&local_audio, &replay_audio] {
+        std::fs::write(path.with_extension("json"), legacy.to_string()).expect("legacy sidecar");
+    }
+    let mut backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_directory.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".to_string()),
+        ..SettingsPatch::default()
+    });
+    backend.enqueue_audio_file(&local_audio, Some("whisper-medium".to_string()));
+    backend.enqueue_audio_file(&replay_audio, Some("soniox-realtime-v5".to_string()));
+    let replay_id = backend
+        .queue_snapshot()
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == replay_audio)
+        .expect("replay job")
+        .id;
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::failed(replay_id, "old failure"))
+        .expect("fail replay job");
+    backend
+        .reprocess_jobs(vec![replay_id], "soniox-realtime-v5".to_string())
+        .expect("replay saved audio");
+    backend.enqueue_audio_file(&imported_audio, Some("soniox-realtime-v5".to_string()));
+
+    // Local jobs, replays of saved audio and picked files (even on a realtime
+    // model, which has no live session for them) all resume after relaunch.
+    assert!(!backend.has_pending_unresumable_transcription_jobs());
+    assert!(
+        backend
+            .start_unresumable_transcription_jobs_up_to(1)
+            .is_empty()
+    );
+    assert_eq!(backend.queue_snapshot().pending_count, 3);
+
+    // A picked file can outlast the update's wait, so it is reported up front
+    // instead of being waited for; old live chunks are simply waited for.
+    let mut picked_running = false;
+    for _ in 0..3 {
+        assert!(!backend.is_transcribing_imported_audio());
+        let started = backend.start_transcription_jobs_up_to(1);
+        assert_eq!(started.len(), 1);
+        if started[0].job.audio_path == imported_audio {
+            picked_running = true;
+            break;
+        }
+        assert!(!backend.is_transcribing_imported_audio());
+        backend
+            .finish_transcription_job(TranscriptionJobOutcome::failed(started[0].job.id, "done"))
+            .expect("finish job");
+    }
+    assert!(picked_running);
+    assert!(backend.is_transcribing_imported_audio());
+}
+
+#[test]
 fn backend_starts_one_transcription_job_at_a_time() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_directory = tmp.path().join("models");

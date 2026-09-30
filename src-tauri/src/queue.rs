@@ -314,13 +314,23 @@ impl TranscriptionQueue {
         model_ids: &HashSet<String>,
         max_running: usize,
     ) -> Option<QueueJob> {
+        self.start_next_matching_up_to(max_running, |job| model_ids.contains(&job.model_id))
+    }
+
+    /// Start the oldest pending job accepted by `matches`.
+    pub fn start_next_matching_up_to(
+        &mut self,
+        max_running: usize,
+        matches: impl Fn(&QueueJob) -> bool,
+    ) -> Option<QueueJob> {
         if max_running == 0 || self.running_job_count() > 0 {
             return None;
         }
 
-        let job = self.jobs.iter_mut().find(|job| {
-            job.status == QueueJobStatus::Pending && model_ids.contains(&job.model_id)
-        })?;
+        let job = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.status == QueueJobStatus::Pending && matches(job))?;
         job.status = QueueJobStatus::Running;
         job.error = None;
         job.issue = None;
@@ -504,6 +514,10 @@ impl TranscriptionQueue {
 
     pub fn jobs_mut(&mut self) -> &mut [QueueJob] {
         &mut self.jobs
+    }
+
+    pub fn any_job(&self, matches: impl Fn(&QueueJob) -> bool) -> bool {
+        self.jobs.iter().any(matches)
     }
 
     pub fn normalize_legacy_issues(&mut self) -> bool {

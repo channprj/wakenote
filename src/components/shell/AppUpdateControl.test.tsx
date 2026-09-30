@@ -3,16 +3,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppUpdateControl } from "./AppUpdateControl";
-import type { UpdateInfo, UpdateProgress } from "@/lib/app-update";
+import type { UpdateInfo, UpdateProgress, UpdateReadiness } from "@/lib/app-update";
 
 const api = vi.hoisted(() => ({
-  supported: vi.fn(), check: vi.fn(), blocker: vi.fn(), install: vi.fn(),
+  supported: vi.fn(), check: vi.fn(), readiness: vi.fn(), install: vi.fn(),
   listen: vi.fn(), unlisten: vi.fn(), open: vi.fn(),
 }));
 vi.mock("@/lib/app-update", async (original) => ({
   ...await original<typeof import("@/lib/app-update")>(),
   supportsAppUpdates: api.supported, checkForAppUpdate: api.check,
-  updateInstallBlocker: api.blocker, installAppUpdate: api.install,
+  updateInstallReadiness: api.readiness, installAppUpdate: api.install,
   onAppUpdateProgress: api.listen, openUpdateRelease: api.open,
 }));
 
@@ -21,6 +21,7 @@ const latest: UpdateInfo = {
   canInstall: false, installReason: null, notes: "", releaseUrl: "https://github.com/channprj/wakenote/releases",
 };
 const available: UpdateInfo = { ...latest, status: "available", latestVersion: "0.261001.0", canInstall: true, notes: "<img src=x onerror=alert(1)>" };
+const idle: UpdateReadiness = { blocker: null, stopsCapture: false, resumesCapture: false };
 function mount() { return render(<TooltipProvider><AppUpdateControl /></TooltipProvider>); }
 function open() { fireEvent.click(screen.getByRole("button", { name: /Open updates/ })); }
 
@@ -28,7 +29,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   api.supported.mockReturnValue(true);
   api.check.mockResolvedValue(latest);
-  api.blocker.mockResolvedValue(null);
+  api.readiness.mockResolvedValue(idle);
   api.listen.mockResolvedValue(api.unlisten);
   api.install.mockResolvedValue(undefined);
   api.open.mockResolvedValue(undefined);
@@ -90,7 +91,7 @@ describe("sidebar app updates", () => {
 
   it("blocks installation during active work and treats release notes as text", async () => {
     api.check.mockResolvedValue(available);
-    api.blocker.mockResolvedValue("Stop the meeting recording before installing.");
+    api.readiness.mockResolvedValue({ ...idle, blocker: "Stop the meeting recording before installing." });
     mount();
     await screen.findByRole("button", { name: /Update available/ });
     open();
@@ -99,6 +100,60 @@ describe("sidebar app updates", () => {
     expect(screen.getByText(available.notes)).toBeTruthy();
     expect(screen.getByRole("dialog").querySelector("img")).toBeNull();
     expect(api.install).not.toHaveBeenCalled();
+  });
+
+  it("keeps Install & restart available while Capture input runs and pauses it natively", async () => {
+    api.check.mockResolvedValue(available);
+    api.readiness.mockResolvedValue({ ...idle, stopsCapture: true, resumesCapture: true });
+    mount();
+    await screen.findByRole("button", { name: /Update available/ });
+    open();
+    const install = screen.getByRole("button", { name: "Install & restart" }) as HTMLButtonElement;
+    await waitFor(() => expect(install.disabled).toBe(false));
+    expect(screen.getByText("Capture input pauses during the update and restarts when WakeNote reopens.")).toBeTruthy();
+    expect(screen.queryByText(/Stop Capture input/)).toBeNull();
+    fireEvent.click(install);
+    await waitFor(() => expect(api.install).toHaveBeenCalledExactlyOnceWith("0.261001.0"));
+  });
+
+  it("does not promise that Capture input resumes when launch auto-start is off", async () => {
+    api.check.mockResolvedValue(available);
+    api.readiness.mockResolvedValue({ ...idle, stopsCapture: true });
+    mount();
+    await screen.findByRole("button", { name: /Update available/ });
+    open();
+    await screen.findByText("Capture input stops during the update. Start it again after WakeNote reopens.");
+    expect(screen.queryByText(/restarts when WakeNote reopens/)).toBeNull();
+  });
+
+  it("keeps installation disabled when WakeNote cannot confirm it is idle", async () => {
+    api.check.mockResolvedValue(available);
+    api.readiness.mockRejectedValue("Could not verify whether WakeNote is idle.");
+    mount();
+    await screen.findByRole("button", { name: /Update available/ });
+    open();
+    await screen.findByText("Could not verify whether WakeNote is idle.");
+    expect((screen.getByRole("button", { name: "Install & restart" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows capture pause and remaining work before restarting", async () => {
+    api.check.mockResolvedValue(available);
+    api.install.mockReturnValue(new Promise<void>(() => {}));
+    let progress!: (value: UpdateProgress) => void;
+    api.listen.mockImplementation(async (callback) => { progress = callback; return api.unlisten; });
+    mount();
+    await screen.findByRole("button", { name: /Update available/ });
+    open();
+    const install = screen.getByRole("button", { name: "Install & restart" }) as HTMLButtonElement;
+    await waitFor(() => expect(install.disabled).toBe(false));
+    fireEvent.click(install);
+    await waitFor(() => expect(api.install).toHaveBeenCalledOnce());
+    act(() => progress({ phase: "stopping_capture", downloaded: 0, total: 0 }));
+    expect(screen.getByRole("status").textContent).toContain("Pausing Capture input");
+    act(() => progress({ phase: "finishing", downloaded: 0, total: 0 }));
+    expect(screen.getByRole("status").textContent).toContain("Finishing current work");
+    act(() => progress({ phase: "restarting", downloaded: 0, total: 0 }));
+    expect(screen.getByRole("status").textContent).toContain("Restarting WakeNote");
   });
 
   it("subscribes before download, shows progress, prevents duplicate installs and waits for restart", async () => {

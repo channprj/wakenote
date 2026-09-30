@@ -1,7 +1,7 @@
 import { ArrowDownToLineIcon, CheckIcon, CircleAlertIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppUpdate } from "@/hooks/use-app-update";
-import { openUpdateRelease, updateError, updateInstallBlocker } from "@/lib/app-update";
+import { openUpdateRelease, updateError, updateInstallReadiness, type UpdateReadiness } from "@/lib/app-update";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -11,7 +11,7 @@ import type { StatusTone } from "@/lib/status-summary";
 export function AppUpdateControl() {
   const update = useAppUpdate();
   const [open, setOpen] = useState(false);
-  const [blocker, setBlocker] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<UpdateReadiness | null>(null);
   const [readinessChecked, setReadinessChecked] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
 
@@ -23,15 +23,16 @@ export function AppUpdateControl() {
       if (pending) return;
       pending = true;
       try {
-        const reason = await updateInstallBlocker();
-        if (!disposed) setBlocker(reason);
+        const next = await updateInstallReadiness();
+        if (!disposed) setReadiness(next);
       } catch (error) {
-        if (!disposed) setBlocker(updateError(error));
+        if (!disposed) setReadiness({ blocker: updateError(error), stopsCapture: false, resumesCapture: false });
       } finally {
         pending = false;
         if (!disposed) setReadinessChecked(true);
       }
     };
+    setReadiness(null);
     setReadinessChecked(false);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
@@ -50,7 +51,10 @@ export function AppUpdateControl() {
   else if (update.info?.status === "ahead") { label = "Latest"; tone = "success"; Icon = CheckIcon; }
   else if (update.info?.status === "no_release") label = "No release yet";
 
+  const blocker = readiness?.blocker ?? null;
   const progressLabel = update.progress?.phase === "verifying" ? "Verifying update…"
+    : update.progress?.phase === "stopping_capture" ? "Pausing Capture input…"
+    : update.progress?.phase === "finishing" ? "Finishing current work…"
     : update.progress?.phase === "restarting" ? "Restarting WakeNote…"
     : update.progress?.total ? `Downloading… ${Math.min(100, Math.floor(update.progress.downloaded / update.progress.total * 100))}%`
     : "Preparing download…";
@@ -99,6 +103,10 @@ export function AppUpdateControl() {
           {update.info?.status === "available" ? <>
             {update.info.installReason ? <p>{update.info.installReason}</p> : null}
             {blocker && !update.installing ? <p role="status">{blocker}</p> : null}
+            {!blocker && readiness?.stopsCapture && !update.installing ? <p className="text-muted-foreground">
+              {readiness.resumesCapture ? "Capture input pauses during the update and restarts when WakeNote reopens."
+                : "Capture input stops during the update. Start it again after WakeNote reopens."}
+            </p> : null}
             {update.info.notes ? <details><summary>What's new in v{update.info.latestVersion}</summary><pre className="app-update-dialog__notes">{update.info.notes}</pre></details> : null}
           </> : null}
           {update.installing ? <div role="status" aria-live="polite">

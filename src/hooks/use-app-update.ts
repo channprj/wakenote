@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkForAppUpdate, installAppUpdate, onAppUpdateProgress,
-  supportsAppUpdates, updateError, updateInstallBlocker,
+  supportsAppUpdates, updateError, updateInstallReadiness,
   UPDATE_CHECK_INTERVAL, UPDATE_RETRY_INTERVAL,
   type UpdateInfo, type UpdateProgress,
 } from "@/lib/app-update";
@@ -65,7 +65,8 @@ export function useAppUpdate() {
     setProgress({ phase: "downloading", downloaded: 0, total: 0 });
     let unlisten: (() => void) | undefined;
     try {
-      const blocker = await updateInstallBlocker();
+      // Capture input and in-flight transcription are handled natively.
+      const { blocker } = await updateInstallReadiness();
       if (blocker) throw new Error(blocker);
       unlisten = await onAppUpdateProgress((value) => {
         if (mounted.current) setProgress(value);

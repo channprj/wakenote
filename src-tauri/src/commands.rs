@@ -33,8 +33,8 @@ use crate::persistence::{
     AppPersistence, ListVisibilityState, PersistenceError, SetListVisibilityRequest,
 };
 use crate::queue::{
-    BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueJobStatus, QueueSnapshot, TranscriptionQueue,
-    is_importable_audio_path,
+    BacklogScan, COMPLETED_JOB_HISTORY_LIMIT, QueueActivityKind, QueueJob, QueueJobStatus,
+    QueueSnapshot, TranscriptionQueue, is_importable_audio_path,
 };
 use crate::recorder::{
     ChunkMetadata, ChunkSource, RecordedChunk, TranscriptionSidecar, TranscriptionStatus,
@@ -2909,6 +2909,80 @@ impl AppBackend {
         &mut self,
         max_running: usize,
     ) -> Vec<StartedTranscriptionJob> {
+        self.start_transcription_jobs_matching(max_running, false)
+    }
+
+    /// Jobs an update must finish before exit because they cannot resume after
+    /// a relaunch: live chunks captured in this session whose realtime result
+    /// exists only in memory, or whose live-webhook metadata is not persisted.
+    fn unresumable_job_filter(
+        &self,
+        models: &[ModelDescriptor],
+    ) -> impl Fn(&QueueJob) -> bool + use<> {
+        let realtime_model_ids: HashSet<String> = models
+            .iter()
+            .filter(|model| {
+                matches!(
+                    model.provider_runtime.as_str(),
+                    "openai-realtime" | "soniox-realtime"
+                )
+            })
+            .map(|model| model.id.clone())
+            .collect();
+        let live_job_ids: HashSet<u64> = self.pending_live_metadata.keys().copied().collect();
+        let webhook_enabled = self.settings.live_transcription_webhook.enabled;
+        move |job| {
+            !job.replay_recorded_audio
+                && live_job_ids.contains(&job.id)
+                && (webhook_enabled || realtime_model_ids.contains(&job.model_id))
+        }
+    }
+
+    /// Whether an update still has queued work it must finish before exit.
+    pub fn has_pending_unresumable_transcription_jobs(&self) -> bool {
+        if self.settings.pause_all || !self.settings.transcription_enabled {
+            return false;
+        }
+        let selectable_model_ids = selectable_model_ids(&self.settings.model_directory);
+        let cannot_resume = self.unresumable_job_filter(&self.model_registry());
+        self.queue.any_job(|job| {
+            job.status == QueueJobStatus::Pending
+                && selectable_model_ids.contains(&job.model_id)
+                && cannot_resume(job)
+        })
+    }
+
+    /// Recordings added from files can take far longer to transcribe than an
+    /// update may wait, unlike live and dictation chunks. Picked files have no
+    /// WakeNote sidecar; live chunks do (older ones may lack its `source`), and
+    /// chunks captured in this session count as live even without one.
+    pub fn is_transcribing_imported_audio(&self) -> bool {
+        self.queue.any_job(|job| {
+            job.status == QueueJobStatus::Running
+                && !self.chunk_id_index.contains_key(&job.audio_path)
+                && match job.activity_kind {
+                    QueueActivityKind::ImportedAudio => true,
+                    QueueActivityKind::Other => !job.audio_path.with_extension("json").exists(),
+                    QueueActivityKind::LiveTranscription | QueueActivityKind::Dictation => false,
+                }
+        })
+    }
+
+    /// While an update drains work, start only jobs that cannot resume after a
+    /// relaunch. Everything else stays pending on disk and resumes after the
+    /// restart.
+    pub fn start_unresumable_transcription_jobs_up_to(
+        &mut self,
+        max_running: usize,
+    ) -> Vec<StartedTranscriptionJob> {
+        self.start_transcription_jobs_matching(max_running, true)
+    }
+
+    fn start_transcription_jobs_matching(
+        &mut self,
+        max_running: usize,
+        unresumable_only: bool,
+    ) -> Vec<StartedTranscriptionJob> {
         if self.settings.pause_all || !self.settings.transcription_enabled {
             return Vec::new();
         }
@@ -2919,14 +2993,15 @@ impl AppBackend {
         let suppress_low_confidence_transcripts = self.settings.suppress_low_confidence_transcripts;
         let dictionary = DictionaryContext::from_settings(&self.settings);
         let models = self.model_registry();
+        let cannot_resume = self.unresumable_job_filter(&models);
         let requested_transcription_options = self.settings.transcription_options.clone();
         let credentials = self.transcription_credentials();
         let mut started_jobs = Vec::new();
 
-        while let Some(job) = self
-            .queue
-            .start_next_for_model_ids_up_to(&selectable_model_ids, max_running)
-        {
+        while let Some(job) = self.queue.start_next_matching_up_to(max_running, |job| {
+            selectable_model_ids.contains(&job.model_id)
+                && (!unresumable_only || cannot_resume(job))
+        }) {
             self.active_transcription_jobs.insert(job.id);
             let requested_options = job
                 .transcription_options
@@ -4536,6 +4611,80 @@ pub fn with_live_runtime_warning(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_drain_finishes_only_live_chunks_that_cannot_resume() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_test_registry(tmp.path(), "local-ready");
+        let mut registry: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(tmp.path().join("model-registry.json")).unwrap(),
+        )
+        .unwrap();
+        let mut realtime = registry[0].clone();
+        realtime["id"] = "live-realtime".into();
+        realtime["provider_runtime"] = "soniox-realtime".into();
+        registry.as_array_mut().unwrap().push(realtime);
+        std::fs::write(tmp.path().join("model-registry.json"), registry.to_string()).unwrap();
+        std::fs::write(tmp.path().join("local-ready.bin"), b"model").unwrap();
+        let mut backend = AppBackend::default();
+        backend.settings.model_directory = tmp.path().to_string_lossy().into();
+        backend.settings.selected_model = "local-ready".into();
+        let live_chunk = |name: &str, model_id: &str| {
+            let mut metadata: ChunkMetadata =
+                serde_json::from_str(include_str!("../tests/fixtures/live-transcript.json"))
+                    .unwrap();
+            metadata.model_id = model_id.into();
+            let mut chunk = RecordedChunk::from_audio_path(tmp.path().join(name));
+            chunk.metadata = Some(Arc::new(metadata));
+            std::fs::write(&chunk.audio_path, b"audio").unwrap();
+            chunk
+        };
+        let job_for = |backend: &AppBackend, path: &std::path::Path| {
+            backend.queue.any_job(|job| job.audio_path == path)
+        };
+
+        // A picked file has no live result to lose, even on a realtime model.
+        let imported = tmp.path().join("imported.wav");
+        std::fs::write(&imported, b"audio").unwrap();
+        backend.enqueue_audio_file(&imported, Some("live-realtime".into()));
+        let local = live_chunk("local.wav", "local-ready");
+        backend.handle_capture_events(vec![CaptureControllerEvent::ChunkCompleted {
+            chunk_id: 1,
+            chunk: local.clone(),
+        }]);
+        assert!(job_for(&backend, &imported) && job_for(&backend, &local.audio_path));
+        assert!(!backend.has_pending_unresumable_transcription_jobs());
+        assert!(
+            backend
+                .start_unresumable_transcription_jobs_up_to(1)
+                .is_empty()
+        );
+
+        // This session's realtime chunk waits for an in-memory result.
+        let realtime = live_chunk("realtime.wav", "live-realtime");
+        backend.handle_capture_events(vec![CaptureControllerEvent::ChunkCompleted {
+            chunk_id: 2,
+            chunk: realtime.clone(),
+        }]);
+        assert!(backend.has_pending_unresumable_transcription_jobs());
+        let started = backend.start_unresumable_transcription_jobs_up_to(1);
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].job.audio_path, realtime.audio_path);
+        backend
+            .finish_transcription_job(TranscriptionJobOutcome::completed(started[0].job.id))
+            .unwrap();
+
+        // Live-webhook metadata is memory-only, so a webhook user's local
+        // chunk must also finish before the update exits.
+        assert!(!backend.has_pending_unresumable_transcription_jobs());
+        backend.settings.live_transcription_webhook.enabled = true;
+        assert!(backend.has_pending_unresumable_transcription_jobs());
+        let started = backend.start_unresumable_transcription_jobs_up_to(1);
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].job.audio_path, local.audio_path);
+        assert!(started[0].live_metadata.is_some());
+        assert!(!backend.is_transcribing_imported_audio());
+    }
 
     #[test]
     fn live_webhook_metadata_is_memory_only_and_consumed_by_the_first_live_job() {

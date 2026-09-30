@@ -388,6 +388,7 @@ describe("app state derivation", () => {
     expect(shouldRefreshSnapshotForTauriEvent("source-capture-error")).toBe(
       true,
     );
+    expect(shouldRefreshSnapshotForTauriEvent("live-input-changed")).toBe(true);
     expect(shouldRefreshSnapshotForTauriEvent("source-detected")).toBe(false);
     expect(shouldRefreshSnapshotForTauriEvent("live-transcript-partial")).toBe(
       false,

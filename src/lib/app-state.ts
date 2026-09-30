@@ -140,7 +140,8 @@ export function shouldRefreshSnapshotForTauriEvent(eventName: string) {
     eventName === "source-capture-error" ||
     eventName === "dictionary-changed" ||
     eventName === "dictionary-file-error" ||
-    eventName === "microphone-input-levels-changed"
+    eventName === "microphone-input-levels-changed" ||
+    eventName === "live-input-changed"
   );
 }
 
