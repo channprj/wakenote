@@ -30,6 +30,7 @@ const ALIGNMENT_PROMINENCE_THRESHOLD: f64 = 0.012;
 const PRIORITY_CROSSFADE_MS: u64 = 50;
 const PRIORITY_SWITCH_MARGIN: f32 = 0.05;
 const PRIORITY_SWITCH_WINDOWS: u8 = 3;
+const TIMELINE_JITTER_TOLERANCE_MS: u64 = 20;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MicrophoneMixMode {
@@ -114,8 +115,10 @@ impl PrioritySignalTracker {
             (MicrophoneSlot::Secondary, MicrophoneSlot::Primary) => (secondary, primary),
             _ => unreachable!("microphone slots are exhaustive"),
         };
-        if !selected_quality.is_finite() || best_quality > selected_quality + PRIORITY_SWITCH_MARGIN
-        {
+        // Keep hysteresis proportional to quiet inputs. An absolute 0.05
+        // advantage would leave startup static selected over quieter speech.
+        let switch_margin = (selected_quality.abs() * 0.25).clamp(0.002, PRIORITY_SWITCH_MARGIN);
+        if !selected_quality.is_finite() || best_quality > selected_quality + switch_margin {
             if self.candidate_slot == Some(best) {
                 self.candidate_windows = self.candidate_windows.saturating_add(1);
             } else {
@@ -291,6 +294,8 @@ pub struct MicrophoneMixer {
     alignment_history_samples: i64,
     pending: BTreeMap<i64, PendingMixSample>,
     latest_end_by_slot: BTreeMap<MicrophoneSlot, i64>,
+    latest_capture_at_by_slot: BTreeMap<MicrophoneSlot, DateTime<Utc>>,
+    resamplers: BTreeMap<MicrophoneSlot, StreamingMonoResampler>,
     last_active_slots: Vec<MicrophoneSlot>,
     next_output_sample: Option<i64>,
     duplicate_signal: DuplicateSignalTracker,
@@ -325,6 +330,8 @@ impl MicrophoneMixer {
             alignment_history_samples: alignment_history_samples.max(2),
             pending: BTreeMap::new(),
             latest_end_by_slot: BTreeMap::new(),
+            latest_capture_at_by_slot: BTreeMap::new(),
+            resamplers: BTreeMap::new(),
             last_active_slots: Vec::new(),
             next_output_sample: None,
             duplicate_signal: DuplicateSignalTracker::default(),
@@ -360,13 +367,51 @@ impl MicrophoneMixer {
         frame: AudioFrame,
         active_slots: &[MicrophoneSlot],
     ) -> Vec<AudioFrame> {
-        let samples = resample_mono(&frame.samples, input_sample_rate, self.target_sample_rate);
+        if frame.samples.is_empty() || input_sample_rate == 0 {
+            return self.drain(active_slots);
+        }
+        let observed_end = self.timeline_sample(frame.captured_at);
+        let input_duration = Duration::microseconds(
+            (frame.samples.len() as u128 * 1_000_000 / input_sample_rate as u128) as i64,
+        );
+        let previous_capture = self.latest_capture_at_by_slot.get(&slot).copied();
+        let jitter_us = (input_duration.num_microseconds().unwrap_or(i64::MAX) / 2)
+            .clamp(1, TIMELINE_JITTER_TOLERANCE_MS as i64 * 1_000);
+        let jitter_tolerance = Duration::microseconds(jitter_us);
+        // Truly stale frames must not perturb the resampler phase or stream cursor.
+        if self.next_output_sample.is_some_and(|floor| {
+            observed_end <= floor
+                && previous_capture
+                    .is_none_or(|previous| frame.captured_at < previous - jitter_tolerance)
+        }) {
+            return self.drain(active_slots);
+        }
+        let previous_end = self.latest_end_by_slot.get(&slot).copied();
+        let input_samples = (frame.samples.len() as u128 * self.target_sample_rate as u128
+            / input_sample_rate as u128) as i64;
+        let cursor_tolerance =
+            ((jitter_us as u64 * u64::from(self.target_sample_rate)).div_ceil(1_000_000)) as i64;
+        let contiguous = previous_capture.is_some_and(|end| {
+            (frame.captured_at - input_duration - end).abs() <= jitter_tolerance
+        }) && previous_end
+            .is_none_or(|end| (observed_end - input_samples - end).abs() <= cursor_tolerance);
+        let resampler = self.resamplers.entry(slot).or_default();
+        if !contiguous {
+            resampler.reset();
+        }
+        let samples = resampler.process(&frame.samples, input_sample_rate, self.target_sample_rate);
+        self.latest_capture_at_by_slot
+            .insert(slot, frame.captured_at);
         if samples.is_empty() {
             return self.drain(active_slots);
         }
 
-        let end_sample = self.timeline_sample(frame.captured_at);
-        let start_sample = end_sample.saturating_sub(samples.len() as i64);
+        // Callback scheduling jitter is not a hole in the captured PCM. Place
+        // adjacent buffers by sample count; re-anchor only after a real gap.
+        let start_sample = previous_end
+            .filter(|_| contiguous)
+            .unwrap_or_else(|| observed_end.saturating_sub(samples.len() as i64));
+        let end_sample = start_sample.saturating_add(samples.len() as i64);
         let output_floor = *self.next_output_sample.get_or_insert(start_sample);
         for (offset, sample) in samples.into_iter().enumerate() {
             let index = start_sample.saturating_add(offset as i64);
@@ -574,16 +619,19 @@ impl MicrophoneMixer {
                     (Some(primary), Some(secondary)) => {
                         primary_weight =
                             move_toward(primary_weight, target_primary_weight, maximum_weight_step);
-                        let (primary_gain, secondary_gain) = match self.mode {
-                            MicrophoneMixMode::Merge => (primary_weight, 1.0 - primary_weight),
-                            MicrophoneMixMode::Priority => {
-                                (primary_weight.sqrt(), (1.0 - primary_weight).sqrt())
-                            }
-                        };
+                        // A convex crossfade cannot amplify correlated inputs
+                        // beyond either source or introduce hard clipping.
+                        let (primary_gain, secondary_gain) = (primary_weight, 1.0 - primary_weight);
                         (primary * primary_gain + secondary * secondary_gain).clamp(-1.0, 1.0)
                     }
-                    (Some(primary), None) => primary.clamp(-1.0, 1.0),
-                    (None, Some(secondary)) => secondary.clamp(-1.0, 1.0),
+                    (Some(primary), None) => {
+                        primary_weight = 1.0;
+                        primary.clamp(-1.0, 1.0)
+                    }
+                    (None, Some(secondary)) => {
+                        primary_weight = 0.0;
+                        secondary.clamp(-1.0, 1.0)
+                    }
                     (None, None) => 0.0,
                 }
             })
@@ -824,33 +872,59 @@ fn estimate_drift_ppm(observations: &VecDeque<(i64, f64)>) -> Option<f64> {
     (variance > f64::EPSILON).then(|| covariance / variance * 1_000_000.0)
 }
 
-fn resample_mono(samples: &[f32], input_sample_rate: u32, output_sample_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || input_sample_rate == 0 || output_sample_rate == 0 {
-        return Vec::new();
-    }
-    if input_sample_rate == output_sample_rate {
-        return samples.to_vec();
-    }
-    let output_len = ((samples.len() as u128 * output_sample_rate as u128
-        + input_sample_rate as u128 / 2)
-        / input_sample_rate as u128)
-        .max(1)
-        .min(usize::MAX as u128) as usize;
-    if output_len == 1 || samples.len() == 1 {
-        return vec![samples[0]; output_len];
+#[derive(Debug, Default)]
+struct StreamingMonoResampler {
+    rates: (u32, u32),
+    input_count: u64,
+    output_count: u64,
+    previous_sample: f32,
+}
+
+impl StreamingMonoResampler {
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 
-    let input_span = (samples.len() - 1) as f64;
-    let output_span = (output_len - 1) as f64;
-    (0..output_len)
-        .map(|index| {
-            let source_position = index as f64 * input_span / output_span;
-            let left = source_position.floor() as usize;
-            let right = (left + 1).min(samples.len() - 1);
-            let fraction = (source_position - left as f64) as f32;
-            samples[left] + (samples[right] - samples[left]) * fraction
-        })
-        .collect()
+    fn process(&mut self, samples: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
+        if samples.is_empty() || input_rate == 0 || output_rate == 0 {
+            return Vec::new();
+        }
+        if self.rates != (input_rate, output_rate) {
+            self.reset();
+            self.rates = (input_rate, output_rate);
+        }
+        let start = self.input_count;
+        self.input_count += samples.len() as u64;
+        let end = (self.input_count as u128 * output_rate as u128 / input_rate as u128) as u64;
+        let sample_at = |index: u64| {
+            if index < start {
+                self.previous_sample
+            } else {
+                samples[(index - start).min(samples.len() as u64 - 1) as usize]
+            }
+        };
+        // Keep one input sample of interpolation history and an exact rational
+        // phase across callbacks. Buffer size must never change pitch or length.
+        let output = (self.output_count..end)
+            .map(|index| {
+                let position = (index as u128 + 1) * input_rate as u128;
+                let whole = (position / output_rate as u128) as u64;
+                if whole == 0 {
+                    return if start == 0 {
+                        samples[0]
+                    } else {
+                        self.previous_sample
+                    };
+                }
+                let fraction = (position % output_rate as u128) as f32 / output_rate as f32;
+                let left = sample_at(whole - 1);
+                left + (sample_at(whole) - left) * fraction
+            })
+            .collect();
+        self.output_count = end;
+        self.previous_sample = *samples.last().expect("non-empty input");
+        output
+    }
 }
 
 fn slot_rms(samples: impl Iterator<Item = f32>) -> f32 {
@@ -866,11 +940,20 @@ fn slot_rms(samples: impl Iterator<Item = f32>) -> f32 {
 
 fn slot_quality(samples: impl Iterator<Item = f32>) -> f32 {
     let mut energy = 0.0_f64;
+    let mut difference_energy = 0.0_f64;
+    let mut previous = None;
     let mut count = 0_u64;
     let mut clipped = 0_u64;
     for sample in samples {
+        if !sample.is_finite() {
+            return f32::NEG_INFINITY;
+        }
         let sample = sample.clamp(-1.0, 1.0);
         energy += f64::from(sample) * f64::from(sample);
+        if let Some(previous) = previous {
+            difference_energy += f64::from(sample - previous).powi(2);
+        }
+        previous = Some(sample);
         count += 1;
         if sample.abs() >= 0.98 {
             clipped += 1;
@@ -884,7 +967,15 @@ fn slot_quality(samples: impl Iterator<Item = f32>) -> f32 {
         return f32::NEG_INFINITY;
     }
     let clipping_ratio = clipped as f32 / count as f32;
-    rms.min(0.5) - clipping_ratio * 2.0
+    // RMS alone rewards loud broadband static. Penalize rapid sample changes
+    // relative to signal energy, while retaining the existing clipping penalty.
+    let roughness = if count > 1 {
+        (difference_energy * count as f64 / ((count - 1) as f64 * energy * 4.0)).clamp(0.0, 1.0)
+            as f32
+    } else {
+        0.0
+    };
+    rms.min(0.5) * (1.0 - roughness * 2.0) - clipping_ratio * 2.0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

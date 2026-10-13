@@ -451,6 +451,15 @@ fn build_cpal_stream(
     }
     let channels = usize::from(stream_config.channels);
     let sample_rate = stream_config.sample_rate.0;
+    let mut encoder = MicrophoneFrameEncoder::default();
+
+    eprintln!(
+        "audio input format: device={} rate={} channels={} sample_format={:?}",
+        config.device_id,
+        sample_rate,
+        channels,
+        supported_config.sample_format()
+    );
 
     let err_fn = move |error: cpal::StreamError| {
         if let Ok(mut runtime_error) = runtime_error.lock() {
@@ -464,7 +473,9 @@ fn build_cpal_stream(
             let on_frame = on_frame.clone();
             device.build_input_stream(
                 &stream_config,
-                move |data: &[f32], _| emit_f32_frame(data, channels, sample_rate, &on_frame),
+                move |data: &[f32], info| {
+                    encoder.emit(data, channels, sample_rate, info, &on_frame)
+                },
                 err_fn,
                 None,
             )
@@ -473,12 +484,12 @@ fn build_cpal_stream(
             let on_frame = on_frame.clone();
             device.build_input_stream(
                 &stream_config,
-                move |data: &[i16], _| {
+                move |data: &[i16], info| {
                     let samples = data
                         .iter()
                         .map(|sample| *sample as f32 / i16::MAX as f32)
                         .collect::<Vec<_>>();
-                    emit_f32_frame(&samples, channels, sample_rate, &on_frame);
+                    encoder.emit(&samples, channels, sample_rate, info, &on_frame);
                 },
                 err_fn,
                 None,
@@ -488,12 +499,12 @@ fn build_cpal_stream(
             let on_frame = on_frame.clone();
             device.build_input_stream(
                 &stream_config,
-                move |data: &[u16], _| {
+                move |data: &[u16], info| {
                     let samples = data
                         .iter()
                         .map(|sample| (*sample as f32 / u16::MAX as f32) * 2.0 - 1.0)
                         .collect::<Vec<_>>();
-                    emit_f32_frame(&samples, channels, sample_rate, &on_frame);
+                    encoder.emit(&samples, channels, sample_rate, info, &on_frame);
                 },
                 err_fn,
                 None,
@@ -735,25 +746,303 @@ fn slugify_device_label(label: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
-fn emit_f32_frame(
-    interleaved: &[f32],
-    channels: usize,
-    sample_rate: u32,
-    on_frame: &Arc<dyn Fn(AudioFrame) + Send + Sync>,
-) {
-    if interleaved.is_empty() || channels == 0 || sample_rate == 0 {
-        return;
+#[derive(Default)]
+struct MicrophoneFrameEncoder {
+    downmixer: MicrophoneDownmixer,
+    clock: CaptureFrameClock,
+}
+
+impl MicrophoneFrameEncoder {
+    fn emit(
+        &mut self,
+        interleaved: &[f32],
+        channels: usize,
+        sample_rate: u32,
+        info: &cpal::InputCallbackInfo,
+        on_frame: &Arc<dyn Fn(AudioFrame) + Send + Sync>,
+    ) {
+        if channels == 0 || sample_rate == 0 || interleaved.len() < channels {
+            return;
+        }
+        let mono = self.downmixer.process(interleaved, channels, sample_rate);
+        let captured_at =
+            self.clock
+                .frame_end(info.timestamp(), mono.len(), sample_rate, Utc::now());
+        let duration_ms = ((mono.len() as f64 / sample_rate as f64) * 1000.0).round() as u64;
+        on_frame(AudioFrame {
+            samples: mono,
+            duration_ms: duration_ms.max(1),
+            captured_at,
+        });
+    }
+}
+
+#[derive(Default)]
+struct CaptureFrameClock {
+    wall_anchor: Option<(cpal::StreamInstant, DateTime<Utc>)>,
+    sample_anchor: Option<DateTime<Utc>>,
+    samples: u64,
+}
+
+impl CaptureFrameClock {
+    fn frame_end(
+        &mut self,
+        timestamp: cpal::InputStreamTimestamp,
+        samples: usize,
+        sample_rate: u32,
+        callback_wall_time: DateTime<Utc>,
+    ) -> DateTime<Utc> {
+        let (stream_anchor, wall_anchor) = *self
+            .wall_anchor
+            .get_or_insert((timestamp.callback, callback_wall_time));
+        let capture_end = timestamp
+            .capture
+            .add(Duration::from_nanos(
+                (samples as u128 * 1_000_000_000 / sample_rate as u128) as u64,
+            ))
+            .unwrap_or(timestamp.callback);
+        let elapsed = if let Some(elapsed) = capture_end.duration_since(&stream_anchor) {
+            chrono::Duration::from_std(elapsed).unwrap_or_default()
+        } else {
+            -chrono::Duration::from_std(
+                stream_anchor
+                    .duration_since(&capture_end)
+                    .unwrap_or_default(),
+            )
+            .unwrap_or_default()
+        };
+        let observed_end = wall_anchor + elapsed;
+        let sample_duration = |count: u64| {
+            chrono::Duration::microseconds((count as u128 * 1_000_000 / sample_rate as u128) as i64)
+        };
+        let expected_end = self
+            .sample_anchor
+            .map(|start| start + sample_duration(self.samples + samples as u64));
+        // Device timestamps are much steadier than callback arrival times. A
+        // complete missing buffer must be a discontinuity, even at small sizes.
+        let tolerance_us =
+            (samples as u128 * 1_000_000 / sample_rate as u128 / 4).clamp(1, 1_000) as i64;
+        if expected_end.is_none_or(|expected| {
+            (observed_end - expected)
+                .num_microseconds()
+                .unwrap_or(i64::MAX)
+                .abs()
+                > tolerance_us
+        }) {
+            self.sample_anchor = Some(observed_end - sample_duration(samples as u64));
+            self.samples = 0;
+        }
+        self.samples += samples as u64;
+        self.sample_anchor.expect("sample clock initialized") + sample_duration(self.samples)
+    }
+}
+
+#[derive(Default)]
+struct MicrophoneDownmixer {
+    selected_channel: Option<usize>,
+    left_weight: Option<f32>,
+}
+
+impl MicrophoneDownmixer {
+    fn process(&mut self, interleaved: &[f32], channels: usize, sample_rate: u32) -> Vec<f32> {
+        let finite = |sample: f32| if sample.is_finite() { sample } else { 0.0 };
+        if channels != 2 {
+            return interleaved
+                .chunks_exact(channels)
+                .map(|frame| {
+                    frame.iter().map(|sample| finite(*sample)).sum::<f32>() / channels as f32
+                })
+                .collect();
+        }
+        let mut energy = [0.0_f64; 2];
+        let mut clipped = [0_usize; 2];
+        let mut cross = 0.0_f64;
+        let count = interleaved.len() / 2;
+        for frame in interleaved.as_chunks::<2>().0 {
+            let left = finite(frame[0]);
+            let right = finite(frame[1]);
+            for (channel, sample) in [left, right].into_iter().enumerate() {
+                energy[channel] += f64::from(sample).powi(2);
+                clipped[channel] += usize::from(sample.abs() >= 0.98);
+            }
+            cross += f64::from(left) * f64::from(right);
+        }
+        let correlation = cross / (energy[0] * energy[1]).sqrt().max(f64::EPSILON);
+        let clipping = clipped.map(|count_clipped| count_clipped as f64 / count as f64 > 0.01);
+        let selected = if energy[1] < energy[0] * 0.001 {
+            Some(0)
+        } else if energy[0] < energy[1] * 0.001 {
+            Some(1)
+        } else if correlation.abs() > 0.75 {
+            match (clipping[0], clipping[1]) {
+                (true, false) => Some(1),
+                (false, true) => Some(0),
+                _ if self.selected_channel.is_some() => self.selected_channel,
+                _ if correlation < -0.75 => Some(0),
+                _ => None,
+            }
+        } else if energy.iter().all(|energy| *energy < 1e-10) {
+            self.selected_channel
+        } else {
+            None // Independent stereo transmitters must retain both voices.
+        };
+        self.selected_channel = selected;
+        let target = match selected {
+            Some(0) => 1.0,
+            Some(_) => 0.0,
+            None => 0.5,
+        };
+        let mut weight = self.left_weight.unwrap_or(target);
+        let step = 1.0 / (sample_rate as f32 * 0.02).max(1.0);
+        let mono = interleaved
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|frame| {
+                weight += (target - weight).clamp(-step, step);
+                finite(frame[0]) * weight + finite(frame[1]) * (1.0 - weight)
+            })
+            .collect();
+        self.left_weight = Some(weight);
+        mono
+    }
+}
+
+#[cfg(test)]
+mod microphone_frame_tests {
+    use super::*;
+
+    fn captured_samples(interleaved: &[f32], channels: usize) -> Vec<f32> {
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let received = frames.clone();
+        let callback: Arc<dyn Fn(AudioFrame) + Send + Sync> = Arc::new(move |frame| {
+            received.lock().unwrap().push(frame);
+        });
+        let info = cpal::InputCallbackInfo::new(cpal::InputStreamTimestamp {
+            callback: cpal::StreamInstant::new(1, 0),
+            capture: cpal::StreamInstant::new(0, 990_000_000),
+        });
+        MicrophoneFrameEncoder::default().emit(interleaved, channels, 48_000, &info, &callback);
+        frames.lock().unwrap()[0].samples.clone()
     }
 
-    let mut mono = Vec::with_capacity(interleaved.len() / channels.max(1));
-    for frame in interleaved.chunks(channels) {
-        let sample = frame.iter().copied().sum::<f32>() / frame.len() as f32;
-        mono.push(sample);
+    #[test]
+    fn usb_microphone_uses_the_clean_safety_channel_when_main_channel_clips() {
+        let source = (0..480)
+            .map(|index| (std::f32::consts::TAU * index as f32 / 48.0).sin())
+            .collect::<Vec<_>>();
+        let interleaved = source
+            .iter()
+            .flat_map(|sample| [(sample * 1.4).clamp(-1.0, 1.0), sample * 0.5])
+            .collect::<Vec<_>>();
+        let mono = captured_samples(&interleaved, 2);
+        let error = mono
+            .iter()
+            .zip(&source)
+            .map(|(actual, original)| (actual - original * 0.5).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            error < 0.0001,
+            "clipped main track contaminated the safety track: {error}"
+        );
     }
-    let duration_ms = ((mono.len() as f64 / sample_rate as f64) * 1000.0).round() as u64;
-    on_frame(AudioFrame {
-        samples: mono,
-        duration_ms: duration_ms.max(1),
-        captured_at: Utc::now(),
-    });
+
+    #[test]
+    fn usb_microphone_does_not_attenuate_a_single_active_stereo_channel() {
+        let mono = captured_samples(&[0.2, 0.0, -0.4, 0.0, 0.6, 0.0], 2);
+        assert_eq!(mono, vec![0.2, -0.4, 0.6]);
+    }
+
+    #[test]
+    fn microphone_downmix_does_not_cancel_opposite_polarity_voice() {
+        let mono = captured_samples(&[0.2, -0.2, -0.4, 0.4, 0.6, -0.6], 2);
+        assert_eq!(mono, vec![0.2, -0.4, 0.6]);
+    }
+
+    #[test]
+    fn microphone_clock_uses_capture_time_despite_callback_delays_and_wall_clock_changes() {
+        let mut clock = CaptureFrameClock::default();
+        let base = DateTime::<Utc>::UNIX_EPOCH;
+        for chunk in 0..100_u32 {
+            let capture = cpal::StreamInstant::new(1, chunk * 10_000_000);
+            let timestamp = cpal::InputStreamTimestamp {
+                capture,
+                callback: capture.add(Duration::from_millis(10)).unwrap(),
+            };
+            let wall_time = if chunk == 0 {
+                base
+            } else {
+                base + chrono::Duration::seconds(100)
+            };
+            let end = clock.frame_end(timestamp, 480, 48_000, wall_time);
+            assert_eq!(
+                end,
+                base + chrono::Duration::milliseconds(chunk as i64 * 10)
+            );
+        }
+    }
+
+    #[test]
+    fn microphone_clock_preserves_real_capture_gaps() {
+        let mut clock = CaptureFrameClock::default();
+        let first = cpal::InputStreamTimestamp {
+            capture: cpal::StreamInstant::new(1, 0),
+            callback: cpal::StreamInstant::new(1, 10_000_000),
+        };
+        let second = cpal::InputStreamTimestamp {
+            capture: cpal::StreamInstant::new(2, 0),
+            callback: cpal::StreamInstant::new(2, 10_000_000),
+        };
+        let base = DateTime::<Utc>::UNIX_EPOCH;
+        assert_eq!(clock.frame_end(first, 480, 48_000, base), base);
+        assert_eq!(
+            clock.frame_end(second, 480, 48_000, base),
+            base + chrono::Duration::seconds(1)
+        );
+    }
+
+    #[test]
+    fn stereo_transmitters_with_different_voices_are_both_retained() {
+        let mono = captured_samples(&[0.4, 0.1, -0.4, 0.1, 0.4, -0.1, -0.4, -0.1], 2);
+        assert_eq!(mono, vec![0.25, -0.15, 0.15, -0.25]);
+    }
+
+    #[test]
+    fn safety_channel_selection_does_not_pump_when_the_main_track_recovers() {
+        let mut mixer = MicrophoneDownmixer::default();
+        let clipped = (0..480)
+            .flat_map(|index| {
+                let sample = (std::f32::consts::TAU * index as f32 / 48.0).sin();
+                [(sample * 1.4).clamp(-1.0, 1.0), sample * 0.5]
+            })
+            .collect::<Vec<_>>();
+        mixer.process(&clipped, 2, 48_000);
+        let recovered = (0..480)
+            .flat_map(|index| {
+                let sample = (std::f32::consts::TAU * index as f32 / 48.0).sin();
+                [sample * 0.8, sample * 0.4]
+            })
+            .collect::<Vec<_>>();
+        let mono = mixer.process(&recovered, 2, 48_000);
+        for (actual, stereo) in mono.iter().zip(recovered.chunks_exact(2)) {
+            assert!((actual - stereo[1]).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn microphone_clock_preserves_one_missing_ten_millisecond_buffer() {
+        let mut clock = CaptureFrameClock::default();
+        let base = DateTime::<Utc>::UNIX_EPOCH;
+        for (chunk, expected_ms) in [(0_u32, 0), (2, 20), (3, 30)] {
+            let capture = cpal::StreamInstant::new(1, chunk * 10_000_000);
+            let timestamp = cpal::InputStreamTimestamp {
+                capture,
+                callback: capture.add(Duration::from_millis(10)).unwrap(),
+            };
+            assert_eq!(
+                clock.frame_end(timestamp, 480, 48_000, base),
+                base + chrono::Duration::milliseconds(expected_ms)
+            );
+        }
+    }
 }

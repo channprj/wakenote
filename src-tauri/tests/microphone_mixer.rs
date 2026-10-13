@@ -141,8 +141,8 @@ fn mixer_resamples_each_device_to_the_shared_output_rate() {
     assert_eq!(mixed.len(), 1);
     assert_eq!(mixed[0].samples.len(), 4);
     assert!((mixed[0].samples[0] - 0.0).abs() < 0.0001);
-    assert!((mixed[0].samples[1] - (1.0 / 3.0)).abs() < 0.0001);
-    assert!((mixed[0].samples[2] - (2.0 / 3.0)).abs() < 0.0001);
+    assert!((mixed[0].samples[1] - 0.0).abs() < 0.0001);
+    assert!((mixed[0].samples[2] - 0.5).abs() < 0.0001);
     assert!((mixed[0].samples[3] - 1.0).abs() < 0.0001);
 }
 
@@ -670,4 +670,287 @@ fn adaptive_merge_falls_back_cleanly_during_reflection_jitter_and_dropout() {
         "transition discontinuity {max_jump:.3} at {max_jump_index} ({:?}), source {source_max_jump:.3}",
         &output[max_jump_index.saturating_sub(3)..(max_jump_index + 5).min(output.len())],
     );
+}
+
+#[test]
+fn priority_audio_preserves_every_sample_despite_callback_timestamp_jitter() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        48_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let source = broadband_reference(48_000, 48_000);
+    let jitter_ms = [0, 3, -2, 1, -3, 2];
+    let mut output = Vec::new();
+    for (chunk, samples) in source.chunks(480).enumerate() {
+        output.extend(
+            mixer
+                .push_frame(
+                    MicrophoneSlot::Primary,
+                    48_000,
+                    frame(
+                        samples.to_vec(),
+                        10,
+                        (chunk as i64 + 1) * 10 + jitter_ms[chunk % 6],
+                    ),
+                    &[MicrophoneSlot::Primary],
+                )
+                .into_iter()
+                .flat_map(|frame| frame.samples),
+        );
+    }
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    assert_eq!(
+        output.len(),
+        source.len(),
+        "callback jitter deleted audio samples"
+    );
+    assert_eq!(
+        output, source,
+        "callback jitter reordered or overwrote audio"
+    );
+}
+
+#[test]
+fn priority_audio_resampling_does_not_depend_on_callback_buffer_size() {
+    let source = (0..48_000)
+        .map(|index| 0.6 * (std::f32::consts::TAU * 1_000.0 * index as f32 / 48_000.0).sin())
+        .collect::<Vec<_>>();
+    let render = |chunk_samples: usize| {
+        let mut mixer = MicrophoneMixer::with_mode(
+            44_100,
+            Utc.timestamp_millis_opt(0).unwrap(),
+            MicrophoneMixMode::Priority,
+        );
+        let mut output = Vec::new();
+        for start in (0..source.len()).step_by(chunk_samples) {
+            let end = (start + chunk_samples).min(source.len());
+            let mut input = frame(source[start..end].to_vec(), 1, 0);
+            input.captured_at += chrono::Duration::microseconds(end as i64 * 1_000_000 / 48_000);
+            output.extend(
+                mixer
+                    .push_frame(
+                        MicrophoneSlot::Primary,
+                        48_000,
+                        input,
+                        &[MicrophoneSlot::Primary],
+                    )
+                    .into_iter()
+                    .flat_map(|frame| frame.samples),
+            );
+        }
+        output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+        output
+    };
+    let large = render(48_000);
+    let small = render(512);
+    assert_eq!(
+        small.len(),
+        44_100,
+        "resampling rounded each buffer separately"
+    );
+    assert_eq!(small.len(), large.len());
+    let error = small
+        .iter()
+        .zip(&large)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        error < 0.0001,
+        "resampling changed waveform at buffer boundaries: {error}"
+    );
+}
+
+#[test]
+fn priority_audio_crossfade_does_not_clip_correlated_loud_inputs() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        1_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let active = [MicrophoneSlot::Primary, MicrophoneSlot::Secondary];
+    let mut output = Vec::new();
+    for chunk in 1..=12 {
+        let (primary, secondary) = if chunk <= 4 { (0.8, 0.2) } else { (0.4, 0.95) };
+        for (slot, value) in [
+            (MicrophoneSlot::Primary, primary),
+            (MicrophoneSlot::Secondary, secondary),
+        ] {
+            output.extend(
+                mixer
+                    .push_frame(
+                        slot,
+                        1_000,
+                        frame(vec![value; 100], 100, chunk * 100),
+                        &active,
+                    )
+                    .into_iter()
+                    .flat_map(|frame| frame.samples),
+            );
+        }
+    }
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    let peak = output.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        peak <= 0.95001,
+        "priority crossfade amplified and clipped clean inputs: {peak}"
+    );
+    assert!(
+        output.last().unwrap() > &0.94,
+        "priority did not select the better input"
+    );
+}
+
+#[test]
+fn priority_audio_crossfades_when_a_missing_selected_input_returns() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        1_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let active = [MicrophoneSlot::Primary, MicrophoneSlot::Secondary];
+    let mut output = Vec::new();
+    for chunk in 1..=12 {
+        output.extend(
+            mixer
+                .push_frame(
+                    MicrophoneSlot::Primary,
+                    1_000,
+                    frame(vec![0.08; 100], 100, chunk * 100),
+                    &active,
+                )
+                .into_iter()
+                .flat_map(|frame| frame.samples),
+        );
+        if !(5..=8).contains(&chunk) {
+            output.extend(
+                mixer
+                    .push_frame(
+                        MicrophoneSlot::Secondary,
+                        1_000,
+                        frame(vec![0.36; 100], 100, chunk * 100),
+                        &active,
+                    )
+                    .into_iter()
+                    .flat_map(|frame| frame.samples),
+            );
+        }
+    }
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    let return_jump = output[700..]
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        return_jump < 0.02,
+        "reconnected input caused an abrupt waveform jump: {return_jump}"
+    );
+    assert!(output.last().unwrap() > &0.34);
+}
+
+#[test]
+fn priority_audio_rejects_louder_unclipped_static_in_favor_of_clean_voice() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        48_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let source = (0..48_000)
+        .map(|index| 0.12 * (std::f32::consts::TAU * 220.0 * index as f32 / 48_000.0).sin())
+        .collect::<Vec<_>>();
+    let mut seed = 0x9173_1521_u32;
+    let static_noise = (0..48_000)
+        .map(|_| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed as f32 / u32::MAX as f32 - 0.5
+        })
+        .collect::<Vec<_>>();
+    let mut output = feed_pair(&mut mixer, 48_000, &source, &static_noise, 480);
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    let error = output
+        .iter()
+        .zip(&source)
+        .map(|(actual, clean)| (actual - clean).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        error < 0.0001,
+        "louder static was selected over clean voice: {error}"
+    );
+}
+
+#[test]
+fn resampler_retains_phase_when_a_buffer_is_shorter_than_one_output_sample() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        1,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let mut output = Vec::new();
+    for (index, value) in [0.1, 0.2, 0.3, 0.4].into_iter().enumerate() {
+        output.extend(
+            mixer
+                .push_frame(
+                    MicrophoneSlot::Primary,
+                    2,
+                    frame(vec![value], 500, (index as i64 + 1) * 500),
+                    &[MicrophoneSlot::Primary],
+                )
+                .into_iter()
+                .flat_map(|frame| frame.samples),
+        );
+    }
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    assert_eq!(output, vec![0.2, 0.4]);
+}
+
+#[test]
+fn priority_audio_switches_from_startup_static_to_quiet_clean_voice() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        48_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let voice = (0..48_000)
+        .map(|index| {
+            if index < 4_800 {
+                0.0
+            } else {
+                0.04 * (std::f32::consts::TAU * 220.0 * index as f32 / 48_000.0).sin()
+            }
+        })
+        .collect::<Vec<_>>();
+    let interference = (0..48_000)
+        .map(|index| if index % 4 < 2 { 0.4 } else { -0.4 })
+        .collect::<Vec<_>>();
+    let mut output = feed_pair(&mut mixer, 48_000, &voice, &interference, 480);
+    output.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+    assert_eq!(output.len(), voice.len());
+    let error = output[24_000..]
+        .iter()
+        .zip(&voice[24_000..])
+        .map(|(actual, clean)| (actual - clean).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        error < 0.0001,
+        "startup static held priority after quiet voice arrived: {error}"
+    );
+}
+
+#[test]
+fn priority_audio_preserves_a_dropped_callback_gap_instead_of_shifting_later_audio() {
+    let mut mixer = MicrophoneMixer::with_mode(
+        48_000,
+        Utc.timestamp_millis_opt(0).unwrap(),
+        MicrophoneMixMode::Priority,
+    );
+    let ends = [10, 30, 40].map(|end| {
+        let output = mixer.push_frame(
+            MicrophoneSlot::Primary,
+            48_000,
+            frame(vec![0.2; 480], 10, end),
+            &[MicrophoneSlot::Primary],
+        );
+        output.last().unwrap().captured_at.timestamp_millis()
+    });
+    assert_eq!(ends, [10, 30, 40]);
 }
