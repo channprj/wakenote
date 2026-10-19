@@ -4401,6 +4401,7 @@ async fn export_transcript_day(
     state: State<'_, BackendState>,
     day: String,
     destination_path: String,
+    overwrite: Option<bool>,
 ) -> Result<wakenote::transcript_export::TranscriptExportResult, String> {
     let _update_activity = RESTART_GATE.long_activity()?;
     let (save_root, custom_sources) = {
@@ -4418,6 +4419,7 @@ async fn export_transcript_day(
             &day,
             Path::new(&destination_path),
             &custom_sources,
+            overwrite.unwrap_or(false),
         )
     })
     .await

@@ -801,6 +801,8 @@ export async function exportTranscriptDay(
   return invoke<TranscriptExportResult>("export_transcript_day", {
     day,
     destinationPath,
+    // The native save dialog confirms replacement before returning an existing path.
+    overwrite: true,
   });
 }
 

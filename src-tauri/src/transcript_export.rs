@@ -31,8 +31,9 @@ pub fn export_transcript_day(
     day: &str,
     destination_path: &Path,
     custom_sources: &[CustomSourceEntry],
+    overwrite: bool,
 ) -> Result<TranscriptExportResult, String> {
-    if destination_path.exists() {
+    if !overwrite && destination_path.exists() {
         return Err(format!(
             "export destination already exists: {}",
             destination_path.display()
@@ -64,7 +65,13 @@ pub fn export_transcript_day(
             destination_path.display()
         ));
     }
-    if let Err(error) = fs::hard_link(&partial_path, destination_path) {
+    // Replace only after native save-dialog approval, once the complete export is ready.
+    let publish_result = if overwrite {
+        fs::rename(&partial_path, destination_path)
+    } else {
+        fs::hard_link(&partial_path, destination_path)
+    };
+    if let Err(error) = publish_result {
         let _ = fs::remove_file(&partial_path);
         return Err(format!(
             "failed to publish transcript export {}: {error}",
@@ -479,6 +486,96 @@ mod tests {
     }
 
     #[test]
+    fn replaces_an_existing_day_export_after_confirmation() {
+        let source = tempfile::tempdir().expect("source");
+        let destination = tempfile::tempdir().expect("destination");
+        let day = source.path().join("20260824");
+        fs::create_dir_all(&day).expect("day");
+        fs::write(day.join("090000.txt"), "updated transcript").expect("transcript");
+        let destination_path = destination.path().join("WakeNote-2026-08-24.txt");
+        fs::write(
+            &destination_path,
+            "old export with a longer trailing suffix",
+        )
+        .expect("old export");
+
+        let result =
+            export_transcript_day(source.path(), "2026-08-24", &destination_path, &[], true)
+                .expect("confirmed replacement");
+
+        assert_eq!(result.day_count, 1);
+        assert_eq!(result.transcript_count, 1);
+        assert_eq!(result.destination_path, destination_path.to_string_lossy());
+        let exported = fs::read_to_string(&destination_path).expect("updated export");
+        assert!(exported.ends_with(" - updated transcript\n"), "{exported}");
+        assert!(!exported.contains("old export"), "{exported}");
+        assert_eq!(
+            fs::read_dir(destination.path())
+                .expect("destination listing")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn failed_day_export_preserves_an_existing_destination() {
+        let source = tempfile::tempdir().expect("source");
+        let destination = tempfile::tempdir().expect("destination");
+        let day = source.path().join("20260824");
+        fs::create_dir_all(&day).expect("day");
+        fs::write(day.join("090000.txt"), [0xff, 0xfe]).expect("invalid UTF-8");
+        let destination_path = destination.path().join("WakeNote-2026-08-24.txt");
+        fs::write(&destination_path, "keep this export").expect("old export");
+
+        let error =
+            export_transcript_day(source.path(), "2026-08-24", &destination_path, &[], true)
+                .expect_err("invalid transcript must fail");
+
+        assert!(error.contains("090000.txt"), "{error}");
+        assert_eq!(
+            fs::read_to_string(&destination_path).expect("old export"),
+            "keep this export"
+        );
+        assert_eq!(
+            fs::read_dir(destination.path())
+                .expect("destination listing")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn failed_day_replacement_preserves_the_destination_and_removes_partial_output() {
+        let source = tempfile::tempdir().expect("source");
+        let destination = tempfile::tempdir().expect("destination");
+        let day = source.path().join("20260824");
+        fs::create_dir_all(&day).expect("day");
+        fs::write(day.join("090000.txt"), "updated transcript").expect("transcript");
+        let destination_path = destination.path().join("WakeNote-2026-08-24.txt");
+        fs::create_dir(&destination_path).expect("existing folder");
+        fs::write(destination_path.join("keep.txt"), "keep this file").expect("existing file");
+
+        let error =
+            export_transcript_day(source.path(), "2026-08-24", &destination_path, &[], true)
+                .expect_err("a folder must not be replaced");
+
+        assert!(
+            error.contains("failed to publish transcript export"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(destination_path.join("keep.txt")).expect("existing file"),
+            "keep this file"
+        );
+        assert_eq!(
+            fs::read_dir(destination.path())
+                .expect("destination listing")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn exports_one_day_without_overwriting_an_existing_destination() {
         let source = tempfile::tempdir().expect("source");
         let destination = tempfile::tempdir().expect("destination");
@@ -488,8 +585,9 @@ mod tests {
         fs::write(day.join("180000.txt"), "evening").expect("evening");
         let destination_path = destination.path().join("WakeNote-2026-08-24.txt");
 
-        let result = export_transcript_day(source.path(), "2026-08-24", &destination_path, &[])
-            .expect("day export");
+        let result =
+            export_transcript_day(source.path(), "2026-08-24", &destination_path, &[], false)
+                .expect("day export");
 
         assert_eq!(result.day_count, 1);
         assert_eq!(result.transcript_count, 2);
@@ -499,8 +597,9 @@ mod tests {
         assert!(!original.contains("\n\n"), "{original}");
         assert!(original.ends_with(" - evening\n"), "{original}");
 
-        let error = export_transcript_day(source.path(), "2026-08-24", &destination_path, &[])
-            .expect_err("existing destination must not be overwritten");
+        let error =
+            export_transcript_day(source.path(), "2026-08-24", &destination_path, &[], false)
+                .expect_err("existing destination must not be overwritten");
 
         assert!(error.contains("already exists"), "{error}");
         assert_eq!(

@@ -575,7 +575,7 @@ describe("tauri runtime client snapshots", () => {
     });
   });
 
-  it("chooses a text file and exports the active transcript day through Tauri", async () => {
+  it("allows replacement only after the native save dialog accepts the destination", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.save.mockResolvedValue("/tmp/WakeNote-2026-08-24.txt");
     mocks.invoke.mockResolvedValue({
@@ -594,6 +594,7 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("export_transcript_day", {
       day: "2026-08-24",
       destinationPath: "/tmp/WakeNote-2026-08-24.txt",
+      overwrite: true,
     });
     expect(result?.transcript_count).toBe(2);
   });
