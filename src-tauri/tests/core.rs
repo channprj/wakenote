@@ -9,9 +9,10 @@ use wakenote::models::{ModelStatus, default_model_registry};
 use wakenote::settings::{
     AppSettings, AudioFormat, CaptureMicrophoneEntry, LaunchAtLoginAction,
     LiveCaptureRuntimeAction, MicrophonePriorityEntry, MicrophoneSlot, SettingsPatch, ThemeMode,
-    TranscriptionLanguage, expand_user_path, launch_at_login_action_for_patch,
-    live_capture_runtime_action_for_patch, live_capture_should_run,
-    live_capture_should_start_on_launch, normalize_capture_microphones,
+    TranscriptionLanguage, capture_microphones_share_device, expand_user_path,
+    launch_at_login_action_for_patch, live_capture_runtime_action_for_patch,
+    live_capture_should_run, live_capture_should_start_on_launch, microphone_source_key,
+    normalize_capture_microphones,
 };
 use wakenote::storage::{OutputBasename, next_available_output};
 
@@ -482,7 +483,7 @@ fn legacy_single_microphone_migrates_without_enabling_priority_fallback() {
 }
 
 #[test]
-fn capture_microphones_keep_first_two_unique_explicit_devices() {
+fn capture_microphones_keep_the_same_device_on_both_slots() {
     let entry = |id: &str, label: &str| CaptureMicrophoneEntry {
         id: id.to_string(),
         label: label.to_string(),
@@ -498,8 +499,67 @@ fn capture_microphones_keep_first_two_unique_explicit_devices() {
         ]),
         vec![
             entry("input-1-wired", "Wired"),
-            entry("input-2-wireless", "Wireless"),
+            entry("input-1-wired", "Duplicate"),
         ],
+    );
+    assert_eq!(
+        normalize_capture_microphones(vec![entry("", "Missing"), entry("input-1-wired", "Wired"),]),
+        vec![entry("input-1-wired", "Wired")],
+    );
+}
+
+#[test]
+fn microphone_source_key_includes_the_slot_only_for_a_shared_device() {
+    let studio = CaptureMicrophoneEntry {
+        id: "studio".to_string(),
+        label: "Studio".to_string(),
+        core_audio_uid: Some("uid-studio".to_string()),
+    };
+    let shared = vec![studio.clone(), studio.clone()];
+    assert!(capture_microphones_share_device(&shared));
+    assert_eq!(
+        microphone_source_key("studio", MicrophoneSlot::Primary, &shared),
+        "microphone:primary:studio"
+    );
+    assert_eq!(
+        microphone_source_key("studio", MicrophoneSlot::Secondary, &shared),
+        "microphone:secondary:studio"
+    );
+
+    let distinct = vec![
+        studio,
+        CaptureMicrophoneEntry {
+            id: "wireless".to_string(),
+            label: "Wireless".to_string(),
+            core_audio_uid: Some("uid-wireless".to_string()),
+        },
+    ];
+    assert!(!capture_microphones_share_device(&distinct));
+    assert_eq!(
+        microphone_source_key("studio", MicrophoneSlot::Primary, &distinct),
+        "microphone:studio"
+    );
+    assert_eq!(
+        microphone_source_key("wireless", MicrophoneSlot::Secondary, &distinct),
+        "microphone:wireless"
+    );
+
+    let same_uid = vec![
+        CaptureMicrophoneEntry {
+            id: "default".to_string(),
+            label: "System Default".to_string(),
+            core_audio_uid: Some("built-in".to_string()),
+        },
+        CaptureMicrophoneEntry {
+            id: "internal".to_string(),
+            label: "Built-in".to_string(),
+            core_audio_uid: Some("built-in".to_string()),
+        },
+    ];
+    assert!(capture_microphones_share_device(&same_uid));
+    assert_eq!(
+        microphone_source_key("internal", MicrophoneSlot::Secondary, &same_uid),
+        "microphone:secondary:internal"
     );
 }
 

@@ -1,3 +1,5 @@
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -7,6 +9,65 @@ use wakenote::live_capture::{
 use wakenote::multi_capture::MultiCaptureRuntime;
 use wakenote::settings::MicrophoneSlot;
 use wakenote::voice_leveling::AudioFrameProcessor;
+
+thread_local! {
+    static CAPTURE_STARTS: Cell<u32> = const { Cell::new(0) };
+    static CAPTURE_CALLBACK: RefCell<Option<Arc<dyn Fn(AudioFrame) + Send + Sync>>> =
+        const { RefCell::new(None) };
+    static CAPTURE_FAIL: Cell<bool> = const { Cell::new(false) };
+}
+
+fn reset_capture_script() {
+    CAPTURE_STARTS.with(|starts| starts.set(0));
+    CAPTURE_CALLBACK.with(|callback| *callback.borrow_mut() = None);
+    CAPTURE_FAIL.with(|fail| fail.set(false));
+}
+
+fn capture_starts() -> u32 {
+    CAPTURE_STARTS.with(|starts| starts.get())
+}
+
+fn emit_capture_frame(sample: f32) {
+    let callback = CAPTURE_CALLBACK.with(|slot| slot.borrow().clone());
+    let callback = callback.expect("capture callback");
+    callback(AudioFrame {
+        samples: vec![sample],
+        duration_ms: 20,
+        captured_at: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+    });
+}
+
+struct CountingHandle;
+
+impl AudioStreamHandle for CountingHandle {
+    fn runtime_error(&self) -> Option<String> {
+        CAPTURE_FAIL.with(|fail| fail.get().then(|| "device stalled".to_string()))
+    }
+}
+
+#[derive(Default)]
+struct CountingInput;
+
+impl AudioInputBackend for CountingInput {
+    fn start(
+        &mut self,
+        _config: AudioInputConfig,
+        on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
+    ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
+        CAPTURE_STARTS.with(|starts| starts.set(starts.get() + 1));
+        CAPTURE_CALLBACK.with(|slot| *slot.borrow_mut() = Some(on_frame));
+        Ok(Box::new(CountingHandle))
+    }
+}
+
+fn device_config(device_id: &str, uid: &str) -> AudioInputConfig {
+    AudioInputConfig {
+        device_id: device_id.to_string(),
+        sample_rate: Some(48_000),
+        label_hint: Some(device_id.to_string()),
+        core_audio_uid: Some(uid.to_string()),
+    }
+}
 
 struct StatefulScalingProcessor {
     multiplier: f32,
@@ -185,4 +246,163 @@ fn secondary_runtime_error_does_not_change_primary_diagnostics() {
         Some("secondary disconnected")
     );
     assert!(runtime.is_running(MicrophoneSlot::Primary));
+}
+
+#[test]
+fn same_physical_microphone_opens_once_and_fans_one_leveling_pass_to_both_slots() {
+    reset_capture_script();
+    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
+    let (primary_tx, primary_rx) = mpsc::channel();
+    let (secondary_tx, secondary_rx) = mpsc::channel();
+    let config = device_config("studio", "uid-studio");
+
+    runtime
+        .start_slot_processed(
+            MicrophoneSlot::Primary,
+            config.clone(),
+            StatefulScalingProcessor {
+                multiplier: 2.0,
+                frames_seen: 0,
+            },
+            move |frame| primary_tx.send(frame.samples).expect("primary frame"),
+        )
+        .expect("open primary");
+    runtime
+        .start_slot_processed(
+            MicrophoneSlot::Secondary,
+            config.clone(),
+            StatefulScalingProcessor {
+                multiplier: 3.0,
+                frames_seen: 0,
+            },
+            move |frame| secondary_tx.send(frame.samples).expect("secondary frame"),
+        )
+        .expect("attach secondary");
+
+    assert_eq!(capture_starts(), 1);
+    assert_eq!(runtime.open_device_sample_rate(&config), Some(48_000));
+    assert!(runtime.is_running(MicrophoneSlot::Primary));
+    assert!(runtime.is_running(MicrophoneSlot::Secondary));
+    assert_eq!(runtime.diagnostics().len(), 2);
+    assert_eq!(runtime.total_dropped_frame_count(), 0);
+
+    emit_capture_frame(0.25);
+    assert_eq!(
+        primary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("primary leveled"),
+        vec![0.5]
+    );
+    assert_eq!(
+        secondary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("secondary shares the primary pass"),
+        vec![0.5]
+    );
+
+    runtime.stop_slot(MicrophoneSlot::Primary);
+    assert!(!runtime.is_running(MicrophoneSlot::Primary));
+    assert!(runtime.is_running(MicrophoneSlot::Secondary));
+    emit_capture_frame(0.25);
+    assert_eq!(
+        secondary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("follower keeps the original pass"),
+        vec![1.0]
+    );
+    assert!(primary_rx.try_recv().is_err());
+
+    let (primary_again_tx, primary_again_rx) = mpsc::channel();
+    runtime
+        .start_slot_processed(
+            MicrophoneSlot::Primary,
+            config,
+            StatefulScalingProcessor {
+                multiplier: 3.0,
+                frames_seen: 0,
+            },
+            move |frame| {
+                primary_again_tx
+                    .send(frame.samples)
+                    .expect("reattached primary")
+            },
+        )
+        .expect("reattach primary");
+    assert_eq!(capture_starts(), 1);
+    emit_capture_frame(0.25);
+    assert_eq!(
+        primary_again_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reattached primary frame"),
+        vec![1.5]
+    );
+    assert_eq!(
+        secondary_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shared third frame"),
+        vec![1.5]
+    );
+}
+
+#[test]
+fn same_core_audio_uid_shares_one_open_even_when_ids_differ() {
+    reset_capture_script();
+    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
+    runtime
+        .start_slot(
+            MicrophoneSlot::Primary,
+            device_config("default", "built-in"),
+            |_| {},
+        )
+        .expect("open default");
+    runtime
+        .start_slot(
+            MicrophoneSlot::Secondary,
+            device_config("internal", "built-in"),
+            |_| {},
+        )
+        .expect("attach built-in");
+    assert_eq!(capture_starts(), 1);
+    assert_eq!(
+        runtime.active_slots(),
+        vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary]
+    );
+}
+
+#[test]
+fn distinct_microphones_still_open_independently() {
+    reset_capture_script();
+    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
+    runtime
+        .start_slot(
+            MicrophoneSlot::Primary,
+            device_config("wired", "uid-wired"),
+            |_| {},
+        )
+        .expect("open wired");
+    runtime
+        .start_slot(
+            MicrophoneSlot::Secondary,
+            device_config("wireless", "uid-wireless"),
+            |_| {},
+        )
+        .expect("open wireless");
+    assert_eq!(capture_starts(), 2);
+}
+
+#[test]
+fn unhealthy_shared_microphone_is_reopened_instead_of_attached() {
+    reset_capture_script();
+    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
+    let config = device_config("studio", "uid-studio");
+    runtime
+        .start_slot(MicrophoneSlot::Primary, config.clone(), |_| {})
+        .expect("open studio");
+    CAPTURE_FAIL.with(|fail| fail.set(true));
+    runtime
+        .start_slot(MicrophoneSlot::Secondary, config, |_| {})
+        .expect("reopen stalled studio");
+    assert_eq!(capture_starts(), 2);
+    assert!(!runtime.is_running(MicrophoneSlot::Primary));
+    assert!(runtime.is_running(MicrophoneSlot::Secondary));
 }

@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, Utc};
 
 use crate::live_capture::{
     AudioFrame, AudioInputBackend, AudioInputConfig, LiveCaptureError, LiveCaptureRuntime,
 };
-use crate::settings::MicrophoneSlot;
+use crate::settings::{MicrophoneSlot, same_physical_input};
 use crate::voice_leveling::AudioFrameProcessor;
 
 pub const MICROPHONE_MIX_REORDER_MS: u64 = 100;
@@ -986,33 +987,68 @@ pub struct MicrophoneRuntimeDiagnostic {
     pub runtime_error: Option<String>,
 }
 
+type SlotCallback = Box<dyn FnMut(AudioFrame) + Send>;
+type SlotFanout = Mutex<BTreeMap<MicrophoneSlot, SlotCallback>>;
+
+struct OpenDevice<B: AudioInputBackend> {
+    runtime: LiveCaptureRuntime<B>,
+    device_id: String,
+    core_audio_uid: Option<String>,
+    sample_rate: u32,
+    fanout: Arc<SlotFanout>,
+}
+
 pub struct MultiCaptureRuntime<B: AudioInputBackend + Default> {
-    runtimes: BTreeMap<MicrophoneSlot, LiveCaptureRuntime<B>>,
+    devices: BTreeMap<u64, OpenDevice<B>>,
+    slot_device: BTreeMap<MicrophoneSlot, u64>,
+    next_device_id: u64,
 }
 
 impl<B: AudioInputBackend + Default> Default for MultiCaptureRuntime<B> {
     fn default() -> Self {
         Self {
-            runtimes: BTreeMap::new(),
+            devices: BTreeMap::new(),
+            slot_device: BTreeMap::new(),
+            next_device_id: 1,
         }
     }
 }
 
 impl<B: AudioInputBackend + Default> MultiCaptureRuntime<B> {
+    /// Sample rate of the already-open capture for this physical device.
+    /// A second slot uses this instead of opening the device again.
+    pub fn open_device_sample_rate(&self, config: &AudioInputConfig) -> Option<u32> {
+        let key = self.healthy_device_key(config)?;
+        self.devices.get(&key).map(|device| device.sample_rate)
+    }
+
+    pub fn attach_slot(
+        &mut self,
+        slot: MicrophoneSlot,
+        config: &AudioInputConfig,
+        on_frame: impl FnMut(AudioFrame) + Send + 'static,
+    ) -> Result<(), LiveCaptureError> {
+        let Some(key) = self.prepare_slot_start(slot, config)? else {
+            return Err(LiveCaptureError::Cpal(
+                "shared microphone capture is not open".to_string(),
+            ));
+        };
+        self.attach_to_device(key, slot, Box::new(on_frame))
+    }
+
     pub fn start_slot(
         &mut self,
         slot: MicrophoneSlot,
         config: AudioInputConfig,
         on_frame: impl FnMut(AudioFrame) + Send + 'static,
     ) -> Result<(), LiveCaptureError> {
-        if let Some(runtime) = self.runtimes.get_mut(&slot) {
-            return runtime.start(config, on_frame);
+        let on_frame: SlotCallback = Box::new(on_frame);
+        if let Some(key) = self.prepare_slot_start(slot, &config)? {
+            return self.attach_to_device(key, slot, on_frame);
         }
-
-        let mut runtime = LiveCaptureRuntime::new(B::default());
-        runtime.start(config, on_frame)?;
-        self.runtimes.insert(slot, runtime);
-        Ok(())
+        self.open_device(slot, config, on_frame, |runtime, config, fanout| {
+            runtime.start(config, move |frame| dispatch_fanout(&fanout, frame))
+        })
     }
 
     pub fn start_slot_processed<P, F>(
@@ -1026,14 +1062,18 @@ impl<B: AudioInputBackend + Default> MultiCaptureRuntime<B> {
         P: AudioFrameProcessor + 'static,
         F: FnMut(AudioFrame) + Send + 'static,
     {
-        if let Some(runtime) = self.runtimes.get_mut(&slot) {
-            return runtime.start_processed(config, processor, on_frame);
+        let on_frame: SlotCallback = Box::new(on_frame);
+        if let Some(key) = self.prepare_slot_start(slot, &config)? {
+            // The device is already open and already leveled. Drop the second
+            // processor so it cannot apply another hardware-gain pass.
+            drop(processor);
+            return self.attach_to_device(key, slot, on_frame);
         }
-
-        let mut runtime = LiveCaptureRuntime::new(B::default());
-        runtime.start_processed(config, processor, on_frame)?;
-        self.runtimes.insert(slot, runtime);
-        Ok(())
+        self.open_device(slot, config, on_frame, |runtime, config, fanout| {
+            runtime.start_processed(config, processor, move |frame| {
+                dispatch_fanout(&fanout, frame)
+            })
+        })
     }
 
     pub fn start_slot_processed_with_warnings<P, F, W>(
@@ -1049,75 +1089,219 @@ impl<B: AudioInputBackend + Default> MultiCaptureRuntime<B> {
         F: FnMut(AudioFrame) + Send + 'static,
         W: FnMut(String) + Send + 'static,
     {
-        if let Some(runtime) = self.runtimes.get_mut(&slot) {
-            return runtime.start_processed_with_warnings(config, processor, on_frame, on_warning);
+        let on_frame: SlotCallback = Box::new(on_frame);
+        if let Some(key) = self.prepare_slot_start(slot, &config)? {
+            drop(processor);
+            drop(on_warning);
+            return self.attach_to_device(key, slot, on_frame);
         }
-
-        let mut runtime = LiveCaptureRuntime::new(B::default());
-        runtime.start_processed_with_warnings(config, processor, on_frame, on_warning)?;
-        self.runtimes.insert(slot, runtime);
-        Ok(())
+        self.open_device(slot, config, on_frame, |runtime, config, fanout| {
+            runtime.start_processed_with_warnings(
+                config,
+                processor,
+                move |frame| dispatch_fanout(&fanout, frame),
+                on_warning,
+            )
+        })
     }
 
     pub fn stop_slot(&mut self, slot: MicrophoneSlot) {
-        if let Some(mut runtime) = self.runtimes.remove(&slot) {
-            runtime.stop();
+        let Some(key) = self.slot_device.remove(&slot) else {
+            return;
+        };
+        if let Some(device) = self.devices.get(&key)
+            && let Ok(mut fanout) = device.fanout.lock()
+        {
+            fanout.remove(&slot);
+        }
+        let still_used = self.slot_device.values().any(|candidate| *candidate == key);
+        if !still_used && let Some(mut device) = self.devices.remove(&key) {
+            device.runtime.stop();
         }
     }
 
     pub fn stop_all(&mut self) {
-        for runtime in self.runtimes.values_mut() {
-            runtime.stop();
+        for device in self.devices.values_mut() {
+            device.runtime.stop();
         }
-        self.runtimes.clear();
+        self.devices.clear();
+        self.slot_device.clear();
     }
 
     pub fn is_running(&self, slot: MicrophoneSlot) -> bool {
-        self.runtimes
-            .get(&slot)
-            .is_some_and(LiveCaptureRuntime::is_running)
+        self.device_for_slot(slot)
+            .is_some_and(|device| device.runtime.is_running())
     }
 
     pub fn active_slots(&self) -> Vec<MicrophoneSlot> {
-        self.runtimes
+        self.slot_device
             .iter()
-            .filter_map(|(slot, runtime)| runtime.is_running().then_some(*slot))
+            .filter_map(|(slot, key)| {
+                self.devices
+                    .get(key)
+                    .is_some_and(|device| device.runtime.is_running())
+                    .then_some(*slot)
+            })
             .collect()
     }
 
     pub fn diagnostics(&self) -> Vec<MicrophoneRuntimeDiagnostic> {
-        self.runtimes
+        self.slot_device
             .iter()
-            .map(|(slot, runtime)| MicrophoneRuntimeDiagnostic {
-                slot: *slot,
-                running: runtime.is_running(),
-                dropped_frame_count: runtime.dropped_frame_count(),
-                runtime_error: runtime.runtime_error(),
-            })
+            .filter_map(|(slot, key)| self.diagnostic_for(*slot, *key))
             .collect()
     }
 
     pub fn diagnostic(&self, slot: MicrophoneSlot) -> Option<MicrophoneRuntimeDiagnostic> {
-        self.runtimes
-            .get(&slot)
-            .map(|runtime| MicrophoneRuntimeDiagnostic {
-                slot,
-                running: runtime.is_running(),
-                dropped_frame_count: runtime.dropped_frame_count(),
-                runtime_error: runtime.runtime_error(),
-            })
+        let key = self.slot_device.get(&slot).copied()?;
+        self.diagnostic_for(slot, key)
     }
 
     pub fn total_dropped_frame_count(&self) -> u64 {
-        self.runtimes
+        self.devices
             .values()
-            .map(LiveCaptureRuntime::dropped_frame_count)
+            .map(|device| device.runtime.dropped_frame_count())
             .sum()
     }
 
     pub fn first_runtime_error(&self) -> Option<String> {
-        self.runtimes
+        self.devices
             .values()
-            .find_map(LiveCaptureRuntime::runtime_error)
+            .find_map(|device| device.runtime.runtime_error())
+    }
+
+    fn diagnostic_for(
+        &self,
+        slot: MicrophoneSlot,
+        key: u64,
+    ) -> Option<MicrophoneRuntimeDiagnostic> {
+        let device = self.devices.get(&key)?;
+        Some(MicrophoneRuntimeDiagnostic {
+            slot,
+            running: device.runtime.is_running(),
+            dropped_frame_count: device.runtime.dropped_frame_count(),
+            runtime_error: device.runtime.runtime_error(),
+        })
+    }
+
+    fn device_for_slot(&self, slot: MicrophoneSlot) -> Option<&OpenDevice<B>> {
+        let key = self.slot_device.get(&slot).copied()?;
+        self.devices.get(&key)
+    }
+
+    fn device_matches(device: &OpenDevice<B>, config: &AudioInputConfig) -> bool {
+        same_physical_input(
+            &config.device_id,
+            config.core_audio_uid.as_deref(),
+            &device.device_id,
+            device.core_audio_uid.as_deref(),
+        )
+    }
+
+    fn device_is_healthy(device: &OpenDevice<B>) -> bool {
+        device.runtime.is_running() && device.runtime.runtime_error().is_none()
+    }
+
+    fn healthy_device_key(&self, config: &AudioInputConfig) -> Option<u64> {
+        self.devices.iter().find_map(|(key, device)| {
+            (Self::device_matches(device, config) && Self::device_is_healthy(device))
+                .then_some(*key)
+        })
+    }
+
+    fn prepare_slot_start(
+        &mut self,
+        slot: MicrophoneSlot,
+        config: &AudioInputConfig,
+    ) -> Result<Option<u64>, LiveCaptureError> {
+        if let Some(key) = self.slot_device.get(&slot).copied() {
+            let healthy = self.devices.get(&key).is_some_and(Self::device_is_healthy);
+            if healthy {
+                return Err(LiveCaptureError::AlreadyRunning);
+            }
+            self.stop_slot(slot);
+        }
+        self.retire_unhealthy_matches(config);
+        Ok(self.healthy_device_key(config))
+    }
+
+    fn retire_unhealthy_matches(&mut self, config: &AudioInputConfig) {
+        let stale = self
+            .devices
+            .iter()
+            .filter_map(|(key, device)| {
+                (Self::device_matches(device, config) && !Self::device_is_healthy(device))
+                    .then_some(*key)
+            })
+            .collect::<Vec<_>>();
+        for key in stale {
+            let slots = self
+                .slot_device
+                .iter()
+                .filter_map(|(slot, slot_key)| (*slot_key == key).then_some(*slot))
+                .collect::<Vec<_>>();
+            for slot in slots {
+                self.stop_slot(slot);
+            }
+        }
+    }
+
+    fn attach_to_device(
+        &mut self,
+        key: u64,
+        slot: MicrophoneSlot,
+        on_frame: SlotCallback,
+    ) -> Result<(), LiveCaptureError> {
+        let device = self.devices.get(&key).ok_or_else(|| {
+            LiveCaptureError::Cpal("shared microphone capture is not open".to_string())
+        })?;
+        device
+            .fanout
+            .lock()
+            .map_err(|_| {
+                LiveCaptureError::Cpal("shared microphone capture lock poisoned".to_string())
+            })?
+            .insert(slot, on_frame);
+        self.slot_device.insert(slot, key);
+        Ok(())
+    }
+
+    fn open_device(
+        &mut self,
+        slot: MicrophoneSlot,
+        config: AudioInputConfig,
+        on_frame: SlotCallback,
+        start: impl FnOnce(
+            &mut LiveCaptureRuntime<B>,
+            AudioInputConfig,
+            Arc<SlotFanout>,
+        ) -> Result<(), LiveCaptureError>,
+    ) -> Result<(), LiveCaptureError> {
+        let fanout = Arc::new(Mutex::new(BTreeMap::from([(slot, on_frame)])));
+        let mut runtime = LiveCaptureRuntime::new(B::default());
+        start(&mut runtime, config.clone(), fanout.clone())?;
+        let key = self.next_device_id;
+        self.next_device_id = self.next_device_id.saturating_add(1);
+        self.devices.insert(
+            key,
+            OpenDevice {
+                runtime,
+                device_id: config.device_id,
+                core_audio_uid: config.core_audio_uid,
+                sample_rate: config.sample_rate.unwrap_or(0),
+                fanout,
+            },
+        );
+        self.slot_device.insert(slot, key);
+        Ok(())
+    }
+}
+
+fn dispatch_fanout(fanout: &SlotFanout, frame: AudioFrame) {
+    let Ok(mut slots) = fanout.lock() else {
+        return;
+    };
+    for callback in slots.values_mut() {
+        callback(frame.clone());
     }
 }

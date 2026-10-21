@@ -24,7 +24,6 @@ import {
   inputAvailability,
   normalizeCaptureMicrophones,
   rebindCaptureMicrophones,
-  sameMicrophone,
 } from "@/lib/capture-controls";
 import {
   RECORDING_FIELD_HELP,
@@ -168,7 +167,7 @@ export function AudioSettings({
         <MicrophoneInputVolumeRows snapshot={snapshot} actions={actions} />
         <SettingSelect
           label="Microphone processing"
-          description="Keep separate recordings, synchronize and blend both microphones, or use the cleanest sufficiently loud microphone."
+          description="Keep Separated Audio, synchronize and blend both microphones, or use the cleanest sufficiently loud microphone."
           value={
             settings.priority_microphone_inputs
               ? "priority"
@@ -177,7 +176,7 @@ export function AudioSettings({
                 : "separate"
           }
           options={[
-            { value: "separate", label: "Separate recordings" },
+            { value: "separate", label: "Separated Audio" },
             { value: "merge", label: "Merge Audio" },
             { value: "priority", label: "Priority Audio" },
           ]}
@@ -528,8 +527,9 @@ function MicrophoneSelectors({
       <FieldContent>
         <FieldLabel>Capture microphones</FieldLabel>
         <FieldDescription>
-          Choose one required Primary and one optional Secondary. Each
-          microphone records and reconnects independently.
+          Choose one required Primary and one optional Secondary. Each slot
+          records and reconnects. The same physical microphone is captured once
+          and used for both slots.
         </FieldDescription>
       </FieldContent>
       <div className="grid gap-3">
@@ -541,9 +541,7 @@ function MicrophoneSelectors({
             onChange(
               normalizeCaptureMicrophones([
                 nextPrimary,
-                ...(!secondary || sameMicrophone(nextPrimary, secondary)
-                  ? []
-                  : [secondary]),
+                ...(secondary ? [secondary] : []),
               ]),
             );
           }}
@@ -592,22 +590,12 @@ function MicrophoneSelectors({
           <SelectContent>
             <SelectGroup>
               <SelectItem value="__none__">No Secondary microphone</SelectItem>
-              {explicitDevices
-                .filter(
-                  (device) =>
-                    !sameMicrophone(device, primary) ||
-                    device.id === secondary?.id,
-                )
-                .map((device) => (
-                  <SelectItem
-                    key={device.id}
-                    value={device.id}
-                    disabled={sameMicrophone(device, primary)}
-                  >
-                    {device.label}
-                    {device.available ? "" : " (Unavailable)"}
-                  </SelectItem>
-                ))}
+              {explicitDevices.map((device) => (
+                <SelectItem key={device.id} value={device.id}>
+                  {device.label}
+                  {device.available ? "" : " (Unavailable)"}
+                </SelectItem>
+              ))}
             </SelectGroup>
           </SelectContent>
         </Select>

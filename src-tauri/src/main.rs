@@ -102,7 +102,7 @@ use wakenote::settings::{
     SettingsPatch, SubtitleAnimation, TranscriptionLanguage, TrayClickAction,
     clamp_llm_max_iterations, expand_user_path, launch_at_login_action_for_patch,
     live_capture_runtime_action_for_patch, live_capture_should_start_on_launch,
-    resolve_auto_prompt,
+    microphone_source_key, resolve_auto_prompt,
 };
 use wakenote::soniox_realtime::SonioxRealtimeManager;
 use wakenote::source_watcher::{
@@ -121,10 +121,10 @@ use wakenote::transcription_cost::{
     TranscriptionCostDetails, TranscriptionCostEntry, TranscriptionCostLedger,
     TranscriptionCostSnapshot, estimated_provider_cost_usd, ledger_path,
 };
+use wakenote::updater::RESTART_GATE;
 use wakenote::voice_leveling::{
     ServiceHardwareLevelControl, VoiceAwareMicrophoneProcessor, VoiceLevelingPolicy,
 };
-use wakenote::updater::RESTART_GATE;
 
 mod app_updater;
 
@@ -2965,19 +2965,6 @@ where
                 });
             }
             Ok(resolved) => {
-                if resolution.ready.iter().any(|ready| {
-                    ready.config.device_id == resolved.device_id
-                        || resolved
-                            .core_audio_uid
-                            .as_ref()
-                            .is_some_and(|uid| ready.config.core_audio_uid.as_ref() == Some(uid))
-                }) {
-                    resolution.failures.push(DictationSlotFailure {
-                        slot,
-                        error: "Secondary resolves to the same microphone as Primary; choose a different device".to_string(),
-                    });
-                    continue;
-                }
                 let input = DictationMicrophoneInput {
                     slot,
                     device: CaptureMicrophoneEntry {
@@ -3103,48 +3090,64 @@ fn start_dictation_capture(
     for resolved in resolution.ready {
         let slot = resolved.input.slot;
         let configured_microphone = resolved.input.device.clone();
-        let hardware_control = app
-            .try_state::<MicrophoneLevelState>()
-            .map(|state| state.inner().clone())
-            .and_then(|service| {
-                service
-                    .level_for(&configured_microphone)
-                    .ok()
-                    .filter(|level| level.writable && level.volume_percent.is_some())
-                    .map(|_| {
-                        ServiceHardwareLevelControl::new(service, configured_microphone.clone())
-                    })
-            });
-        let sample_rate = resolved
-            .config
-            .sample_rate
-            .ok_or_else(|| "Dictation microphone sample rate is unavailable".to_string())?;
-        let processor = VoiceAwareMicrophoneProcessor::new(
-            sample_rate,
-            voice_leveling_policy.clone(),
-            hardware_control,
-        );
         let callback_app = app.clone();
         let callback_throttle = callback_throttle.clone();
-        let start_result = state
+        let emit_waveform = move |frame: &AudioFrame| {
+            if !overlay_level_emit_due(&callback_throttle) {
+                return;
+            }
+            let levels = overlay::waveform_levels_from_samples(
+                &frame.samples,
+                overlay::OVERLAY_WAVEFORM_BAR_COUNT,
+            );
+            overlay::emit_dictation_waveform_levels(&callback_app, levels);
+        };
+        // A second slot on an already-open device must not build another
+        // voice-leveling processor. That processor would read and later write
+        // the same hardware gain.
+        let shares_open_device = state
             .lock()
             .map_err(|error| error.to_string())?
-            .start_slot_with_processor(
-                operation_id,
-                resolved.input,
-                resolved.config,
-                processor,
-                move |frame| {
-                    if !overlay_level_emit_due(&callback_throttle) {
-                        return;
-                    }
-                    let levels = overlay::waveform_levels_from_samples(
-                        &frame.samples,
-                        overlay::OVERLAY_WAVEFORM_BAR_COUNT,
-                    );
-                    overlay::emit_dictation_waveform_levels(&callback_app, levels);
-                },
+            .open_capture_sample_rate(&resolved.config)
+            .is_some();
+        let start_result = if shares_open_device {
+            state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .attach_shared_slot(operation_id, resolved.input, resolved.config, emit_waveform)
+        } else {
+            let hardware_control = app
+                .try_state::<MicrophoneLevelState>()
+                .map(|state| state.inner().clone())
+                .and_then(|service| {
+                    service
+                        .level_for(&configured_microphone)
+                        .ok()
+                        .filter(|level| level.writable && level.volume_percent.is_some())
+                        .map(|_| {
+                            ServiceHardwareLevelControl::new(service, configured_microphone.clone())
+                        })
+                });
+            let sample_rate = resolved
+                .config
+                .sample_rate
+                .ok_or_else(|| "Dictation microphone sample rate is unavailable".to_string())?;
+            let processor = VoiceAwareMicrophoneProcessor::new(
+                sample_rate,
+                voice_leveling_policy.clone(),
+                hardware_control,
             );
+            state
+                .lock()
+                .map_err(|error| error.to_string())?
+                .start_slot_with_processor(
+                    operation_id,
+                    resolved.input,
+                    resolved.config,
+                    processor,
+                    emit_waveform,
+                )
+        };
         if let Err(error) = start_result {
             let failure = DictationSlotFailure { slot, error };
             state
@@ -5963,34 +5966,25 @@ fn start_live_capture_slot_runtime(
         ));
     }
 
-    if slot == MicrophoneSlot::Secondary {
-        let primary = backend_state
-            .lock()
-            .map_err(|error| error.to_string())?
-            .settings()
-            .capture_microphones
-            .first()
-            .cloned();
-        if let Some(primary) = primary
-            && let Ok(primary) = resolve_capture_device_with_timeout(
-                primary.id,
-                Some(primary.label),
-                primary.core_audio_uid,
-            )
-            && (primary.device_id == resolved.device_id
-                || resolved
-                    .core_audio_uid
-                    .as_ref()
-                    .is_some_and(|uid| primary.core_audio_uid.as_ref() == Some(uid)))
-        {
-            return Err(
-                "Secondary resolves to the same microphone as Primary; choose a different device"
-                    .to_string(),
-            );
-        }
-    }
+    let capture_config = AudioInputConfig {
+        device_id: resolved.device_id.clone(),
+        sample_rate: Some(resolved.sample_rate),
+        label_hint: requested_label_hint.clone(),
+        core_audio_uid: resolved.core_audio_uid.clone(),
+    };
+    let shared_sample_rate = live_state
+        .lock()
+        .map_err(|error| error.to_string())?
+        .open_device_sample_rate(&capture_config)
+        .filter(|sample_rate| *sample_rate > 0);
+    let sample_rate = shared_sample_rate.unwrap_or(resolved.sample_rate);
+    let shares_open_device = shared_sample_rate.is_some();
+    let capture_config = AudioInputConfig {
+        sample_rate: Some(sample_rate),
+        ..capture_config
+    };
 
-    let (device_id, sample_rate, handler, events) = {
+    let (handler, events) = {
         let mut backend = backend_state.lock().map_err(|error| error.to_string())?;
         backend.reconcile_capture_microphone_device_id(
             slot,
@@ -6000,15 +5994,14 @@ fn start_live_capture_slot_runtime(
         );
         backend.start_capture_session_for_slot(
             slot,
-            resolved.sample_rate,
+            sample_rate,
             chrono::Utc::now(),
             resolved.device_id.clone(),
             resolved.device_name,
             false,
         )?;
         backend.clear_microphone_slot_warning(slot);
-        let (handler, events) = live_events_for_dispatch(&mut backend);
-        (resolved.device_id, resolved.sample_rate, handler, events)
+        live_events_for_dispatch(&mut backend)
     };
     dispatch_live_events(handler, events);
 
@@ -6030,79 +6023,85 @@ fn start_live_capture_slot_runtime(
         .try_state::<VoiceLevelingPolicy>()
         .map(|state| state.inner().clone())
         .ok_or_else(|| "Voice-aware Auto Level policy is unavailable".to_string())?;
-    let hardware_control = app
-        .try_state::<MicrophoneLevelState>()
-        .map(|state| state.inner().clone())
-        .and_then(|service| {
-            service
-                .level_for(&configured_microphone)
-                .ok()
-                .filter(|level| level.writable && level.volume_percent.is_some())
-                .map(|_| ServiceHardwareLevelControl::new(service, configured_microphone))
-        });
-    let processor =
-        VoiceAwareMicrophoneProcessor::new(sample_rate, voice_leveling_policy, hardware_control);
     let warning_backend = Arc::clone(backend_state);
-    let start_result = live_state
-        .lock()
-        .map_err(|error| error.to_string())?
-        .start_slot_processed_with_warnings(
-            slot,
-            AudioInputConfig {
-                device_id,
-                sample_rate: Some(sample_rate),
-                label_hint: requested_label_hint,
-                core_audio_uid: requested_core_audio_uid,
-            },
-            processor,
-            move |frame| {
-                if let Some(input_monitor) = callback_input_monitor.as_ref()
-                    && let Ok(monitor) = input_monitor.try_lock()
-                {
-                    monitor.feed(&frame.samples);
-                }
-                let waveform_levels = overlay::waveform_levels_from_samples(
-                    &frame.samples,
-                    overlay::OVERLAY_WAVEFORM_BAR_COUNT,
-                );
-                let (should_kick, handler, events, emit_waveform, tray_status) =
-                    if let Ok(mut backend) = callback_backend.lock() {
-                        let status = backend.process_audio_frame_for_slot(slot, frame);
-                        let emit_waveform = slot == MicrophoneSlot::Primary
-                            && status
-                                .as_ref()
-                                .map(|status| matches!(status.tray_state, TrayState::Recording))
-                                .unwrap_or(false);
-                        let should_kick = status
-                            .map(|_| backend.should_process_transcriptions())
-                            .unwrap_or(false);
-                        let tray_status = Some((backend.settings(), backend.app_status()));
-                        let (handler, events) = live_events_for_dispatch(&mut backend);
-                        (should_kick, handler, events, emit_waveform, tray_status)
-                    } else {
-                        (false, None, Vec::new(), false, None)
-                    };
-                dispatch_live_events(handler, events);
-                if let Some((settings, status)) = tray_status {
-                    update_tray_presentation(&callback_app, &settings, &status);
-                }
-                if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
-                    overlay::emit_waveform_levels(&callback_app, waveform_levels);
-                }
-                if should_kick {
-                    kick_transcription_worker(
-                        callback_app.clone(),
-                        callback_backend.clone(),
-                        callback_transcription.clone(),
-                    );
-                }
-            },
-            move |warning| {
-                if let Ok(mut backend) = warning_backend.lock() {
-                    backend.set_microphone_slot_warning(slot, warning);
-                }
-            },
+    let frame_callback = move |frame: AudioFrame| {
+        if let Some(input_monitor) = callback_input_monitor.as_ref()
+            && let Ok(monitor) = input_monitor.try_lock()
+        {
+            monitor.feed(&frame.samples);
+        }
+        let waveform_levels = overlay::waveform_levels_from_samples(
+            &frame.samples,
+            overlay::OVERLAY_WAVEFORM_BAR_COUNT,
         );
+        let (should_kick, handler, events, emit_waveform, tray_status) =
+            if let Ok(mut backend) = callback_backend.lock() {
+                let status = backend.process_audio_frame_for_slot(slot, frame);
+                let emit_waveform = slot == MicrophoneSlot::Primary
+                    && status
+                        .as_ref()
+                        .map(|status| matches!(status.tray_state, TrayState::Recording))
+                        .unwrap_or(false);
+                let should_kick = status
+                    .map(|_| backend.should_process_transcriptions())
+                    .unwrap_or(false);
+                let tray_status = Some((backend.settings(), backend.app_status()));
+                let (handler, events) = live_events_for_dispatch(&mut backend);
+                (should_kick, handler, events, emit_waveform, tray_status)
+            } else {
+                (false, None, Vec::new(), false, None)
+            };
+        dispatch_live_events(handler, events);
+        if let Some((settings, status)) = tray_status {
+            update_tray_presentation(&callback_app, &settings, &status);
+        }
+        if emit_waveform && overlay_level_emit_due(&callback_overlay_level_throttle) {
+            overlay::emit_waveform_levels(&callback_app, waveform_levels);
+        }
+        if should_kick {
+            kick_transcription_worker(
+                callback_app.clone(),
+                callback_backend.clone(),
+                callback_transcription.clone(),
+            );
+        }
+    };
+    let start_result = if shares_open_device {
+        live_state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .attach_slot(slot, &capture_config, frame_callback)
+    } else {
+        let hardware_control = app
+            .try_state::<MicrophoneLevelState>()
+            .map(|state| state.inner().clone())
+            .and_then(|service| {
+                service
+                    .level_for(&configured_microphone)
+                    .ok()
+                    .filter(|level| level.writable && level.volume_percent.is_some())
+                    .map(|_| ServiceHardwareLevelControl::new(service, configured_microphone))
+            });
+        let processor = VoiceAwareMicrophoneProcessor::new(
+            sample_rate,
+            voice_leveling_policy,
+            hardware_control,
+        );
+        live_state
+            .lock()
+            .map_err(|error| error.to_string())?
+            .start_slot_processed_with_warnings(
+                slot,
+                capture_config,
+                processor,
+                frame_callback,
+                move |warning| {
+                    if let Ok(mut backend) = warning_backend.lock() {
+                        backend.set_microphone_slot_warning(slot, warning);
+                    }
+                },
+            )
+    };
     if let Err(error) = start_result {
         let mut backend = backend_state.lock().map_err(|lock| lock.to_string())?;
         backend.stop_capture_slot(slot)?;
@@ -7842,7 +7841,9 @@ fn kick_transcription_worker(
     backend_state: BackendState,
     transcription_state: AutoTranscriptionState,
 ) {
-    let Ok(update_activity) = RESTART_GATE.activity() else { return; };
+    let Ok(update_activity) = RESTART_GATE.activity() else {
+        return;
+    };
     if transcription_state
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
@@ -8058,15 +8059,22 @@ fn emit_file_stream_partial(
     {
         return;
     }
-    let chunk_id = backend_state
+    let (chunk_id, capture_microphones) = backend_state
         .lock()
         .ok()
-        .and_then(|backend| backend.chunk_id_for_audio_path(audio_path))
-        .or_else(|| chunk_id_from_metadata(audio_path));
+        .map(|backend| {
+            (
+                backend
+                    .chunk_id_for_audio_path(audio_path)
+                    .or_else(|| chunk_id_from_metadata(audio_path)),
+                backend.settings().capture_microphones,
+            )
+        })
+        .unwrap_or_else(|| (chunk_id_from_metadata(audio_path), Vec::new()));
     let Some(chunk_id) = chunk_id else {
         return;
     };
-    let source = capture_source_identity_from_metadata(audio_path);
+    let source = capture_source_identity_from_metadata(audio_path, &capture_microphones);
     if source.microphone_slot != Some(MicrophoneSlot::Secondary)
         && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
     {
@@ -8128,7 +8136,8 @@ fn emit_outcome_to_frontend(
         .unwrap_or_else(|| (chunk_id_from_metadata(audio_path), AppSettings::default()));
     let audio_path_str = audio_path.to_string_lossy().to_string();
     let recorded_at = recorded_at_for_audio_path(audio_path);
-    let source_identity = capture_source_identity_from_metadata(audio_path);
+    let source_identity =
+        capture_source_identity_from_metadata(audio_path, &settings_for_log.capture_microphones);
 
     if outcome.fallback_from_model_id.is_some()
         && let (Some(requested_model_id), Some(effective_model_id)) = (
@@ -8275,7 +8284,10 @@ struct CaptureSourceIdentity {
     microphone_slot: Option<MicrophoneSlot>,
 }
 
-fn capture_source_identity_from_metadata(audio_path: &Path) -> CaptureSourceIdentity {
+fn capture_source_identity_from_metadata(
+    audio_path: &Path,
+    capture_microphones: &[CaptureMicrophoneEntry],
+) -> CaptureSourceIdentity {
     let metadata = std::fs::read(audio_path.with_extension("json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<ChunkMetadata>(&bytes).ok());
@@ -8302,12 +8314,14 @@ fn capture_source_identity_from_metadata(audio_path: &Path) -> CaptureSourceIden
     } else {
         metadata.device_name
     };
+    let device_id = metadata.device_id.trim();
+    let source_key = match metadata.microphone_slot {
+        Some(slot) => microphone_source_key(device_id, slot, capture_microphones),
+        None if device_id.is_empty() => "microphone".to_string(),
+        None => format!("microphone:{device_id}"),
+    };
     CaptureSourceIdentity {
-        source_key: if metadata.device_id.trim().is_empty() {
-            "microphone".to_string()
-        } else {
-            format!("microphone:{}", metadata.device_id)
-        },
+        source_key,
         source_label,
         microphone_slot: metadata.microphone_slot,
     }
@@ -9904,20 +9918,28 @@ mod tests {
     }
 
     #[test]
-    fn dictation_default_and_secondary_only_open_distinct_physical_devices() {
+    fn dictation_accepts_the_same_physical_microphone_on_both_slots() {
         let mut settings = dictation_resolution_settings();
         settings.capture_microphones[0].id = "default".into();
         let distinct =
             resolve_dictation_inputs_with(&settings, |entry| Ok(resolved_dictation_device(entry)));
         assert_eq!(distinct.ready.len(), 2);
+        assert!(distinct.failures.is_empty());
         let duplicate = resolve_dictation_inputs_with(&settings, |entry| {
             let mut resolved = resolved_dictation_device(entry);
             resolved.core_audio_uid = Some("same-hardware".into());
             Ok(resolved)
         });
-        assert_eq!(duplicate.ready.len(), 1);
-        assert_eq!(duplicate.failures.len(), 1);
-        assert!(duplicate.failures[0].error.contains("same microphone"));
+        assert_eq!(duplicate.ready.len(), 2);
+        assert!(duplicate.failures.is_empty());
+        assert_eq!(
+            duplicate
+                .ready
+                .iter()
+                .map(|input| input.input.slot)
+                .collect::<Vec<_>>(),
+            vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        );
     }
 
     #[test]

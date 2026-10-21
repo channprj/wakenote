@@ -42,7 +42,7 @@ use crate::recorder::{
 };
 use crate::settings::{
     AppSettings, MicrophoneSlot, SettingsPatch, TranscriptionLanguage, TranscriptionOptions,
-    expand_user_path,
+    expand_user_path, microphone_source_key,
 };
 use crate::storage::copy_uploaded_audio_file;
 use crate::transcription::{
@@ -3336,12 +3336,10 @@ impl AppBackend {
             MicrophoneSlot::Primary => self.active_microphone_id.as_deref(),
             MicrophoneSlot::Secondary => self.active_secondary_microphone_id.as_deref(),
         };
-        format!(
-            "microphone:{}",
-            active_device_id
-                .or_else(|| configured.map(|entry| entry.id.as_str()))
-                .unwrap_or(slot.as_str())
-        )
+        let device_id = active_device_id
+            .or_else(|| configured.map(|entry| entry.id.as_str()))
+            .unwrap_or(slot.as_str());
+        microphone_source_key(device_id, slot, &self.settings.capture_microphones)
     }
 
     fn live_chunk_is_suppressed_for_dictation(&mut self, source_key: &str, chunk_id: u64) -> bool {

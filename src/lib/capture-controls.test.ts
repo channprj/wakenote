@@ -20,7 +20,7 @@ const stoppedStatus: Pick<AppStatus, "live_input_active" | "runtime_warning"> =
   };
 
 describe("capture controls", () => {
-  it("keeps at most two unique explicit microphone selections", () => {
+  it("keeps the same microphone on both slots and drops a third", () => {
     expect(
       normalizeCaptureMicrophones([
         { id: "wired", label: "Wired" },
@@ -30,7 +30,7 @@ describe("capture controls", () => {
       ]),
     ).toEqual([
       { id: "wired", label: "Wired" },
-      { id: "wireless", label: "Wireless" },
+      { id: "wired", label: "Duplicate" },
     ]);
   });
 

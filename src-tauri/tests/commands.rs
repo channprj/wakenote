@@ -988,6 +988,24 @@ fn backend_keeps_independent_dual_microphone_artifacts_when_merge_is_off() {
             .iter()
             .any(|path| path.contains("mic-secondary-wireless"))
     );
+    let started_keys = backend
+        .drain_live_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            LiveTranscriptEvent::Started { source_key, .. } => Some(source_key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        started_keys
+            .iter()
+            .any(|key| key == "microphone:input-1-wired")
+    );
+    assert!(
+        started_keys
+            .iter()
+            .any(|key| key == "microphone:input-2-wireless")
+    );
 }
 
 #[test]
@@ -4287,4 +4305,296 @@ fn queued_transcription_keeps_the_options_present_when_it_was_enqueued() {
         .expect("queued cloud job");
 
     assert_eq!(started.transcription_options, queued_options);
+}
+
+fn same_studio_microphones() -> Vec<CaptureMicrophoneEntry> {
+    vec![
+        CaptureMicrophoneEntry {
+            id: "input-studio".to_string(),
+            label: "Studio".to_string(),
+            core_audio_uid: Some("uid-studio".to_string()),
+        },
+        CaptureMicrophoneEntry {
+            id: "input-studio".to_string(),
+            label: "Studio".to_string(),
+            core_audio_uid: Some("uid-studio".to_string()),
+        },
+    ]
+}
+
+fn parity_settings_patch(
+    save_root: &std::path::Path,
+    microphones: Vec<CaptureMicrophoneEntry>,
+    merge: bool,
+    priority: bool,
+) -> SettingsPatch {
+    SettingsPatch {
+        save_root: Some(save_root.to_string_lossy().to_string()),
+        audio_format: Some(AudioFormat::Wav),
+        capture_microphones: Some(microphones),
+        merge_microphone_inputs: Some(merge),
+        priority_microphone_inputs: Some(priority),
+        threshold_dbfs: Some(-45.0),
+        attack_ms: Some(100),
+        release_ms: Some(250),
+        pre_roll_ms: Some(0),
+        lead_in_padding_ms: Some(0),
+        post_roll_ms: Some(0),
+        min_chunk_ms: Some(100),
+        transcription_enabled: Some(true),
+        ..SettingsPatch::default()
+    }
+}
+
+fn feed_constant_frames(
+    backend: &mut AppBackend,
+    slots: &[MicrophoneSlot],
+    sample: f32,
+    speech_frames: i64,
+    silence_frames: i64,
+) {
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    let mut step = 1;
+    for _ in 0..speech_frames {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        for slot in slots {
+            backend
+                .process_audio_frame_for_slot(
+                    *slot,
+                    AudioFrame {
+                        samples: vec![sample],
+                        duration_ms: 100,
+                        captured_at,
+                    },
+                )
+                .expect("speech frame");
+        }
+        step += 1;
+    }
+    for _ in 0..silence_frames {
+        let captured_at = base_time + chrono::Duration::milliseconds(step * 100);
+        for slot in slots {
+            backend
+                .process_audio_frame_for_slot(
+                    *slot,
+                    AudioFrame {
+                        samples: vec![0.0],
+                        duration_ms: 100,
+                        captured_at,
+                    },
+                )
+                .expect("silence frame");
+        }
+        step += 1;
+    }
+}
+
+fn wav_pcm16_samples(path: &std::path::Path) -> Vec<i16> {
+    let bytes = std::fs::read(path).expect("wav bytes");
+    let data_at = bytes
+        .windows(4)
+        .position(|marker| marker == b"data")
+        .expect("wav data chunk");
+    let size =
+        u32::from_le_bytes(bytes[data_at + 4..data_at + 8].try_into().expect("size")) as usize;
+    let start = data_at + 8;
+    bytes[start..start + size]
+        .chunks_exact(2)
+        .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+        .collect()
+}
+
+fn speech_peak(samples: &[i16]) -> i16 {
+    samples
+        .iter()
+        .filter(|sample| sample.abs() > 1_000)
+        .map(|sample| sample.abs())
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn same_device_separated_audio_matches_primary_only_transcription_input() {
+    let speech = 0.4;
+    let primary_only = {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut backend = AppBackend::default();
+        backend.update_settings(parity_settings_patch(
+            tmp.path(),
+            vec![CaptureMicrophoneEntry {
+                id: "input-studio".to_string(),
+                label: "Studio".to_string(),
+                core_audio_uid: Some("uid-studio".to_string()),
+            }],
+            false,
+            false,
+        ));
+        let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+        backend
+            .start_capture_session_for_slot(
+                MicrophoneSlot::Primary,
+                10,
+                base_time,
+                "input-studio",
+                "Studio",
+                false,
+            )
+            .expect("start primary only");
+        feed_constant_frames(&mut backend, &[MicrophoneSlot::Primary], speech, 5, 8);
+        let snapshot = backend.queue_snapshot();
+        assert_eq!(snapshot.jobs.len(), 1);
+        wav_pcm16_samples(&snapshot.jobs[0].audio_path)
+    };
+    assert!(speech_peak(&primary_only) > 8_000);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(parity_settings_patch(
+        tmp.path(),
+        same_studio_microphones(),
+        false,
+        false,
+    ));
+    assert_eq!(backend.settings().capture_microphones.len(), 2);
+    assert_eq!(
+        backend.settings().capture_microphones[0].id,
+        backend.settings().capture_microphones[1].id
+    );
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+        backend
+            .start_capture_session_for_slot(slot, 10, base_time, "input-studio", "Studio", false)
+            .expect("start shared-device slot");
+    }
+    feed_constant_frames(
+        &mut backend,
+        &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        speech,
+        5,
+        8,
+    );
+
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.pending_count, 2);
+    let mut jobs = snapshot.jobs.clone();
+    jobs.sort_by(|left, right| left.audio_path.cmp(&right.audio_path));
+    let paths = jobs
+        .iter()
+        .map(|job| job.audio_path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(paths.iter().any(|path| path.contains("mic-primary")));
+    assert!(paths.iter().any(|path| path.contains("mic-secondary")));
+    for job in &jobs {
+        let samples = wav_pcm16_samples(&job.audio_path);
+        assert_eq!(
+            samples, primary_only,
+            "slot audio drifted from Primary-only"
+        );
+        let metadata: ChunkMetadata = serde_json::from_slice(
+            &std::fs::read(job.audio_path.with_extension("json")).expect("metadata"),
+        )
+        .expect("parse metadata");
+        assert_eq!(metadata.device_id, "input-studio");
+        assert!(metadata.microphone_slot.is_some());
+    }
+    let started_keys = backend
+        .drain_live_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            LiveTranscriptEvent::Started { source_key, .. } => Some(source_key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        started_keys
+            .iter()
+            .any(|key| key == "microphone:primary:input-studio")
+    );
+    assert!(
+        started_keys
+            .iter()
+            .any(|key| key == "microphone:secondary:input-studio")
+    );
+}
+
+fn assert_duplicate_mix_keeps_primary_level(samples: &[i16]) {
+    let peak = speech_peak(samples);
+    assert!(
+        peak > 8_000 && peak < 20_000,
+        "duplicate mix cancelled or summed the primary signal (peak {peak})"
+    );
+}
+
+#[test]
+fn same_device_merge_audio_keeps_one_primary_quality_signal() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(parity_settings_patch(
+        tmp.path(),
+        same_studio_microphones(),
+        true,
+        false,
+    ));
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+        backend
+            .start_capture_session_for_slot(slot, 10, base_time, "input-studio", "Studio", false)
+            .expect("start merge slot");
+    }
+    feed_constant_frames(
+        &mut backend,
+        &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        0.4,
+        8,
+        8,
+    );
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.jobs.len(), 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .to_string_lossy()
+            .contains("mic-merged")
+    );
+    assert_duplicate_mix_keeps_primary_level(&wav_pcm16_samples(&snapshot.jobs[0].audio_path));
+}
+
+#[test]
+fn same_device_priority_audio_keeps_one_clean_signal() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut backend = AppBackend::default();
+    backend.update_settings(parity_settings_patch(
+        tmp.path(),
+        same_studio_microphones(),
+        false,
+        true,
+    ));
+    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+    for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+        backend
+            .start_capture_session_for_slot(slot, 10, base_time, "input-studio", "Studio", false)
+            .expect("start priority slot");
+    }
+    feed_constant_frames(
+        &mut backend,
+        &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+        0.4,
+        8,
+        8,
+    );
+    let snapshot = backend.queue_snapshot();
+    assert_eq!(snapshot.jobs.len(), 1);
+    assert!(
+        snapshot.jobs[0]
+            .audio_path
+            .to_string_lossy()
+            .contains("mic-priority")
+    );
+    let samples = wav_pcm16_samples(&snapshot.jobs[0].audio_path);
+    assert_duplicate_mix_keeps_primary_level(&samples);
+    let summed = (0.8 * i16::MAX as f32) as i16;
+    assert!(
+        samples.iter().all(|sample| sample.abs() < summed - 1_000),
+        "priority summed both copies of the same microphone"
+    );
 }

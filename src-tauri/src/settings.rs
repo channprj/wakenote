@@ -847,15 +847,67 @@ pub const fn default_dictation_copy_to_clipboard() -> bool {
     true
 }
 
+/// Two configured inputs are the same physical microphone when their ids match
+/// or they share a non-empty Core Audio UID. Both slots may name that device.
+pub fn same_physical_input(
+    left_id: &str,
+    left_uid: Option<&str>,
+    right_id: &str,
+    right_uid: Option<&str>,
+) -> bool {
+    let same_id = !left_id.is_empty() && left_id == right_id;
+    let same_uid = matches!((left_uid, right_uid), (Some(left), Some(right)) if !left.is_empty() && left == right);
+    same_id || same_uid
+}
+
+pub fn same_physical_microphone(
+    left: &CaptureMicrophoneEntry,
+    right: &CaptureMicrophoneEntry,
+) -> bool {
+    same_physical_input(
+        &left.id,
+        left.core_audio_uid.as_deref(),
+        &right.id,
+        right.core_audio_uid.as_deref(),
+    )
+}
+
+/// Both configured slots name one physical microphone.
+pub fn capture_microphones_share_device(entries: &[CaptureMicrophoneEntry]) -> bool {
+    match entries {
+        [left, right, ..] => same_physical_microphone(left, right),
+        _ => false,
+    }
+}
+
+/// Live transcript identity for one slot.
+/// Distinct devices stay `microphone:{device_id}`. Shared devices include the
+/// slot so the two streams do not suppress each other.
+pub fn microphone_source_key(
+    device_id: &str,
+    slot: MicrophoneSlot,
+    capture_microphones: &[CaptureMicrophoneEntry],
+) -> String {
+    if device_id.is_empty() {
+        return "microphone".to_string();
+    }
+    if capture_microphones_share_device(capture_microphones) {
+        format!("microphone:{}:{device_id}", slot.as_str())
+    } else {
+        format!("microphone:{device_id}")
+    }
+}
+
 pub fn normalize_capture_microphones(
     entries: Vec<CaptureMicrophoneEntry>,
 ) -> Vec<CaptureMicrophoneEntry> {
-    let mut seen = std::collections::HashSet::new();
     let normalized = entries
         .into_iter()
         .filter_map(|entry| {
             let id = entry.id.trim().to_string();
-            if id.is_empty() || !seen.insert(id.clone()) {
+            // The same physical microphone may occupy both slots. Empty ids are
+            // still dropped, and the list is still capped at two slots.
+            if id.is_empty() {
                 return None;
             }
             let label = if entry.label.trim().is_empty() {

@@ -937,6 +937,84 @@ fn priority_audio_switches_from_startup_static_to_quiet_clean_voice() {
 }
 
 #[test]
+fn merge_of_identical_samples_stays_comparable_to_the_single_signal() {
+    const SAMPLE_RATE: u32 = 1_000;
+    const CHUNK_SAMPLES: usize = 10;
+    const TOTAL_SAMPLES: usize = 600;
+    const ANALYSIS_WARMUP_SAMPLES: usize = 250;
+
+    let source = (0..TOTAL_SAMPLES)
+        .map(|index| {
+            let time = index as f32 / SAMPLE_RATE as f32;
+            0.32 * (std::f32::consts::TAU * 37.0 * time).sin()
+                + 0.21 * (std::f32::consts::TAU * 73.0 * time).sin()
+                + 0.13 * (std::f32::consts::TAU * 131.0 * time).sin()
+        })
+        .collect::<Vec<_>>();
+    let base_time = Utc.timestamp_millis_opt(0).single().unwrap();
+    let mut mixer = MicrophoneMixer::new(SAMPLE_RATE, base_time);
+    let mut mixed = feed_pair(&mut mixer, SAMPLE_RATE, &source, &source, CHUNK_SAMPLES);
+    mixed.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+
+    let source_peak = source
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max);
+    let mixed_peak = mixed
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        mixed_peak <= source_peak * 1.05,
+        "identical inputs were amplified or hard-clipped (peak {mixed_peak} vs {source_peak})"
+    );
+    let compared = mixed.len().saturating_sub(ANALYSIS_WARMUP_SAMPLES).max(1);
+    let mean_squared_error = mixed
+        .iter()
+        .rev()
+        .zip(source.iter().rev())
+        .take(compared)
+        .map(|(actual, expected)| f64::from(actual - expected).powi(2))
+        .sum::<f64>()
+        / compared as f64;
+    assert!(
+        mean_squared_error < 0.002,
+        "identical inputs cancelled or drifted (MSE {mean_squared_error:.6})"
+    );
+}
+
+#[test]
+fn priority_of_identical_samples_does_not_sum_the_two_slots() {
+    const SAMPLE_RATE: u32 = 1_000;
+    let base_time = Utc.timestamp_millis_opt(0).single().unwrap();
+    let mut mixer = MicrophoneMixer::with_mode(SAMPLE_RATE, base_time, MicrophoneMixMode::Priority);
+    let source = vec![0.4_f32; 800];
+    let mut mixed = feed_pair(&mut mixer, SAMPLE_RATE, &source, &source, 100);
+    mixed.extend(mixer.flush().into_iter().flat_map(|frame| frame.samples));
+
+    assert!(!mixed.is_empty());
+    let peak = mixed
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        peak < 0.55,
+        "identical priority inputs were summed (peak {peak})"
+    );
+    let loud = mixed
+        .iter()
+        .filter(|sample| sample.abs() > 0.2)
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(!loud.is_empty());
+    let mean = loud.iter().sum::<f32>() / loud.len() as f32;
+    assert!(
+        (mean - 0.4).abs() < 0.05,
+        "priority output left the single-signal level (mean {mean})"
+    );
+}
+
+#[test]
 fn priority_audio_preserves_a_dropped_callback_gap_instead_of_shifting_later_audio() {
     let mut mixer = MicrophoneMixer::with_mode(
         48_000,

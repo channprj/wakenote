@@ -71,7 +71,8 @@ export function derivePriorityList(
 export function normalizeCaptureMicrophones(
   entries: readonly CaptureMicrophoneEntry[],
 ): CaptureMicrophoneEntry[] {
-  const seen = new Set<string>();
+  // The same physical microphone may occupy both slots. Empty ids are still
+  // dropped, and the list is still capped at two slots.
   const normalized = entries
     .map((entry) => {
       const coreAudioUid = entry.core_audio_uid?.trim();
@@ -83,13 +84,7 @@ export function normalizeCaptureMicrophones(
         ...(coreAudioUid ? { core_audio_uid: coreAudioUid } : {}),
       };
     })
-    .filter((entry) => {
-      if (!entry.id || seen.has(entry.id)) {
-        return false;
-      }
-      seen.add(entry.id);
-      return true;
-    })
+    .filter((entry) => entry.id.length > 0)
     .slice(0, 2);
   return normalized.length > 0
     ? normalized

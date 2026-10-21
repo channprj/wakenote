@@ -742,6 +742,56 @@ impl<B: AudioInputBackend + Default> DictationRuntime<B> {
         self.mark_slot_started(operation_id, input)
     }
 
+    pub fn open_capture_sample_rate(&self, config: &AudioInputConfig) -> Option<u32> {
+        self.capture
+            .open_device_sample_rate(config)
+            .filter(|sample_rate| *sample_rate > 0)
+    }
+
+    /// Deliver this slot from the physical microphone that is already open.
+    /// No second device stream and no second voice-leveling pass are created.
+    pub fn attach_shared_slot<F>(
+        &mut self,
+        operation_id: u64,
+        input: DictationMicrophoneInput,
+        config: AudioInputConfig,
+        mut on_frame: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&AudioFrame) + Send + 'static,
+    {
+        if !self.capture_is_open(operation_id) {
+            return Err("dictation operation is unavailable".to_string());
+        }
+        let sample_rate = self
+            .open_capture_sample_rate(&config)
+            .or(config.sample_rate)
+            .filter(|sample_rate| *sample_rate > 0)
+            .ok_or_else(|| "dictation requires a valid sample rate".to_string())?;
+        let slot = input.slot;
+        let mix_session = self
+            .mix_session
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "dictation mix session is unavailable".to_string())?;
+        let samples = self.samples.clone();
+        self.capture
+            .attach_slot(slot, &config, move |frame| {
+                let mixed = mix_session
+                    .lock()
+                    .map(|mut session| session.push_frame(slot, sample_rate, frame))
+                    .unwrap_or_default();
+                for frame in mixed {
+                    if let Ok(mut samples) = samples.lock() {
+                        samples.extend_from_slice(&frame.samples);
+                    }
+                    on_frame(&frame);
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        self.mark_slot_started(operation_id, input)
+    }
+
     fn mark_slot_started(
         &mut self,
         operation_id: u64,

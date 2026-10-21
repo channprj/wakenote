@@ -815,6 +815,9 @@ describe("SettingsPage interactions", () => {
     expect(processing.textContent).toContain("Merge Audio");
 
     await userEvent.click(processing);
+    expect(
+      screen.getByRole("option", { name: "Separated Audio" }),
+    ).toBeTruthy();
     await userEvent.click(
       screen.getByRole("option", { name: "Priority Audio" }),
     );
@@ -824,7 +827,7 @@ describe("SettingsPage interactions", () => {
     });
   });
 
-  it("allows selecting Secondary with System Default Primary, excluding the same physical device", async () => {
+  it("allows selecting the same physical microphone as Secondary", async () => {
     const snapshot = mockSnapshot();
     snapshot.settings.capture_microphones = [
       { id: "default", label: "System Default", core_audio_uid: "built-in" },
@@ -865,15 +868,20 @@ describe("SettingsPage interactions", () => {
       screen.getByRole("combobox", { name: "Secondary microphone" }),
     );
     expect(
-      screen.queryByRole("option", { name: "Built-in microphone" }),
-    ).toBeNull();
+      screen.getByRole("option", { name: "Built-in microphone" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("option", { name: "USB microphone" })).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("option", { name: "USB microphone" }),
+      screen.getByRole("option", { name: "Built-in microphone" }),
     );
     expect(actions.onPatch).toHaveBeenCalledWith({
       capture_microphones: [
         { id: "default", label: "System Default", core_audio_uid: "built-in" },
-        { id: "usb", label: "USB microphone", core_audio_uid: "usb" },
+        {
+          id: "internal",
+          label: "Built-in microphone",
+          core_audio_uid: "built-in",
+        },
       ],
     });
   });
