@@ -181,7 +181,7 @@ The shelf follows System Settings and closes when the permission is granted, Sys
 
 The speech gate starts a chunk only after the input remains above Threshold for the Attack duration. It closes only after the input remains below Threshold for Release, while Pre-roll, Lead-in, and Post-roll protect the edges. Max Chunk splits continuous audio into bounded recordings.
 
-With two configured microphones, **Microphone processing** offers three modes. **Separate recordings** writes independent Primary and Secondary artifacts. **Merge Audio** is the default: it buffers up to 220 ms, estimates fractional delay and clock drift, corrects gain and polarity, and blends only while alignment confidence is sufficient. **Priority Audio** instead writes one sufficiently loud, clean source at a time, using switching hysteresis and a 50 ms equal-power crossfade so two room responses are never summed. Every mode retains physical-device identity in metadata and transcript filters.
+With two configured microphones, **Microphone processing** offers three modes. **Separated Audio** writes independent Primary and Secondary artifacts. **Merge Audio** is the default: it buffers up to 220 ms, estimates fractional delay and clock drift, corrects gain and polarity, and blends only while alignment confidence is sufficient. **Priority Audio** instead writes one sufficiently loud, clean source at a time, using switching hysteresis and a 50 ms equal-power crossfade so two room responses are never summed. Every mode retains physical-device identity in metadata and transcript filters. Both slots may name the same physical microphone. That device is opened and leveled once, and both slots use that capture.
 
 Recording, Transcription, and Pause are independent controls. You can retain audio without creating new transcription jobs, process an existing backlog without recording, or pause both.
 
@@ -309,8 +309,8 @@ Settings patches are clamped or normalized by the Rust backend.
 | Soniox language hints | English, Korean | Select several languages in Settings › Audio. Shared with Soniox Dictation; Meetings can override them per transcription. Clear all hints for automatic detection. |
 | Transcript translation language | Not set | Select a target language before enabling transcript translation. |
 | Primary microphone | `System Default` | one available input |
-| Secondary microphone | none | one distinct physical input |
-| Microphone processing | Merge Audio | Separate recordings / Merge Audio / Priority Audio |
+| Secondary microphone | none | one input, including the same physical microphone as Primary |
+| Microphone processing | Merge Audio | Separated Audio / Merge Audio / Priority Audio |
 | Threshold | `-40 dBFS` | `-90 … -10` |
 | Voice-aware Auto Level | `on` | Local RNN speech detection, adaptive digital gain, clipping protection, and hardware input-volume recommendations when the microphone allows them |
 | Mic input volume | Current macOS value | `0 … 100%`; system-authoritative and not reset with recording defaults |
@@ -553,8 +553,8 @@ The browser fixture includes captures, reports, runs, queue outcomes, and instal
 
 ### Keep two microphone identities separate
 
-1. Select explicit, distinct Primary and Secondary devices in **Settings › Audio**.
-2. Choose **Separate recordings** under **Microphone processing**.
+1. Select Primary and Secondary devices in **Settings › Audio**. The same physical microphone may fill both slots.
+2. Choose **Separated Audio** under **Microphone processing**.
 3. Record normally.
 
 WakeNote writes separate source-labelled files and interleaves their transcript entries chronologically. Input monitoring still uses Primary only.
@@ -610,11 +610,11 @@ Use the actual path if WakeNote is installed somewhere other than `/Applications
 
 - Confirm **Settings › Audio › Microphone Permission** is granted.
 - Verify that the pinned device is present. WakeNote reconnects to the same device rather than silently replacing it with another physical input.
-- In a two-microphone setup, choose distinct physical devices. `System Default` is supported as Primary; if macOS routes it to the selected Secondary device, choose another Secondary input.
+- Both slots may use the same physical microphone. WakeNote opens that device once and feeds both slots from that capture. `System Default` is supported as Primary even when it routes to the Secondary device.
 - Watch each microphone status row for Active, Waiting, or Reconnecting state.
 - The input-volume row mirrors macOS. `Digital auto level only` means the device exposes no writable hardware volume; capture remains available and the row is intentionally read-only.
 - Some USB interfaces manage gain with a physical knob and do not expose a macOS input-volume property.
-- With **Voice-aware Auto Level** enabled, WakeNote detects speech locally and may move a writable macOS input slider during capture. Primary and Secondary microphones are adjusted independently.
+- With **Voice-aware Auto Level** enabled, WakeNote detects speech locally and may move a writable macOS input slider during capture. Each physical microphone is leveled once. Slots that share a microphone use that same pass.
 - `Hardware + digital auto level` combines macOS input-volume recommendations with adaptive digital gain. `Digital auto level only` keeps the local digital protection when the device is read-only.
 - Disable **Voice-aware Auto Level** to use `Manual system volume`. Samples already clipped by the microphone's analog-to-digital converter cannot be reconstructed; lower the physical gain when clipping persists.
 

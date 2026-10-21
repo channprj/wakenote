@@ -120,9 +120,9 @@ The frontend renders report Markdown without enabling raw HTML. Hiding a report 
 
 ```text
 physical microphones / supported system source
-  -> independent capture runtimes and bounded frame queues
+  -> one capture runtime per physical microphone and bounded frame queues
   -> level monitor + SpeechGate
-  -> Separate recordings / adaptive Merge Audio / Priority Audio
+  -> Separated Audio / adaptive Merge Audio / Priority Audio
   -> Recorder
   -> YYYYMMDD audio + metadata sidecar
   -> persistent TranscriptionQueue
