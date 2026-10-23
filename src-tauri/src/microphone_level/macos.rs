@@ -710,13 +710,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads real macOS Core Audio devices"]
+    #[ignore = "reads real macOS Core Audio devices; run alone with --test-threads=1"]
     fn core_audio_string_properties_are_released() {
         const READS: usize = 200;
         let backend = CoreAudioInputVolumeBackend::new();
-        let Some(uid) = backend.default_input_uid().unwrap() else {
-            return;
-        };
+        let uid = backend
+            .default_input_uid()
+            .unwrap()
+            .expect("the retention check needs a default input device");
         let read_all = || {
             backend.input_devices().unwrap();
             backend.default_input_uid().unwrap();

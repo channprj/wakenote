@@ -698,21 +698,18 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    #[ignore = "requires macOS Screen Recording permission"]
+    #[ignore = "requires macOS Screen Recording permission; run alone with --test-threads=1"]
     fn window_enumeration_releases_autoreleased_objects_without_a_pool() {
         const POLLS: usize = 40;
         // Like the source watcher, the test thread has no autorelease pool.
-        if let Err(error) = enumerate_windows() {
-            eprintln!("skipped: window enumeration is unavailable: {error}");
-            return;
-        }
+        let enumerate = || enumerate_windows().expect("window enumeration needs Screen Recording");
         // ScreenCaptureKit fills a bounded cache over the first calls.
         for _ in 0..20 {
-            let _ = enumerate_windows();
+            enumerate();
         }
         let before = live_malloc_blocks();
         for _ in 0..POLLS {
-            let _ = enumerate_windows();
+            enumerate();
         }
         let retained = live_malloc_blocks().saturating_sub(before);
         assert!(
