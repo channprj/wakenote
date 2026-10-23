@@ -194,7 +194,7 @@ mod macos {
     use block2::RcBlock;
     use chrono::Utc;
     use dispatch2::{DispatchQueue, DispatchQueueAttr};
-    use objc2::rc::Retained;
+    use objc2::rc::{Retained, autoreleasepool};
     use objc2::runtime::ProtocolObject;
     use objc2::{AnyThread, DefinedClass, define_class, msg_send};
     use objc2_core_audio_types::AudioBufferList;
@@ -380,19 +380,23 @@ mod macos {
     /// permission not yet granted). Off-screen and minimized call windows stay
     /// eligible because their application audio can still be active.
     pub(super) fn enumerate_windows() -> Result<Vec<WindowSnapshot>, String> {
-        let content = fetch_shareable_content().map_err(|error| error.to_string())?;
-        let windows = unsafe { content.windows() };
-        Ok(windows
-            .iter()
-            .filter_map(|window| {
-                let app = unsafe { window.owningApplication() }?;
-                let title = unsafe { window.title() }.map(|title| title.to_string());
-                let app_name = unsafe { app.applicationName() }.to_string();
-                window_snapshot_from_metadata(title.as_deref(), Some(&app_name), unsafe {
-                    app.processID()
+        // The source watcher polls from a long-lived thread with no autorelease
+        // pool, so drain ScreenCaptureKit and NSString temporaries per call.
+        autoreleasepool(|_| {
+            let content = fetch_shareable_content().map_err(|error| error.to_string())?;
+            let windows = unsafe { content.windows() };
+            Ok(windows
+                .iter()
+                .filter_map(|window| {
+                    let app = unsafe { window.owningApplication() }?;
+                    let title = unsafe { window.title() }.map(|title| title.to_string());
+                    let app_name = unsafe { app.applicationName() }.to_string();
+                    window_snapshot_from_metadata(title.as_deref(), Some(&app_name), unsafe {
+                        app.processID()
+                    })
                 })
-            })
-            .collect())
+                .collect())
+        })
     }
 
     /// Resolve the running applications/displays available to capture.
@@ -681,6 +685,40 @@ mod tests {
             "Spotify",
             "com.spotify.client",
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn live_malloc_blocks() -> usize {
+        let mut stats = std::mem::MaybeUninit::<libc::malloc_statistics_t>::zeroed();
+        // SAFETY: a null zone asks malloc for statistics across all zones into `stats`.
+        unsafe { libc::malloc_zone_statistics(std::ptr::null_mut(), stats.as_mut_ptr()) };
+        // SAFETY: the call above initialized every field.
+        unsafe { stats.assume_init() }.blocks_in_use as usize
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires macOS Screen Recording permission"]
+    fn window_enumeration_releases_autoreleased_objects_without_a_pool() {
+        const POLLS: usize = 40;
+        // Like the source watcher, the test thread has no autorelease pool.
+        if let Err(error) = enumerate_windows() {
+            eprintln!("skipped: window enumeration is unavailable: {error}");
+            return;
+        }
+        // ScreenCaptureKit fills a bounded cache over the first calls.
+        for _ in 0..20 {
+            let _ = enumerate_windows();
+        }
+        let before = live_malloc_blocks();
+        for _ in 0..POLLS {
+            let _ = enumerate_windows();
+        }
+        let retained = live_malloc_blocks().saturating_sub(before);
+        assert!(
+            retained < POLLS * 25,
+            "{retained} malloc blocks retained across {POLLS} window enumerations"
+        );
     }
 
     #[test]
