@@ -13,7 +13,7 @@ use objc2_core_audio::{
     kAudioObjectPropertyScopeInput, kAudioObjectSystemObject,
 };
 use objc2_core_audio_types::{AudioBuffer, AudioBufferList};
-use objc2_core_foundation::CFString;
+use objc2_core_foundation::{CFRetained, CFString};
 
 use super::{DeviceVolume, MicrophoneLevelError, MicrophoneVolumeBackend, SystemInputDevice};
 use crate::live_capture::stable_input_device_id;
@@ -331,10 +331,13 @@ fn string_property(
     address: AudioObjectPropertyAddress,
     operation: &'static str,
 ) -> Result<String, MicrophoneLevelError> {
-    let pointer: *const CFString = property_value(object_id, address, operation)?;
-    let value = unsafe { pointer.as_ref() }.ok_or_else(|| {
+    let pointer: *mut CFString = property_value(object_id, address, operation)?;
+    let pointer = NonNull::new(pointer).ok_or_else(|| {
         MicrophoneLevelError::Backend(format!("{operation} returned a null CFString"))
     })?;
+    // SAFETY: Core Audio string properties follow the Create rule, so this +1 reference is
+    // ours to release; `CFRetained` releases it on drop.
+    let value = unsafe { CFRetained::from_raw(pointer) };
     Ok(value.to_string())
 }
 
@@ -696,6 +699,41 @@ mod tests {
         fn drop(&mut self) {
             let _ = self.backend.write_volume(&self.uid, self.volume_percent);
         }
+    }
+
+    fn live_malloc_blocks() -> usize {
+        let mut stats = MaybeUninit::<libc::malloc_statistics_t>::zeroed();
+        // SAFETY: a null zone asks malloc for statistics across all zones into `stats`.
+        unsafe { libc::malloc_zone_statistics(std::ptr::null_mut(), stats.as_mut_ptr()) };
+        // SAFETY: the call above initialized every field.
+        unsafe { stats.assume_init() }.blocks_in_use as usize
+    }
+
+    #[test]
+    #[ignore = "reads real macOS Core Audio devices"]
+    fn core_audio_string_properties_are_released() {
+        const READS: usize = 200;
+        let backend = CoreAudioInputVolumeBackend::new();
+        let Some(uid) = backend.default_input_uid().unwrap() else {
+            return;
+        };
+        let read_all = || {
+            backend.input_devices().unwrap();
+            backend.default_input_uid().unwrap();
+            let _ = backend.read_volume(&uid);
+        };
+        for _ in 0..10 {
+            read_all();
+        }
+        let before = live_malloc_blocks();
+        for _ in 0..READS {
+            read_all();
+        }
+        let retained = live_malloc_blocks().saturating_sub(before);
+        assert!(
+            retained < READS,
+            "{retained} malloc blocks retained across {READS} Core Audio reads"
+        );
     }
 
     #[test]
