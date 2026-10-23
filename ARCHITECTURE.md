@@ -218,13 +218,14 @@ The default is `~/Documents/WakeNote`.
 ├── meetings/<meeting-id>/
 │   ├── audio.m4a or imported audio.*
 │   └── meeting.json
+├── logs/YYYY/MM/YYMMDD.log
 └── reports/
     ├── *.md
     ├── *.json
     └── .runs/*.json
 ```
 
-`all.json` is a derived per-day transcript index; audio and individual sidecars remain the source artifacts. Collisions use `-2`, `-3`, and so on rather than overwriting an existing basename.
+`all.json` is a derived per-day transcript index; audio and individual sidecars remain the source artifacts. `logs/` exists only after **Diagnostic logs** is turned on: `debug_log` appends timestamped `EVENT`/`ERROR` lines from a bounded background writer, collapses consecutive duplicates, and records panics synchronously. Collisions use `-2`, `-3`, and so on rather than overwriting an existing basename.
 
 ## Directory structure
 

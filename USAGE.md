@@ -203,6 +203,7 @@ The default save root is `~/Documents/WakeNote`.
 ├── meetings/<meeting-id>/
 │   ├── audio.m4a
 │   └── meeting.json
+├── logs/2026/08/260805.log
 └── reports/
 ```
 
@@ -218,6 +219,7 @@ The default save root is `~/Documents/WakeNote`.
 | `meetings/<id>/meeting.json` | Long-form meeting state, segments, progress, and optional speaker turns |
 | `reports/*.md` and `*.json` | Persisted report body and metadata |
 | `reports/.runs/*.json` | Active and terminal report-run state |
+| `logs/YYYY/MM/YYMMDD.log` | Error and event lines, written only while **Settings › Storage › Diagnostic logs** is on |
 
 WakeNote never overwrites an existing basename. A collision adds `-2`, then `-3`, and so on.
 
