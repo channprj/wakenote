@@ -20,6 +20,11 @@ const LIVE_PARTIAL_INTERVAL_MS: u64 = 750;
 /// returns nothing below ~1 s, so submitting earlier wastes a decode cycle
 /// the worker could spend on the next, longer slice.
 const LIVE_PARTIAL_MIN_DURATION_MS: u64 = 1_000;
+
+/// Committed chunks reach their consumers through `ChunkCompleted` events, so
+/// keep only a few recent ones for inspection instead of every chunk of an
+/// always-on capture session.
+const RECENT_COMPLETED_CHUNK_LIMIT: usize = 16;
 // Unique across devices and stream restarts so late ASR results cannot target a new utterance.
 static NEXT_CHUNK_ID: OnceLock<AtomicU64> = OnceLock::new();
 
@@ -472,6 +477,9 @@ impl CaptureProcessor {
             microphone_inputs: None,
         })?;
 
+        if self.completed_chunks.len() == RECENT_COMPLETED_CHUNK_LIMIT {
+            self.completed_chunks.remove(0);
+        }
         self.completed_chunks.push(chunk.clone());
         if let Some(chunk_id) = chunk_id {
             let final_duration_ms =
@@ -671,6 +679,51 @@ mod tests {
             metadata.started_at <= last_captured_at,
             "started_at {} must not exceed the latest wall-clock {last_captured_at}",
             metadata.started_at
+        );
+    }
+
+    #[test]
+    fn completed_chunk_history_keeps_only_recent_chunks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
+            save_root: tmp.path().to_path_buf(),
+            settings: AppSettings {
+                attack_ms: 100,
+                max_chunk_ms: 500,
+                ..settings()
+            },
+            sample_rate: 10,
+            device_id: "mic".to_string(),
+            device_name: "Mic".to_string(),
+            used_fallback_device: false,
+            base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+            app_version: "0.1.0".to_string(),
+            source: ChunkSource::Microphone,
+            source_label: None,
+        });
+
+        // Each 500 ms rollover commits one chunk.
+        for _ in 0..(RECENT_COMPLETED_CHUNK_LIMIT + 4) * 5 {
+            processor.process_samples(&[0.8; 1], 100).expect("speech");
+        }
+
+        let committed: Vec<_> = processor
+            .take_pending_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                CaptureControllerEvent::ChunkCompleted { chunk, .. } => Some(chunk.audio_path),
+                _ => None,
+            })
+            .collect();
+        assert!(committed.len() > RECENT_COMPLETED_CHUNK_LIMIT);
+        let retained: Vec<_> = processor
+            .completed_chunks()
+            .iter()
+            .map(|chunk| chunk.audio_path.clone())
+            .collect();
+        assert_eq!(
+            retained,
+            committed[committed.len() - RECENT_COMPLETED_CHUNK_LIMIT..]
         );
     }
 
