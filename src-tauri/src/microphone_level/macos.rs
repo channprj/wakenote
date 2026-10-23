@@ -721,6 +721,7 @@ mod tests {
             backend.input_devices().unwrap();
             backend.default_input_uid().unwrap();
             let _ = backend.read_volume(&uid);
+            crate::audio::list_input_devices();
         };
         for _ in 0..10 {
             read_all();
@@ -731,7 +732,7 @@ mod tests {
         }
         let retained = live_malloc_blocks().saturating_sub(before);
         assert!(
-            retained < READS,
+            retained < READS / 4,
             "{retained} malloc blocks retained across {READS} Core Audio reads"
         );
     }

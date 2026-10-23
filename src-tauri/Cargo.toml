@@ -55,6 +55,11 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 [patch.crates-io]
 sherpa-rs-sys = { path = "vendor/sherpa-rs-sys" }
 sherpa-rs = { path = "vendor/sherpa-rs" }
+# cpal 0.16 pins coreaudio-rs 0.13.0, whose get_device_name() never releases the
+# CFString Core Audio returns, so every cpal device-name read leaked one string.
+# The vendored copy is 0.13.0 with only that 0.14.2 ownership fix (and 0.14.2's
+# explicit `'_` lifetimes, which keep the build warning-free) backported.
+coreaudio-rs = { path = "vendor/coreaudio-rs" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -247,7 +247,7 @@ wakenote/
     ├── tauri.conf.json         Window, bundle, resources, and macOS minimum version
     ├── src/                    Backend domains and Tauri runtime
     ├── tests/                  Rust integration tests
-    └── vendor/                 Patched sherpa-rs / sherpa-rs-sys sources
+    └── vendor/                 Patched sherpa-rs / sherpa-rs-sys / coreaudio-rs sources
 ```
 
 ## Design decisions
