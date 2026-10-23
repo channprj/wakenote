@@ -94,6 +94,14 @@ export function StorageSettings({
             actions.onPatch({ audio_bitrate_kbps: Number(audio_bitrate_kbps) })
           }
         />
+        <SettingSwitch
+          label="Don't keep audio files"
+          description="Delete a recording's audio once its transcript is saved. Clips that fail, need review, or are reprocessed keep their audio, as do imported files."
+          checked={settings.discard_transcript_audio}
+          onCheckedChange={(discard_transcript_audio) =>
+            actions.onPatch({ discard_transcript_audio })
+          }
+        />
       </SettingsCard>
 
       <SettingsCard title="Path preview" description="Files created for each captured clip.">

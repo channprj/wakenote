@@ -87,7 +87,7 @@ export function isReprocessableActivityStatus(status: QueueJobStatus): boolean {
 }
 
 export function isReprocessableActivityJob(job: QueueJob): boolean {
-  return isReprocessableActivityStatus(job.status);
+  return !job.audio_discarded && isReprocessableActivityStatus(job.status);
 }
 
 export function isRecentUnreadWarning(job: QueueJob, nowMs: number): boolean {

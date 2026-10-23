@@ -962,3 +962,51 @@ describe("QueuePanel pagination", () => {
     );
   });
 });
+
+describe("QueuePanel discarded audio", () => {
+  it("disables playback and retry when a transcript's audio was not kept", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    render(
+      <QueuePanel
+        nowMs={Date.parse("2026-08-04T12:00:00.000Z")}
+        queue={{
+          jobs: [
+            {
+              id: 7,
+              audio_path: "/recordings/20260804/010203.m4a",
+              model_id: "whisper-medium",
+              status: "completed",
+              audio_discarded: true,
+            },
+          ],
+          pending_count: 0,
+          running_count: 0,
+          failed_count: 0,
+        }}
+        models={[]}
+        canProcessTranscription
+        onImportAudioFiles={() => {}}
+        onEnqueueBacklog={() => {}}
+        onMarkAllRead={() => {}}
+        onCancelCurrent={() => {}}
+        onProcessNext={() => {}}
+        onRetry={onRetry}
+        onSkip={() => {}}
+        selectedModelId="whisper-medium"
+        onReprocess={async () => true}
+      />,
+    );
+
+    await showVisibleActivity(user);
+    await showAllStatuses(user);
+
+    const play = screen.getByRole("button", { name: "Play audio: 010203.m4a" });
+    const disabledActions = screen.getAllByTitle("Audio was not kept");
+    expect(disabledActions).toHaveLength(2);
+    expect(disabledActions).toContain(play);
+    for (const action of disabledActions) {
+      expect((action as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+});

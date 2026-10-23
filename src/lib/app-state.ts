@@ -162,6 +162,7 @@ export function defaultSettings(): AppSettings {
     save_root: "~/Documents/WakeNote",
     save_root_confirmed: false,
     diagnostic_logging_enabled: false,
+    discard_transcript_audio: false,
     audio_format: "m4a",
     audio_bitrate_kbps: 96,
     ...RECORDING_DEFAULTS,

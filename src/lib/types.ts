@@ -180,6 +180,7 @@ export interface AppSettings {
   save_root: string;
   save_root_confirmed: boolean;
   diagnostic_logging_enabled: boolean;
+  discard_transcript_audio: boolean;
   audio_format: AudioFormat;
   audio_bitrate_kbps: number;
   threshold_dbfs: number;
@@ -350,6 +351,7 @@ export interface QueueJob {
   transcription_options?: TranscriptionOptions | null;
   activity_kind?: QueueActivityKind;
   replay_recorded_audio?: boolean;
+  audio_discarded?: boolean;
 }
 
 export interface QueueSnapshot {

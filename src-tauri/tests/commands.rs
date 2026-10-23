@@ -4611,3 +4611,213 @@ fn same_device_priority_audio_keeps_one_clean_signal() {
         "priority summed both copies of the same microphone"
     );
 }
+
+fn write_microphone_chunk(save_root: &std::path::Path, stem: &str) -> PathBuf {
+    let audio_path = save_root.join("20260611").join(format!("{stem}.wav"));
+    std::fs::create_dir_all(audio_path.parent().expect("audio parent")).expect("audio dir");
+    std::fs::write(&audio_path, b"wav bytes").expect("audio");
+    let now = chrono::Utc::now();
+    let metadata = ChunkMetadata {
+        model_id: "whisper-medium".into(),
+        requested_model_id: None,
+        effective_model_id: None,
+        fallback_from_model_id: None,
+        device_id: "input-0-mic".into(),
+        device_name: "Mic".into(),
+        sample_rate: 16_000,
+        threshold_dbfs: -42.0,
+        attack_ms: 100,
+        release_ms: 1_000,
+        pre_roll_ms: 1_000,
+        lead_in_padding_ms: 300,
+        post_roll_ms: 300,
+        min_chunk_ms: 600,
+        max_chunk_ms: 120_000,
+        started_at: now,
+        ended_at: now,
+        duration_ms: 1000,
+        transcription_status: TranscriptionStatus::Queued,
+        transcribed_at: None,
+        transcript_text: None,
+        app_version: "0.0.0".into(),
+        used_fallback_device: false,
+        live_capture_chunk_id: None,
+        source: ChunkSource::Microphone,
+        source_label: None,
+        microphone_slot: None,
+        microphone_inputs: Vec::new(),
+    };
+    std::fs::write(
+        audio_path.with_extension("json"),
+        serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+    )
+    .expect("metadata");
+    audio_path
+}
+
+fn backend_for_audio_retention(save_root: &std::path::Path, discard: bool) -> AppBackend {
+    let model_dir = save_root.join("models");
+    write_ready_local_model(&model_dir, "whisper-medium");
+    let mut backend = AppBackend::default();
+    backend.update_settings(SettingsPatch {
+        model_directory: Some(model_dir.to_string_lossy().to_string()),
+        selected_model: Some("whisper-medium".into()),
+        discard_transcript_audio: Some(discard),
+        ..wav_settings_patch(save_root)
+    });
+    backend
+}
+
+struct FailingTranscriber;
+
+impl Transcriber for FailingTranscriber {
+    fn transcribe(&self, _request: TranscriptionRequest<'_>) -> Result<String, TranscriptionError> {
+        Err(TranscriptionError::Engine("decoder crashed".into()))
+    }
+}
+
+#[test]
+fn discarded_recording_audio_keeps_the_transcript_and_blocks_reruns() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let audio_path = write_microphone_chunk(tmp.path(), "260611-024304");
+    let mut backend = backend_for_audio_retention(tmp.path(), true);
+    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("process transcription");
+
+    let job = snapshot.jobs.last().expect("job").clone();
+    assert_eq!(job.status, QueueJobStatus::Completed);
+    assert!(job.audio_discarded);
+    assert!(!audio_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
+        "queued transcript\n"
+    );
+    assert!(audio_path.with_extension("json").exists());
+    let retry_error = backend.retry_job(job.id).expect_err("retry without audio");
+    assert!(retry_error.contains("no longer available"), "{retry_error}");
+    assert_eq!(
+        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript kept"),
+        "queued transcript\n"
+    );
+
+    let mut trashed = Vec::new();
+    let result = backend
+        .trash_activity_jobs_with(vec![job.id], |path| {
+            trashed.push(path.to_path_buf());
+            Ok(())
+        })
+        .expect("trash activity");
+    assert_eq!(result.trashed_ids, vec![job.id]);
+    assert_eq!(trashed, vec![audio_path]);
+}
+
+#[test]
+fn audio_is_kept_by_default_for_imports_and_for_failed_jobs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let kept_by_default = write_microphone_chunk(tmp.path(), "260611-024305");
+    let mut backend = backend_for_audio_retention(tmp.path(), false);
+    backend.enqueue_audio_file(&kept_by_default, Some("whisper-medium".to_string()));
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("process default");
+    assert!(!snapshot.jobs.last().expect("job").audio_discarded);
+    assert!(kept_by_default.exists());
+
+    let archive = tmp.path().join("archive");
+    let imported = tmp.path().join("picked").join("interview.wav");
+    std::fs::create_dir_all(imported.parent().expect("picked dir")).expect("picked dir");
+    std::fs::write(&imported, b"wav bytes").expect("imported audio");
+    let failed = write_microphone_chunk(&archive, "260611-024306");
+    let mut backend = backend_for_audio_retention(&archive, true);
+    backend.enqueue_audio_file(&imported, Some("whisper-medium".to_string()));
+    backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("process import");
+    assert!(
+        imported.exists(),
+        "imported audio outside WakeNote recordings is never deleted"
+    );
+    assert!(imported.with_extension("txt").exists());
+
+    backend.enqueue_audio_file(&failed, Some("whisper-medium".to_string()));
+    let snapshot = backend
+        .process_next_transcription_with(FailingTranscriber)
+        .expect("process failure");
+    let job = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == failed)
+        .expect("failed job");
+    assert_eq!(job.status, QueueJobStatus::Failed);
+    assert!(!job.audio_discarded);
+    assert!(failed.exists(), "failed jobs keep audio for retries");
+}
+
+#[test]
+fn reprocessing_keeps_audio_and_trashing_a_discarded_transcript_clears_its_activity_row() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let reprocessed = write_microphone_chunk(tmp.path(), "260611-024307");
+    let mut backend = backend_for_audio_retention(tmp.path(), false);
+    backend.enqueue_audio_file(&reprocessed, Some("whisper-medium".to_string()));
+    backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("first run");
+    backend.update_settings(SettingsPatch {
+        discard_transcript_audio: Some(true),
+        ..SettingsPatch::default()
+    });
+    backend
+        .regenerate_transcript(&reprocessed, None)
+        .expect("regenerate");
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("reprocess");
+    let job = snapshot
+        .jobs
+        .iter()
+        .find(|job| job.audio_path == reprocessed)
+        .expect("reprocessed job");
+    assert_eq!(job.status, QueueJobStatus::Completed);
+    assert!(!job.audio_discarded);
+    assert!(
+        reprocessed.exists(),
+        "explicit reprocessing keeps the audio"
+    );
+
+    let discarded = write_microphone_chunk(tmp.path(), "260611-024308");
+    backend.enqueue_audio_file(&discarded, Some("whisper-medium".to_string()));
+    let snapshot = backend
+        .process_next_transcription_with(StaticTranscriber::default())
+        .expect("discarding run");
+    assert!(
+        snapshot
+            .jobs
+            .iter()
+            .any(|job| job.audio_path == discarded && job.audio_discarded)
+    );
+    let fake_trash = tmp.path().join("fake-trash");
+    std::fs::create_dir_all(&fake_trash).expect("fake trash");
+    let outcome = backend
+        .trash_transcripts_with(vec![discarded.with_extension("txt")], |reference| {
+            wakenote::trash::move_recording_bundle_to_trash_with(reference, |stage_path| {
+                let destination = fake_trash.join(stage_path.file_name().expect("stage name"));
+                std::fs::rename(stage_path, &destination).map_err(|error| error.to_string())?;
+                Ok(destination)
+            })
+        })
+        .expect("trash transcript");
+
+    assert_eq!(outcome.trashed_transcript_paths.len(), 1);
+    assert!(
+        !backend
+            .queue_snapshot()
+            .jobs
+            .iter()
+            .any(|job| job.audio_path == discarded),
+        "the Activity row of a trashed transcript is removed even without audio"
+    );
+}

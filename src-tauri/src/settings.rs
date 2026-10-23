@@ -541,6 +541,9 @@ pub struct AppSettings {
     pub audio_format: AudioFormat,
     #[serde(default = "default_audio_bitrate_kbps")]
     pub audio_bitrate_kbps: u32,
+    /// Delete a WakeNote recording's audio once its transcript is saved.
+    #[serde(default)]
+    pub discard_transcript_audio: bool,
     pub threshold_dbfs: f32,
     pub calibration_completed: bool,
     pub attack_ms: u64,
@@ -715,6 +718,7 @@ pub struct SettingsPatch {
     pub diagnostic_logging_enabled: Option<bool>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
+    pub discard_transcript_audio: Option<bool>,
     pub threshold_dbfs: Option<f32>,
     pub calibration_completed: Option<bool>,
     pub attack_ms: Option<u64>,
@@ -1458,6 +1462,9 @@ impl AppSettings {
         if let Some(value) = patch.audio_bitrate_kbps {
             self.audio_bitrate_kbps = clamp_audio_bitrate_kbps(value);
         }
+        if let Some(value) = patch.discard_transcript_audio {
+            self.discard_transcript_audio = value;
+        }
         if let Some(value) = patch.threshold_dbfs {
             self.threshold_dbfs = clamp_threshold_dbfs(value);
         }
@@ -1746,6 +1753,7 @@ impl Default for AppSettings {
             diagnostic_logging_enabled: false,
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
+            discard_transcript_audio: false,
             threshold_dbfs: -40.0,
             calibration_completed: false,
             attack_ms: 200,
@@ -2119,6 +2127,16 @@ mod tests {
             settings.effective_floating_overlay_position(),
             FloatingOverlayPosition::Off
         );
+    }
+
+    #[test]
+    fn patch_sets_discard_transcript_audio() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            discard_transcript_audio: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.discard_transcript_audio);
     }
 
     #[test]
@@ -2658,6 +2676,7 @@ mod tests {
         assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
         assert!(!settings.diagnostic_logging_enabled);
+        assert!(!settings.discard_transcript_audio);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");

@@ -115,6 +115,7 @@ describe("activity attention", () => {
     expect(countUnreadActivityOutcomes([completedWarning, cleanCompleted])).toBe(1);
     expect(isReprocessableActivityJob(completedWarning)).toBe(true);
     expect(isReprocessableActivityJob(cleanCompleted)).toBe(true);
+    expect(isReprocessableActivityJob({ ...cleanCompleted, audio_discarded: true })).toBe(false);
     expect(activityIssueCounts([completedWarning, job("failed", error(), { id: 3 })])).toEqual({
       warning: 1,
       error: 1,

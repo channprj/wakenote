@@ -31,4 +31,14 @@ describe("StorageSettings", () => {
 
     expect(onPatch).toHaveBeenCalledWith({ diagnostic_logging_enabled: true });
   });
+
+  it("offers to stop keeping audio files, off by default", async () => {
+    const onPatch = renderStorage();
+    const toggle = screen.getByRole("switch", { name: "Don't keep audio files" });
+
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await userEvent.setup().click(toggle);
+
+    expect(onPatch).toHaveBeenCalledWith({ discard_transcript_audio: true });
+  });
 });

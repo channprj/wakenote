@@ -2759,6 +2759,7 @@ fn process_dictation_recording(
             if let Some(entry) = cost_entry {
                 upsert_transcription_cost(app, entry);
             }
+            let flagged = execution.issue.is_some();
             let text = execution.text;
             if let Err(error) = TranscriptionSidecar::write_success(&archive, &text) {
                 show_dictation_operation_error(
@@ -2772,6 +2773,7 @@ fn process_dictation_recording(
             {
                 Ok(output) => output,
                 Err(error) => {
+                    discard_dictation_audio_if_configured(&settings, &archive, flagged);
                     refresh_transcript_day_index(&archive.audio_path);
                     if dictation_operation_is_active(app, operation_id) {
                         show_dictation_operation_error(
@@ -2795,6 +2797,7 @@ fn process_dictation_recording(
                 show_dictation_operation_error(app, operation_id, "No speech detected".to_string());
                 return;
             };
+            discard_dictation_audio_if_configured(&settings, &archive, flagged);
             refresh_transcript_day_index(&archive.audio_path);
             debug_log::event(format!(
                 "[dictation] transcription=completed elapsed_ms={} total_ms={}",
@@ -2820,6 +2823,28 @@ fn process_dictation_recording(
             refresh_transcript_day_index(&archive.audio_path);
             show_dictation_operation_error(app, operation_id, error);
         }
+    }
+}
+
+/// Flagged transcripts keep their audio so they can be reprocessed.
+fn discard_dictation_audio_if_configured(
+    settings: &AppSettings,
+    archive: &wakenote::recorder::RecordedChunk,
+    flagged: bool,
+) {
+    if !settings.discard_transcript_audio || flagged {
+        return;
+    }
+    match TranscriptionSidecar::discard_audio(archive) {
+        Ok(true) => debug_log::event(format!(
+            "[dictation] audio_discarded path={}",
+            archive.audio_path.display()
+        )),
+        Ok(false) => {}
+        Err(error) => log_error!(
+            "[dictation] audio_discard_failed path={} error={error}",
+            archive.audio_path.display()
+        ),
     }
 }
 

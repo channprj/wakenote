@@ -119,17 +119,21 @@ pub struct QueueJob {
     /// Explicit reprocessing must replay saved audio instead of waiting for a live capture.
     #[serde(default)]
     pub replay_recorded_audio: bool,
+    /// The audio was deleted after transcription, so the job cannot run again.
+    #[serde(default)]
+    pub audio_discarded: bool,
 }
 
 impl QueueJob {
     pub fn is_reprocessable(&self) -> bool {
-        matches!(
-            self.status,
-            QueueJobStatus::Completed
-                | QueueJobStatus::Failed
-                | QueueJobStatus::Cancelled
-                | QueueJobStatus::Skipped
-        )
+        !self.audio_discarded
+            && matches!(
+                self.status,
+                QueueJobStatus::Completed
+                    | QueueJobStatus::Failed
+                    | QueueJobStatus::Cancelled
+                    | QueueJobStatus::Skipped
+            )
     }
 
     pub fn is_reprocessable_attention_outcome(&self) -> bool {
@@ -209,6 +213,7 @@ impl TranscriptionQueue {
             transcription_options: None,
             activity_kind,
             replay_recorded_audio: false,
+            audio_discarded: false,
         });
         (id, true)
     }
@@ -268,6 +273,7 @@ impl TranscriptionQueue {
             }
             job.model_id = model_id;
             job.replay_recorded_audio = true;
+            job.audio_discarded = false;
             job.status = QueueJobStatus::Pending;
             job.error = None;
             job.issue = None;
@@ -383,6 +389,12 @@ impl TranscriptionQueue {
         job.issue = Some(issue);
         job.is_read = false;
         Ok(())
+    }
+
+    pub fn mark_audio_discarded(&mut self, id: u64) {
+        if let Some(job) = self.job_mut(id) {
+            job.audio_discarded = true;
+        }
     }
 
     pub fn mark_completed(&mut self, id: u64) -> Result<(), String> {

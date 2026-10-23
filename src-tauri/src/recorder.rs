@@ -361,6 +361,21 @@ impl TranscriptionSidecar {
         )
     }
 
+    /// Deletes a clip's audio, but only once its transcript is on disk.
+    /// Returns whether the audio was removed.
+    pub fn discard_audio(chunk: &RecordedChunk) -> Result<bool, RecorderError> {
+        let Ok(transcript) = fs::File::open(&chunk.transcript_path) else {
+            return Ok(false);
+        };
+        if transcript.metadata()?.len() <= 1 {
+            return Ok(false);
+        }
+        // The transcript must survive a power loss before its only source goes.
+        transcript.sync_all()?;
+        remove_file_if_present(&chunk.audio_path)?;
+        Ok(true)
+    }
+
     pub fn mark_not_requested(chunk: &RecordedChunk) -> Result<(), RecorderError> {
         remove_file_if_present(&chunk.transcript_path)?;
         remove_file_if_present(&chunk.error_path)?;

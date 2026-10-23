@@ -2360,6 +2360,16 @@ impl AppBackend {
             .queue
             .job(id)
             .ok_or_else(|| format!("job {id} not found"))?;
+        if self.active_transcription_jobs.contains(&id) {
+            return Err(format!(
+                "job {id} is still stopping; retry it once the current run ends"
+            ));
+        }
+        if job.audio_discarded || !job.audio_path.is_file() {
+            return Err(format!(
+                "job {id} cannot be retried because its audio file is no longer available"
+            ));
+        }
         if !job.is_reprocessable() {
             return Err(format!("job {id} cannot be retried from {:?}", job.status));
         }
@@ -2490,7 +2500,13 @@ impl AppBackend {
         let mut missing_ids = Vec::new();
         let mut failures = Vec::new();
         for job in jobs {
-            match job.audio_path.try_exists() {
+            // Discarded audio still leaves a transcript bundle worth trashing.
+            let bundle_present = if job.audio_discarded {
+                Ok(true)
+            } else {
+                job.audio_path.try_exists()
+            };
+            match bundle_present {
                 Ok(false) => {
                     removed_ids.push(job.id);
                     missing_ids.push(job.id);
@@ -2500,7 +2516,7 @@ impl AppBackend {
                     audio_path: job.audio_path,
                     error: error.to_string(),
                 }),
-                Ok(true) if !is_importable_audio_path(&job.audio_path) => {
+                Ok(true) if !job.audio_discarded && !is_importable_audio_path(&job.audio_path) => {
                     failures.push(TrashActivityJobFailure {
                         id: job.id,
                         audio_path: job.audio_path,
@@ -2593,13 +2609,16 @@ impl AppBackend {
                         });
                         continue;
                     }
-                    removed_audio_paths.extend(
-                        bundle
-                            .original_paths
-                            .iter()
-                            .filter(|path| is_recording_audio_path(path))
-                            .cloned(),
-                    );
+                    // Use every candidate audio path: a clip whose audio was not
+                    // kept still has an Activity row to clear.
+                    if let Some(bundle_paths) = bundle_paths_by_transcript.get(&transcript_path) {
+                        removed_audio_paths.extend(
+                            bundle_paths
+                                .iter()
+                                .filter(|path| is_recording_audio_path(path))
+                                .cloned(),
+                        );
+                    }
                     removed_transcript_paths.push(transcript_path.clone());
                     trashed_transcript_paths.push(transcript_path);
                 }
@@ -3033,8 +3052,55 @@ impl AppBackend {
         let result = apply_outcome(&mut self.queue, outcome).map_err(|error| error.to_string());
         self.active_transcription_jobs.remove(&id);
         result?;
+        // Save Completed before deleting audio, so a crash in between can't
+        // reload the job as Pending and rerun it without its audio.
         self.persist_queue();
+        if self.discard_transcribed_audio(id) {
+            self.persist_queue();
+        }
         Ok(self.queue.snapshot())
+    }
+
+    /// With "Don't keep audio files" on, deletes a WakeNote recording's audio
+    /// once its transcript is saved. Failed, flagged, reprocessed, and imported
+    /// audio stays. Returns whether the job changed.
+    fn discard_transcribed_audio(&mut self, id: u64) -> bool {
+        if !self.settings.discard_transcript_audio {
+            return false;
+        }
+        let Some(job) = self.queue.job(id) else {
+            return false;
+        };
+        let wakenote_recording = matches!(
+            job.activity_kind,
+            QueueActivityKind::LiveTranscription | QueueActivityKind::Dictation
+        ) && job.audio_path.starts_with(self.save_root_path());
+        if job.status != QueueJobStatus::Completed
+            || job.issue.is_some()
+            || job.replay_recorded_audio
+            || !wakenote_recording
+        {
+            return false;
+        }
+        let chunk = RecordedChunk::from_audio_path(job.audio_path.clone());
+        match TranscriptionSidecar::discard_audio(&chunk) {
+            Ok(true) => {
+                debug_log::event(format!(
+                    "[queue] state=audio_discarded job_id={id} path={}",
+                    chunk.audio_path.display()
+                ));
+                self.queue.mark_audio_discarded(id);
+                true
+            }
+            Ok(false) => false,
+            Err(error) => {
+                debug_log::error(format!(
+                    "[queue] audio_discard_failed job_id={id} path={} error={error}",
+                    chunk.audio_path.display()
+                ));
+                false
+            }
+        }
     }
 
     pub fn list_microphones(&self) -> Vec<MicrophoneDevice> {

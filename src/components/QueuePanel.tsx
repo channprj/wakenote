@@ -235,6 +235,8 @@ function groupActivityJobsByDay(
   return [...groups].map(([day, entries]) => ({ day, entries }));
 }
 
+const AUDIO_NOT_KEPT = "Audio was not kept";
+
 export function queueJobActionState(status: QueueJobStatus) {
   return {
     canRetry: isReprocessableActivityStatus(status),
@@ -1024,10 +1026,11 @@ export function QueuePanel({
                       </td>
                     </tr>
                     {group.entries.map((job) => {
+                      const audioKept = !job.audio_discarded;
                       const actions = queueJobActionState(job.status);
-                      const retryReason = queueJobRetryDisabledReason(
-                        job.status,
-                      );
+                      const retryReason = audioKept
+                        ? queueJobRetryDisabledReason(job.status)
+                        : AUDIO_NOT_KEPT;
                       const skipReason = queueJobSkipDisabledReason(job.status);
                       const presentation = activityJobPresentation(job);
                       const rowTone = presentation.primaryTone;
@@ -1130,9 +1133,10 @@ export function QueuePanel({
                                 data-active={
                                   playingJob?.id === job.id || undefined
                                 }
+                                disabled={!audioKept}
                                 onClick={() => setPlayingJob(job)}
                                 size="icon"
-                                title="Play audio"
+                                title={audioKept ? "Play audio" : AUDIO_NOT_KEPT}
                                 type="button"
                                 variant="secondary"
                               >
@@ -1154,7 +1158,7 @@ export function QueuePanel({
                                 size="icon"
                                 title={retryReason ?? "Retry"}
                                 onClick={() => onRetry(job.id)}
-                                disabled={!actions.canRetry}
+                                disabled={!audioKept || !actions.canRetry}
                               >
                                 <RotateCw data-icon="solo" />
                               </Button>
