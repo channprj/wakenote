@@ -209,7 +209,7 @@ The default save root is `~/Documents/WakeNote`.
 
 | Artifact | Meaning |
 | --- | --- |
-| `*.m4a`, `*.mp3`, `*.wav` | Captured or copied audio |
+| `*.m4a`, `*.mp3`, `*.wav` | Captured or copied audio. With **Settings › Storage › Don't keep audio files** on, a captured clip's audio is deleted once its transcript is saved; failed or flagged clips and imported files keep theirs |
 | `*.json` beside a chunk | Model, device, timing, source, status, and provenance metadata |
 | `*.txt` | Successful transcript |
 | `*.error.txt` | Recoverable transcription error |
