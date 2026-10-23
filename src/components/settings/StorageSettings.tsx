@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2Icon, FolderOpenIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -15,7 +16,26 @@ export function StorageSettings({
   settings: AppSettings;
   actions: SettingsActions;
 }) {
-  const saveRootReason = confirmSaveRootDisabledReason(settings);
+  // Every saved Save Root becomes the live archive (and log) folder, so keep
+  // typing local and save once the edit is finished.
+  const [saveRootDraft, setSaveRootDraft] = useState(settings.save_root);
+  const editingSaveRoot = useRef(false);
+  const canceledSaveRoot = useRef(false);
+  useEffect(() => {
+    if (!editingSaveRoot.current) setSaveRootDraft(settings.save_root);
+  }, [settings.save_root]);
+  const commitSaveRoot = () => {
+    editingSaveRoot.current = false;
+    if (canceledSaveRoot.current) {
+      canceledSaveRoot.current = false;
+      setSaveRootDraft(settings.save_root);
+      return;
+    }
+    if (saveRootDraft !== settings.save_root) {
+      actions.onPatch({ save_root: saveRootDraft });
+    }
+  };
+  const saveRootReason = confirmSaveRootDisabledReason({ save_root: saveRootDraft });
   const pathPrefix = settings.save_root || "Choose a save folder";
 
   return (
@@ -30,9 +50,23 @@ export function StorageSettings({
           </FieldContent>
           <Input
             id="save-root"
-            value={settings.save_root}
-            title={settings.save_root || undefined}
-            onChange={(event) => actions.onPatch({ save_root: event.currentTarget.value })}
+            value={saveRootDraft}
+            title={saveRootDraft || undefined}
+            onFocus={() => {
+              editingSaveRoot.current = true;
+            }}
+            onChange={(event) => setSaveRootDraft(event.currentTarget.value)}
+            onBlur={commitSaveRoot}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                canceledSaveRoot.current = true;
+                event.currentTarget.blur();
+              }
+            }}
           />
           <div className="settings-action-row">
             {settings.save_root_confirmed ? (
@@ -44,7 +78,7 @@ export function StorageSettings({
                 variant="outline"
                 disabled={saveRootReason !== null}
                 title={saveRootReason ?? undefined}
-                onClick={() => actions.onPatch({ save_root: settings.save_root })}
+                onClick={() => actions.onPatch({ save_root: saveRootDraft })}
               >
                 <CheckCircle2Icon data-icon="inline-start" />
                 Confirm Save Root

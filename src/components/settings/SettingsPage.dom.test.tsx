@@ -930,9 +930,11 @@ describe("SettingsPage interactions", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Save Root"), {
-      target: { value: "/tmp/notes" },
-    });
+    const saveRoot = screen.getByLabelText("Save Root");
+    fireEvent.focus(saveRoot);
+    fireEvent.change(saveRoot, { target: { value: "/tmp/notes" } });
+    expect(actions.onPatch).not.toHaveBeenCalled();
+    fireEvent.blur(saveRoot);
     expect(actions.onPatch).toHaveBeenCalledWith({ save_root: "/tmp/notes" });
   });
 

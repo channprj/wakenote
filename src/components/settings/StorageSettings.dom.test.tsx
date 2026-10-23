@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings } from "@/lib/app-state";
@@ -30,6 +30,28 @@ describe("StorageSettings", () => {
     await userEvent.setup().click(screen.getByRole("switch", { name: "Diagnostic logs" }));
 
     expect(onPatch).toHaveBeenCalledWith({ diagnostic_logging_enabled: true });
+  });
+
+  it("saves Save Root once on blur or Enter, never per keystroke, and Escape reverts", async () => {
+    const user = userEvent.setup();
+    const onPatch = renderStorage();
+    const input = screen.getByLabelText("Save Root") as HTMLInputElement;
+
+    await user.clear(input);
+    await user.type(input, "/Volumes/Notes");
+    expect(onPatch).not.toHaveBeenCalled();
+    await user.type(input, "{Enter}");
+    expect(onPatch).toHaveBeenCalledExactlyOnceWith({ save_root: "/Volumes/Notes" });
+
+    onPatch.mockClear();
+    await user.type(input, "/draft{Escape}");
+    expect(onPatch).not.toHaveBeenCalled();
+    expect(input.value).toBe("/Archive");
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "/Elsewhere" } });
+    fireEvent.blur(input);
+    expect(onPatch).toHaveBeenCalledExactlyOnceWith({ save_root: "/Elsewhere" });
   });
 
   it("offers to stop keeping audio files, off by default", async () => {
