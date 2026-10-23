@@ -39,7 +39,6 @@ use wakenote::commands::{
     tray_presentation_for_dictation, tray_presentation_for_state, tray_runtime_presentation,
     validate_audio_playback_file, with_live_runtime_warning,
 };
-use wakenote::debug_log::append_debug_log_nonblocking as append_debug_log;
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
     DictationCaptureHealth, DictationCaptureResult, DictationHotkeyMode, DictationMicrophoneInput,
@@ -125,6 +124,7 @@ use wakenote::updater::RESTART_GATE;
 use wakenote::voice_leveling::{
     ServiceHardwareLevelControl, VoiceAwareMicrophoneProcessor, VoiceLevelingPolicy,
 };
+use wakenote::{debug_log, log_error, log_event};
 
 mod app_updater;
 
@@ -372,7 +372,7 @@ fn dispatch_auto_type(
         });
         if let Err(error) = result {
             session.clear();
-            append_runtime_debug_log(&settings, format!("[auto-type] {error}"));
+            debug_log::error(format!("[auto-type] {error}"));
             let _ = input_app.emit("auto-type-error", error);
         }
     });
@@ -463,7 +463,7 @@ fn emit_dictionary_outcome(
         DictionaryApplyOutcome::Invalid(_) => EVENT_DICTIONARY_FILE_ERROR,
     };
     if let Err(error) = app.emit(event, status.clone()) {
-        eprintln!("[dictionary-file] could not emit {event}: {error}");
+        log_error!("[dictionary-file] could not emit {event}: {error}");
     }
 }
 
@@ -478,7 +478,7 @@ fn spawn_dictionary_file_watcher(
             let current = match backend_state.lock() {
                 Ok(backend) => backend.settings().dictionary,
                 Err(error) => {
-                    eprintln!("[dictionary-file] backend lock failed: {error}");
+                    log_error!("[dictionary-file] backend lock failed: {error}");
                     continue;
                 }
             };
@@ -489,14 +489,14 @@ fn spawn_dictionary_file_watcher(
                     (poll, status)
                 }
                 Err(error) => {
-                    eprintln!("[dictionary-file] store lock failed: {error}");
+                    log_error!("[dictionary-file] store lock failed: {error}");
                     continue;
                 }
             };
             let outcome = match backend_state.lock() {
                 Ok(mut backend) => apply_dictionary_poll(&mut backend, poll),
                 Err(error) => {
-                    eprintln!("[dictionary-file] backend apply lock failed: {error}");
+                    log_error!("[dictionary-file] backend apply lock failed: {error}");
                     continue;
                 }
             };
@@ -1205,9 +1205,9 @@ fn publish_overlay_caption_snapshot(
                 &snapshot.style,
                 layout_context.map(|context| context.target_monitor),
             ) {
-                eprintln!("[overlay-caption] {context} show failed: {error}");
+                log_error!("[overlay-caption] {context} show failed: {error}");
                 if let Err(hide_error) = overlay::hide_overlay(&app_for_task) {
-                    eprintln!(
+                    log_error!(
                         "[overlay-caption] {context} cleanup after show failure failed: {hide_error}"
                     );
                 }
@@ -1216,7 +1216,7 @@ fn publish_overlay_caption_snapshot(
             let exit_duration = subtitle_exit_duration(snapshot.style.animation);
             if exit_duration.is_zero() {
                 if let Err(error) = overlay::hide_overlay(&app_for_task) {
-                    eprintln!("[overlay-caption] {context} hide failed: {error}");
+                    log_error!("[overlay-caption] {context} hide failed: {error}");
                 }
             } else {
                 schedule_subtitle_window_hide(
@@ -1229,9 +1229,9 @@ fn publish_overlay_caption_snapshot(
             }
         }
     }) {
-        eprintln!("[overlay-caption] {context} schedule failed: {error}");
+        log_error!("[overlay-caption] {context} schedule failed: {error}");
         if let Err(hide_error) = overlay::hide_overlay_on_main_thread(app, context) {
-            eprintln!(
+            log_error!(
                 "[overlay-caption] {context} cleanup after schedule failure failed: {hide_error}"
             );
         }
@@ -1271,10 +1271,10 @@ fn schedule_subtitle_window_hide(
         let app_for_task = app.clone();
         if let Err(error) = app.run_on_main_thread(move || {
             if let Err(error) = overlay::hide_overlay(&app_for_task) {
-                eprintln!("[overlay-caption] {context} delayed hide failed: {error}");
+                log_error!("[overlay-caption] {context} delayed hide failed: {error}");
             }
         }) {
-            eprintln!("[overlay-caption] {context} delayed hide schedule failed: {error}");
+            log_error!("[overlay-caption] {context} delayed hide schedule failed: {error}");
         }
     });
 }
@@ -1732,7 +1732,7 @@ fn emit_dictation_state(app: &AppHandle, payload: DictationStatePayload) {
 
 fn emit_permission_guidance(app: &AppHandle, payload: PermissionGuidancePayload) {
     if let Err(error) = app.emit(PERMISSION_GUIDANCE_EVENT, payload) {
-        eprintln!("[permissions] could not emit guidance: {error}");
+        log_error!("[permissions] could not emit guidance: {error}");
     }
 }
 
@@ -1798,16 +1798,6 @@ fn play_dictation_cue(
         .ok_or_else(|| format!("afplay exited with {status}"))
 }
 
-fn log_dictation_runtime(app: &AppHandle, message: impl AsRef<str>) {
-    let message = message.as_ref();
-    if let Some(settings) = app
-        .try_state::<BackendState>()
-        .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
-    {
-        append_runtime_debug_log(&settings, message);
-    }
-}
-
 fn spawn_dictation_cue_task(task: impl FnOnce() + Send + 'static) -> Result<(), String> {
     thread::Builder::new()
         .name("dictation-audio-cue".to_string())
@@ -1830,15 +1820,13 @@ fn play_dictation_cue_nonblocking_on_failure(
             DictationCue::End => "end",
         };
         match play_dictation_cue(&app, cue, &settings) {
-            Ok(()) => log_dictation_runtime(&app, format!("[dictation] cue={cue_name} completed")),
+            Ok(()) => debug_log::event(format!("[dictation] cue={cue_name} completed")),
             Err(error) => {
-                let message = format!("[dictation] cue={cue_name} failed error={error}");
-                eprintln!("{message}");
-                log_dictation_runtime(&app, message);
+                log_error!("[dictation] cue={cue_name} failed error={error}");
             }
         }
     }) {
-        eprintln!("[dictation] cue worker failed: {error}");
+        log_error!("[dictation] cue worker failed: {error}");
     }
 }
 
@@ -1857,7 +1845,7 @@ fn dispatch_dictation_shortcut_event(
     if let Some(dispatcher) = app.try_state::<DictationShortcutDispatcher>()
         && let Err(error) = dispatcher.send((event, mode))
     {
-        eprintln!("[dictation] shortcut dispatcher unavailable: {error}");
+        log_error!("[dictation] shortcut dispatcher unavailable: {error}");
     }
 }
 
@@ -2082,15 +2070,7 @@ fn handle_modifier_shortcut_event(
         .map(|mut runtime| runtime.handle_modifiers(pressed))
         .unwrap_or_default();
     for (event, mode) in events {
-        if let Some(settings) = app
-            .try_state::<BackendState>()
-            .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
-        {
-            append_runtime_debug_log(
-                &settings,
-                format!("[dictation] modifier shortcut event={event:?}"),
-            );
-        }
+        debug_log::event(format!("[dictation] modifier shortcut event={event:?}"));
         dispatch_dictation_shortcut_event(app, event, mode);
     }
 }
@@ -2191,10 +2171,10 @@ fn show_dictation_overlay(
         if let Err(error) =
             overlay::show_dictation_overlay(&app_for_task, state, message, position, style)
         {
-            eprintln!("[dictation] overlay update failed: {error}");
+            log_error!("[dictation] overlay update failed: {error}");
         }
     }) {
-        eprintln!("[dictation] overlay scheduling failed: {error}");
+        log_error!("[dictation] overlay scheduling failed: {error}");
     }
 }
 
@@ -2277,13 +2257,10 @@ fn type_dictation_text_on_main_thread(
             show_dictation_operation_error(&app_for_task, operation_id, error);
             return;
         }
-        log_dictation_runtime(
-            &app_for_task,
-            format!(
-                "[dictation] text_input=completed total_ms={}",
-                started.elapsed().as_millis()
-            ),
-        );
+        debug_log::event(format!(
+            "[dictation] text_input=completed total_ms={}",
+            started.elapsed().as_millis()
+        ));
         play_dictation_cue_nonblocking_on_failure(&app_for_task, DictationCue::End, &settings);
         complete_dictation_operation(&app_for_task, operation_id);
     }) {
@@ -2341,7 +2318,7 @@ fn restore_overlay_after_dictation(app: &AppHandle) {
             settings.effective_floating_overlay_position(),
             "dictation restore",
         ) {
-            eprintln!("[dictation] overlay restore failed: {error}");
+            log_error!("[dictation] overlay restore failed: {error}");
         }
         return;
     }
@@ -2349,7 +2326,7 @@ fn restore_overlay_after_dictation(app: &AppHandle) {
     if let Some(caption) = caption {
         publish_overlay_caption_snapshot(app, caption, "dictation finish");
     } else if let Err(error) = overlay::hide_overlay_on_main_thread(app, "dictation finish") {
-        eprintln!("[dictation] overlay hide failed: {error}");
+        log_error!("[dictation] overlay hide failed: {error}");
     }
 }
 
@@ -2391,8 +2368,7 @@ fn complete_dictation_operation(app: &AppHandle, operation_id: u64) -> bool {
 }
 
 fn show_dictation_error(app: &AppHandle, error: String) {
-    eprintln!("[dictation] {error}");
-    log_dictation_runtime(app, format!("[dictation] error={error}"));
+    log_error!("[dictation] {error}");
     let payload = app
         .try_state::<DictationState>()
         .and_then(|state| {
@@ -2445,8 +2421,7 @@ fn show_dictation_operation_error(app: &AppHandle, operation_id: u64, error: Str
         return false;
     };
 
-    eprintln!("[dictation] {error}");
-    log_dictation_runtime(app, format!("[dictation] error={error}"));
+    log_error!("[dictation] {error}");
     set_vor_live_transcription_suspended_for_dictation(app, false);
     hide_dictation_caption(app);
     emit_dictation_state(app, payload);
@@ -2494,7 +2469,7 @@ fn cancel_dictation_runtime(app: &AppHandle) -> Result<bool, String> {
     if let Some(manager) = app.try_state::<SonioxRealtimeManager>() {
         manager.close_source("dictation".to_string());
     }
-    log_dictation_runtime(app, "[dictation] cancelled by user");
+    debug_log::event("[dictation] cancelled by user");
     set_vor_live_transcription_suspended_for_dictation(app, false);
     hide_dictation_caption(app);
     emit_dictation_state(app, payload);
@@ -2735,20 +2710,16 @@ fn process_dictation_recording(
             return;
         }
     };
-    log_dictation_runtime(
-        app,
-        format!(
-            "[dictation] archive=created elapsed_ms={} audio_path={}",
-            archive_elapsed.as_millis(),
-            archive.audio_path.display(),
-        ),
-    );
+    debug_log::event(format!(
+        "[dictation] archive=created elapsed_ms={} audio_path={}",
+        archive_elapsed.as_millis(),
+        archive.audio_path.display(),
+    ));
 
     if !dictation_operation_is_active(app, operation_id) {
-        log_dictation_runtime(
-            app,
-            format!("[dictation] stale result ignored operation_id={operation_id}"),
-        );
+        debug_log::event(format!(
+            "[dictation] stale result ignored operation_id={operation_id}"
+        ));
         return;
     }
 
@@ -2825,14 +2796,11 @@ fn process_dictation_recording(
                 return;
             };
             refresh_transcript_day_index(&archive.audio_path);
-            log_dictation_runtime(
-                app,
-                format!(
-                    "[dictation] transcription=completed elapsed_ms={} total_ms={}",
-                    transcription_elapsed.as_millis(),
-                    started.elapsed().as_millis(),
-                ),
-            );
+            debug_log::event(format!(
+                "[dictation] transcription=completed elapsed_ms={} total_ms={}",
+                transcription_elapsed.as_millis(),
+                started.elapsed().as_millis(),
+            ));
             publish_dictation_final(
                 app,
                 operation_id,
@@ -2870,7 +2838,7 @@ fn spawn_dictation_processing_task(
 
 fn refresh_transcript_day_index(recording_path: &Path) {
     if let Err(error) = refresh_transcript_day_index_for_recording_path(recording_path) {
-        eprintln!(
+        log_error!(
             "[wakenote] transcript day index refresh failed path={} error={error}",
             recording_path.display()
         );
@@ -3036,14 +3004,11 @@ fn show_dictation_degraded(
     failures: &[DictationSlotFailure],
 ) {
     for failure in failures {
-        log_dictation_runtime(
-            app,
-            format!(
-                "[dictation] slot={} state=failed error={}",
-                failure.slot.as_str(),
-                failure.error,
-            ),
-        );
+        debug_log::error(format!(
+            "[dictation] slot={} state=failed error={}",
+            failure.slot.as_str(),
+            failure.error,
+        ));
     }
     let Ok(message) = dictation_listening_message(active_slots) else {
         return;
@@ -3174,17 +3139,14 @@ fn start_dictation_capture(
     } else {
         show_dictation_degraded(app, &active_slots, &failures);
     }
-    log_dictation_runtime(
-        app,
-        format!(
-            "[dictation] capture=started recording_id={operation_id} slots={}",
-            active_slots
-                .iter()
-                .map(|slot| slot.as_str())
-                .collect::<Vec<_>>()
-                .join("+")
-        ),
-    );
+    debug_log::event(format!(
+        "[dictation] capture=started recording_id={operation_id} slots={}",
+        active_slots
+            .iter()
+            .map(|slot| slot.as_str())
+            .collect::<Vec<_>>()
+            .join("+")
+    ));
     Ok(operation_id)
 }
 
@@ -3219,24 +3181,21 @@ fn finish_dictation_capture(
         return Ok(false);
     };
     let result = result?;
-    log_dictation_runtime(
-        app,
-        format!(
-            "[dictation] capture=stopped cause={} samples={} slots={}",
-            match cause {
-                DictationStopCause::ShortcutRelease => "shortcut_release",
-                DictationStopCause::DurationLimit => "duration_limit",
-            },
-            result.recording.samples.len(),
-            result
-                .recording
-                .microphone_inputs
-                .iter()
-                .map(|input| input.slot.as_str())
-                .collect::<Vec<_>>()
-                .join("+")
-        ),
-    );
+    debug_log::event(format!(
+        "[dictation] capture=stopped cause={} samples={} slots={}",
+        match cause {
+            DictationStopCause::ShortcutRelease => "shortcut_release",
+            DictationStopCause::DurationLimit => "duration_limit",
+        },
+        result.recording.samples.len(),
+        result
+            .recording
+            .microphone_inputs
+            .iter()
+            .map(|input| input.slot.as_str())
+            .collect::<Vec<_>>()
+            .join("+")
+    ));
     emit_dictation_state(app, payload);
     show_dictation_overlay(
         app,
@@ -3254,10 +3213,9 @@ fn finish_exhausted_dictation(
     result: DictationCaptureResult,
 ) -> Result<(), String> {
     let error = dictation_start_error(&result.failures);
-    log_dictation_runtime(
-        app,
-        format!("[dictation] capture=partial reason=device_failure error={error}"),
-    );
+    debug_log::error(format!(
+        "[dictation] capture=partial reason=device_failure error={error}"
+    ));
     emit_dictation_state(
         app,
         DictationStatePayload {
@@ -3350,7 +3308,7 @@ fn handle_dictation_shortcut_event(
         DictationShortcutEvent::Pressed => "pressed",
         DictationShortcutEvent::Released => "released",
     };
-    log_dictation_runtime(app, format!("[dictation] shortcut={event_name}"));
+    debug_log::event(format!("[dictation] shortcut={event_name}"));
     let state = app
         .try_state::<DictationState>()
         .ok_or_else(|| "dictation runtime is unavailable".to_string())?;
@@ -3516,7 +3474,7 @@ fn update_settings(
                 emit_dictionary_outcome(&app, &outcome, &status);
             }
             Err(error) => {
-                eprintln!("[dictionary-file] store lock failed after settings save: {error}");
+                log_error!("[dictionary-file] store lock failed after settings save: {error}");
             }
         }
     }
@@ -3650,7 +3608,7 @@ fn apply_overlay_settings_change(app: &AppHandle, settings: &AppSettings) {
         && let Err(error) =
             overlay::hide_overlay_on_main_thread(app, "position change hide inactive")
     {
-        eprintln!("[overlay] position change failed: {error}");
+        log_error!("[overlay] position change failed: {error}");
     }
 }
 
@@ -3720,10 +3678,7 @@ fn apply_input_monitor_settings(
         .lock()
         .map_err(|error| error.to_string())?;
     if let Some(error) = monitor.runtime_error() {
-        append_runtime_debug_log(
-            &settings,
-            format!("[input-monitor] output_stream_error error={error}"),
-        );
+        debug_log::error(format!("[input-monitor] output_stream_error error={error}"));
         monitor.stop();
     }
 
@@ -3731,23 +3686,19 @@ fn apply_input_monitor_settings(
         InputMonitorRuntimeAction::Start => {
             if let Some(sample_rate) = sample_rate {
                 match monitor.start(sample_rate) {
-                    Ok(()) => append_runtime_debug_log(
-                        &settings,
-                        format!("[input-monitor] start sample_rate={sample_rate}"),
-                    ),
+                    Ok(()) => {
+                        debug_log::event(format!("[input-monitor] start sample_rate={sample_rate}"))
+                    }
                     Err(error) => {
                         monitor.stop();
-                        append_runtime_debug_log(
-                            &settings,
-                            format!("[input-monitor] start_failed error={error}"),
-                        );
+                        debug_log::error(format!("[input-monitor] start_failed error={error}"));
                     }
                 }
             }
         }
         InputMonitorRuntimeAction::Stop => {
             monitor.stop();
-            append_runtime_debug_log(&settings, "[input-monitor] stop");
+            debug_log::event("[input-monitor] stop");
         }
         InputMonitorRuntimeAction::Unchanged => {}
     }
@@ -3920,7 +3871,7 @@ fn dispatch_live_events(handler: Option<LiveEventHandler>, events: Vec<LiveTrans
     }
 
     let Some(handler) = handler else {
-        eprintln!("[wakenote] WARN: live events generated before handler was set");
+        log_error!("[wakenote] WARN: live events generated before handler was set");
         return;
     };
 
@@ -4148,7 +4099,7 @@ fn spawn_microphone_input_level_observer(
             let entries = match backend.lock() {
                 Ok(backend) => backend.settings().capture_microphones,
                 Err(error) => {
-                    eprintln!("[microphone-level] settings lock failed: {error}");
+                    log_error!("[microphone-level] settings lock failed: {error}");
                     continue;
                 }
             };
@@ -4217,7 +4168,7 @@ fn download_model(
             _ => store.download_model(&model),
         };
         if let Err(error) = result {
-            eprintln!("[models] download {} failed: {error}", model.id);
+            log_error!("[models] download {} failed: {error}", model.id);
         }
     });
 
@@ -4471,7 +4422,7 @@ fn emit_terminal_run_result(
     match result {
         Ok(Some(snapshot)) => emit_llm_run_update(app, &snapshot),
         Ok(None) => {}
-        Err(error) => eprintln!("[llm-report] {context}: {error}"),
+        Err(error) => log_error!("[llm-report] {context}: {error}"),
     }
 }
 
@@ -5069,7 +5020,7 @@ fn upsert_transcription_cost(app: &AppHandle, entry: TranscriptionCostEntry) {
         ledger
             .upsert(entry)
             .map_err(|error| {
-                eprintln!("[wakenote] WARN transcription cost ledger update failed: {error}");
+                log_error!("[wakenote] WARN transcription cost ledger update failed: {error}");
             })
             .ok()?;
         Some(ledger.snapshot(Local::now()))
@@ -5142,7 +5093,7 @@ fn record_meeting_transcription_cost(app: &AppHandle, save_root: &Path, id: &str
 
 fn emit_manual_meeting_status(app: &AppHandle, status: &ManualMeetingRecordingStatus) {
     if let Err(error) = app.emit(EVENT_MANUAL_MEETING_RECORDING_STATE, status.clone()) {
-        eprintln!("[wakenote] WARN emit manual meeting state failed: {error}");
+        log_error!("[wakenote] WARN emit manual meeting state failed: {error}");
     }
 }
 
@@ -5438,7 +5389,7 @@ fn schedule_and_spawn_meeting_job(
                         backend
                             .transcription_credentials()
                             .map_err(|error| {
-                                eprintln!("[wakenote] meeting credentials unavailable: {error}");
+                                log_error!("[wakenote] meeting credentials unavailable: {error}");
                             })
                             .ok()
                     })
@@ -5456,7 +5407,7 @@ fn schedule_and_spawn_meeting_job(
                 current_cancel,
                 emit,
             ) {
-                eprintln!("[wakenote] meeting job {} error: {error}", current_job.id);
+                log_error!("[wakenote] meeting job {} error: {error}", current_job.id);
             }
             record_meeting_transcription_cost(&app, &current_job.save_root, &current_job.id);
 
@@ -5467,13 +5418,10 @@ fn schedule_and_spawn_meeting_job(
             let Some((next_job, next_cancel)) = next else {
                 break;
             };
-            append_debug_log(
-                &next_job.save_root,
-                format!(
-                    "[meeting-capture] state=transcribing id={} resumed_from_queue=true",
-                    next_job.id
-                ),
-            );
+            debug_log::event(format!(
+                "[meeting-capture] state=transcribing id={} resumed_from_queue=true",
+                next_job.id
+            ));
             current_job = next_job;
             current_cancel = next_cancel;
         }
@@ -6172,7 +6120,7 @@ fn stop_live_capture_runtime(
         })
         .unwrap_or(true);
     if queue_idle && let Err(error) = overlay::hide_overlay_on_main_thread(app, "hide") {
-        eprintln!("[overlay] hide failed: {error}");
+        log_error!("[overlay] hide failed: {error}");
     }
     Ok(status)
 }
@@ -6232,15 +6180,9 @@ fn ensure_source_meeting_microphone(
                 auto_started = primary_live_capture_is_healthy(live_state.inner());
             }
             Err(error) => {
-                append_runtime_debug_log(
-                    &backend_state
-                        .lock()
-                        .map(|backend| backend.settings())
-                        .unwrap_or_default(),
-                    format!(
-                        "[meeting-capture] microphone_unavailable source_id={source_id} error={error}"
-                    ),
-                );
+                debug_log::error(format!(
+                    "[meeting-capture] microphone_unavailable source_id={source_id} error={error}"
+                ));
             }
         }
     }
@@ -6315,7 +6257,7 @@ fn release_source_meeting_microphone(app: &AppHandle, backend_state: &BackendSta
     if let Some(live_state) = app.try_state::<LiveCaptureState>()
         && let Err(error) = stop_live_capture_runtime(app, backend_state, live_state.inner())
     {
-        eprintln!("[meeting-capture] could not release automatic microphone: {error}");
+        log_error!("[meeting-capture] could not release automatic microphone: {error}");
     }
 }
 
@@ -6437,14 +6379,11 @@ fn attempt_source_capture_start(
             }
             SourceCaptureStartDecision::BackingOff { retry_after } => {
                 if let Ok(backend) = backend_state.lock() {
-                    append_runtime_debug_log(
-                        &backend.settings(),
-                        format!(
-                            "[source-capture] backoff source_id={} retry_after_ms={}",
-                            source.source_id,
-                            retry_after.as_millis()
-                        ),
-                    );
+                    debug_log::event(format!(
+                        "[source-capture] backoff source_id={} retry_after_ms={}",
+                        source.source_id,
+                        retry_after.as_millis()
+                    ));
                     return Ok(SourceCaptureAttemptResult {
                         status: backend.app_status(),
                         outcome: SourceCaptureAttemptOutcome::Deferred,
@@ -6459,19 +6398,16 @@ fn attempt_source_capture_start(
     let source_label = recording_source_label(source);
     {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
-        append_runtime_debug_log(
-            &backend.settings(),
-            format!(
-                "[source-capture] start source_id={} label={} recording_label={} app={} pid={} sample_rate={} attempt={}",
-                source.source_id,
-                source.label,
-                source_label,
-                source.app_name,
-                source.pid,
-                sample_rate,
-                start_attempt
-            ),
-        );
+        debug_log::event(format!(
+            "[source-capture] start source_id={} label={} recording_label={} app={} pid={} sample_rate={} attempt={}",
+            source.source_id,
+            source.label,
+            source_label,
+            source.app_name,
+            source.pid,
+            sample_rate,
+            start_attempt
+        ));
         if let Err(error) = backend.start_system_capture_session(
             sample_rate,
             chrono::Utc::now(),
@@ -6488,13 +6424,10 @@ fn attempt_source_capture_start(
                 screen_recording_status,
                 &error,
             );
-            append_runtime_debug_log(
-                &backend.settings(),
-                format!(
-                    "{} label={} app={} pid={}",
-                    diagnostic, source.label, source.app_name, source.pid
-                ),
-            );
+            debug_log::error(format!(
+                "{} label={} app={} pid={}",
+                diagnostic, source.label, source.app_name, source.pid
+            ));
             return Err(error);
         }
         frame_generation.store(
@@ -6506,15 +6439,10 @@ fn attempt_source_capture_start(
     }
 
     let capture_scope = source_capture_scope(source);
-    if let Ok(backend) = backend_state.lock() {
-        append_runtime_debug_log(
-            &backend.settings(),
-            format!(
-                "[source-capture] input_scope source_id={} scope={} app={} pid={}",
-                source.source_id, capture_scope, source.app_name, source.pid
-            ),
-        );
-    }
+    debug_log::event(format!(
+        "[source-capture] input_scope source_id={} scope={} app={} pid={}",
+        source.source_id, capture_scope, source.app_name, source.pid
+    ));
 
     let stream = match starter.start_source_capture_stream(source, sample_rate, on_frame) {
         Ok(stream) => stream,
@@ -6528,13 +6456,10 @@ fn attempt_source_capture_start(
             );
             // Roll back the capture session we opened above.
             if let Ok(mut backend) = backend_state.lock() {
-                append_runtime_debug_log(
-                    &backend.settings(),
-                    format!(
-                        "{} label={} app={} pid={}",
-                        diagnostic, source.label, source.app_name, source.pid
-                    ),
-                );
+                debug_log::error(format!(
+                    "{} label={} app={} pid={}",
+                    diagnostic, source.label, source.app_name, source.pid
+                ));
                 let _ = backend.stop_system_capture_session();
             }
             if let Ok(mut lifecycle) = source_capture_lifecycle_state.lock() {
@@ -6712,7 +6637,7 @@ fn stop_source_capture_runtime(
     *system_capture_state.lock().map_err(|e| e.to_string())? = None;
     let (settings, status, finished_meetings) = {
         let mut backend = backend_state.lock().map_err(|e| e.to_string())?;
-        append_runtime_debug_log(&backend.settings(), "[source-capture] stop");
+        debug_log::event("[source-capture] stop");
         let status = backend.stop_system_capture_session()?;
         let finished_meetings = backend.take_finished_system_meetings();
         (backend.settings(), status, finished_meetings)
@@ -6856,22 +6781,19 @@ fn spawn_startup_document_recovery(
                 .map(|source| format!("{}:{}", source.id, source.label))
                 .collect::<Vec<_>>()
                 .join(",");
-            append_runtime_debug_log(
-                &settings,
-                format!(
-                    "[app] launched version={} system_audio_enabled={} custom_sources=[{}]",
-                    env!("CARGO_PKG_VERSION"),
-                    settings.system_audio_enabled,
-                    custom_sources
-                ),
-            );
+            debug_log::event(format!(
+                "[app] launched version={} system_audio_enabled={} custom_sources=[{}]",
+                env!("CARGO_PKG_VERSION"),
+                settings.system_audio_enabled,
+                custom_sources
+            ));
 
             let save_root = expand_user_path(&settings.save_root);
             let llm_store = LlmRunStore::new(save_root.clone());
             let recovered_llm_runs = llm_store
                 .recover_interrupted_before(&llm_now(), &cutoff.to_rfc3339())
                 .unwrap_or_else(|error| {
-                    eprintln!("[llm-report] could not recover interrupted runs: {error}");
+                    log_error!("[llm-report] could not recover interrupted runs: {error}");
                     Vec::new()
                 });
 
@@ -6931,44 +6853,32 @@ fn start_finished_system_meeting_jobs(
         let job = match action {
             FinishedSystemMeetingJobAction::Start(job) => job,
             FinishedSystemMeetingJobAction::Pending { job, reason } => {
-                append_debug_log(
-                    &job.save_root,
-                    format!(
-                        "[meeting-capture] state=pending id={} reason={}",
-                        job.id, reason
-                    ),
-                );
+                debug_log::event(format!(
+                    "[meeting-capture] state=pending id={} reason={}",
+                    job.id, reason
+                ));
                 continue;
             }
         };
-        append_debug_log(
-            &job.save_root,
-            format!("[meeting-capture] state=queued id={}", job.id),
-        );
+        debug_log::event(format!("[meeting-capture] state=queued id={}", job.id));
         match schedule_and_spawn_meeting_job(app.clone(), meeting_state.clone(), job.clone(), true)
         {
-            Ok(MeetingJobScheduleOutcome::Started) => append_debug_log(
-                &job.save_root,
-                format!("[meeting-capture] state=transcribing id={}", job.id),
-            ),
-            Ok(MeetingJobScheduleOutcome::Queued) => append_debug_log(
-                &job.save_root,
-                format!(
-                    "[meeting-capture] state=queued id={} reason=worker_busy",
-                    job.id
-                ),
-            ),
-            Ok(MeetingJobScheduleOutcome::AlreadyScheduled) => append_debug_log(
-                &job.save_root,
-                format!("[meeting-capture] state=already_scheduled id={}", job.id),
-            ),
-            Err(error) => append_debug_log(
-                &job.save_root,
-                format!(
-                    "[meeting-capture] state=pending id={} reason=schedule_failed error={}",
-                    job.id, error
-                ),
-            ),
+            Ok(MeetingJobScheduleOutcome::Started) => debug_log::event(format!(
+                "[meeting-capture] state=transcribing id={}",
+                job.id
+            )),
+            Ok(MeetingJobScheduleOutcome::Queued) => debug_log::event(format!(
+                "[meeting-capture] state=queued id={} reason=worker_busy",
+                job.id
+            )),
+            Ok(MeetingJobScheduleOutcome::AlreadyScheduled) => debug_log::event(format!(
+                "[meeting-capture] state=already_scheduled id={}",
+                job.id
+            )),
+            Err(error) => debug_log::error(format!(
+                "[meeting-capture] state=pending id={} reason=schedule_failed error={}",
+                job.id, error
+            )),
         }
     }
 }
@@ -6977,10 +6887,6 @@ fn start_finished_system_meeting_jobs(
 /// so no resampling is needed; mirror that here for the capture session.
 fn system_audio_sample_rate() -> u32 {
     PIPELINE_SAMPLE_RATE
-}
-
-fn append_runtime_debug_log(settings: &AppSettings, message: impl AsRef<str>) {
-    append_debug_log(expand_user_path(&settings.save_root), message);
 }
 
 fn source_watcher_should_enumerate_windows(
@@ -7062,13 +6968,10 @@ fn spawn_source_watcher(
                     .ok()
                     .and_then(|slot| slot.as_ref().map(|source| source.source_id.clone()))
                     .unwrap_or_else(|| "unknown".to_string());
-                append_runtime_debug_log(
-                    &settings,
-                    format!(
-                        "[source-capture] runtime_error source_id={} error={} action=restart",
-                        source_id, error
-                    ),
-                );
+                debug_log::error(format!(
+                    "[source-capture] runtime_error source_id={} error={} action=restart",
+                    source_id, error
+                ));
                 let stop_result = stop_source_capture_runtime(
                     &app,
                     &backend_state,
@@ -7087,7 +6990,7 @@ fn spawn_source_watcher(
                     transcription_state.clone(),
                 );
                 if let Err(stop_error) = stop_result {
-                    eprintln!(
+                    log_error!(
                         "[source-watch] runtime-error cleanup failed for {source_id}: {stop_error}"
                     );
                 }
@@ -7104,12 +7007,9 @@ fn spawn_source_watcher(
                 Ok(windows) => windows,
                 Err(error) => {
                     if source_watch_diagnostic_due(last_source_watch_diagnostic, now) {
-                        append_runtime_debug_log(
-                            &settings,
-                            format!(
-                                "[source-watch] enumerate_error screen_recording_status={screen_recording_status:?} error={error}"
-                            ),
-                        );
+                        debug_log::error(format!(
+                            "[source-watch] enumerate_error screen_recording_status={screen_recording_status:?} error={error}"
+                        ));
                         last_source_watch_diagnostic = Some(now);
                     }
                     continue;
@@ -7147,13 +7047,10 @@ fn spawn_source_watcher(
                 && matches!(&transition, SourceTransition::Unchanged)
                 && source_watch_diagnostic_due(last_source_watch_diagnostic, now)
             {
-                append_runtime_debug_log(
-                    &settings,
-                    format!(
-                        "[source-watch] no_match screen_recording_status={screen_recording_status:?} {}",
-                        redacted_source_window_summary(&windows)
-                    ),
-                );
+                debug_log::event(format!(
+                    "[source-watch] no_match screen_recording_status={screen_recording_status:?} {}",
+                    redacted_source_window_summary(&windows)
+                ));
                 last_source_watch_diagnostic = Some(now);
             }
             match transition {
@@ -7161,13 +7058,10 @@ fn spawn_source_watcher(
                     if let Ok(mut slot) = detected_source_state.lock() {
                         *slot = Some(source.clone());
                     }
-                    append_runtime_debug_log(
-                        &settings,
-                        format!(
-                            "[source-watch] detected source_id={} label={} app={} pid={}",
-                            source.source_id, source.label, source.app_name, source.pid
-                        ),
-                    );
+                    debug_log::event(format!(
+                        "[source-watch] detected source_id={} label={} app={} pid={}",
+                        source.source_id, source.label, source.app_name, source.pid
+                    ));
                     let _ = app.emit(EVENT_SOURCE_DETECTED, SourcePayload::from(&source));
 
                     let already_capturing = source_capture_stream_is_healthy(&system_capture_state);
@@ -7190,7 +7084,7 @@ fn spawn_source_watcher(
                         &detected_source_state,
                         transcription_state.clone(),
                     ) {
-                        eprintln!("[source-watch] auto-capture failed: {error}");
+                        log_error!("[source-watch] auto-capture failed: {error}");
                     }
                 }
                 SourceTransition::Ended(source) => {
@@ -7211,27 +7105,21 @@ fn spawn_source_watcher(
                         recent_audio,
                     ) {
                         missing_source_polls = SOURCE_MISSING_GRACE_POLLS.saturating_sub(1);
-                        append_runtime_debug_log(
-                            &settings,
-                            format!(
-                                "[source-watch] hold-ended source_id={} label={} app={} pid={} audio_liveness_window_ms={}",
-                                source.source_id,
-                                source.label,
-                                source.app_name,
-                                source.pid,
-                                SOURCE_CAPTURE_AUDIO_LIVENESS_HOLD.as_millis()
-                            ),
-                        );
+                        debug_log::event(format!(
+                            "[source-watch] hold-ended source_id={} label={} app={} pid={} audio_liveness_window_ms={}",
+                            source.source_id,
+                            source.label,
+                            source.app_name,
+                            source.pid,
+                            SOURCE_CAPTURE_AUDIO_LIVENESS_HOLD.as_millis()
+                        ));
                         continue;
                     }
 
-                    append_runtime_debug_log(
-                        &settings,
-                        format!(
-                            "[source-watch] ended source_id={} label={} app={} pid={}",
-                            source.source_id, source.label, source.app_name, source.pid
-                        ),
-                    );
+                    debug_log::event(format!(
+                        "[source-watch] ended source_id={} label={} app={} pid={}",
+                        source.source_id, source.label, source.app_name, source.pid
+                    ));
                     if let Ok(mut paused) = source_capture_pause_state.lock() {
                         paused.remove(&source.source_id);
                     }
@@ -7246,7 +7134,7 @@ fn spawn_source_watcher(
                             &detected_source_state,
                             &meeting_state,
                         ) {
-                            eprintln!("[source-watch] auto-stop failed: {error}");
+                            log_error!("[source-watch] auto-stop failed: {error}");
                         }
                         // Auto-stop can flush a final system chunk after the
                         // queue worker has gone idle; make that tail job run.
@@ -7290,7 +7178,7 @@ fn spawn_source_watcher(
                         &detected_source_state,
                         transcription_state.clone(),
                     ) {
-                        eprintln!("[source-watch] auto-capture retry failed: {error}");
+                        log_error!("[source-watch] auto-capture retry failed: {error}");
                     }
                 }
             }
@@ -7388,7 +7276,7 @@ fn emit_realtime_partial(app: &AppHandle, backend_state: &BackendState, partial:
             text: partial.text,
         },
     ) {
-        eprintln!("[wakenote] WARN failed to emit cloud realtime partial: {error}");
+        log_error!("[wakenote] WARN failed to emit cloud realtime partial: {error}");
     }
 }
 
@@ -7401,7 +7289,7 @@ fn wire_live_transcription(
         .lock()
         .map(|backend| backend.settings().model_directory)
         .unwrap_or_default();
-    eprintln!("[wakenote] wire_live_transcription: model_dir={model_directory}");
+    log_event!("[wakenote] wire_live_transcription: model_dir={model_directory}");
 
     let app_for_partial = app_handle.clone();
     let backend_for_partial = backend_state.clone();
@@ -7418,7 +7306,7 @@ fn wire_live_transcription(
                     result.chunk_id,
                     AutoTypeUpdate::Partial(result.text.clone()),
                 );
-                eprintln!(
+                log_event!(
                     "[wakenote] live partial -> FE chunk_id={} text_len={}",
                     result.chunk_id,
                     result.text.len()
@@ -7469,7 +7357,7 @@ fn wire_live_transcription(
                         text: result.text,
                     },
                 ) {
-                    eprintln!("[wakenote] WARN failed to emit partial: {error}");
+                    log_error!("[wakenote] WARN failed to emit partial: {error}");
                 }
             }
             LivePartialEvent::ModelMissing {
@@ -7482,7 +7370,7 @@ fn wire_live_transcription(
                 if dictation_suppresses_vor_live_transcription(&app_for_partial) {
                     return;
                 }
-                eprintln!(
+                log_error!(
                     "[wakenote] live partial: model missing chunk_id={chunk_id} model={model_id}"
                 );
                 let error = format!(
@@ -7513,7 +7401,7 @@ fn wire_live_transcription(
                         error,
                     },
                 ) {
-                    eprintln!("[wakenote] WARN failed to emit live-failed: {emit_error}");
+                    log_error!("[wakenote] WARN failed to emit live-failed: {emit_error}");
                 }
             }
             LivePartialEvent::EngineError {
@@ -7526,7 +7414,7 @@ fn wire_live_transcription(
                 if dictation_suppresses_vor_live_transcription(&app_for_partial) {
                     return;
                 }
-                eprintln!(
+                log_error!(
                     "[wakenote] live partial: engine error chunk_id={chunk_id} message={message}"
                 );
                 if let Some(caption_state) = app_for_partial.try_state::<OverlayCaptionState>() {
@@ -7554,7 +7442,7 @@ fn wire_live_transcription(
                         error: format!("Live partial decode failed: {message}"),
                     },
                 ) {
-                    eprintln!("[wakenote] WARN failed to emit live-failed: {emit_error}");
+                    log_error!("[wakenote] WARN failed to emit live-failed: {emit_error}");
                 }
             }
         },
@@ -7627,7 +7515,7 @@ fn wire_live_transcription(
                 chunk_id,
                 AutoTypeUpdate::Started,
             );
-            eprintln!("[wakenote] handler: emit started chunk_id={chunk_id}");
+            log_event!("[wakenote] handler: emit started chunk_id={chunk_id}");
             if microphone_slot != Some(MicrophoneSlot::Secondary)
                 && let Some(caption_state) = app_for_handler.try_state::<OverlayCaptionState>()
             {
@@ -7662,7 +7550,7 @@ fn wire_live_transcription(
                     started_at: started_at.to_rfc3339(),
                 },
             ) {
-                eprintln!("[wakenote] WARN emit started failed: {error}");
+                log_error!("[wakenote] WARN emit started failed: {error}");
             }
         }
         LiveTranscriptEvent::SamplesReady {
@@ -7690,7 +7578,7 @@ fn wire_live_transcription(
                     })
                 });
             let Some(preview_model_id) = preview_model_id else {
-                eprintln!(
+                log_event!(
                     "[wakenote] handler: no ready live preview model for final model={model_id}"
                 );
                 return;
@@ -7734,12 +7622,12 @@ fn wire_live_transcription(
                 return;
             }
             if !model_supports_live_partials(&model_directory_for_handler, &preview_model_id) {
-                eprintln!(
+                log_event!(
                     "[wakenote] handler: skip unsupported live preview model={preview_model_id} final_model={model_id}"
                 );
                 return;
             }
-            eprintln!(
+            log_event!(
                 "[wakenote] handler: submit live partial chunk_id={chunk_id} preview_model={preview_model_id} final_model={model_id} samples={} rate={sample_rate}",
                 samples.len()
             );
@@ -7783,7 +7671,7 @@ fn wire_live_transcription(
                     AutoTypeUpdate::Failed,
                 );
             }
-            eprintln!(
+            log_event!(
                 "[wakenote] handler: emit committed chunk_id={chunk_id} path={}",
                 audio_path.display()
             );
@@ -7826,7 +7714,7 @@ fn wire_live_transcription(
                     will_transcribe,
                 },
             ) {
-                eprintln!("[wakenote] WARN emit committed failed: {error}");
+                log_error!("[wakenote] WARN emit committed failed: {error}");
             }
         }
     });
@@ -7853,7 +7741,7 @@ fn kick_transcription_worker(
 
     thread::spawn(move || {
         let _update_activity = update_activity;
-        eprintln!(
+        log_event!(
             "[wakenote] queue worker thread started max_parallel={MAX_PARALLEL_TRANSCRIPTIONS}"
         );
         let (outcome_tx, outcome_rx) = mpsc::channel();
@@ -7872,7 +7760,7 @@ fn kick_transcription_worker(
                 Err(_) => break,
             };
             if started_jobs.is_empty() && active_jobs == 0 {
-                eprintln!("[wakenote] queue worker: no pending jobs, exiting loop");
+                log_event!("[wakenote] queue worker: no pending jobs, exiting loop");
                 break;
             }
 
@@ -7891,19 +7779,20 @@ fn kick_transcription_worker(
             }
 
             let Ok((audio_path, outcome)) = outcome_rx.recv() else {
-                eprintln!("[wakenote] queue worker: outcome channel closed");
+                log_error!("[wakenote] queue worker: outcome channel closed");
                 break;
             };
-            eprintln!(
+            log_event!(
                 "[wakenote] queue worker: job id={} outcome={:?}",
-                outcome.id, outcome.status
+                outcome.id,
+                outcome.status
             );
 
             let cancelled = match backend_state.lock() {
                 Ok(backend) if backend.transcription_job_was_cancelled(outcome.id) => true,
                 Ok(mut backend) => {
                     if let Err(error) = backend.finish_transcription_job(outcome.clone()) {
-                        eprintln!(
+                        log_error!(
                             "[wakenote] queue worker: failed to commit job {} outcome: {error}",
                             outcome.id
                         );
@@ -7917,7 +7806,7 @@ fn kick_transcription_worker(
             if cancelled {
                 let chunk = wakenote::recorder::RecordedChunk::from_audio_path(audio_path.clone());
                 if let Err(error) = TranscriptionSidecar::discard_cancelled_output(&chunk) {
-                    eprintln!(
+                    log_error!(
                         "[wakenote] queue worker: failed to discard cancelled job {} output: {error}",
                         outcome.id
                     );
@@ -7956,7 +7845,7 @@ fn spawn_transcription_job(
             .live_metadata
             .clone()
             .map(LiveWebhookTranscript::new);
-        eprintln!(
+        log_event!(
             "[wakenote] queue worker: processing job id={} path={} model={}",
             started.job.id,
             audio_path.display(),
@@ -8038,7 +7927,7 @@ fn spawn_transcription_job(
                 }
             })
             .unwrap_or_else(|error| {
-                eprintln!("[wakenote] queue worker: process_started_job error: {error}");
+                log_error!("[wakenote] queue worker: process_started_job error: {error}");
                 TranscriptionJobOutcome::failed(started.job.id, error.to_string())
             });
 
@@ -8112,7 +8001,7 @@ fn emit_file_stream_partial(
             text,
         },
     ) {
-        eprintln!("[wakenote] WARN failed to emit OpenAI stream partial: {error}");
+        log_error!("[wakenote] WARN failed to emit OpenAI stream partial: {error}");
     }
 }
 
@@ -8152,7 +8041,7 @@ fn emit_outcome_to_frontend(
             },
         )
     {
-        eprintln!("[wakenote] WARN emit model fallback failed: {error}");
+        log_error!("[wakenote] WARN emit model fallback failed: {error}");
     }
 
     match &outcome.status {
@@ -8171,13 +8060,13 @@ fn emit_outcome_to_frontend(
                         AutoTypeUpdate::Failed,
                     );
                 }
-                eprintln!(
+                log_event!(
                     "[wakenote] emit_outcome_to_frontend: empty sidecar at {}",
                     transcript_path.display()
                 );
                 return;
             }
-            eprintln!(
+            log_event!(
                 "[wakenote] emit final chunk_id={:?} path={} text_len={}",
                 chunk_id,
                 audio_path_str,
@@ -8225,7 +8114,7 @@ fn emit_outcome_to_frontend(
                     text,
                 },
             ) {
-                eprintln!("[wakenote] WARN emit final failed: {error}");
+                log_error!("[wakenote] WARN emit final failed: {error}");
             }
         }
         TranscriptionJobStatus::Failed(error) => {
@@ -8238,9 +8127,11 @@ fn emit_outcome_to_frontend(
                     AutoTypeUpdate::Failed,
                 );
             }
-            eprintln!(
+            log_error!(
                 "[wakenote] emit failed chunk_id={:?} path={} error={}",
-                chunk_id, audio_path_str, error
+                chunk_id,
+                audio_path_str,
+                error
             );
             if source_identity.microphone_slot != Some(MicrophoneSlot::Secondary)
                 && let Some(caption_state) = app.try_state::<OverlayCaptionState>()
@@ -8265,7 +8156,7 @@ fn emit_outcome_to_frontend(
                     error: error.clone(),
                 },
             ) {
-                eprintln!("[wakenote] WARN emit failed event failed: {emit_error}");
+                log_error!("[wakenote] WARN emit failed event failed: {emit_error}");
             }
         }
     }
@@ -8471,13 +8362,13 @@ fn apply_mic_recovery_action(
     };
     match action {
         MicHealthAction::SwitchTo { device_id, reason } => {
-            eprintln!("[mic-watchdog] restarting primary {device_id}: {reason}");
+            log_event!("[mic-watchdog] restarting primary {device_id}: {reason}");
             if let Err(error) = stop_live_capture_slot_runtime(
                 backend_state,
                 live_state.inner(),
                 MicrophoneSlot::Primary,
             ) {
-                eprintln!("[mic-watchdog] stop primary before restart failed: {error}");
+                log_error!("[mic-watchdog] stop primary before restart failed: {error}");
             }
             // CoreAudio frequently retains wedged state for ~tens of ms
             // after a device is released. A brief settling delay before
@@ -8500,7 +8391,7 @@ fn apply_mic_recovery_action(
                     )
                 });
             if let Err(error) = restart {
-                eprintln!("[mic-watchdog] primary restart failed: {error}");
+                log_error!("[mic-watchdog] primary restart failed: {error}");
                 if let Ok(mut backend) = backend_state.lock() {
                     backend.capture_slot_start_failed(
                         MicrophoneSlot::Primary,
@@ -8654,7 +8545,7 @@ fn handle_app_menu_event(app: &AppHandle, menu_id: &str) {
     match app_menu_action(menu_id) {
         AppMenuAction::HideSettingsWindow => {
             if let Err(error) = hide_settings_window(app) {
-                eprintln!("[window] failed to close settings window: {error}");
+                log_error!("[window] failed to close settings window: {error}");
             }
         }
         AppMenuAction::IntentionalQuit => {
@@ -8684,7 +8575,7 @@ fn finalize_manual_meeting_before_exit(app: &AppHandle) {
         generation,
         ManualMeetingStopReason::ApplicationQuit,
     ) {
-        eprintln!("[wakenote] WARN could not finalize Meeting Mode before exit: {error}");
+        log_error!("[wakenote] WARN could not finalize Meeting Mode before exit: {error}");
     }
 }
 
@@ -8692,16 +8583,7 @@ fn mark_intentional_quit(app: &AppHandle, reason: &'static str) {
     if let Some(state) = app.try_state::<IntentionalQuitState>() {
         state.store(true, Ordering::SeqCst);
     }
-    append_app_lifecycle_debug_log(app, format!("[app] quit requested reason={reason}"));
-}
-
-fn append_app_lifecycle_debug_log(app: &AppHandle, message: impl AsRef<str>) {
-    if let Some(settings) = app
-        .try_state::<BackendState>()
-        .and_then(|state| state.lock().ok().map(|backend| backend.settings()))
-    {
-        append_runtime_debug_log(&settings, message);
-    }
+    debug_log::event(format!("[app] quit requested reason={reason}"));
 }
 
 fn hide_settings_window(app: &AppHandle) -> tauri::Result<()> {
@@ -8717,10 +8599,10 @@ fn schedule_settings_window_for_reopen(app: &AppHandle, reason: &'static str) {
     let app_handle = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         if let Err(error) = open_settings_window_for_reopen(&app_handle) {
-            eprintln!("[window] failed to open settings window on {reason}: {error}");
+            log_error!("[window] failed to open settings window on {reason}: {error}");
         }
     }) {
-        eprintln!("[window] failed to schedule settings window on {reason}: {error}");
+        log_error!("[window] failed to schedule settings window on {reason}: {error}");
     }
 }
 
@@ -8804,11 +8686,11 @@ fn ensure_main_window_visible(app: &AppHandle, show_dock_icon: bool) -> tauri::R
     if main_window_needs_size_restore(size.width, size.height) {
         window.set_size(LogicalSize::new(MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT))?;
         if let Err(error) = window.center() {
-            eprintln!("[window] failed to center settings window: {error}");
+            log_error!("[window] failed to center settings window: {error}");
         }
     }
     if let Err(error) = window.set_focus() {
-        eprintln!("[window] failed to focus settings window: {error}");
+        log_error!("[window] failed to focus settings window: {error}");
     }
     Ok(())
 }
@@ -8916,7 +8798,58 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     )
 }
 
+/// Read-only commands the UI polls (the snapshot loop runs every 100 ms);
+/// logging each call would bury the events worth reading.
+fn is_polled_query_command(command: &str) -> bool {
+    matches!(
+        command,
+        "app_status"
+            | "dictionary_file_status"
+            | "get_settings"
+            | "get_live_webhook_stats"
+            | "list_microphones"
+            | "list_models"
+            | "list_webhook_history"
+            | "log_frontend_error"
+            | "manual_meeting_recording_status"
+            | "microphone_input_levels"
+            | "openai_key_status"
+            | "openrouter_key_status"
+            | "permission_snapshot"
+            | "pressed_modifier_shortcut"
+            | "queue_snapshot"
+            | "soniox_key_status"
+            | "update_install_readiness"
+    )
+}
+
+fn with_command_logging<R: tauri::Runtime>(
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let command = invoke.message.command();
+        if debug_log::enabled() && !is_polled_query_command(command) {
+            debug_log::event(format!("[command] {command}"));
+        }
+        handler(invoke)
+    }
+}
+
+/// Receives errors the UI surfaced or failed to handle.
+#[tauri::command]
+fn log_frontend_error(message: String) {
+    const MAX_MESSAGE_CHARS: usize = 8_000;
+    let message: String = message.chars().take(MAX_MESSAGE_CHARS).collect();
+    debug_log::error(format!("[frontend] {message}"));
+}
+
 fn main() {
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        debug_log::record_panic(info);
+        default_panic_hook(info);
+    }));
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             schedule_settings_window_for_reopen(app, "single-instance launch");
@@ -9006,11 +8939,11 @@ fn main() {
                 spawn_dictation_shortcut_worker(app.handle().clone())?;
             let live_webhook = Arc::new(WebhookService::new(
                 initial_settings_for_runtime.live_transcription_webhook.clone(),
-                wakenote::settings::expand_user_path(&initial_settings_for_runtime.save_root),
                 app_data_dir.join("webhook-history.sqlite3"),
             ));
             if let Ok(mut backend) = backend_state.lock() {
                 backend.set_live_webhook(live_webhook.clone());
+                backend.attach_diagnostic_log();
             }
             app.manage(live_webhook);
             app.manage(backend_state.clone());
@@ -9065,9 +8998,7 @@ fn main() {
 
             for (shortcut, mode) in active_dictation_shortcuts(&initial_settings_for_runtime) {
                 if let Err(error) = register_dictation_shortcut_for_mode(app.handle(), &shortcut, mode) {
-                    append_runtime_debug_log(&initial_settings_for_runtime,
-                        format!("[dictation] startup registration failed mode={mode:?}: {error}"));
-                    eprintln!("[dictation] startup registration failed mode={mode:?}: {error}");
+                    log_error!("[dictation] startup registration failed mode={mode:?}: {error}");
                 }
             }
 
@@ -9101,7 +9032,7 @@ fn main() {
                 transcription_state.clone(),
             );
             if let Err(error) = overlay::create_overlay_window(app.handle()) {
-                eprintln!("[overlay] initial hidden overlay creation failed: {error}");
+                log_error!("[overlay] initial hidden overlay creation failed: {error}");
             }
             maybe_show_debug_overlay_caption_from_env(app.handle());
             let initial = backend_state
@@ -9146,7 +9077,7 @@ fn main() {
                             })
                             .unwrap_or(false);
                         if !should_start {
-                            eprintln!(
+                            log_event!(
                                 "[capture] launch auto-start stopped because settings no longer allow live input"
                             );
                             break;
@@ -9172,19 +9103,19 @@ fn main() {
                                     );
                                 }
                                 if status.live_input_active {
-                                    eprintln!("[capture] launch auto-start succeeded");
+                                    log_event!("[capture] launch auto-start succeeded");
                                     break;
                                 }
-                                eprintln!(
+                                log_event!(
                                     "[capture] launch auto-start did not activate input; retrying if attempts remain"
                                 );
                             }
                             Err(error) => {
-                                eprintln!(
+                                log_error!(
                                     "[capture] launch auto-start attempt failed: {error}"
                                 );
                                 if !launch_auto_start_should_retry(&error) {
-                                    eprintln!(
+                                    log_error!(
                                         "[capture] launch auto-start stopped because Microphone permission is unavailable"
                                     );
                                     break;
@@ -9201,7 +9132,8 @@ fn main() {
             );
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(with_command_logging(tauri::generate_handler![
+            log_frontend_error,
             app_updater::check_for_update,
             app_updater::update_install_readiness,
             app_updater::open_update_release,
@@ -9306,7 +9238,7 @@ fn main() {
             start_meeting_transcription,
             cancel_meeting,
             resume_meeting
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("failed to build WakeNote")
         .run(|app, event| {
@@ -9351,12 +9283,9 @@ fn main() {
                         .unwrap_or(false);
                     let decision =
                         exit_request_decision(code, show_tray_icon, runtime_active, intentional_quit);
-                    append_runtime_debug_log(
-                        &settings,
-                        format!(
+                    debug_log::event(format!(
                             "[app] exit_requested code={code:?} show_tray_icon={show_tray_icon} runtime_active={runtime_active} intentional_quit={intentional_quit} decision={decision:?}"
-                        ),
-                    );
+                        ));
                     if matches!(decision, ExitRequestDecision::Prevent) {
                         api.prevent_exit();
                     } else {
@@ -9373,7 +9302,8 @@ fn main() {
                 // GPU resources anyway, and all durable state (settings,
                 // transcription queue) is already persisted on write.
                 tauri::RunEvent::Exit => {
-                    append_app_lifecycle_debug_log(app, "[app] exit");
+                    debug_log::event("[app] exit");
+                    debug_log::flush(Duration::from_millis(500));
                     unsafe { libc::_exit(0) };
                 }
                 _ => {}
@@ -9637,7 +9567,6 @@ fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, stat
     let Some(payload) = payload else {
         return;
     };
-    let log_settings = payload.settings.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         apply_tray_presentation(
             &app_handle,
@@ -9646,11 +9575,7 @@ fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, stat
             payload.dictation_stage,
         );
     }) {
-        append_runtime_debug_log(
-            &log_settings,
-            format!("[tray] failed to schedule presentation update: {error}"),
-        );
-        eprintln!("[tray] failed to schedule presentation update: {error}");
+        log_error!("[tray] failed to schedule presentation update: {error}");
     }
 }
 
@@ -9809,7 +9734,7 @@ fn handle_tray_menu(app: &tauri::AppHandle, id: &str) {
                 })
                 .unwrap_or(true);
             if let Err(error) = ensure_main_window_visible(app, show_dock_icon) {
-                eprintln!("[window] failed to open settings window: {error}");
+                log_error!("[window] failed to open settings window: {error}");
             }
         }
         "quit" => {

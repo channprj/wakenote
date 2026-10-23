@@ -453,7 +453,7 @@ fn build_cpal_stream(
     let sample_rate = stream_config.sample_rate.0;
     let mut encoder = MicrophoneFrameEncoder::default();
 
-    eprintln!(
+    crate::log_event!(
         "audio input format: device={} rate={} channels={} sample_format={:?}",
         config.device_id,
         sample_rate,
@@ -465,7 +465,7 @@ fn build_cpal_stream(
         if let Ok(mut runtime_error) = runtime_error.lock() {
             *runtime_error = Some(error.to_string());
         }
-        eprintln!("audio input stream error: {error}");
+        crate::log_error!("audio input stream error: {error}");
     };
 
     match supported_config.sample_format() {

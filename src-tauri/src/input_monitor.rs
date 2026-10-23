@@ -232,7 +232,7 @@ fn build_output_stream(
         if let Ok(mut runtime_error) = runtime_error.lock() {
             *runtime_error = Some(error.to_string());
         }
-        eprintln!("input monitor output stream error: {error}");
+        crate::log_error!("input monitor output stream error: {error}");
     };
 
     let stream = match supported_config.sample_format() {

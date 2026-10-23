@@ -13,7 +13,7 @@ use wakenote::commands::{
     tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
     with_live_runtime_warning, with_runtime_warning,
 };
-use wakenote::debug_log::debug_log_path_for;
+use wakenote::debug_log;
 use wakenote::live_capture::AudioFrame;
 use wakenote::meeting::{MeetingStatus, list_meetings, meeting_detail};
 use wakenote::models::{ModelStatus, ModelStore, default_model_registry};
@@ -2537,15 +2537,28 @@ fn backend_logs_backfilled_jobs_when_enqueueing_backlog() {
     std::fs::write(&audio_path, b"recorded audio").expect("audio");
 
     let mut backend = AppBackend::default();
-    backend.update_settings(wav_settings_patch(tmp.path()));
+    backend.attach_diagnostic_log();
+    backend.update_settings(SettingsPatch {
+        diagnostic_logging_enabled: Some(true),
+        ..wav_settings_patch(tmp.path())
+    });
 
     let snapshot = backend
         .enqueue_backlog(tmp.path())
         .expect("enqueue backlog");
+    backend.update_settings(SettingsPatch {
+        diagnostic_logging_enabled: Some(false),
+        ..Default::default()
+    });
+    debug_log::flush(std::time::Duration::from_secs(2));
 
+    assert!(!debug_log::enabled());
     assert_eq!(snapshot.pending_count, 1);
-    let log_path = debug_log_path_for(tmp.path(), chrono::Local::now().date_naive());
+    let log_path = debug_log::log_path_for(tmp.path(), chrono::Local::now().date_naive());
     let log = std::fs::read_to_string(log_path).expect("debug log");
+    assert!(log.contains("[diagnostics] logging enabled"));
+    assert!(log.contains("[settings] updated fields="));
+    assert!(log.contains("diagnostic_logging_enabled"));
     assert!(log.contains("[queue] state=backfilled"));
     assert!(log.contains("job_id=1"));
     assert!(log.contains("model=whisper-medium"));

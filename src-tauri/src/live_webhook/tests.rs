@@ -223,10 +223,10 @@ fn header<'a>(request: &'a Request, name: &str) -> &'a str {
 #[tokio::test]
 async fn defaults_and_disabled_results_never_send_or_replay() {
     let server = Server::start(vec![Response::Status(200)]).await;
-    let (service, logs, _) = start(LiveTranscriptionWebhookSettings::default(), fast_policy());
+    let (service, _logs, _) = start(LiveTranscriptionWebhookSettings::default(), fast_policy());
     let old = LiveWebhookTranscript::new(metadata(1));
     old.finalize(&service, &execution("old"));
-    service.configure(settings(&server.url), logs.path().into());
+    service.configure(settings(&server.url));
     old.finalize(&service, &execution("old"));
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert!(server.requests().is_empty());
@@ -335,11 +335,11 @@ async fn json_retries_keep_the_original_snapshot_when_unrelated_settings_change(
         retry_delays: [Duration::from_millis(100); 3],
         ..fast_policy()
     };
-    let (service, logs, _) = start(config.clone(), policy);
+    let (service, _logs, _) = start(config.clone(), policy);
     let transcript = LiveWebhookTranscript::new(metadata(1));
     transcript.finalize(&service, &execution("original"));
     until(|| service.stats().retries == 1).await;
-    service.configure(config, logs.path().join("another-log-root"));
+    service.configure(config);
     transcript.finalize(
         &service,
         &execution("later correction must not replace the snapshot"),
@@ -402,19 +402,28 @@ async fn connection_refused_is_bounded_and_does_not_expose_the_url_in_logs() {
         listener.local_addr().unwrap()
     );
     drop(listener);
+    let _log_config = crate::debug_log::GLOBAL_CONFIG_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (service, logs, _) = start(settings(&endpoint), fast_policy());
+    crate::debug_log::configure(Some(logs.path().to_path_buf()));
     submit(&service, 1, "private-transcript-body");
     until(|| service.stats().failed == 1).await;
     assert_eq!(service.stats().retries, 3);
-    let log_path =
-        crate::debug_log::debug_log_path_for(logs.path(), chrono::Local::now().date_naive());
-    until(|| {
+    let log_path = crate::debug_log::log_path_for(logs.path(), chrono::Local::now().date_naive());
+    // Other tests may log concurrently while the process-wide log is on.
+    let webhook_lines = || {
         std::fs::read_to_string(&log_path)
             .unwrap_or_default()
-            .contains("failed_connect")
-    })
-    .await;
-    let log = std::fs::read_to_string(log_path).unwrap();
+            .lines()
+            .filter(|line| line.contains("[live-webhook]"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    until(|| webhook_lines().contains("failed_connect")).await;
+    crate::debug_log::configure(None);
+    crate::debug_log::flush(Duration::from_secs(2));
+    let log = webhook_lines();
     for secret in [
         "private-transcript-body",
         "private-path",
@@ -573,7 +582,7 @@ async fn changing_url_mode_or_disabling_cancels_old_work_instead_of_retargeting_
     for change in ["url", "mode", "disable"] {
         let old = Server::start(vec![Response::StallHeaders]).await;
         let new = Server::start(vec![Response::Status(200)]).await;
-        let (service, logs, _) = start(settings(&old.url), Policy::default());
+        let (service, _logs, _) = start(settings(&old.url), Policy::default());
         for id in 0..6 {
             submit(&service, id, "old setting");
         }
@@ -584,12 +593,12 @@ async fn changing_url_mode_or_disabling_cancels_old_work_instead_of_retargeting_
             "mode" => config.payload_format = WebhookPayloadFormat::Json,
             _ => config.enabled = false,
         }
-        service.configure(config, logs.path().into());
+        service.configure(config);
         until(|| service.stats().cancelled == 6).await;
         assert_eq!(service.stats().failed, 0);
         assert_eq!(service.stats().retries, 0);
         assert!(new.requests().is_empty());
-        service.configure(settings(&new.url), logs.path().into());
+        service.configure(settings(&new.url));
         submit(&service, 10, "new setting");
         until(|| service.stats().succeeded == 1).await;
         assert_eq!(new.requests()[0].body, b"new setting");
@@ -600,13 +609,10 @@ async fn changing_url_mode_or_disabling_cancels_old_work_instead_of_retargeting_
 #[tokio::test]
 async fn cancel_during_backoff_and_restart_do_not_replay() {
     let server = Server::start(vec![Response::Status(500)]).await;
-    let (service, logs, task) = start(settings(&server.url), Policy::default());
+    let (service, _logs, task) = start(settings(&server.url), Policy::default());
     submit(&service, 1, "old");
     until(|| service.stats().retries == 1).await;
-    service.configure(
-        LiveTranscriptionWebhookSettings::default(),
-        logs.path().into(),
-    );
+    service.configure(LiveTranscriptionWebhookSettings::default());
     assert_eq!(service.stats().cancelled, 1);
     assert_eq!(service.stats().pending, 0);
     drop(service);
@@ -890,12 +896,12 @@ async fn failed_history_survives_restart_but_waits_for_explicit_manual_retry() {
 async fn changing_cleanup_preference_does_not_cancel_in_flight_requests() {
     let server = Server::start(vec![Response::StallHeaders]).await;
     let config = settings(&server.url);
-    let (service, logs, _) = start(config.clone(), Policy::default());
+    let (service, _logs, _) = start(config.clone(), Policy::default());
     submit(&service, 1, "still sending");
     until(|| service.stats().in_flight == 1).await;
     let mut changed = config;
     changed.auto_delete_history = false;
-    service.configure(changed, logs.path().into());
+    service.configure(changed);
     let page = service.list_history(1, HistoryFilter::All).await.unwrap();
     assert_eq!(page.total, 1);
     assert_eq!(service.stats().pending, 1);
@@ -952,12 +958,7 @@ async fn delivery_continues_when_history_storage_is_unavailable() {
     let logs = tempfile::tempdir().unwrap();
     let invalid_path = logs.path().join("directory-not-a-database");
     std::fs::create_dir(&invalid_path).unwrap();
-    let service = WebhookService::build(
-        settings(&server.url),
-        logs.path().into(),
-        fast_policy(),
-        invalid_path,
-    );
+    let service = WebhookService::build(settings(&server.url), fast_policy(), invalid_path);
     let task = tokio::spawn(run(service.inner.clone()));
     submit(&service, 1, "delivery remains independent");
     until(|| service.stats().succeeded == 1).await;

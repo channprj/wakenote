@@ -369,7 +369,7 @@ pub fn show_overlay_on_main_thread(
     let app_for_task = app.clone();
     app.run_on_main_thread(move || {
         if let Err(error) = show_overlay(&app_for_task, state, position) {
-            eprintln!("[overlay] {context} failed: {error}");
+            crate::log_error!("[overlay] {context} failed: {error}");
         }
     })
 }
@@ -391,7 +391,7 @@ pub fn hide_overlay_on_main_thread(app: &AppHandle, context: &'static str) -> ta
     let app_for_task = app.clone();
     app.run_on_main_thread(move || {
         if let Err(error) = hide_overlay(&app_for_task) {
-            eprintln!("[overlay] {context} failed: {error}");
+            crate::log_error!("[overlay] {context} failed: {error}");
         }
     })
 }

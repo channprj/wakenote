@@ -261,8 +261,7 @@ impl Recorder {
             if metadata.live_capture_chunk_id.is_none() {
                 return Err(error);
             }
-            crate::debug_log::append_debug_log_nonblocking(
-                request.save_root,
+            crate::debug_log::error(
                 "[capture] metadata_write_failed; continuing with in-memory live metadata",
             );
         }

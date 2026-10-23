@@ -201,7 +201,7 @@ impl Drop for LiveTranscriptionService {
 }
 
 fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallback) {
-    eprintln!("[wakenote] live_transcription worker thread started");
+    crate::log_event!("[wakenote] live_transcription worker thread started");
     // Track (chunk_id, model_id) of the most recent ModelMissing emission so
     // we only surface the failure once per chunk — partials fire every few
     // seconds and the UI doesn't need a steady stream of identical errors.
@@ -210,7 +210,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
         let request = match wait_for_request(&inner) {
             Some(WorkItem::Partial(request)) => request,
             Some(WorkItem::Preload(model_id)) => {
-                eprintln!("[wakenote] live_transcription: preloading model {model_id}");
+                crate::log_event!("[wakenote] live_transcription: preloading model {model_id}");
                 // Warm the model so the first real decode is instant. Ignore
                 // the result — a real request (or ModelMissing handling) will
                 // surface any load failure to the UI.
@@ -218,7 +218,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
                 continue;
             }
             None => {
-                eprintln!("[wakenote] live_transcription worker exiting (closed)");
+                crate::log_event!("[wakenote] live_transcription worker exiting (closed)");
                 return;
             }
         };
@@ -229,7 +229,7 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
                 context
             }
             None => {
-                eprintln!(
+                crate::log_error!(
                     "[wakenote] live_transcription: model not loadable for id={}",
                     request.model_id
                 );
@@ -270,9 +270,10 @@ fn worker_loop(inner: Arc<LiveTranscriptionInner>, on_result: LivePartialCallbac
             &request.dictionary,
         );
         let elapsed = started.elapsed();
-        eprintln!(
+        crate::log_event!(
             "[wakenote] live_transcription: chunk_id={} decode took {:?}",
-            request.chunk_id, elapsed
+            request.chunk_id,
+            elapsed
         );
         mark_idle(&inner);
 
@@ -347,21 +348,21 @@ fn ensure_context(
         return Some(context);
     }
     if !model_path.exists() {
-        eprintln!(
+        crate::log_error!(
             "[wakenote] live_transcription: model file missing at {}",
             model_path.display()
         );
         return None;
     }
 
-    eprintln!(
+    crate::log_event!(
         "[wakenote] live_transcription: loading model {} (this can take 5-15s)",
         model_path.display()
     );
     let context = match cached_whisper_context(&model_path) {
         Ok(context) => context,
         Err(error) => {
-            eprintln!("[wakenote] live_transcription: WhisperContext load error: {error}");
+            crate::log_error!("[wakenote] live_transcription: WhisperContext load error: {error}");
             return None;
         }
     };

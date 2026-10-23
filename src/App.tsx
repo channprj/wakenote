@@ -40,6 +40,7 @@ import {
   loadPermissionSnapshot,
   loadSnapshot,
   isTauriRuntime,
+  logFrontendError,
   markAllActivityRead,
   openAccessibilityPermissionAssistant,
   openTranscriptFolder,
@@ -225,6 +226,10 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
   }
+
+  useEffect(() => {
+    if (error) logFrontendError(error);
+  }, [error]);
 
   useEffect(() => {
     void refresh();

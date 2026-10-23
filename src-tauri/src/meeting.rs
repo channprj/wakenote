@@ -1372,7 +1372,7 @@ pub fn run_meeting_job(
                     &format!("Segment {} audio read failed", idx + 1),
                     &error.to_string(),
                 );
-                eprintln!(
+                crate::log_error!(
                     "[wakenote] meeting {}: segment {idx} read failed: {error}",
                     record.id
                 );
@@ -1605,7 +1605,7 @@ pub fn run_meeting_job(
                     &format!("Segment {} transcription failed", idx + 1),
                     &error.to_string(),
                 );
-                eprintln!(
+                crate::log_error!(
                     "[wakenote] meeting {}: segment {idx} decode failed: {error}",
                     record.id
                 );

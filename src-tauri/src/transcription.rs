@@ -504,7 +504,7 @@ impl<T: Transcriber> TranscriptionWorker<T> {
                     && should_apply_artifact_suppression(&chunk);
                 if suppress_artifacts && let Some(reason) = transcript_artifact_reason(&transcript)
                 {
-                    eprintln!(
+                    crate::log_event!(
                         "[wakenote] transcription: flagged artifact reason={} path={}; preserving archival transcript",
                         reason.code(),
                         job.audio_path.display()
@@ -1771,17 +1771,26 @@ pub(crate) fn configure_whisper_language(
 unsafe extern "C" fn whisper_log_trampoline(
     // `ggml_log_level` is a `c_uint` typedef; naming the sys type would require
     // whisper-rs's `raw-api` feature, so we use the transparent alias directly.
-    _level: c_uint,
+    level: c_uint,
     text: *const c_char,
     _user_data: *mut c_void,
 ) {
+    // `ggml_log_level` values; INFO and DEBUG repeat on every live-preview
+    // state, so only warnings and errors reach the diagnostic log.
+    const GGML_LOG_LEVEL_WARN: c_uint = 3;
+    const GGML_LOG_LEVEL_ERROR: c_uint = 4;
     if text.is_null() {
         return;
     }
     let message = unsafe { CStr::from_ptr(text) }.to_string_lossy();
     let message = message.trim_end();
-    if !message.is_empty() {
-        eprintln!("[wakenote] whisper: {message}");
+    if message.is_empty() {
+        return;
+    }
+    match level {
+        GGML_LOG_LEVEL_ERROR => crate::log_error!("[wakenote] whisper: {message}"),
+        GGML_LOG_LEVEL_WARN => crate::log_event!("[wakenote] whisper: {message}"),
+        _ => eprintln!("[wakenote] whisper: {message}"),
     }
 }
 
@@ -1897,7 +1906,7 @@ pub fn cached_whisper_context(
         })?;
     cache.get_or_try_load(model_path, || {
         let started = std::time::Instant::now();
-        eprintln!(
+        crate::log_event!(
             "[wakenote] whisper: loading reusable context from {}",
             model_path.display()
         );
@@ -1910,7 +1919,7 @@ pub fn cached_whisper_context(
             WhisperContext::new_from_buffer_with_params(bytes, default_whisper_context_parameters())
                 .map_err(|error| TranscriptionError::Engine(error.to_string()))
         })?;
-        eprintln!(
+        crate::log_event!(
             "[wakenote] whisper: reusable context loaded in {:?}",
             started.elapsed()
         );

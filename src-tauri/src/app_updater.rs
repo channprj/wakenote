@@ -265,7 +265,7 @@ fn abandon_update(app: &AppHandle, suspension: CaptureSuspension<'static>, captu
             ) {
                 Ok(status) => refresh_capture_presentation(&app, &status),
                 Err(error) => {
-                    eprintln!(
+                    crate::log_error!(
                         "[updater] could not restart Capture input after a cancelled update: {error}"
                     );
                     let _ = app.emit(LIVE_INPUT_CHANGED_EVENT, ());

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { devFixtures } from "./lib/dev-fixtures";
+import { installDiagnosticErrorLogging } from "./lib/diagnostic-log";
 import { isTauriRuntime, seedBrowserFixtures } from "./lib/tauri-client";
 import { seedBrowserWebhookHistory } from "./lib/webhook-history";
 import "./styles.css";
@@ -13,6 +14,8 @@ if (!isTauriRuntime()) {
   seedBrowserFixtures(devFixtures());
   seedBrowserWebhookHistory();
 }
+
+installDiagnosticErrorLogging();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

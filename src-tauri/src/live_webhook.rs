@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 use tokio::time::{Instant, sleep_until, timeout};
 use tokio_util::sync::CancellationToken;
 
-use crate::debug_log::append_debug_log_nonblocking;
+use crate::debug_log;
 use crate::recorder::ChunkMetadata;
 use crate::settings::{LiveTranscriptionWebhookSettings, WebhookPayloadFormat};
 use crate::transcription::TranscriptionExecution;
@@ -121,7 +121,6 @@ struct State {
     queue: BTreeMap<u64, Event>,
     next_sequence: u64,
     stats: WebhookStats,
-    log_root: PathBuf,
 }
 
 struct Inner {
@@ -138,12 +137,8 @@ pub struct WebhookService {
 }
 
 impl WebhookService {
-    pub fn new(
-        settings: LiveTranscriptionWebhookSettings,
-        log_root: PathBuf,
-        history_path: PathBuf,
-    ) -> Self {
-        let service = Self::build(settings, log_root, Policy::default(), history_path);
+    pub fn new(settings: LiveTranscriptionWebhookSettings, history_path: PathBuf) -> Self {
+        let service = Self::build(settings, Policy::default(), history_path);
         tauri::async_runtime::spawn(run(service.inner.clone()));
         service
     }
@@ -151,16 +146,15 @@ impl WebhookService {
     #[cfg(test)]
     fn unstarted(
         settings: LiveTranscriptionWebhookSettings,
-        log_root: PathBuf,
+        history_dir: PathBuf,
         policy: Policy,
     ) -> Self {
-        let history_path = log_root.join("webhook-history.sqlite3");
-        Self::build(settings, log_root, policy, history_path)
+        let history_path = history_dir.join("webhook-history.sqlite3");
+        Self::build(settings, policy, history_path)
     }
 
     fn build(
         settings: LiveTranscriptionWebhookSettings,
-        log_root: PathBuf,
         policy: Policy,
         history_path: PathBuf,
     ) -> Self {
@@ -174,7 +168,6 @@ impl WebhookService {
                     queue: BTreeMap::new(),
                     next_sequence: 0,
                     stats: WebhookStats::default(),
-                    log_root,
                 }),
                 notify: Notify::new(),
                 shutdown: CancellationToken::new(),
@@ -189,7 +182,7 @@ impl WebhookService {
     }
 
     /// Called under the settings commit lock, after successful persistence.
-    pub fn configure(&self, settings: LiveTranscriptionWebhookSettings, log_root: PathBuf) {
+    pub fn configure(&self, settings: LiveTranscriptionWebhookSettings) {
         let Ok(mut state) = self.inner.state.lock() else {
             return;
         };
@@ -203,7 +196,6 @@ impl WebhookService {
         }
         self.inner.history.configure(settings.auto_delete_history);
         state.settings = settings;
-        state.log_root = log_root;
         drop(state);
         self.inner.notify.notify_one();
     }
@@ -419,19 +411,22 @@ fn record(
     elapsed_ms: u128,
 ) {
     // Never format reqwest::Error, URLs, request/response bodies, or metadata.
-    append_debug_log_nonblocking(
-        &state.log_root,
-        format!(
-            "[live-webhook] event_id={id} attempt={attempt} outcome={outcome} status={status:?} elapsed_ms={elapsed_ms} succeeded={} retries={} failed={} cancelled={} dropped={} pending={} in_flight={}",
-            state.stats.succeeded,
-            state.stats.retries,
-            state.stats.failed,
-            state.stats.cancelled,
-            state.stats.dropped,
-            state.stats.pending,
-            state.stats.in_flight,
-        ),
-    );
+    let delivered_or_retrying = outcome == "succeeded" || outcome.starts_with("retry_");
+    let level = if delivered_or_retrying {
+        debug_log::event
+    } else {
+        debug_log::error
+    };
+    level(format!(
+        "[live-webhook] event_id={id} attempt={attempt} outcome={outcome} status={status:?} elapsed_ms={elapsed_ms} succeeded={} retries={} failed={} cancelled={} dropped={} pending={} in_flight={}",
+        state.stats.succeeded,
+        state.stats.retries,
+        state.stats.failed,
+        state.stats.cancelled,
+        state.stats.dropped,
+        state.stats.pending,
+        state.stats.in_flight,
+    ));
 }
 
 enum AttemptResult {

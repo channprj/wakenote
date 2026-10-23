@@ -162,6 +162,11 @@ export async function cancelTextTransform(requestId: string): Promise<void> {
   if (isTauriRuntime()) await invoke("cancel_text_transform", { requestId });
 }
 
+/** Records a UI error in the diagnostic log; the backend drops it while logging is off. */
+export function logFrontendError(message: string): void {
+  if (isTauriRuntime()) void invoke("log_frontend_error", { message }).catch(() => {});
+}
+
 function normalizeSubtitlePatch(
   patch: SettingsPatch,
   current?: AppSettings,

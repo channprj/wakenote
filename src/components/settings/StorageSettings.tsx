@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { AppSettings } from "@/lib/types";
 import { confirmSaveRootDisabledReason } from "./settings-helpers";
-import { SettingSelect, SettingsCard, SettingsGrid } from "./settings-controls";
+import { SettingSelect, SettingSwitch, SettingsCard, SettingsGrid } from "./settings-controls";
 import type { SettingsActions } from "./types";
 
 export function StorageSettings({
@@ -110,6 +110,17 @@ export function StorageSettings({
             {pathPrefix}/YYYYMMDD/YYMMDD-HHMMSS.json
           </code>
         </div>
+      </SettingsCard>
+
+      <SettingsCard title="Diagnostics" description="Detailed records for troubleshooting.">
+        <SettingSwitch
+          label="Diagnostic logs"
+          description={`Append error and event logs to ${pathPrefix}/logs/YYYY/MM/YYMMDD.log.`}
+          checked={settings.diagnostic_logging_enabled}
+          onCheckedChange={(diagnostic_logging_enabled) =>
+            actions.onPatch({ diagnostic_logging_enabled })
+          }
+        />
       </SettingsCard>
     </SettingsGrid>
   );

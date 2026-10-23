@@ -535,6 +535,9 @@ pub struct AppSettings {
     pub priority_microphone_inputs: bool,
     pub save_root: String,
     pub save_root_confirmed: bool,
+    /// Append detailed error and event lines to `<save root>/logs/YYYY/MM/YYMMDD.log`.
+    #[serde(default)]
+    pub diagnostic_logging_enabled: bool,
     pub audio_format: AudioFormat,
     #[serde(default = "default_audio_bitrate_kbps")]
     pub audio_bitrate_kbps: u32,
@@ -709,6 +712,7 @@ pub struct SettingsPatch {
     pub merge_microphone_inputs: Option<bool>,
     pub priority_microphone_inputs: Option<bool>,
     pub save_root: Option<String>,
+    pub diagnostic_logging_enabled: Option<bool>,
     pub audio_format: Option<AudioFormat>,
     pub audio_bitrate_kbps: Option<u32>,
     pub threshold_dbfs: Option<f32>,
@@ -1445,6 +1449,9 @@ impl AppSettings {
             self.save_root_confirmed = !value.trim().is_empty();
             self.save_root = value;
         }
+        if let Some(value) = patch.diagnostic_logging_enabled {
+            self.diagnostic_logging_enabled = value;
+        }
         if let Some(value) = patch.audio_format {
             self.audio_format = value;
         }
@@ -1736,6 +1743,7 @@ impl Default for AppSettings {
             priority_microphone_inputs: false,
             save_root: "~/Documents/WakeNote".to_string(),
             save_root_confirmed: false,
+            diagnostic_logging_enabled: false,
             audio_format: AudioFormat::M4a,
             audio_bitrate_kbps: default_audio_bitrate_kbps(),
             threshold_dbfs: -40.0,
@@ -2111,6 +2119,16 @@ mod tests {
             settings.effective_floating_overlay_position(),
             FloatingOverlayPosition::Off
         );
+    }
+
+    #[test]
+    fn patch_sets_diagnostic_logging() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            diagnostic_logging_enabled: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.diagnostic_logging_enabled);
     }
 
     #[test]
@@ -2639,6 +2657,7 @@ mod tests {
         assert_eq!(settings.audio_bitrate_kbps, 96);
         assert_eq!(settings.lead_in_padding_ms, 200);
         assert!(!settings.system_audio_enabled);
+        assert!(!settings.diagnostic_logging_enabled);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "alt+space");

@@ -179,6 +179,7 @@ export interface AppSettings {
   priority_microphone_inputs: boolean;
   save_root: string;
   save_root_confirmed: boolean;
+  diagnostic_logging_enabled: boolean;
   audio_format: AudioFormat;
   audio_bitrate_kbps: number;
   threshold_dbfs: number;

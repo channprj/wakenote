@@ -16,7 +16,7 @@ use crate::audio::{
 };
 use crate::capture::{CaptureController, CaptureControllerConfig, CaptureControllerEvent};
 use crate::cloud_transcription::TranscriptionCredentials;
-use crate::debug_log::{append_debug_log, append_debug_log_nonblocking};
+use crate::debug_log;
 use crate::dictation::DictationStage;
 use crate::dictionary::DictionaryContext;
 use crate::live_capture::AudioFrame;
@@ -50,6 +50,7 @@ use crate::transcription::{
     TranscriptionWorker, TranscriptionWorkerOptions, apply_outcome, model_supports_live_partials,
 };
 use crate::trash::{TrashedRecordingBundle, recording_bundle_paths, restore_recording_bundle};
+use crate::{log_error, log_event};
 
 /// How many recently committed chunk_ids we keep around for audio_path -> chunk_id
 /// reverse-lookup after a queue worker finishes. Bounded to avoid unbounded growth
@@ -623,6 +624,9 @@ struct SystemMeetingCapture {
 
 pub struct AppBackend {
     live_webhook: Option<Arc<crate::live_webhook::WebhookService>>,
+    /// Set by the app runtime so settings changes drive the process-wide
+    /// diagnostic log; tests leave it off to keep that global untouched.
+    diagnostic_log_attached: bool,
     pending_live_metadata: HashMap<u64, Arc<ChunkMetadata>>,
     settings: AppSettings,
     queue: TranscriptionQueue,
@@ -728,6 +732,7 @@ impl Default for AppBackend {
     fn default() -> Self {
         Self {
             live_webhook: None,
+            diagnostic_log_attached: false,
             pending_live_metadata: HashMap::new(),
             settings: AppSettings::default(),
             queue: TranscriptionQueue::new(),
@@ -777,6 +782,7 @@ impl AppBackend {
         );
         Ok(Self {
             live_webhook: None,
+            diagnostic_log_attached: false,
             pending_live_metadata: HashMap::new(),
             settings,
             queue: persistence.load_queue()?.unwrap_or_default(),
@@ -898,16 +904,28 @@ impl AppBackend {
     }
 
     pub fn set_live_webhook(&mut self, service: Arc<crate::live_webhook::WebhookService>) {
-        service.configure(
-            self.settings.live_transcription_webhook.clone(),
-            self.save_root_path(),
-        );
+        service.configure(self.settings.live_transcription_webhook.clone());
         self.live_webhook = Some(service);
+    }
+
+    pub fn attach_diagnostic_log(&mut self) {
+        self.diagnostic_log_attached = true;
+        self.sync_diagnostic_log();
+    }
+
+    fn sync_diagnostic_log(&self) {
+        if self.diagnostic_log_attached {
+            debug_log::configure(
+                self.settings
+                    .diagnostic_logging_enabled
+                    .then(|| self.save_root_path()),
+            );
+        }
     }
 
     pub fn update_settings(&mut self, patch: SettingsPatch) -> AppSettings {
         self.try_update_settings(patch).unwrap_or_else(|error| {
-            eprintln!("[settings] could not save settings: {error}");
+            log_error!("[settings] could not save settings: {error}");
             self.settings.clone()
         })
     }
@@ -942,6 +960,7 @@ impl AppBackend {
                 patch.selected_model = None;
             }
         }
+        let patched_fields = settings_patch_field_names(&patch);
         let mut candidate = self.settings.clone();
         candidate.apply_patch(patch);
         candidate.live_transcription_webhook.validate()?;
@@ -958,11 +977,10 @@ impl AppBackend {
         }
         self.settings = candidate;
         if let Some(service) = &self.live_webhook {
-            service.configure(
-                self.settings.live_transcription_webhook.clone(),
-                self.save_root_path(),
-            );
+            service.configure(self.settings.live_transcription_webhook.clone());
         }
+        self.sync_diagnostic_log();
+        debug_log::event(format!("[settings] updated fields={patched_fields}"));
         self.sync_capture_settings();
         Ok(self.settings.clone())
     }
@@ -1388,16 +1406,9 @@ impl AppBackend {
         // its label, and whether a fallback warning is being surfaced. Lets
         // a `log show --predicate 'process == "wakenote"'` reader confirm
         // the false-positive 'Pinned X unavailable; using X' bug stays dead.
-        eprintln!(
+        log_event!(
             "[mic-start] device_id={device_id} label={device_name} fallback={used_fallback_device} warning={:?}",
             self.microphone_warning
-        );
-        append_debug_log_nonblocking(
-            self.save_root_path(),
-            format!(
-                "[mic-start] device_id={} label={} fallback={} warning={:?}",
-                device_id, device_name, used_fallback_device, self.microphone_warning
-            ),
         );
         let priority_ids = vec![device_id.clone()];
         let active_index = priority_ids
@@ -2016,13 +2027,10 @@ impl AppBackend {
         if let Some(capture) = self.system_meeting_capture.take() {
             self.finish_system_meeting_capture(capture);
         }
-        append_debug_log_nonblocking(
-            self.save_root_path(),
-            format!(
-                "[system-capture] start source_id={} label={} app={} sample_rate={}",
-                source_id, source_label, app_name, sample_rate
-            ),
-        );
+        debug_log::event(format!(
+            "[system-capture] start source_id={} label={} app={} sample_rate={}",
+            source_id, source_label, app_name, sample_rate
+        ));
         self.last_system_audio_frame_at = None;
         self.next_system_meeting_generation =
             self.next_system_meeting_generation.wrapping_add(1).max(1);
@@ -2058,13 +2066,10 @@ impl AppBackend {
         self.system_meeting_capture = match meeting_capture {
             Ok(capture) => capture,
             Err(error) => {
-                append_debug_log_nonblocking(
-                    self.save_root_path(),
-                    format!(
-                        "[system-capture] meeting_start_failed source_id={} error={}",
-                        source_id, error
-                    ),
-                );
+                debug_log::error(format!(
+                    "[system-capture] meeting_start_failed source_id={} error={}",
+                    source_id, error
+                ));
                 None
             }
         };
@@ -2135,7 +2140,7 @@ impl AppBackend {
         if let Some(capture) = self.system_meeting_capture.take() {
             self.finish_system_meeting_capture(capture);
         }
-        append_debug_log_nonblocking(self.save_root_path(), "[system-capture] stop");
+        debug_log::event("[system-capture] stop");
         Ok(self.app_status())
     }
 
@@ -2148,13 +2153,10 @@ impl AppBackend {
         } = capture;
         if !received_audio {
             let _ = writer.abort();
-            append_debug_log_nonblocking(
-                self.save_root_path(),
-                format!(
-                    "[system-capture] meeting_discarded id={} reason=no_audio",
-                    meeting_id
-                ),
-            );
+            debug_log::event(format!(
+                "[system-capture] meeting_discarded id={} reason=no_audio",
+                meeting_id
+            ));
             return;
         }
 
@@ -2171,22 +2173,16 @@ impl AppBackend {
                     status: MeetingStatus::Recorded,
                     error: None,
                 });
-                append_debug_log_nonblocking(
-                    self.save_root_path(),
-                    format!(
-                        "[system-capture] meeting_recorded id={} duration_ms={}",
-                        record.id, record.duration_ms
-                    ),
-                );
+                debug_log::event(format!(
+                    "[system-capture] meeting_recorded id={} duration_ms={}",
+                    record.id, record.duration_ms
+                ));
             }
             Err(error) => {
-                append_debug_log_nonblocking(
-                    self.save_root_path(),
-                    format!(
-                        "[system-capture] meeting_failed id={} error={}",
-                        meeting_id, error
-                    ),
-                );
+                debug_log::error(format!(
+                    "[system-capture] meeting_failed id={} error={}",
+                    meeting_id, error
+                ));
                 self.finished_system_meetings.push(MeetingFinishedEvent {
                     id: meeting_id,
                     status: MeetingStatus::Failed,
@@ -2215,7 +2211,7 @@ impl AppBackend {
                     chunk_id,
                     started_at,
                 } => {
-                    eprintln!("[wakenote] system-capture: ChunkStarted chunk_id={chunk_id}");
+                    log_event!("[wakenote] system-capture: ChunkStarted chunk_id={chunk_id}");
                     self.emit_live_event(LiveTranscriptEvent::Started {
                         source_key: "system".to_string(),
                         source_label: "System".to_string(),
@@ -2230,7 +2226,7 @@ impl AppBackend {
                     sample_rate,
                     samples,
                 } => {
-                    eprintln!(
+                    log_event!(
                         "[wakenote] system-capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
                         samples.len()
                     );
@@ -2250,19 +2246,10 @@ impl AppBackend {
                 }
                 CaptureControllerEvent::ChunkCompleted { chunk_id, chunk } => {
                     let model_id = self.transcription_model_for_completed_chunk(&chunk);
-                    eprintln!(
+                    log_event!(
                         "[wakenote] system-capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?}",
                         chunk.audio_path.display(),
                         model_id
-                    );
-                    append_debug_log_nonblocking(
-                        self.save_root_path(),
-                        format!(
-                            "[system-capture] chunk_completed chunk_id={} path={} queue_model={:?}",
-                            chunk_id,
-                            chunk.audio_path.display(),
-                            model_id
-                        ),
                     );
                     self.remember_chunk_id(&chunk.audio_path, chunk_id);
                     if let Some(model_id) = model_id.as_ref() {
@@ -2353,18 +2340,14 @@ impl AppBackend {
                     self.settings.transcription_options.clone(),
                 );
             }
-            let log_root = self.save_root_path();
             for job_id in &enqueued {
                 if let Some(job) = self.queue.job(*job_id) {
-                    append_debug_log(
-                        &log_root,
-                        format!(
-                            "[queue] state=backfilled job_id={} path={} model={}",
-                            job.id,
-                            job.audio_path.display(),
-                            job.model_id
-                        ),
-                    );
+                    debug_log::event(format!(
+                        "[queue] state=backfilled job_id={} path={} model={}",
+                        job.id,
+                        job.audio_path.display(),
+                        job.model_id
+                    ));
                 }
             }
             self.persist_queue();
@@ -3388,7 +3371,7 @@ impl AppBackend {
                     chunk_id,
                     started_at,
                 } => {
-                    eprintln!("[wakenote] capture: ChunkStarted chunk_id={chunk_id}");
+                    log_event!("[wakenote] capture: ChunkStarted chunk_id={chunk_id}");
                     if !self.live_chunk_is_suppressed_for_dictation(&source_key, chunk_id) {
                         self.emit_live_event(LiveTranscriptEvent::Started {
                             source_key: source_key.clone(),
@@ -3405,7 +3388,7 @@ impl AppBackend {
                     sample_rate,
                     samples,
                 } => {
-                    eprintln!(
+                    log_event!(
                         "[wakenote] capture: LiveSamplesReady chunk_id={chunk_id} samples={} rate={sample_rate}",
                         samples.len()
                     );
@@ -3429,19 +3412,16 @@ impl AppBackend {
                     let suppressed = self.finish_live_chunk_suppression(&source_key, chunk_id);
                     let model_id = if suppressed {
                         if let Err(error) = TranscriptionSidecar::mark_not_requested(&chunk) {
-                            append_debug_log_nonblocking(
-                                self.save_root_path(),
-                                format!(
-                                    "[dictation] failed to suppress overlapping VOR transcription path={} error={error}",
-                                    chunk.audio_path.display()
-                                ),
-                            );
+                            debug_log::error(format!(
+                                "[dictation] failed to suppress overlapping VOR transcription path={} error={error}",
+                                chunk.audio_path.display()
+                            ));
                         }
                         None
                     } else {
                         self.transcription_model_for_completed_chunk(&chunk)
                     };
-                    eprintln!(
+                    log_event!(
                         "[wakenote] capture: ChunkCompleted chunk_id={chunk_id} path={} queue_model={:?} dictation_suppressed={suppressed}",
                         chunk.audio_path.display(),
                         model_id
@@ -4535,6 +4515,20 @@ fn derive_tray_state(
         AppMode::RecordingAndTranscription | AppMode::RecordingOnly => TrayState::Idle,
         AppMode::TranscriptionOnly => TrayState::Idle,
         AppMode::Paused => TrayState::Paused,
+    }
+}
+
+/// Names the fields a patch sets, never their values: prompts, dictionary
+/// entries and webhook URLs must stay out of the diagnostic log.
+fn settings_patch_field_names(patch: &SettingsPatch) -> String {
+    match serde_json::to_value(patch) {
+        Ok(serde_json::Value::Object(fields)) => fields
+            .into_iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => String::new(),
     }
 }
 
