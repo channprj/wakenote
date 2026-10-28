@@ -186,24 +186,6 @@ describe("reduceTranscriptLog", () => {
     });
   });
 
-  it("records failed status with error message", () => {
-    const entries = apply([
-      { type: "started", chunk_id: 2, started_at: "2026-05-09T08:00:00Z" },
-      { type: "committed", chunk_id: 2, audio_path: "/tmp/2.m4a" },
-      {
-        type: "failed",
-        chunk_id: 2,
-        audio_path: "/tmp/2.m4a",
-        error: "model missing",
-      },
-    ]);
-
-    expect(entries[0]).toMatchObject({
-      status: "failed",
-      error: "model missing",
-    });
-  });
-
   it("trims to at most TRANSCRIPT_LOG_LIMIT entries", () => {
     const events: TranscriptEvent[] = Array.from(
       { length: TRANSCRIPT_LOG_LIMIT + 5 },

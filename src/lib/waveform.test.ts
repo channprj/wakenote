@@ -9,49 +9,50 @@ import {
 } from "./waveform";
 
 describe("waveform view helpers", () => {
-  it("returns the full waveform when zoom is at minimum", () => {
-    expect(visibleWaveformPeaks([0, 0.25, 0.5, 1], 1, 0.5)).toEqual([0, 0.25, 0.5, 1]);
-  });
+  it("selects the visible waveform window for zoom and center", () => {
+    const cases: Array<[string, Parameters<typeof visibleWaveformPeaks>, number[]]> = [
+      ["full waveform at minimum zoom", [[0, 0.25, 0.5, 1], 1, 0.5], [0, 0.25, 0.5, 1]],
+      ["centered subset when zoomed in", [[0, 0.25, 0.5, 0.75, 1], 2, 0.5], [0.25, 0.5, 0.75]],
+      ["zoom window clamped to the waveform edges", [[0, 0.25, 0.5, 0.75, 1], 3, 0], [0, 0.25]],
+    ];
 
-  it("returns a centered subset when zoomed in", () => {
-    expect(visibleWaveformPeaks([0, 0.25, 0.5, 0.75, 1], 2, 0.5)).toEqual([0.25, 0.5, 0.75]);
-  });
-
-  it("clamps the zoom window to the waveform edges", () => {
-    expect(visibleWaveformPeaks([0, 0.25, 0.5, 0.75, 1], 3, 0)).toEqual([0, 0.25]);
+    for (const [label, args, expected] of cases) {
+      expect(visibleWaveformPeaks(...args), label).toEqual(expected);
+    }
   });
 });
 
 describe("displaySignedWaveformPeaks", () => {
-  it("returns empty arrays when sources are empty", () => {
-    expect(displaySignedWaveformPeaks([], [], 100)).toEqual({ positive: [], negative: [] });
-  });
+  it("buckets signed waveform peaks into the display bar count", () => {
+    const cases: Array<[string, number[], number[], number, { positive: number[]; negative: number[] }]> = [
+      ["empty sources", [], [], 100, { positive: [], negative: [] }],
+      [
+        "sources shorter than the target bar count stay untouched",
+        [0.2, 0.4],
+        [-0.1, -0.3],
+        8,
+        { positive: [0.2, 0.4], negative: [-0.1, -0.3] },
+      ],
+      [
+        "max-pos and min-neg per bucket",
+        [0.1, 0.3, 0.2, 0.5, 0.4, 0.6],
+        [-0.2, -0.05, -0.4, -0.1, -0.3, -0.5],
+        3,
+        { positive: [0.3, 0.5, 0.6], negative: [-0.2, -0.4, -0.5] },
+      ],
+      [
+        "uneven inputs use the shorter array length",
+        [0.5, 0.5, 0.5],
+        [-0.4],
+        2,
+        { positive: [0.5], negative: [-0.4] },
+      ],
+      ["non-positive bar counts clamp to an empty view", [0.5], [-0.5], 0, { positive: [], negative: [] }],
+    ];
 
-  it("returns the sources untouched when shorter than the target bar count", () => {
-    const result = displaySignedWaveformPeaks([0.2, 0.4], [-0.1, -0.3], 8);
-    expect(result.positive).toEqual([0.2, 0.4]);
-    expect(result.negative).toEqual([-0.1, -0.3]);
-  });
-
-  it("buckets sources into the target bar count, taking max-pos and min-neg per bucket", () => {
-    const positive = [0.1, 0.3, 0.2, 0.5, 0.4, 0.6];
-    const negative = [-0.2, -0.05, -0.4, -0.1, -0.3, -0.5];
-    const result = displaySignedWaveformPeaks(positive, negative, 3);
-    expect(result.positive).toEqual([0.3, 0.5, 0.6]);
-    expect(result.negative).toEqual([-0.2, -0.4, -0.5]);
-  });
-
-  it("uses the shorter array length when the inputs are uneven", () => {
-    const result = displaySignedWaveformPeaks([0.5, 0.5, 0.5], [-0.4], 2);
-    expect(result.positive).toEqual([0.5]);
-    expect(result.negative).toEqual([-0.4]);
-  });
-
-  it("clamps non-positive bar counts to an empty view", () => {
-    expect(displaySignedWaveformPeaks([0.5], [-0.5], 0)).toEqual({
-      positive: [],
-      negative: [],
-    });
+    for (const [label, positive, negative, bars, expected] of cases) {
+      expect(displaySignedWaveformPeaks(positive, negative, bars), label).toEqual(expected);
+    }
   });
 });
 

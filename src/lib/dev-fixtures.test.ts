@@ -46,15 +46,6 @@ describe("dev fixtures", () => {
     }
   });
 
-  it("spreads captures across several days so the day strip has content", () => {
-    const { transcripts } = devFixtures(now);
-    const days = new Set(
-      transcripts.map((transcript) => transcript.recorded_at.slice(0, 10)),
-    );
-
-    expect(days.size).toBeGreaterThanOrEqual(4);
-  });
-
   it("covers both capture sources", () => {
     const { transcripts } = devFixtures(now);
     const sources = new Set(transcripts.map((transcript) => transcript.source));

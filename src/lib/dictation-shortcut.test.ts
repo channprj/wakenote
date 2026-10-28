@@ -27,20 +27,23 @@ function keyEvent(
 }
 
 describe("dictation shortcut helpers", () => {
-  it("normalizes aliases, whitespace, case, and modifier order", () => {
-    expect(normalizeDictationShortcut(" Command + SHIFT + Option + Control + D ")).toBe(
-      "ctrl+alt+shift+cmd+d",
-    );
-  });
+  it("normalizes valid shortcuts and rejects invalid ones", () => {
+    const accepted: Array<[string, string]> = [
+      // Aliases, whitespace, case, and modifier order.
+      [" Command + SHIFT + Option + Control + D ", "ctrl+alt+shift+cmd+d"],
+      // Modifier chords, modified keys, physical modifiers, and single keys.
+      [" Shift + Control ", "ctrl+shift"],
+      ["Control+V", "ctrl+v"],
+      ["Option+Command", "alt+cmd"],
+      ["Shift+Z", "shift+z"],
+      ["Z", "z"],
+      ["Space", "space"],
+      ["LeftControl", "leftctrl"],
+    ];
 
-  it("accepts modifier chords, modified keys, physical modifiers, and single keys", () => {
-    expect(normalizeDictationShortcut(" Shift + Control ")).toBe("ctrl+shift");
-    expect(normalizeDictationShortcut("Control+V")).toBe("ctrl+v");
-    expect(normalizeDictationShortcut("Option+Command")).toBe("alt+cmd");
-    expect(normalizeDictationShortcut("Shift+Z")).toBe("shift+z");
-    expect(normalizeDictationShortcut("Z")).toBe("z");
-    expect(normalizeDictationShortcut("Space")).toBe("space");
-    expect(normalizeDictationShortcut("LeftControl")).toBe("leftctrl");
+    for (const [input, canonical] of accepted) {
+      expect(normalizeDictationShortcut(input), input).toBe(canonical);
+    }
 
     for (const shortcut of [
       "",
@@ -54,38 +57,30 @@ describe("dictation shortcut helpers", () => {
     }
   });
 
-  it("uses the physical key code so Option-modified characters stay stable", () => {
-    expect(
-      dictationShortcutFromKeyboardEvent(
-        keyEvent("KeyD", { key: "∂", altKey: true }),
-      ),
-    ).toBe("alt+d");
-    expect(dictationShortcutFromKeyboardEvent(keyEvent("F8"))).toBe("f8");
-  });
-
-  it("captures a physical modifier key and rejects unsupported keys", () => {
-    expect(
-      dictationShortcutFromKeyboardEvent(
-        keyEvent("AltLeft", { key: "Alt", altKey: true }),
-      ),
-    ).toBe("leftalt");
-    expect(
-      dictationShortcutFromKeyboardEvent(
-        keyEvent("MediaPlayPause", { altKey: true }),
-      ),
-    ).toBeNull();
-  });
-
-  it("captures a modifier-only chord when the second modifier is pressed", () => {
-    expect(
-      dictationShortcutFromKeyboardEvent(
+  it("derives shortcuts from physical key events", () => {
+    const cases: Array<[string, ReturnType<typeof keyEvent>, string | null]> = [
+      // The physical key code keeps Option-modified characters stable.
+      ["Option+D as ∂", keyEvent("KeyD", { key: "∂", altKey: true }), "alt+d"],
+      ["F8", keyEvent("F8"), "f8"],
+      // A physical modifier key on its own.
+      ["AltLeft", keyEvent("AltLeft", { key: "Alt", altKey: true }), "leftalt"],
+      // Unsupported keys are rejected.
+      ["MediaPlayPause", keyEvent("MediaPlayPause", { altKey: true }), null],
+      // A modifier-only chord once the second modifier is pressed.
+      [
+        "ShiftLeft with Control held",
         keyEvent("ShiftLeft", {
           key: "Shift",
           ctrlKey: true,
           shiftKey: true,
         }),
-      ),
-    ).toBe("ctrl+shift");
+        "ctrl+shift",
+      ],
+    ];
+
+    for (const [label, event, expected] of cases) {
+      expect(dictationShortcutFromKeyboardEvent(event), label).toBe(expected);
+    }
   });
 
   it("formats canonical shortcuts for people", () => {

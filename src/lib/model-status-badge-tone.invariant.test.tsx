@@ -101,24 +101,28 @@ function renderModelsSettingsSectionBadgeTone(status: ModelStatus): string {
   return match?.[1] ?? "";
 }
 
-describe.each<ModelStatus>([
-  "installed",
-  "missing",
-  "downloading",
-  "verifying",
-  "extracting",
-  "ready",
-  "unloaded",
-  "error",
-])("model_status Badge cross-surface invariant for %s", (status) => {
-  it("renders the same semantic tone in ModelManager and ModelsSettings", () => {
-    const expectedTone = modelStatusBadgeTone(status);
+describe("model_status Badge cross-surface invariant", () => {
+  it("renders the same semantic tone in ModelManager and ModelsSettings for every model status", () => {
+    const statuses: ModelStatus[] = [
+      "installed",
+      "missing",
+      "downloading",
+      "verifying",
+      "extracting",
+      "ready",
+      "unloaded",
+      "error",
+    ];
 
-    const modelManagerTone = renderModelManagerSelectedRowBadgeTone(status);
-    const modelsSettingsTone = renderModelsSettingsSectionBadgeTone(status);
+    for (const status of statuses) {
+      const expectedTone = modelStatusBadgeTone(status);
 
-    expect(modelManagerTone).toBe(expectedTone);
-    expect(modelsSettingsTone).toBe(expectedTone);
-    expect(modelManagerTone).toBe(modelsSettingsTone);
-  });
+      const modelManagerTone = renderModelManagerSelectedRowBadgeTone(status);
+      const modelsSettingsTone = renderModelsSettingsSectionBadgeTone(status);
+
+      expect(modelManagerTone, `${status} ModelManager`).toBe(expectedTone);
+      expect(modelsSettingsTone, `${status} ModelsSettings`).toBe(expectedTone);
+      expect(modelManagerTone, `${status} ModelManager vs ModelsSettings`).toBe(modelsSettingsTone);
+    }
+  }, 30_000);
 });

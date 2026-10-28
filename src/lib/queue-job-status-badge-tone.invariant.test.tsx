@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { mockModels } from "./app-state";
-import { queueJobStatusBadgeTone } from "./status-summary";
+import { queueJobStatusBadgeTone, queueStatsCellTone } from "./status-summary";
 import { humanizeQueueJobStatus } from "./transcript-history";
 import type { QueueJob, QueueJobStatus, QueueSnapshot } from "./types";
 import { QueuePanel } from "../components/QueuePanel";
@@ -24,6 +24,21 @@ afterEach(cleanup);
 // invariant test normalizes absence-of-data-tone to "neutral" to compare against the Badge's
 // (always-emitted) StatusBadge data-tone. This documented JSX contract on QueuePanel.tsx
 // optimizes the DOM for the common "no signal" case while keeping the semantic tone derivable.
+//
+// The same render also checks QueuePanel's queue-stats banner cells and per-day group-row chip
+// spans, which must derive their data-tone from the shared queueStatsCellTone() helper. Iter-75
+// introduced queueStatsCellTone with those two co-located consumer surfaces; a regression where
+// one reverts to a hardcoded data-tone literal (e.g. the pre-iter-75 `"warning"` / `"primary"` /
+// `"danger"` / `"success"` string literals) fails here too.
+
+const STATS_LABELS: Record<QueueJobStatus, string> = {
+  pending: "Pending",
+  running: "Running",
+  completed: "Completed",
+  failed: "Errors",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+};
 
 function buildQueueSnapshot(status: QueueJobStatus): QueueSnapshot {
   const job: QueueJob = {
@@ -108,26 +123,67 @@ function extractJobRowDataTone(
   return row?.dataset.tone ?? "neutral";
 }
 
-describe.each<QueueJobStatus>([
-  "pending",
-  "running",
-  "completed",
-  "failed",
-  "cancelled",
-  "skipped",
-])(
-  "queue_job_status Badge/row-data-tone cross-surface invariant for %s",
-  (status) => {
-    it("renders the same effective tone for row and StatusBadge data-tone", () => {
-      const container = renderQueuePanel(status);
-      const expectedTone = queueJobStatusBadgeTone(status);
+function extractStatsCellTone(container: HTMLElement, label: string): string {
+  const cell = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      '[data-slot="queue-summary"] > div',
+    ),
+  ).find((candidate) => candidate.querySelector("span")?.textContent === label);
+  expect(
+    cell,
+    `expected queue-stats banner cell labeled "${label}"`,
+  ).toBeTruthy();
+  return cell?.dataset.tone ?? "";
+}
 
+function extractGroupChipTone(
+  container: HTMLElement,
+  status: QueueJobStatus,
+): string {
+  const bucket = status === "failed" ? "error" : status;
+  const chip = Array.from(
+    container.querySelectorAll<HTMLElement>(".table-group-row span[data-tone]"),
+  ).find((candidate) => candidate.textContent?.endsWith(` ${bucket}`));
+  expect(
+    chip,
+    `expected per-day group-row chip for "${status}"`,
+  ).toBeTruthy();
+  return chip?.dataset.tone ?? "";
+}
+
+describe("queue_job_status cross-surface tone invariant", () => {
+  it("renders consistent QueuePanel tones on every surface for every queue job status", () => {
+    const statuses: QueueJobStatus[] = [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+      "skipped",
+    ];
+
+    for (const status of statuses) {
+      // Each status gets its own render so the "Visible N" button and Badge lookups stay unique.
+      cleanup();
+      const container = renderQueuePanel(status);
+
+      // Row <tr> data-tone and StatusBadge data-tone share queueJobStatusBadgeTone.
+      const expectedTone = queueJobStatusBadgeTone(status);
       const badgeTone = extractJobRowBadgeTone(container, status);
       const rowTone = extractJobRowDataTone(container, status);
 
-      expect(badgeTone).toBe(expectedTone);
-      expect(rowTone).toBe(expectedTone);
-      expect(badgeTone).toBe(rowTone);
-    });
-  },
-);
+      expect(badgeTone, `${status} badge`).toBe(expectedTone);
+      expect(rowTone, `${status} row`).toBe(expectedTone);
+      expect(badgeTone, `${status} badge vs row`).toBe(rowTone);
+
+      // Queue-stats banner cell and per-day group-row chip share queueStatsCellTone.
+      const expectedStatsTone = queueStatsCellTone(status);
+      const statsCellTone = extractStatsCellTone(container, STATS_LABELS[status]);
+      const groupChipTone = extractGroupChipTone(container, status);
+
+      expect(statsCellTone, `${status} stats cell`).toBe(expectedStatsTone);
+      expect(groupChipTone, `${status} group chip`).toBe(expectedStatsTone);
+      expect(statsCellTone, `${status} stats cell vs group chip`).toBe(groupChipTone);
+    }
+  }, 30_000);
+});

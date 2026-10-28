@@ -79,10 +79,13 @@ function extractAppCaptureBadgeTone(markup: string, humanizedText: string): stri
   return match?.[1] ?? "";
 }
 
-describe.each<TrayState>(["idle", "listening", "recording", "transcribing", "paused", "error"])(
-  "tray_state Badge cross-surface invariant for %s",
-  (trayState) => {
-    it("renders the same semantic tone in Capture, TrayPreview, and LevelMeter", () => {
+describe("tray_state Badge cross-surface invariant", () => {
+  it("renders the same semantic tone in Capture, TrayPreview, and LevelMeter for every tray_state", () => {
+    const trayStates: TrayState[] = ["idle", "listening", "recording", "transcribing", "paused", "error"];
+
+    for (const trayState of trayStates) {
+      // Drop any unconsumed mockReturnValueOnce so each tray_state renders App independently.
+      vi.mocked(mockSnapshot).mockReset();
       const snapshot = buildSnapshotWithTrayState(trayState);
       const humanized = humanizeTrayState(trayState);
       const expectedTone = trayStateBadgeTone(trayState);
@@ -96,10 +99,10 @@ describe.each<TrayState>(["idle", "listening", "recording", "transcribing", "pau
         humanized,
       );
 
-      expect(appTone).toBe(expectedTone);
-      expect(trayPreviewTone).toBe(expectedTone);
-      expect(levelMeterTone).toBe(expectedTone);
-      expect(trayPreviewTone).toBe(levelMeterTone);
-    });
-  },
-);
+      expect(appTone, `${trayState} Capture`).toBe(expectedTone);
+      expect(trayPreviewTone, `${trayState} TrayPreview`).toBe(expectedTone);
+      expect(levelMeterTone, `${trayState} LevelMeter`).toBe(expectedTone);
+      expect(trayPreviewTone, `${trayState} TrayPreview vs LevelMeter`).toBe(levelMeterTone);
+    }
+  }, 30_000);
+});

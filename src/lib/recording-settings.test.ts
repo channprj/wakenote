@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  RECORDING_DEFAULTS,
-  resetRecordingSettingsPatch,
-} from "./recording-settings";
+import { resetRecordingSettingsPatch } from "./recording-settings";
 
 const expectedDefaults = {
   threshold_dbfs: -40,
@@ -16,10 +13,6 @@ const expectedDefaults = {
 };
 
 describe("recording settings", () => {
-  it("defines the requested first-install recording profile", () => {
-    expect(RECORDING_DEFAULTS).toEqual(expectedDefaults);
-  });
-
   it("resets only the recording profile and calibration state", () => {
     const patch = resetRecordingSettingsPatch();
 

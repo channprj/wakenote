@@ -31,19 +31,23 @@ describe("audio playback helpers", () => {
     expect(allowAudioPlayback).not.toHaveBeenCalled();
   });
 
-  it("does not expose a raw file URL before Tauri prepares playback", () => {
-    expect(
-      initialAudioPlaybackSource("/Users/channprj/Documents/WakeNote/20260510/002816.m4a", {
-        tauriRuntime: true,
-      }),
-    ).toBe("");
-  });
+  it("uses an initial source only outside Tauri", () => {
+    const cases: Array<[string, boolean, string]> = [
+      // No raw file URL is exposed before Tauri prepares playback.
+      ["/Users/channprj/Documents/WakeNote/20260510/002816.m4a", true, ""],
+      // Browser previews keep a file URL source.
+      [
+        "/tmp/WakeNote/20260510/010203 voice.wav",
+        false,
+        "file:///tmp/WakeNote/20260510/010203%20voice.wav",
+      ],
+    ];
 
-  it("keeps a browser preview source outside Tauri", () => {
-    expect(
-      initialAudioPlaybackSource("/tmp/WakeNote/20260510/010203 voice.wav", {
-        tauriRuntime: false,
-      }),
-    ).toBe("file:///tmp/WakeNote/20260510/010203%20voice.wav");
+    for (const [path, tauriRuntime, expected] of cases) {
+      expect(
+        initialAudioPlaybackSource(path, { tauriRuntime }),
+        `tauriRuntime=${tauriRuntime}`,
+      ).toBe(expected);
+    }
   });
 });

@@ -12,41 +12,53 @@ import {
 } from "./meeting-progress";
 
 describe("progressPercent", () => {
-  it("returns an integer 0..100 by audio time", () => {
-    expect(progressPercent(0, 1000)).toBe(0);
-    expect(progressPercent(500, 1000)).toBe(50);
-    expect(progressPercent(1000, 1000)).toBe(100);
-  });
+  it("returns a clamped integer percent by audio time", () => {
+    const cases: Array<[number, number, number]> = [
+      [0, 1000, 0],
+      [500, 1000, 50],
+      [1000, 1000, 100],
+      // Guards a zero duration and clamps overshoot.
+      [100, 0, 0],
+      [2000, 1000, 100],
+    ];
 
-  it("clamps and guards a zero duration", () => {
-    expect(progressPercent(100, 0)).toBe(0);
-    expect(progressPercent(2000, 1000)).toBe(100);
+    for (const [done, total, expected] of cases) {
+      expect(progressPercent(done, total), `${done}/${total}`).toBe(expected);
+    }
   });
 });
 
 describe("formatClock", () => {
-  it("uses m:ss under an hour and h:mm:ss above", () => {
-    expect(formatClock(0)).toBe("0:00");
-    expect(formatClock(65_000)).toBe("1:05");
-    expect(formatClock(3_725_000)).toBe("1:02:05");
-  });
+  it("formats a clamped m:ss or h:mm:ss clock", () => {
+    const cases: Array<[number, string]> = [
+      // m:ss under an hour and h:mm:ss above.
+      [0, "0:00"],
+      [65_000, "1:05"],
+      [3_725_000, "1:02:05"],
+      // Invalid input clamps to zero.
+      [-100, "0:00"],
+      [Number.NaN, "0:00"],
+    ];
 
-  it("clamps invalid input", () => {
-    expect(formatClock(-100)).toBe("0:00");
-    expect(formatClock(Number.NaN)).toBe("0:00");
+    for (const [ms, expected] of cases) {
+      expect(formatClock(ms), String(ms)).toBe(expected);
+    }
   });
 });
 
 describe("formatEta", () => {
-  it("renders an em dash when unknown", () => {
-    expect(formatEta(0)).toBe("—");
-    expect(formatEta(-1)).toBe("—");
-  });
+  it("formats a coarse ETA or an em dash when unknown", () => {
+    const cases: Array<[number, string]> = [
+      [0, "—"],
+      [-1, "—"],
+      [45_000, "about 45s"],
+      [680_000, "about 11m 20s"],
+      [3_660_000, "about 1h 1m"],
+    ];
 
-  it("renders coarse human durations", () => {
-    expect(formatEta(45_000)).toBe("about 45s");
-    expect(formatEta(680_000)).toBe("about 11m 20s");
-    expect(formatEta(3_660_000)).toBe("about 1h 1m");
+    for (const [ms, expected] of cases) {
+      expect(formatEta(ms), String(ms)).toBe(expected);
+    }
   });
 });
 

@@ -164,6 +164,13 @@ describe("transcription cost analytics", () => {
     const zero = entryTotals(entry("2026-09-01", { estimated_cost_usd: 0 }));
     expect(displayedCost(zero)).toBe("$0.0000");
     expect(hourlyCost(zero)).toBe(0);
+    // Invalid costs are not presented as a price either.
+    for (const cost of [NaN, Infinity, -3]) {
+      const invalid = entryTotals(
+        entry("2026-09-01", { estimated_cost_usd: cost }),
+      );
+      expect(displayedCost(invalid), String(cost)).toBe("Not priced");
+    }
   });
   it("preserves known charges in partially priced meeting aggregates without claiming an hourly rate", () => {
     const result = aggregateCosts(
@@ -225,15 +232,6 @@ describe("transcription cost analytics", () => {
     expect(result.buckets[0].providers["__proto__"]).toBe(0.006);
     expect(result.buckets[0].providers.constructor).toBe(0.006);
   });
-  it.each([NaN, Infinity, -3])(
-    "does not present invalid cost %s as a price",
-    (cost) => {
-      const total = entryTotals(
-        entry("2026-09-01", { estimated_cost_usd: cost }),
-      );
-      expect(displayedCost(total)).toBe("Not priced");
-    },
-  );
   it("validates impossible, reversed and excessive ranges before allocating buckets", () => {
     expect(parseCostDate("2026-02-29")).toBeNull();
     expect(costDateError("", "2026-09-01")).toMatch(/valid/);

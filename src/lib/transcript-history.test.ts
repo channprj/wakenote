@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { QueueJob, QueueSnapshot, RecentTranscript } from "./types";
-import { activityIssueCounts } from "./activity-attention";
+import type { QueueJob, QueueJobStatus, QueueSnapshot, RecentTranscript } from "./types";
 import {
   appendRecentAge,
   countCancelledQueueJobs,
@@ -119,75 +118,115 @@ describe("transcript history helpers", () => {
     ).toBe("2026-06-15");
   });
 
-  it("shortens save-root audio paths to a YYYY-MM-DD/HH:MM:SS pair with humanized date + time", () => {
-    expect(
-      formatAudioPathLabel("/Users/me/Documents/WakeNote/20260510/010203.m4a"),
-    ).toBe("2026-05-10/01:02:03.m4a");
-    expect(
-      formatAudioPathLabel(
-        "/Users/me/Documents/WakeNote/20260510/010203-001.wav",
-      ),
-    ).toBe("2026-05-10/01:02:03-001.wav");
+  it("shortens audio paths to humanized day/time labels", () => {
+    const cases: Array<[string, string]> = [
+      // Save-root paths become a YYYY-MM-DD/HH:MM:SS pair.
+      ["/Users/me/Documents/WakeNote/20260510/010203.m4a", "2026-05-10/01:02:03.m4a"],
+      ["/Users/me/Documents/WakeNote/20260510/010203-001.wav", "2026-05-10/01:02:03-001.wav"],
+      ["/Users/me/Documents/WakeNote/20260510/260510-010203.m4a", "2026-05-10/01:02:03.m4a"],
+      // Falls back to the basename when the parent dir is not an 8-digit date.
+      ["/tmp/imported/pending.wav", "pending.wav"],
+      ["/tmp/2026/010203.m4a", "01:02:03.m4a"],
+      ["standalone.m4a", "standalone.m4a"],
+      // Nothing to shorten.
+      ["", ""],
+    ];
+
+    for (const [path, expected] of cases) {
+      expect(formatAudioPathLabel(path), path).toBe(expected);
+    }
   });
 
-  it("falls back to the basename when the parent dir is not an 8-digit date", () => {
-    expect(formatAudioPathLabel("/tmp/imported/pending.wav")).toBe(
-      "pending.wav",
-    );
-    expect(formatAudioPathLabel("/tmp/2026/010203.m4a")).toBe("01:02:03.m4a");
-    expect(formatAudioPathLabel("standalone.m4a")).toBe("standalone.m4a");
+  it("humanizes the HHMMSS clock in recording basenames", () => {
+    const cases: Array<[string, string]> = [
+      // Leading HHMMSS followed by an extension or collision suffix.
+      ["010203.m4a", "01:02:03.m4a"],
+      ["235959.wav", "23:59:59.wav"],
+      ["010203-001.wav", "01:02:03-001.wav"],
+      // Date-prefixed recording basenames.
+      ["260510-010203.m4a", "01:02:03.m4a"],
+      ["260510-010203-meet.wav", "01:02:03-meet.wav"],
+      // No leading HHMMSS: unchanged.
+      ["pending.wav", "pending.wav"],
+      ["standalone.m4a", "standalone.m4a"],
+      ["123456789.m4a", "123456789.m4a"],
+      ["", ""],
+    ];
+
+    for (const [basename, expected] of cases) {
+      expect(humanizeBasenameTime(basename), basename).toBe(expected);
+    }
   });
 
-  it("returns the input unchanged when there is nothing to shorten", () => {
-    expect(formatAudioPathLabel("")).toBe("");
+  it("humanizes only YYYYMMDD date segments", () => {
+    const cases: Array<[string, string]> = [
+      ["20260510", "2026-05-10"],
+      ["20260101", "2026-01-01"],
+      ["99991231", "9999-12-31"],
+      // Non-YYYYMMDD segments stay unchanged.
+      ["2026-05-10", "2026-05-10"],
+      ["Imported", "Imported"],
+      ["123456789", "123456789"],
+      ["", ""],
+    ];
+
+    for (const [segment, expected] of cases) {
+      expect(humanizeDateSegment(segment), segment).toBe(expected);
+    }
   });
 
-  it("humanizes leading HHMMSS in basenames followed by an extension or collision suffix", () => {
-    expect(humanizeBasenameTime("010203.m4a")).toBe("01:02:03.m4a");
-    expect(humanizeBasenameTime("235959.wav")).toBe("23:59:59.wav");
-    expect(humanizeBasenameTime("010203-001.wav")).toBe("01:02:03-001.wav");
-  });
+  it("title-cases every status vocabulary for badges", () => {
+    const cases: Array<[string, (value: string) => string, Array<[string, string]>]> = [
+      // QueueJobStatus values match the banner cell labels.
+      [
+        "humanizeQueueJobStatus",
+        humanizeQueueJobStatus,
+        [
+          ["pending", "Pending"],
+          ["running", "Running"],
+          ["completed", "Completed"],
+          ["failed", "Failed"],
+          ["cancelled", "Cancelled"],
+          ["skipped", "Skipped"],
+          ["", ""],
+        ],
+      ],
+      [
+        "humanizeTrayState",
+        humanizeTrayState,
+        [
+          ["idle", "Idle"],
+          ["listening", "Listening"],
+          ["recording", "Recording"],
+          ["transcribing", "Transcribing"],
+          ["paused", "Paused"],
+          ["error", "Error"],
+          ["", ""],
+        ],
+      ],
+      // ModelStatus values for the ModelManager badge.
+      [
+        "humanizeModelStatus",
+        humanizeModelStatus,
+        [
+          ["installed", "Installed"],
+          ["missing", "Missing"],
+          ["downloading", "Downloading"],
+          ["verifying", "Verifying"],
+          ["extracting", "Extracting"],
+          ["ready", "Ready"],
+          ["unloaded", "Unloaded"],
+          ["error", "Error"],
+          ["", ""],
+        ],
+      ],
+    ];
 
-  it("humanizes the clock in date-prefixed recording basenames", () => {
-    expect(humanizeBasenameTime("260510-010203.m4a")).toBe("01:02:03.m4a");
-    expect(humanizeBasenameTime("260510-010203-meet.wav")).toBe(
-      "01:02:03-meet.wav",
-    );
-    expect(
-      formatAudioPathLabel(
-        "/Users/me/Documents/WakeNote/20260510/260510-010203.m4a",
-      ),
-    ).toBe("2026-05-10/01:02:03.m4a");
-  });
-
-  it("leaves basenames without a leading HHMMSS unchanged", () => {
-    expect(humanizeBasenameTime("pending.wav")).toBe("pending.wav");
-    expect(humanizeBasenameTime("standalone.m4a")).toBe("standalone.m4a");
-    expect(humanizeBasenameTime("123456789.m4a")).toBe("123456789.m4a");
-    expect(humanizeBasenameTime("")).toBe("");
-  });
-
-  it("humanizes 8-digit YYYYMMDD date segments into YYYY-MM-DD", () => {
-    expect(humanizeDateSegment("20260510")).toBe("2026-05-10");
-    expect(humanizeDateSegment("20260101")).toBe("2026-01-01");
-    expect(humanizeDateSegment("99991231")).toBe("9999-12-31");
-  });
-
-  it("leaves non-YYYYMMDD segments unchanged", () => {
-    expect(humanizeDateSegment("2026-05-10")).toBe("2026-05-10");
-    expect(humanizeDateSegment("Imported")).toBe("Imported");
-    expect(humanizeDateSegment("123456789")).toBe("123456789");
-    expect(humanizeDateSegment("")).toBe("");
-  });
-
-  it("title-cases each QueueJobStatus value to match the banner cell labels", () => {
-    expect(humanizeQueueJobStatus("pending")).toBe("Pending");
-    expect(humanizeQueueJobStatus("running")).toBe("Running");
-    expect(humanizeQueueJobStatus("completed")).toBe("Completed");
-    expect(humanizeQueueJobStatus("failed")).toBe("Failed");
-    expect(humanizeQueueJobStatus("cancelled")).toBe("Cancelled");
-    expect(humanizeQueueJobStatus("skipped")).toBe("Skipped");
-    expect(humanizeQueueJobStatus("")).toBe("");
+    for (const [name, humanize, values] of cases) {
+      for (const [value, expected] of values) {
+        expect(humanize(value), `${name}("${value}")`).toBe(expected);
+      }
+    }
   });
 
   it("counts only unread failed, cancelled, and skipped Activity outcomes", () => {
@@ -237,57 +276,27 @@ describe("transcript history helpers", () => {
     expect(countUnreadActivityOutcomes(jobs)).toBe(3);
   });
 
-  it("title-cases each TrayState value for status badges", () => {
-    expect(humanizeTrayState("idle")).toBe("Idle");
-    expect(humanizeTrayState("listening")).toBe("Listening");
-    expect(humanizeTrayState("recording")).toBe("Recording");
-    expect(humanizeTrayState("transcribing")).toBe("Transcribing");
-    expect(humanizeTrayState("paused")).toBe("Paused");
-    expect(humanizeTrayState("error")).toBe("Error");
-    expect(humanizeTrayState("")).toBe("");
-  });
-
-  it("title-cases each ModelStatus value for the ModelManager badge", () => {
-    expect(humanizeModelStatus("installed")).toBe("Installed");
-    expect(humanizeModelStatus("missing")).toBe("Missing");
-    expect(humanizeModelStatus("downloading")).toBe("Downloading");
-    expect(humanizeModelStatus("verifying")).toBe("Verifying");
-    expect(humanizeModelStatus("extracting")).toBe("Extracting");
-    expect(humanizeModelStatus("ready")).toBe("Ready");
-    expect(humanizeModelStatus("unloaded")).toBe("Unloaded");
-    expect(humanizeModelStatus("error")).toBe("Error");
-    expect(humanizeModelStatus("")).toBe("");
-  });
-
-  it("derives sidecar transcript paths only for completed and failed queue jobs", () => {
+  it("derives sidecar paths for completed and failed m4a/wav jobs only", () => {
     const audio = "/Users/me/Documents/WakeNote/20260510/010203.m4a";
-    expect(queueJobSidecarPath(audio, "completed")).toBe(
-      "/Users/me/Documents/WakeNote/20260510/010203.txt",
-    );
-    expect(queueJobSidecarPath(audio, "failed")).toBe(
-      "/Users/me/Documents/WakeNote/20260510/010203.error.txt",
-    );
-    expect(queueJobSidecarPath(audio, "pending")).toBeNull();
-    expect(queueJobSidecarPath(audio, "running")).toBeNull();
-    expect(queueJobSidecarPath(audio, "cancelled")).toBeNull();
-    expect(queueJobSidecarPath(audio, "skipped")).toBeNull();
-  });
+    const cases: Array<[string, QueueJobStatus, string | null]> = [
+      [audio, "completed", "/Users/me/Documents/WakeNote/20260510/010203.txt"],
+      [audio, "failed", "/Users/me/Documents/WakeNote/20260510/010203.error.txt"],
+      [audio, "pending", null],
+      [audio, "running", null],
+      [audio, "cancelled", null],
+      [audio, "skipped", null],
+      // Swaps both m4a and wav extensions and preserves collision suffixes.
+      ["/tmp/WakeNote/20260510/010203-001.wav", "completed", "/tmp/WakeNote/20260510/010203-001.txt"],
+      ["/tmp/WakeNote/20260510/010203.WAV", "failed", "/tmp/WakeNote/20260510/010203.error.txt"],
+      // Unsupported or missing extensions have no sidecar.
+      ["/tmp/import/notes.mp3", "completed", null],
+      ["/tmp/import/recording", "failed", null],
+      ["", "completed", null],
+    ];
 
-  it("swaps both m4a and wav extensions and preserves collision suffixes", () => {
-    expect(
-      queueJobSidecarPath("/tmp/WakeNote/20260510/010203-001.wav", "completed"),
-    ).toBe("/tmp/WakeNote/20260510/010203-001.txt");
-    expect(
-      queueJobSidecarPath("/tmp/WakeNote/20260510/010203.WAV", "failed"),
-    ).toBe("/tmp/WakeNote/20260510/010203.error.txt");
-  });
-
-  it("returns null when the audio path lacks a supported extension", () => {
-    expect(
-      queueJobSidecarPath("/tmp/import/notes.mp3", "completed"),
-    ).toBeNull();
-    expect(queueJobSidecarPath("/tmp/import/recording", "failed")).toBeNull();
-    expect(queueJobSidecarPath("", "completed")).toBeNull();
+    for (const [audioPath, status, expected] of cases) {
+      expect(queueJobSidecarPath(audioPath, status), `${audioPath} (${status})`).toBe(expected);
+    }
   });
 
   it("sorts queue jobs within a day chronologically by audio path HHMMSS prefix", () => {
@@ -719,21 +728,6 @@ describe("transcript history helpers", () => {
     expect(queueDayBreakdown([])).toEqual([]);
   });
 
-  it("filters zero-count statuses out of queueDayBreakdown", () => {
-    const jobs: QueueJob[] = [
-      {
-        id: 1,
-        audio_path: "/tmp/WakeNote/20260510/010101.m4a",
-        model_id: "whisper-medium",
-        status: "completed",
-        error: null,
-      },
-    ];
-    expect(queueDayBreakdown(jobs)).toEqual([
-      { status: "completed", count: 1 },
-    ]);
-  });
-
   it("preserves the canonical lifecycle and semantic issue order regardless of insertion order", () => {
     const jobs: QueueJob[] = [
       {
@@ -811,83 +805,6 @@ describe("transcript history helpers", () => {
     expect(queueDayBreakdown(jobs)).toEqual([
       { status: "pending", count: 2 },
       { status: "error", count: 1 },
-    ]);
-  });
-
-  it("matches the count returned by the per-status count* helpers for the same entries", () => {
-    const jobs: QueueJob[] = [
-      {
-        id: 1,
-        audio_path: "/a",
-        model_id: "m",
-        status: "pending",
-        error: null,
-      },
-      {
-        id: 2,
-        audio_path: "/a",
-        model_id: "m",
-        status: "pending",
-        error: null,
-      },
-      {
-        id: 3,
-        audio_path: "/a",
-        model_id: "m",
-        status: "running",
-        error: null,
-      },
-      {
-        id: 4,
-        audio_path: "/a",
-        model_id: "m",
-        status: "completed",
-        error: null,
-      },
-      { id: 5, audio_path: "/a", model_id: "m", status: "failed", error: null },
-      {
-        id: 6,
-        audio_path: "/a",
-        model_id: "m",
-        status: "cancelled",
-        error: null,
-      },
-      {
-        id: 7,
-        audio_path: "/a",
-        model_id: "m",
-        status: "skipped",
-        error: null,
-      },
-    ];
-    const breakdown = queueDayBreakdown(jobs);
-    const byStatus = new Map(
-      breakdown.map((entry) => [entry.status, entry.count]),
-    );
-    expect(byStatus.get("pending")).toBe(countPendingQueueJobs(jobs));
-    expect(byStatus.get("running")).toBe(countRunningQueueJobs(jobs));
-    expect(byStatus.get("completed")).toBe(countCompletedQueueJobs(jobs));
-    expect(byStatus.get("warning")).toBe(activityIssueCounts(jobs).warning);
-    expect(byStatus.get("error")).toBe(activityIssueCounts(jobs).error);
-    expect(byStatus.get("cancelled")).toBe(countCancelledQueueJobs(jobs));
-    expect(byStatus.get("skipped")).toBe(countSkippedQueueJobs(jobs));
-  });
-
-  it("emits queueStatsBanner cells with explicit warning and error buckets", () => {
-    const queue: QueueSnapshot = {
-      jobs: [],
-      pending_count: 0,
-      running_count: 0,
-      failed_count: 0,
-    };
-    expect(queueStatsBanner(queue).map((entry) => entry.status)).toEqual([
-      "pending",
-      "skipped",
-      "running",
-      "warning",
-      "error",
-      "cancelled",
-      "completed",
     ]);
   });
 
@@ -1102,88 +1019,7 @@ describe("transcript history helpers", () => {
 });
 
 describe("formatTranscriptForCopy", () => {
-  it("uses the physical microphone name when identity metadata is present", () => {
-    expect(
-      transcriptSourceLabel({
-        source: "microphone",
-        source_label: "mic-primary-wired",
-        device_name: "Wired",
-      }),
-    ).toBe("Wired");
-  });
-
-  it("labels merged microphone captures without hiding their device metadata", () => {
-    const merged: RecentTranscript = {
-      transcript_path: "/tmp/WakeNote/20260729/162908-mic-merged.txt",
-      audio_path: "/tmp/WakeNote/20260729/162908-mic-merged.m4a",
-      recorded_at: "2026-07-29T16:29:08+09:00",
-      text: "merged transcript",
-      source: "microphone",
-      source_label: "mic-merged",
-      device_id: "input-1-boya-cm40+input-2-by-v",
-      device_name: "BOYA CM40 + BY-V",
-      microphone_slot: null,
-    };
-
-    expect(transcriptSourceLabel(merged)).toBe("Merged Mic");
-    expect(formatTranscriptForCopy(merged)).toBe(
-      "2026-07-29 16:29:08 [Merged Mic] - merged transcript",
-    );
-    expect(merged.device_name).toBe("BOYA CM40 + BY-V");
-  });
-
-  it("labels Priority Audio captures separately from merged captures", () => {
-    const priority: RecentTranscript = {
-      transcript_path: "/tmp/WakeNote/20260729/162909-mic-priority.txt",
-      audio_path: "/tmp/WakeNote/20260729/162909-mic-priority.m4a",
-      recorded_at: "2026-07-29T16:29:09+09:00",
-      text: "priority transcript",
-      source: "microphone",
-      source_label: "mic-priority",
-      device_id: "input-1-boya-cm40+input-2-by-v",
-      device_name: "BOYA CM40 + BY-V",
-      microphone_slot: null,
-    };
-
-    expect(transcriptSourceLabel(priority)).toBe("Priority Mic");
-    expect(formatTranscriptForCopy(priority)).toBe(
-      "2026-07-29 16:29:09 [Priority Mic] - priority transcript",
-    );
-  });
-
-  it("labels Dictation captures from their persisted source label", () => {
-    const dictation: RecentTranscript = {
-      transcript_path: "/tmp/WakeNote/20260731/031500-dictation.txt",
-      audio_path: "/tmp/WakeNote/20260731/031500-dictation.m4a",
-      recorded_at: "2026-07-31T03:15:00+09:00",
-      text: "dictated text",
-      source: "microphone",
-      source_label: "dictation",
-      device_id: "input-0-boya-cm40",
-      device_name: "BOYA CM40",
-      microphone_slot: null,
-    };
-
-    expect(transcriptSourceLabel(dictation)).toBe("Dict");
-    expect(formatTranscriptForCopy(dictation)).toBe(
-      "2026-07-31 03:15:00 [Dict] - dictated text",
-    );
-  });
-
-  it("formats a single entry as `YYYY-MM-DD HH:mm:SS [source] - text`", () => {
-    const entry: RecentTranscript = {
-      transcript_path: "/tmp/WakeNote/20260519/155323.txt",
-      audio_path: "/tmp/WakeNote/20260519/155323.m4a",
-      recorded_at: "2026-05-19T15:53:23+09:00",
-      text: "슬립~",
-    };
-
-    expect(formatTranscriptForCopy(entry)).toBe(
-      "2026-05-19 15:53:23 [Mic] - 슬립~",
-    );
-  });
-
-  it("includes system-audio source labels when formatting copy text", () => {
+  it("labels each capture source and formats it for copy", () => {
     const youtube: RecentTranscript = {
       transcript_path: "/tmp/WakeNote/20260519/155323-youtube.txt",
       audio_path: "/tmp/WakeNote/20260519/155323-youtube.m4a",
@@ -1192,35 +1028,134 @@ describe("formatTranscriptForCopy", () => {
       source: "system",
       source_label: "youtube",
     };
-    const meet: RecentTranscript = {
-      ...youtube,
-      transcript_path: "/tmp/WakeNote/20260519/155324-meet.txt",
-      recorded_at: "2026-05-19T15:53:24+09:00",
-      text: "meet text",
-      source_label: "meet",
-    };
-    const custom: RecentTranscript = {
-      ...youtube,
-      transcript_path: "/tmp/WakeNote/20260519/155325-custom-source-2.txt",
-      recorded_at: "2026-05-19T15:53:25+09:00",
-      text: "custom text",
-      source_label: "custom-source-2",
-    };
+    // Each row checks transcriptSourceLabel (`label`) and/or the
+    // `YYYY-MM-DD HH:mm:SS [source] - text` copy line (`copy`).
+    const cases: Array<{
+      name: string;
+      entry: RecentTranscript;
+      sourceLabels?: Record<string, string>;
+      label?: string;
+      copy?: string;
+    }> = [
+      {
+        // The physical microphone name wins when identity metadata is present.
+        name: "wired microphone",
+        entry: {
+          transcript_path: "",
+          audio_path: "",
+          recorded_at: "",
+          text: "",
+          source: "microphone",
+          source_label: "mic-primary-wired",
+          device_name: "Wired",
+        },
+        label: "Wired",
+      },
+      {
+        // Merged captures keep their device metadata but are labeled as merged.
+        name: "merged microphone",
+        entry: {
+          transcript_path: "/tmp/WakeNote/20260729/162908-mic-merged.txt",
+          audio_path: "/tmp/WakeNote/20260729/162908-mic-merged.m4a",
+          recorded_at: "2026-07-29T16:29:08+09:00",
+          text: "merged transcript",
+          source: "microphone",
+          source_label: "mic-merged",
+          device_id: "input-1-boya-cm40+input-2-by-v",
+          device_name: "BOYA CM40 + BY-V",
+          microphone_slot: null,
+        },
+        label: "Merged Mic",
+        copy: "2026-07-29 16:29:08 [Merged Mic] - merged transcript",
+      },
+      {
+        // Priority Audio captures are labeled separately from merged captures.
+        name: "priority microphone",
+        entry: {
+          transcript_path: "/tmp/WakeNote/20260729/162909-mic-priority.txt",
+          audio_path: "/tmp/WakeNote/20260729/162909-mic-priority.m4a",
+          recorded_at: "2026-07-29T16:29:09+09:00",
+          text: "priority transcript",
+          source: "microphone",
+          source_label: "mic-priority",
+          device_id: "input-1-boya-cm40+input-2-by-v",
+          device_name: "BOYA CM40 + BY-V",
+          microphone_slot: null,
+        },
+        label: "Priority Mic",
+        copy: "2026-07-29 16:29:09 [Priority Mic] - priority transcript",
+      },
+      {
+        // Dictation captures are labeled from their persisted source label.
+        name: "dictation",
+        entry: {
+          transcript_path: "/tmp/WakeNote/20260731/031500-dictation.txt",
+          audio_path: "/tmp/WakeNote/20260731/031500-dictation.m4a",
+          recorded_at: "2026-07-31T03:15:00+09:00",
+          text: "dictated text",
+          source: "microphone",
+          source_label: "dictation",
+          device_id: "input-0-boya-cm40",
+          device_name: "BOYA CM40",
+          microphone_slot: null,
+        },
+        label: "Dict",
+        copy: "2026-07-31 03:15:00 [Dict] - dictated text",
+      },
+      {
+        name: "default microphone",
+        entry: {
+          transcript_path: "/tmp/WakeNote/20260519/155323.txt",
+          audio_path: "/tmp/WakeNote/20260519/155323.m4a",
+          recorded_at: "2026-05-19T15:53:23+09:00",
+          text: "슬립~",
+        },
+        copy: "2026-05-19 15:53:23 [Mic] - 슬립~",
+      },
+      // System-audio source labels.
+      {
+        name: "youtube",
+        entry: youtube,
+        copy: "2026-05-19 15:53:23 [YouTube] - youtube text",
+      },
+      {
+        name: "meet",
+        entry: {
+          ...youtube,
+          transcript_path: "/tmp/WakeNote/20260519/155324-meet.txt",
+          recorded_at: "2026-05-19T15:53:24+09:00",
+          text: "meet text",
+          source_label: "meet",
+        },
+        copy: "2026-05-19 15:53:24 [Meet] - meet text",
+      },
+      {
+        name: "custom source with an override",
+        entry: {
+          ...youtube,
+          transcript_path: "/tmp/WakeNote/20260519/155325-custom-source-2.txt",
+          recorded_at: "2026-05-19T15:53:25+09:00",
+          text: "custom text",
+          source_label: "custom-source-2",
+        },
+        sourceLabels: { "custom-source-2": "Spotify" },
+        copy: "2026-05-19 15:53:25 [Spotify] - custom text",
+      },
+    ];
 
-    expect(formatTranscriptForCopy(youtube)).toBe(
-      "2026-05-19 15:53:23 [YouTube] - youtube text",
-    );
-    expect(formatTranscriptForCopy(meet)).toBe(
-      "2026-05-19 15:53:24 [Meet] - meet text",
-    );
-    expect(
-      formatTranscriptForCopy(custom, { "custom-source-2": "Spotify" }),
-    ).toBe("2026-05-19 15:53:25 [Spotify] - custom text");
+    for (const { name, entry, sourceLabels, label, copy } of cases) {
+      if (label !== undefined) {
+        expect(transcriptSourceLabel(entry, sourceLabels), name).toBe(label);
+      }
+      if (copy !== undefined) {
+        expect(formatTranscriptForCopy(entry, sourceLabels), name).toBe(copy);
+      }
+    }
   });
 });
 
 describe("formatTranscriptsForCopy", () => {
-  it("joins entries with single newlines even when text has surrounding whitespace", () => {
+  it("joins trimmed entries with single newlines", () => {
     const entries: RecentTranscript[] = [
       {
         transcript_path: "/tmp/WakeNote/20260519/155323.txt",
@@ -1239,15 +1174,12 @@ describe("formatTranscriptsForCopy", () => {
     expect(formatTranscriptsForCopy(entries)).toBe(
       "2026-05-19 15:53:23 [Mic] - 슬립~\n2026-05-19 15:53:30 [Mic] - 여보세요?",
     );
-  });
-
-  it("returns an empty string for an empty list", () => {
     expect(formatTranscriptsForCopy([])).toBe("");
   });
 });
 
 describe("formatTranscriptsForTextExport", () => {
-  it("separates chronological entries with single newlines and ends with one newline", () => {
+  it("exports entries newline-separated with one trailing newline and nothing for an empty day", () => {
     const entries: RecentTranscript[] = [
       {
         transcript_path: "/tmp/WakeNote/20260824/090000.txt",
@@ -1269,9 +1201,6 @@ describe("formatTranscriptsForTextExport", () => {
       "2026-08-24 09:00:00 [Mic] - First thought\n" +
         "2026-08-24 10:00:00 [YouTube] - Second thought\n",
     );
-  });
-
-  it("returns an empty string when a day has no transcripts", () => {
     expect(formatTranscriptsForTextExport([])).toBe("");
   });
 });

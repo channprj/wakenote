@@ -149,45 +149,29 @@ describe("report entry filtering", () => {
     expect(text).toContain("2026-07-25");
   });
 
-  it("returns every entry for a blank query", () => {
-    expect(filterReportEntries(entries, "")).toHaveLength(entries.length);
-    expect(filterReportEntries(entries, "   ")).toHaveLength(entries.length);
-  });
+  it("filters report entries by every query term", () => {
+    const cases: Array<[string, string[]]> = [
+      // A blank query returns every entry.
+      ["", entries.map((entry) => entry.key)],
+      ["   ", entries.map((entry) => entry.key)],
+      // File name, regardless of case.
+      ["20260725-DETAILED", ["report:report-beta"]],
+      // Model.
+      ["claude", ["report:report-beta"]],
+      // An in-flight run by its status message.
+      ["evidence", ["run:run-1"]],
+      // Every term must match.
+      ["detailed 20260725", ["report:report-beta"]],
+      ["detailed 20260727", []],
+      // No entry matches.
+      ["nonexistent", []],
+    ];
 
-  it("matches on file name regardless of case", () => {
-    const matched = filterReportEntries(entries, "20260725-DETAILED");
-
-    expect(matched).toHaveLength(1);
-    expect(matched[0].report?.report_id).toBe("report-beta");
-  });
-
-  it("matches on model", () => {
-    const matched = filterReportEntries(entries, "claude");
-
-    expect(matched).toHaveLength(1);
-    expect(matched[0].report?.report_id).toBe("report-beta");
-  });
-
-  it("matches an in-flight run by its status message", () => {
-    const matched = filterReportEntries(entries, "evidence");
-
-    expect(matched).toHaveLength(1);
-    expect(matched[0].run?.run_id).toBe("run-1");
-  });
-
-  it("requires every term to match", () => {
-    expect(filterReportEntries(entries, "detailed 20260725")).toHaveLength(1);
-    expect(filterReportEntries(entries, "detailed 20260727")).toHaveLength(0);
-  });
-
-  it("returns nothing when no entry matches", () => {
-    expect(filterReportEntries(entries, "nonexistent")).toEqual([]);
-  });
-
-  it("does not mutate the input list", () => {
-    const before = entries.length;
-    filterReportEntries(entries, "claude");
-
-    expect(entries).toHaveLength(before);
+    for (const [query, expectedKeys] of cases) {
+      expect(
+        filterReportEntries(entries, query).map((entry) => entry.key),
+        JSON.stringify(query),
+      ).toEqual(expectedKeys);
+    }
   });
 });

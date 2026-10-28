@@ -10,8 +10,10 @@ import {
   runtimeCardTone,
   trayStateBadgeTone,
   visibleWarningForDismissedKey,
+  type StatusTone,
 } from "./status-summary";
 import { mockSnapshot } from "./app-state";
+import type { TrayState } from "./types";
 
 describe("capture status presentation", () => {
   it("describes stopped input with microphone and threshold context", () => {
@@ -69,105 +71,47 @@ describe("capture status presentation", () => {
     ).toBe("-120 dBFS current · -120 dBFS peak");
   });
 
-  it("describes continuous listening only when capture is active", () => {
+  it("maps each active tray_state to its capture headline and tone", () => {
     const snapshot = mockSnapshot();
+    const cases: Array<[TrayState, { headline: string; tone: StatusTone }]> = [
+      ["listening", { headline: "Listening for voice", tone: "primary" }],
+      ["recording", { headline: "Recording speech", tone: "success" }],
+      ["transcribing", { headline: "Transcribing queue", tone: "warning" }],
+      ["paused", { headline: "Paused", tone: "warning" }],
+      ["error", { headline: "Needs attention", tone: "danger" }],
+    ];
 
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: { ...snapshot.status, tray_state: "listening" },
-      }),
-    ).toMatchObject({
-      headline: "Listening for voice",
-      tone: "primary",
-    });
+    for (const [trayState, expected] of cases) {
+      expect(
+        captureStatusPresentation({
+          ...snapshot,
+          status: { ...snapshot.status, tray_state: trayState },
+        }),
+        trayState,
+      ).toMatchObject(expected);
+    }
   });
 
-  it("prioritizes active recording and transcription states", () => {
+  it("classifies runtime warnings by severity", () => {
     const snapshot = mockSnapshot();
+    const cases: Array<[string, StatusTone]> = [
+      ["Live input dropped 42 stale audio frames while processing was busy", "warning"],
+      ["Live input stream error: default input stream disconnected", "danger"],
+    ];
 
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: { ...snapshot.status, tray_state: "recording" },
-      }).headline,
-    ).toBe("Recording speech");
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: { ...snapshot.status, tray_state: "transcribing" },
-      }).headline,
-    ).toBe("Transcribing queue");
-  });
-
-  it("surfaces paused and error states as operator-visible warnings", () => {
-    const snapshot = mockSnapshot();
-
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: { ...snapshot.status, tray_state: "paused" },
-      }),
-    ).toMatchObject({ headline: "Paused", tone: "warning" });
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: { ...snapshot.status, tray_state: "error" },
-      }),
-    ).toMatchObject({ headline: "Needs attention", tone: "danger" });
-  });
-
-  it("labels idle recording modes as stopped input", () => {
-    const snapshot = mockSnapshot();
-
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: {
-          ...snapshot.status,
-          mode: "recording_and_transcription",
-          tray_state: "idle",
-        },
-      }),
-    ).toMatchObject({ headline: "Input stopped", tone: "neutral" });
-  });
-
-  it("includes runtime warnings in the status detail", () => {
-    const snapshot = mockSnapshot();
-
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: {
-          ...snapshot.status,
-          runtime_warning: "Live input dropped 42 stale audio frames while processing was busy",
-        },
-      }),
-    ).toMatchObject({
-      warning: {
-        key: "runtime:Live input dropped 42 stale audio frames while processing was busy",
-        message: "Live input dropped 42 stale audio frames while processing was busy",
-        tone: "warning",
-      },
-    });
-  });
-
-  it("surfaces live input stream errors as danger warnings", () => {
-    const snapshot = mockSnapshot();
-
-    expect(
-      captureStatusPresentation({
-        ...snapshot,
-        status: {
-          ...snapshot.status,
-          runtime_warning: "Live input stream error: default input stream disconnected",
-        },
-      }).warning,
-    ).toEqual({
-      key: "runtime:Live input stream error: default input stream disconnected",
-      message: "Live input stream error: default input stream disconnected",
-      tone: "danger",
-    });
+    for (const [runtimeWarning, tone] of cases) {
+      expect(
+        captureStatusPresentation({
+          ...snapshot,
+          status: { ...snapshot.status, runtime_warning: runtimeWarning },
+        }).warning,
+        runtimeWarning,
+      ).toEqual({
+        key: `runtime:${runtimeWarning}`,
+        message: runtimeWarning,
+        tone,
+      });
+    }
   });
 
   it("prioritizes microphone warnings over runtime and queue warnings", () => {
@@ -321,296 +265,176 @@ describe("capture status presentation", () => {
 });
 
 describe("queueCardTone", () => {
-  it("returns undefined when queue is fully clean (no failed, running, pending, or completed)", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 0),
-    ).toBeUndefined();
-  });
+  it("maps queue counts and attention to the queue card tone", () => {
+    const dangerAttention = { tone: "danger" as const, count: 1, message: "error", nextExpiryAt: null };
+    const cases: Array<[string, Parameters<typeof queueCardTone>, ReturnType<typeof queueCardTone>]> = [
+      ["fully clean queue", [{ failed_count: 0, running_count: 0, pending_count: 0 }, 0], undefined],
+      [
+        "danger attention with clean counts",
+        [{ failed_count: 0, running_count: 0, pending_count: 0 }, 0, dangerAttention],
+        "danger",
+      ],
+      ["raw failed count alone", [{ failed_count: 42, running_count: 0, pending_count: 0 }, 0], undefined],
+      ["one running", [{ failed_count: 0, running_count: 1, pending_count: 0 }, 0], "primary"],
+      ["running with pending", [{ failed_count: 0, running_count: 3, pending_count: 5 }, 0], "primary"],
+      ["one pending", [{ failed_count: 0, running_count: 0, pending_count: 1 }, 0], "warning"],
+      ["several pending", [{ failed_count: 0, running_count: 0, pending_count: 8 }, 0], "warning"],
+      ["one completed", [{ failed_count: 0, running_count: 0, pending_count: 0 }, 1], "success"],
+      ["several completed", [{ failed_count: 0, running_count: 0, pending_count: 0 }, 17], "success"],
+      [
+        "danger attention over running, pending, and completed",
+        [{ failed_count: 1, running_count: 1, pending_count: 1 }, 1, dangerAttention],
+        "danger",
+      ],
+      ["running over pending and completed", [{ failed_count: 0, running_count: 1, pending_count: 1 }, 1], "primary"],
+      ["pending over completed", [{ failed_count: 0, running_count: 0, pending_count: 1 }, 1], "warning"],
+      ["omitted completedCount on a clean queue", [{ failed_count: 0, running_count: 0, pending_count: 0 }], undefined],
+      ["omitted completedCount with a failed job", [{ failed_count: 1, running_count: 0, pending_count: 0 }], undefined],
+    ];
 
-  it("returns danger for active error attention regardless of raw failed count", () => {
-    expect(
-      queueCardTone(
-        { failed_count: 0, running_count: 0, pending_count: 0 },
-        0,
-        { tone: "danger", count: 1, message: "error", nextExpiryAt: null },
-      ),
-    ).toBe("danger");
-    expect(
-      queueCardTone({ failed_count: 42, running_count: 0, pending_count: 0 }, 0),
-    ).toBeUndefined();
-  });
-
-  it("returns 'primary' when running jobs exist and no failed jobs", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 0 }, 0),
-    ).toBe("primary");
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 3, pending_count: 5 }, 0),
-    ).toBe("primary");
-  });
-
-  it("returns 'warning' when only pending jobs exist", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }, 0),
-    ).toBe("warning");
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 8 }, 0),
-    ).toBe("warning");
-  });
-
-  it("returns 'success' when only completed jobs exist (happy-path throughput signal)", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 1),
-    ).toBe("success");
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 }, 17),
-    ).toBe("success");
-  });
-
-  it("prioritizes active error attention over running, pending, and completed", () => {
-    expect(
-      queueCardTone(
-        { failed_count: 1, running_count: 1, pending_count: 1 },
-        1,
-        { tone: "danger", count: 1, message: "error", nextExpiryAt: null },
-      ),
-    ).toBe("danger");
-  });
-
-  it("prioritizes running over pending and completed when no failed jobs", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 1, pending_count: 1 }, 1),
-    ).toBe("primary");
-  });
-
-  it("prioritizes pending over completed when no failed or running jobs", () => {
-    expect(
-      queueCardTone({ failed_count: 0, running_count: 0, pending_count: 1 }, 1),
-    ).toBe("warning");
-  });
-
-  it("defaults completedCount to 0 when omitted (backwards-compat)", () => {
-    expect(queueCardTone({ failed_count: 0, running_count: 0, pending_count: 0 })).toBeUndefined();
-    expect(queueCardTone({ failed_count: 1, running_count: 0, pending_count: 0 })).toBeUndefined();
+    for (const [label, args, expected] of cases) {
+      expect(queueCardTone(...args), label).toBe(expected);
+    }
   });
 });
 
 describe("levelCardTone", () => {
-  it("returns undefined when live input is inactive regardless of current vs threshold", () => {
-    expect(levelCardTone(false, -50, -60)).toBeUndefined();
-    expect(levelCardTone(false, -30, -60)).toBeUndefined();
-    expect(levelCardTone(false, -120, -60)).toBeUndefined();
-  });
+  it("maps live input level against threshold to the level card tone", () => {
+    const cases: Array<[boolean, number, number, ReturnType<typeof levelCardTone>]> = [
+      // Inactive input stays plain regardless of current vs threshold.
+      [false, -50, -60, undefined],
+      [false, -30, -60, undefined],
+      [false, -120, -60, undefined],
+      // Below threshold.
+      [true, -65, -60, undefined],
+      [true, -120, -60, undefined],
+      // Equal to threshold is the gate edge.
+      [true, -60, -60, "primary"],
+      // Above threshold (gate would open).
+      [true, -50, -60, "primary"],
+      [true, -20, -60, "primary"],
+      [true, 0, -60, "primary"],
+      // Tracks threshold changes.
+      [true, -50, -40, undefined],
+      [true, -50, -50, "primary"],
+      [true, -50, -60, "primary"],
+    ];
 
-  it("returns undefined when current dBFS is below threshold", () => {
-    expect(levelCardTone(true, -65, -60)).toBeUndefined();
-    expect(levelCardTone(true, -120, -60)).toBeUndefined();
-  });
-
-  it("returns 'primary' when current dBFS is equal to threshold (gate edge)", () => {
-    expect(levelCardTone(true, -60, -60)).toBe("primary");
-  });
-
-  it("returns 'primary' when current dBFS is above threshold (gate would open)", () => {
-    expect(levelCardTone(true, -50, -60)).toBe("primary");
-    expect(levelCardTone(true, -20, -60)).toBe("primary");
-    expect(levelCardTone(true, 0, -60)).toBe("primary");
-  });
-
-  it("tracks threshold changes (active input, varying threshold)", () => {
-    expect(levelCardTone(true, -50, -40)).toBeUndefined();
-    expect(levelCardTone(true, -50, -50)).toBe("primary");
-    expect(levelCardTone(true, -50, -60)).toBe("primary");
+    for (const [active, current, threshold, expected] of cases) {
+      expect(levelCardTone(active, current, threshold), `${active} ${current}/${threshold}`).toBe(expected);
+    }
   });
 });
 
 describe("runtimeCardTone", () => {
-  it("returns undefined when both microphone and runtime warnings are absent", () => {
-    expect(runtimeCardTone(null, null)).toBeUndefined();
-    expect(runtimeCardTone(undefined, undefined)).toBeUndefined();
-    expect(runtimeCardTone(null, undefined)).toBeUndefined();
-  });
+  it("maps microphone and runtime warnings to the runtime card tone", () => {
+    const cases: Array<[string | null | undefined, string | null | undefined, ReturnType<typeof runtimeCardTone>]> = [
+      [null, null, undefined],
+      [undefined, undefined, undefined],
+      [null, undefined, undefined],
+      // Empty strings are absent (falsy) so a healthy runtime stays plain.
+      ["", "", undefined],
+      ["", null, undefined],
+      ["Pinned microphone is unavailable", null, "danger"],
+      ["Falling back to System Default", null, "danger"],
+      [null, "Live input stream error: default input stream disconnected", "danger"],
+      [null, "Live input dropped 42 stale audio frames while processing was busy", "warning"],
+      // Microphone warnings win over runtime warnings.
+      ["Pinned microphone is unavailable", "Live input stream error: default input stream disconnected", "danger"],
+      ["Pinned microphone is unavailable", "Live input dropped 42 stale audio frames while processing was busy", "danger"],
+    ];
 
-  it("returns 'danger' when a microphone warning is present", () => {
-    expect(runtimeCardTone("Pinned microphone is unavailable", null)).toBe("danger");
-    expect(runtimeCardTone("Falling back to System Default", null)).toBe("danger");
-  });
-
-  it("returns 'danger' when the runtime warning is a live input stream error", () => {
-    expect(
-      runtimeCardTone(null, "Live input stream error: default input stream disconnected"),
-    ).toBe("danger");
-  });
-
-  it("returns 'warning' for other recoverable runtime warnings", () => {
-    expect(
-      runtimeCardTone(null, "Live input dropped 42 stale audio frames while processing was busy"),
-    ).toBe("warning");
-  });
-
-  it("prioritizes microphone warnings over runtime warnings", () => {
-    expect(
-      runtimeCardTone(
-        "Pinned microphone is unavailable",
-        "Live input stream error: default input stream disconnected",
-      ),
-    ).toBe("danger");
-    expect(
-      runtimeCardTone(
-        "Pinned microphone is unavailable",
-        "Live input dropped 42 stale audio frames while processing was busy",
-      ),
-    ).toBe("danger");
-  });
-
-  it("treats empty strings as absent (falsy) so a healthy runtime stays plain", () => {
-    expect(runtimeCardTone("", "")).toBeUndefined();
-    expect(runtimeCardTone("", null)).toBeUndefined();
+    for (const [microphone, runtime, expected] of cases) {
+      expect(runtimeCardTone(microphone, runtime), `${String(microphone)} / ${String(runtime)}`).toBe(expected);
+    }
   });
 });
 
 describe("trayStateBadgeTone", () => {
-  it("maps idle to neutral (the default tray-state Badge tone)", () => {
-    expect(trayStateBadgeTone("idle")).toBe("neutral");
-  });
+  it("maps every tray_state to its Badge tone", () => {
+    const cases: Array<[string, StatusTone]> = [
+      ["idle", "neutral"],
+      ["listening", "primary"],
+      ["recording", "success"],
+      ["transcribing", "warning"],
+      ["paused", "warning"],
+      ["error", "danger"],
+      // Unknown strings fall back to neutral so the Badge contract stays total.
+      ["unknown", "neutral"],
+      ["", "neutral"],
+    ];
 
-  it("maps listening to primary (capture monitoring is live)", () => {
-    expect(trayStateBadgeTone("listening")).toBe("primary");
-  });
-
-  it("maps recording to success (speech gate has opened)", () => {
-    expect(trayStateBadgeTone("recording")).toBe("success");
-  });
-
-  it("maps transcribing to warning (worker is busy processing the queue)", () => {
-    expect(trayStateBadgeTone("transcribing")).toBe("warning");
-  });
-
-  it("maps paused to warning (operator-visible attention state)", () => {
-    expect(trayStateBadgeTone("paused")).toBe("warning");
-  });
-
-  it("maps error to danger (needs attention)", () => {
-    expect(trayStateBadgeTone("error")).toBe("danger");
-  });
-
-  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
-    expect(trayStateBadgeTone("unknown")).toBe("neutral");
-    expect(trayStateBadgeTone("")).toBe("neutral");
+    for (const [state, tone] of cases) {
+      expect(trayStateBadgeTone(state), state).toBe(tone);
+    }
   });
 });
 
 describe("modelStatusBadgeTone", () => {
-  it("maps ready to success (model is usable now)", () => {
-    expect(modelStatusBadgeTone("ready")).toBe("success");
-  });
+  it("maps every model status to its Badge tone", () => {
+    const cases: Array<[string, StatusTone]> = [
+      ["ready", "success"],
+      ["installed", "success"],
+      ["downloading", "primary"],
+      ["verifying", "primary"],
+      ["extracting", "primary"],
+      ["error", "danger"],
+      ["missing", "neutral"],
+      ["unloaded", "neutral"],
+      // Unknown strings fall back to neutral so the Badge contract stays total.
+      ["unknown", "neutral"],
+      ["", "neutral"],
+    ];
 
-  it("maps installed to success (model is usable now)", () => {
-    expect(modelStatusBadgeTone("installed")).toBe("success");
-  });
-
-  it("maps downloading to primary (active in-flight)", () => {
-    expect(modelStatusBadgeTone("downloading")).toBe("primary");
-  });
-
-  it("maps verifying to primary (active in-flight)", () => {
-    expect(modelStatusBadgeTone("verifying")).toBe("primary");
-  });
-
-  it("maps extracting to primary (active in-flight)", () => {
-    expect(modelStatusBadgeTone("extracting")).toBe("primary");
-  });
-
-  it("maps error to danger (needs attention)", () => {
-    expect(modelStatusBadgeTone("error")).toBe("danger");
-  });
-
-  it("maps missing to neutral (no installation signal)", () => {
-    expect(modelStatusBadgeTone("missing")).toBe("neutral");
-  });
-
-  it("maps unloaded to neutral (model is present but not in memory)", () => {
-    expect(modelStatusBadgeTone("unloaded")).toBe("neutral");
-  });
-
-  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
-    expect(modelStatusBadgeTone("unknown")).toBe("neutral");
-    expect(modelStatusBadgeTone("")).toBe("neutral");
+    for (const [status, tone] of cases) {
+      expect(modelStatusBadgeTone(status), status).toBe(tone);
+    }
   });
 });
 
 describe("queueJobStatusBadgeTone", () => {
-  it("maps running to primary (job is in flight)", () => {
-    expect(queueJobStatusBadgeTone("running")).toBe("primary");
-  });
+  it("maps every queue job status to its Badge tone", () => {
+    const cases: Array<[string, StatusTone]> = [
+      ["running", "primary"],
+      ["completed", "success"],
+      ["failed", "danger"],
+      ["cancelled", "warning"],
+      ["skipped", "warning"],
+      ["pending", "neutral"],
+      // Unknown strings fall back to neutral so the Badge contract stays total.
+      ["unknown", "neutral"],
+      ["", "neutral"],
+    ];
 
-  it("maps completed to success (happy-path throughput)", () => {
-    expect(queueJobStatusBadgeTone("completed")).toBe("success");
-  });
-
-  it("maps failed to danger (needs retry)", () => {
-    expect(queueJobStatusBadgeTone("failed")).toBe("danger");
-  });
-
-  it("maps cancelled to warning (operational attention)", () => {
-    expect(queueJobStatusBadgeTone("cancelled")).toBe("warning");
-  });
-
-  it("maps skipped to warning (acknowledged but not done)", () => {
-    expect(queueJobStatusBadgeTone("skipped")).toBe("warning");
-  });
-
-  it("maps pending to neutral (waiting, no signal)", () => {
-    expect(queueJobStatusBadgeTone("pending")).toBe("neutral");
-  });
-
-  it("falls back to neutral for unknown strings so the Badge contract stays total", () => {
-    expect(queueJobStatusBadgeTone("unknown")).toBe("neutral");
-    expect(queueJobStatusBadgeTone("")).toBe("neutral");
+    for (const [status, tone] of cases) {
+      expect(queueJobStatusBadgeTone(status), status).toBe(tone);
+    }
   });
 });
 
 describe("queueStatsCellTone", () => {
-  it("maps pending to warning (any backlog signals attention)", () => {
-    expect(queueStatsCellTone("pending")).toBe("warning");
-  });
+  it("maps every queue stats bucket to its cell tone", () => {
+    const cases: Array<[string, StatusTone]> = [
+      // Per iter-73: the aggregate-bucket tone encodes "backlog → attention" while the
+      // per-row Badge tone encodes "this single job is waiting → no signal" (pending → neutral
+      // in queueJobStatusBadgeTone). Pinning the divergence here protects against a refactor
+      // that accidentally unifies them.
+      ["pending", "warning"],
+      ["skipped", "warning"],
+      ["running", "primary"],
+      ["failed", "danger"],
+      ["cancelled", "warning"],
+      ["warning", "warning"],
+      ["error", "danger"],
+      ["completed", "success"],
+      // Unknown strings fall back to neutral so the call site stays total.
+      ["unknown", "neutral"],
+      ["", "neutral"],
+    ];
 
-  it("maps skipped to warning (acknowledged gap in the queue)", () => {
-    expect(queueStatsCellTone("skipped")).toBe("warning");
-  });
-
-  it("maps running to primary (queue is in flight)", () => {
-    expect(queueStatsCellTone("running")).toBe("primary");
-  });
-
-  it("maps failed to danger (needs retry)", () => {
-    expect(queueStatsCellTone("failed")).toBe("danger");
-  });
-
-  it("maps cancelled to warning (operational attention)", () => {
-    expect(queueStatsCellTone("cancelled")).toBe("warning");
-  });
-
-  it("maps semantic warning and error buckets", () => {
-    expect(queueStatsCellTone("warning")).toBe("warning");
-    expect(queueStatsCellTone("error")).toBe("danger");
-  });
-
-  it("maps completed to success (happy-path throughput)", () => {
-    expect(queueStatsCellTone("completed")).toBe("success");
-  });
-
-  it("falls back to neutral for unknown strings so the call site stays total", () => {
-    expect(queueStatsCellTone("unknown")).toBe("neutral");
-    expect(queueStatsCellTone("")).toBe("neutral");
-  });
-
-  it("diverges from queueJobStatusBadgeTone for pending (warning vs neutral)", () => {
-    // Per iter-73: the aggregate-bucket tone encodes "backlog → attention" while the
-    // per-row Badge tone encodes "this single job is waiting → no signal". Pinning the
-    // divergence here protects against a refactor that accidentally unifies them.
-    expect(queueStatsCellTone("pending")).toBe("warning");
-    expect(queueJobStatusBadgeTone("pending")).toBe("neutral");
+    for (const [status, tone] of cases) {
+      expect(queueStatsCellTone(status), status).toBe(tone);
+    }
   });
 });
 

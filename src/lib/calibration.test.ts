@@ -36,56 +36,26 @@ describe("calibration helpers", () => {
 });
 
 describe("calibrationBadgePresentation", () => {
-  it("renders an idle Calibration Badge before calibration starts", () => {
-    expect(calibrationBadgePresentation(null, 0, false)).toEqual({
-      tone: "neutral",
-      label: "Calibration",
-    });
-  });
+  it("presents the calibration Badge for every calibration phase", () => {
+    const cases: Array<[Parameters<typeof calibrationBadgePresentation>, ReturnType<typeof calibrationBadgePresentation>]> = [
+      // Idle before calibration starts.
+      [[null, 0, false], { tone: "neutral", label: "Calibration" }],
+      // Progress in flight.
+      [[1000, 0, false], { tone: "primary", label: "Calibrating" }],
+      [[1000, 50, false], { tone: "primary", label: "Calibrating" }],
+      [[1000, 99, false], { tone: "primary", label: "Calibrating" }],
+      // Ready at 100% before auto-apply finalizes.
+      [[1000, 100, false], { tone: "success", label: "Ready" }],
+      // Applied once the auto-apply has run.
+      [[1000, 100, true], { tone: "success", label: "Applied" }],
+      // Defensive: even at percent < 100 an applied=true state should land on "Applied",
+      // not "Calibrating" — protects against a hypothetical state shape where the parent
+      // sets applied early.
+      [[1000, 30, true], { tone: "success", label: "Applied" }],
+    ];
 
-  it("renders a Calibrating Badge while progress is in flight", () => {
-    expect(calibrationBadgePresentation(1000, 0, false)).toEqual({
-      tone: "primary",
-      label: "Calibrating",
-    });
-    expect(calibrationBadgePresentation(1000, 50, false)).toEqual({
-      tone: "primary",
-      label: "Calibrating",
-    });
-    expect(calibrationBadgePresentation(1000, 99, false)).toEqual({
-      tone: "primary",
-      label: "Calibrating",
-    });
-  });
-
-  it("renders a Ready Badge at 100% before auto-apply finalizes", () => {
-    expect(calibrationBadgePresentation(1000, 100, false)).toEqual({
-      tone: "success",
-      label: "Ready",
-    });
-  });
-
-  it("renders an Applied Badge once the auto-apply has run", () => {
-    expect(calibrationBadgePresentation(1000, 100, true)).toEqual({
-      tone: "success",
-      label: "Applied",
-    });
-  });
-
-  it("favors the applied label over the percent-driven branches", () => {
-    // Defensive: even at percent < 100 an applied=true state should land on "Applied",
-    // not "Calibrating" — protects against a hypothetical state shape where the parent
-    // sets applied early.
-    expect(calibrationBadgePresentation(1000, 30, true)).toEqual({
-      tone: "success",
-      label: "Applied",
-    });
-  });
-
-  it("collapses Ready and Applied to success tone but distinguishes label", () => {
-    const ready = calibrationBadgePresentation(1000, 100, false);
-    const applied = calibrationBadgePresentation(1000, 100, true);
-    expect(ready.tone).toBe(applied.tone);
-    expect(ready.label).not.toBe(applied.label);
+    for (const [args, expected] of cases) {
+      expect(calibrationBadgePresentation(...args), JSON.stringify(args)).toEqual(expected);
+    }
   });
 });

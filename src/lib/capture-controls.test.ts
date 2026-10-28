@@ -20,30 +20,37 @@ const stoppedStatus: Pick<AppStatus, "live_input_active" | "runtime_warning"> =
   };
 
 describe("capture controls", () => {
-  it("keeps the same microphone on both slots and drops a third", () => {
-    expect(
-      normalizeCaptureMicrophones([
-        { id: "wired", label: "Wired" },
-        { id: "wired", label: "Duplicate" },
-        { id: "wireless", label: "Wireless" },
-        { id: "third", label: "Third" },
-      ]),
-    ).toEqual([
-      { id: "wired", label: "Wired" },
-      { id: "wired", label: "Duplicate" },
-    ]);
-  });
+  it("normalizes capture microphones to at most two slots", () => {
+    const cases: Array<[string, Parameters<typeof normalizeCaptureMicrophones>[0], ReturnType<typeof normalizeCaptureMicrophones>]> = [
+      [
+        "keeps the same microphone on both slots and drops a third",
+        [
+          { id: "wired", label: "Wired" },
+          { id: "wired", label: "Duplicate" },
+          { id: "wireless", label: "Wireless" },
+          { id: "third", label: "Third" },
+        ],
+        [
+          { id: "wired", label: "Wired" },
+          { id: "wired", label: "Duplicate" },
+        ],
+      ],
+      [
+        "allows System Default with a second device",
+        [
+          { id: "default", label: "System Default" },
+          { id: "wired", label: "Wired" },
+        ],
+        [
+          { id: "default", label: "System Default" },
+          { id: "wired", label: "Wired" },
+        ],
+      ],
+    ];
 
-  it("allows System Default with a second device", () => {
-    expect(
-      normalizeCaptureMicrophones([
-        { id: "default", label: "System Default" },
-        { id: "wired", label: "Wired" },
-      ]),
-    ).toEqual([
-      { id: "default", label: "System Default" },
-      { id: "wired", label: "Wired" },
-    ]);
+    for (const [label, input, expected] of cases) {
+      expect(normalizeCaptureMicrophones(input), label).toEqual(expected);
+    }
   });
 
   it("rebinds a stale BOYA selection to one active same-name device", () => {
@@ -133,24 +140,34 @@ describe("inputAvailability", () => {
     ],
   };
 
-  it("waits for the selected primary instead of substituting another device", () => {
-    const microphones: MicrophoneDevice[] = [
-      { id: "studio", label: "Studio Mic", available: false, fallback: false },
-      {
-        id: "laptop",
-        label: "MacBook Microphone",
-        available: true,
-        fallback: false,
-      },
+  it("waits for the selected primary when it is unavailable or absent", () => {
+    const cases: Array<[string, MicrophoneDevice[]]> = [
+      // Another device is available but is not substituted for the primary.
+      [
+        "primary unavailable",
+        [
+          { id: "studio", label: "Studio Mic", available: false, fallback: false },
+          {
+            id: "laptop",
+            label: "MacBook Microphone",
+            available: true,
+            fallback: false,
+          },
+        ],
+      ],
+      // No selected or fallback input is available at all.
+      ["no microphones", []],
     ];
 
-    expect(inputAvailability(settings, microphones)).toEqual({
-      canStart: false,
-      activeLabel: "Studio Mic",
-      warning:
-        'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
-      warningTone: "danger",
-    });
+    for (const [label, microphones] of cases) {
+      expect(inputAvailability(settings, microphones), label).toEqual({
+        canStart: false,
+        activeLabel: "Studio Mic",
+        warning:
+          'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
+        warningTone: "danger",
+      });
+    }
   });
 
   it("allows capture through the single active same-name replacement", () => {
@@ -181,16 +198,6 @@ describe("inputAvailability", () => {
       activeLabel: "BOYA CM40",
       warning: null,
       warningTone: null,
-    });
-  });
-
-  it("surfaces a danger when no selected or fallback input is available", () => {
-    expect(inputAvailability(settings, [])).toEqual({
-      canStart: false,
-      activeLabel: "Studio Mic",
-      warning:
-        'Primary input "Studio Mic" is unavailable. WakeNote will wait for the same device.',
-      warningTone: "danger",
     });
   });
 

@@ -12,82 +12,6 @@ import {
 } from "./app-state";
 
 describe("app state derivation", () => {
-  it("leaves the transcript translation language unset by default", () => {
-    expect(defaultSettings()).toMatchObject({
-      transcription_translation_language: null,
-      transcription_translation_enabled: false,
-      subtitle_translation_language: "ko",
-      dictation_translation_language: "ko",
-    });
-  });
-
-  it("merges two microphone inputs by default", () => {
-    expect(defaultSettings().merge_microphone_inputs).toBe(true);
-    expect(defaultSettings().priority_microphone_inputs).toBe(false);
-  });
-
-  it("enables local voice-aware auto level by default", () => {
-    expect(defaultSettings().voice_auto_level_enabled).toBe(true);
-  });
-
-  it("keeps input monitoring and the floating overlay off by default", () => {
-    const settings = defaultSettings();
-
-    expect(settings.input_monitoring_enabled).toBe(false);
-    expect(settings.show_floating_overlay).toBe(false);
-  });
-
-  it("keeps the existing subtitle geometry as editable pixel defaults", () => {
-    const settings = defaultSettings();
-    expect(settings.subtitle_source_mode).toBe("both");
-    expect(settings).toMatchObject({
-      subtitle_padding_horizontal_px: 18,
-      subtitle_padding_vertical_px: 14,
-      subtitle_border_width_px: 1,
-      subtitle_border_color: "#ffffff",
-      subtitle_border_radius_px: 8,
-      subtitle_max_width_px: 720,
-      subtitle_min_height_px: 58,
-      subtitle_max_height_px: 1_000,
-    });
-    expect(settings).not.toHaveProperty("subtitle_min_width_px");
-  });
-
-  it("uses the upstream whisper.cpp repository for mock model downloads", () => {
-    const whisperModels = mockModels().filter(
-      (model) => model.provider_runtime === "whisper-rs",
-    );
-    expect(whisperModels.length).toBeGreaterThan(0);
-    for (const model of whisperModels) {
-      expect(model.download_url).toMatch(
-        /^https:\/\/huggingface\.co\/ggerganov\/whisper\.cpp\/resolve\/main\//,
-      );
-    }
-  });
-
-  it("ships dictation off by default with the product shortcut and auto-detect language", () => {
-    const settings = defaultSettings();
-    expect(settings.dictation_enabled).toBe(false);
-    expect(settings.dictation_shortcut).toBe("alt+space");
-    expect(settings.dictation_language).toBe("auto");
-    expect(settings).toMatchObject({
-      dictation_start_sound: "original",
-      dictation_stop_sound: "original",
-      dictation_end_sound: "original",
-      dictation_cue_volume: "medium",
-      dictation_bubble_position: "top_center",
-      dictation_bubble_background_color: "#000000",
-      dictation_bubble_background_opacity: 88,
-      dictation_model: "",
-      dictation_copy_to_clipboard: true,
-      dictation_remove_trailing_space: false,
-    });
-  });
-
-  it("keeps a safe dedicated meeting model independent from live transcription", () => {
-    expect(defaultSettings().meeting_model).toBe("whisper-medium");
-  });
-
   it("maps independent recording/transcription toggles to PRD product modes", () => {
     expect(
       deriveProductMode({
@@ -168,10 +92,16 @@ describe("app state derivation", () => {
       "soniox-async-v5",
       "soniox-realtime-v5",
     ]);
-    for (const model of models.filter(
+    const whisperModels = models.filter(
       (model) => model.provider_runtime === "whisper-rs",
-    )) {
+    );
+    expect(whisperModels.length).toBeGreaterThan(0);
+    for (const model of whisperModels) {
       expect(model.languages).toContain("ko");
+      // Mock model downloads use the upstream whisper.cpp repository.
+      expect(model.download_url).toMatch(
+        /^https:\/\/huggingface\.co\/ggerganov\/whisper\.cpp\/resolve\/main\//,
+      );
     }
     expect(
       models.find((model) => model.id === "sensevoice-small")?.languages,
@@ -196,17 +126,30 @@ describe("app state derivation", () => {
       provider_runtime: "openai-stt",
       offline: false,
       status: "ready",
+      capabilities: { streaming: "optional" },
     });
     expect(
       models.find((model) => model.id === "openai-gpt-live-transcribe"),
     ).toMatchObject({
       provider_runtime: "openai-realtime",
-      capabilities: { streaming: "required", realtime: true },
+      capabilities: {
+        file_transcription: false,
+        realtime: true,
+        streaming: "required",
+        diarization: false,
+        selectable_contexts: ["realtime", "dictation", "meeting"],
+      },
     });
     expect(
       models.find((model) => model.id === "openai-gpt-4o-transcribe-diarize"),
     ).toMatchObject({
-      capabilities: { diarization: true, maximum_request_bytes: 25_000_000 },
+      capabilities: {
+        file_transcription: true,
+        realtime: false,
+        streaming: "optional",
+        diarization: true,
+        maximum_request_bytes: 25_000_000,
+      },
     });
     expect(
       models.find((model) => model.id === "soniox-async-v5"),
@@ -215,6 +158,7 @@ describe("app state derivation", () => {
       capabilities: {
         file_transcription: true,
         realtime: false,
+        streaming: "unsupported",
         selectable_contexts: ["file", "dictation", "meeting"],
       },
     });
@@ -338,45 +282,48 @@ describe("app state derivation", () => {
     ).toBe(false);
   });
 
-  it("keeps polling while a live input stream error is active", () => {
+  it("keeps polling for every live runtime signal", () => {
     const snapshot = mockSnapshot();
-    const streamErrorStatus = {
-      ...snapshot.status,
-      tray_state: "error" as const,
-      runtime_warning:
-        "Live input stream error: default input stream disconnected",
-    };
+    const cases: Array<[string, Parameters<typeof shouldPollSnapshot>]> = [
+      [
+        "live input stream error",
+        [
+          {
+            ...snapshot.status,
+            tray_state: "error" as const,
+            runtime_warning:
+              "Live input stream error: default input stream disconnected",
+          },
+          snapshot.queue,
+          snapshot.models,
+        ],
+      ],
+      [
+        "live input still active under an error state",
+        [
+          {
+            ...snapshot.status,
+            tray_state: "error" as const,
+            live_input_active: true,
+          },
+          snapshot.queue,
+          snapshot.models,
+        ],
+      ],
+      [
+        "launch auto-start pending from an idle snapshot",
+        [
+          snapshot.status,
+          snapshot.queue,
+          snapshot.models,
+          { launchAutoStartPending: true },
+        ],
+      ],
+    ];
 
-    expect(
-      shouldPollSnapshot(streamErrorStatus, snapshot.queue, snapshot.models),
-    ).toBe(true);
-  });
-
-  it("keeps polling while live input remains active under an error state", () => {
-    const snapshot = mockSnapshot();
-    const activeInputErrorStatus = {
-      ...snapshot.status,
-      tray_state: "error" as const,
-      live_input_active: true,
-    };
-
-    expect(
-      shouldPollSnapshot(
-        activeInputErrorStatus,
-        snapshot.queue,
-        snapshot.models,
-      ),
-    ).toBe(true);
-  });
-
-  it("keeps polling while launch auto-start is pending from an idle snapshot", () => {
-    const snapshot = mockSnapshot();
-
-    expect(
-      shouldPollSnapshot(snapshot.status, snapshot.queue, snapshot.models, {
-        launchAutoStartPending: true,
-      }),
-    ).toBe(true);
+    for (const [label, args] of cases) {
+      expect(shouldPollSnapshot(...args), label).toBe(true);
+    }
   });
 
   it("refreshes snapshots when system-audio capture lifecycle events arrive", () => {
@@ -399,7 +346,7 @@ describe("app state derivation", () => {
     ).toBe(true);
   });
 
-  it("changes the polling dependency key when polling inputs change", () => {
+  it("changes the polling dependency key when any polling input changes", () => {
     const snapshot = mockSnapshot();
     const baseKey = pollSnapshotDependencyKey(
       snapshot.status,
@@ -432,10 +379,8 @@ describe("app state derivation", () => {
         snapshot.models,
       ),
     ).not.toBe(baseKey);
-  });
 
-  it("changes the polling dependency key when pending job model targets change", () => {
-    const snapshot = mockSnapshot();
+    // Pending job model targets are part of the key too.
     const mediumPendingQueue = {
       ...snapshot.queue,
       jobs: [
@@ -477,7 +422,51 @@ describe("app state derivation", () => {
     );
   });
 
-  it("provides browser-safe mock data for Vite development outside Tauri", () => {
+  it("provides browser-safe default settings and mock data outside Tauri", () => {
+    const settings = defaultSettings();
+    expect(settings).toMatchObject({
+      // The transcript translation language is unset by default.
+      transcription_translation_language: null,
+      transcription_translation_enabled: false,
+      subtitle_translation_language: "ko",
+      dictation_translation_language: "ko",
+      // Two microphone inputs are merged by default.
+      merge_microphone_inputs: true,
+      priority_microphone_inputs: false,
+      // Local voice-aware auto level is on by default.
+      voice_auto_level_enabled: true,
+      // Input monitoring and the floating overlay are off by default.
+      input_monitoring_enabled: false,
+      show_floating_overlay: false,
+      // The existing subtitle geometry stays as editable pixel defaults.
+      subtitle_source_mode: "both",
+      subtitle_padding_horizontal_px: 18,
+      subtitle_padding_vertical_px: 14,
+      subtitle_border_width_px: 1,
+      subtitle_border_color: "#ffffff",
+      subtitle_border_radius_px: 8,
+      subtitle_max_width_px: 720,
+      subtitle_min_height_px: 58,
+      subtitle_max_height_px: 1_000,
+      // Dictation ships off with the product shortcut and auto-detect language.
+      dictation_enabled: false,
+      dictation_shortcut: "alt+space",
+      dictation_language: "auto",
+      dictation_start_sound: "original",
+      dictation_stop_sound: "original",
+      dictation_end_sound: "original",
+      dictation_cue_volume: "medium",
+      dictation_bubble_position: "top_center",
+      dictation_bubble_background_color: "#000000",
+      dictation_bubble_background_opacity: 88,
+      dictation_model: "",
+      dictation_copy_to_clipboard: true,
+      dictation_remove_trailing_space: false,
+      // A safe dedicated meeting model, independent from live transcription.
+      meeting_model: "whisper-medium",
+    });
+    expect(settings).not.toHaveProperty("subtitle_min_width_px");
+
     const snapshot = mockSnapshot();
 
     expect(snapshot.settings.save_root).toBe("~/Documents/WakeNote");
