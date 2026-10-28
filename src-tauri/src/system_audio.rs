@@ -716,6 +716,40 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "requires macOS Screen Recording permission; run alone with --test-threads=1"]
+    fn failed_system_audio_starts_release_autoreleased_objects_without_a_pool() {
+        const RETRIES: usize = 40;
+        // The source watcher retries a start whose meeting app has gone away.
+        // That start fails after querying shareable content and scanning every
+        // running application, on a thread with no autorelease pool.
+        let missing = SystemAudioTarget {
+            pid: i32::MAX,
+            app_name: Some("WakeNote Missing Meeting App".to_string()),
+        };
+        let attempt = || {
+            let started =
+                macos::start_system_audio(Some(missing.clone()), 48_000, Arc::new(|_| {}));
+            assert!(
+                started.is_err(),
+                "a missing application must not start capture"
+            );
+        };
+        for _ in 0..20 {
+            attempt();
+        }
+        let before = live_malloc_blocks();
+        for _ in 0..RETRIES {
+            attempt();
+        }
+        let retained = live_malloc_blocks().saturating_sub(before);
+        assert!(
+            retained < RETRIES * 25,
+            "{retained} malloc blocks retained across {RETRIES} failed system-audio starts"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires macOS Screen Recording permission; run alone with --test-threads=1"]
     fn window_enumeration_releases_autoreleased_objects_without_a_pool() {
         const POLLS: usize = 40;
         // Like the source watcher, the test thread has no autorelease pool.
