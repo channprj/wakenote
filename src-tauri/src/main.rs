@@ -11689,6 +11689,40 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads real macOS Core Audio devices"]
+    fn concurrent_microphone_polls_share_core_audio_scans() {
+        const CALLERS: usize = 32;
+        const POLLS: usize = 10;
+        let started = Instant::now();
+        let scans_before = MICROPHONE_SCANS.scans.lock().expect("scans").next_id;
+        let callers = (0..CALLERS)
+            .map(|_| {
+                thread::spawn(|| {
+                    (0..POLLS)
+                        .filter(|_| {
+                            scanned_microphones().is_some_and(|devices| !devices.is_empty())
+                        })
+                        .count()
+                })
+            })
+            .collect::<Vec<_>>();
+        let answered: usize = callers
+            .into_iter()
+            .map(|caller| caller.join().expect("caller"))
+            .sum();
+        let scans = MICROPHONE_SCANS.scans.lock().expect("scans").next_id - scans_before;
+        let reuse_windows = started.elapsed().as_millis() / MICROPHONE_SCAN_REUSE.as_millis() + 1;
+
+        assert_eq!(answered, CALLERS * POLLS);
+        assert!(
+            u128::from(scans) <= reuse_windows,
+            "{scans} Core Audio scans for {} polls in {} reuse windows",
+            CALLERS * POLLS,
+            reuse_windows
+        );
+    }
+
+    #[test]
     fn scanned_microphones_mark_system_default_as_fallback_per_settings() {
         let mut settings = AppSettings::default();
         let devices = vec![scanned_device("default"), scanned_device("usb")];
