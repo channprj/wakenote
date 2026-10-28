@@ -4905,14 +4905,6 @@ mod tests {
     }
 
     #[test]
-    fn tray_state_prefers_running_transcription_over_active_recording() {
-        assert_eq!(
-            derive_tray_state(AppMode::RecordingAndTranscription, true, true, true, false),
-            TrayState::Transcribing
-        );
-    }
-
-    #[test]
     fn tray_presentation_for_dictation_overrides_active_stages() {
         assert_eq!(
             tray_presentation_for_dictation(DictationStage::Recording)
@@ -4936,60 +4928,86 @@ mod tests {
     }
 
     #[test]
-    fn pinned_device_mismatch_returns_false_when_label_matches_after_id_drift() {
-        // Stable ids embed the cpal enumeration index. After USB re-enumeration
-        // the same physical mic has a new stable id but the label is unchanged.
-        // Label match alone is enough to say we're on the pinned device.
-        assert!(!pinned_device_mismatch(
-            "input-3-by-v",
-            "BY-V",
-            "input-5-by-v",
-            "BY-V",
-            false,
-        ));
-    }
+    fn pinned_device_mismatch_follows_fallback_then_id_then_label() {
+        // (case, pinned_id, pinned_label, resolved_id, resolved_label, resolver_fell_back, expected)
+        let cases = [
+            // Stable ids embed the cpal enumeration index. After USB re-enumeration
+            // the same physical mic has a new stable id but the label is unchanged.
+            // Label match alone is enough to say we're on the pinned device.
+            (
+                "label matches after id drift",
+                "input-3-by-v",
+                "BY-V",
+                "input-5-by-v",
+                "BY-V",
+                false,
+                false,
+            ),
+            (
+                "label differs",
+                "input-3-by-v",
+                "BY-V",
+                "default",
+                "System Default",
+                false,
+                true,
+            ),
+            (
+                "resolver fell back to another device",
+                "input-3-by-v",
+                "BY-V",
+                "default",
+                "System Default",
+                true,
+                true,
+            ),
+            // Even with matching labels, trust the resolver's explicit fallback signal.
+            (
+                "resolver explicitly fell back",
+                "input-3-by-v",
+                "BY-V",
+                "input-3-by-v",
+                "BY-V",
+                true,
+                true,
+            ),
+            (
+                "ids match",
+                "input-3-by-v",
+                "BY-V",
+                "input-3-by-v",
+                "BY-V",
+                false,
+                false,
+            ),
+            // Legacy settings might not have a label. Without a label, fall back
+            // to id equality only.
+            (
+                "pinned label empty and ids differ",
+                "input-3",
+                "",
+                "input-5",
+                "Some Mic",
+                false,
+                true,
+            ),
+        ];
 
-    #[test]
-    fn pinned_device_mismatch_returns_true_when_label_differs() {
-        assert!(pinned_device_mismatch(
-            "input-3-by-v",
-            "BY-V",
-            "default",
-            "System Default",
-            true,
-        ));
-    }
-
-    #[test]
-    fn pinned_device_mismatch_returns_true_when_resolver_explicitly_fell_back() {
-        // Even with matching labels, trust the resolver's explicit fallback signal.
-        assert!(pinned_device_mismatch(
-            "input-3-by-v",
-            "BY-V",
-            "input-3-by-v",
-            "BY-V",
-            true,
-        ));
-    }
-
-    #[test]
-    fn pinned_device_mismatch_returns_false_when_ids_match() {
-        assert!(!pinned_device_mismatch(
-            "input-3-by-v",
-            "BY-V",
-            "input-3-by-v",
-            "BY-V",
-            false,
-        ));
-    }
-
-    #[test]
-    fn pinned_device_mismatch_returns_true_when_pinned_label_empty_and_ids_differ() {
-        // Legacy settings might not have a label. Without a label, fall back
-        // to id equality only.
-        assert!(pinned_device_mismatch(
-            "input-3", "", "input-5", "Some Mic", false,
-        ));
+        for (case, pinned_id, pinned_label, resolved_id, resolved_label, fell_back, expected) in
+            cases
+        {
+            assert_eq!(
+                pinned_device_mismatch(
+                    pinned_id,
+                    pinned_label,
+                    resolved_id,
+                    resolved_label,
+                    fell_back,
+                ),
+                expected,
+                "{case}"
+            );
+        }
     }
 
     fn settings_with_priority(
@@ -5011,7 +5029,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_device_id_in_settings_rewrites_selected_and_priority_entries() {
+    fn reconcile_device_id_in_settings_rewrites_only_label_matched_drift() {
         let mut settings = settings_with_priority(
             "input-3-by-v",
             "BY-V",
@@ -5026,49 +5044,30 @@ mod tests {
         assert_eq!(settings.selected_microphone_label, "BY-V");
         assert_eq!(settings.microphone_priority[0].id, "input-5-by-v");
         assert_eq!(settings.microphone_priority[1].id, "input-7-airpods");
-    }
 
-    #[test]
-    fn reconcile_device_id_in_settings_skips_when_label_does_not_match() {
-        // If the resolver returned a different label for the same id, we
-        // can't be sure it's the same physical device — leave settings alone.
-        let mut settings =
-            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
+        for (resolved_id, resolved_label) in [
+            // If the resolver returned a different label for the same id, we
+            // can't be sure it's the same physical device — leave settings alone.
+            ("input-5-other", "Some Other Mic"),
+            ("input-3-by-v", "BY-V"),
+            // No label means we can't safely identify the device; skip.
+            ("input-5-by-v", ""),
+        ] {
+            let mut settings =
+                settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
 
-        let changed = reconcile_device_id_in_settings(
-            &mut settings,
-            "input-3-by-v",
-            "input-5-other",
-            "Some Other Mic",
-        );
+            let changed = reconcile_device_id_in_settings(
+                &mut settings,
+                "input-3-by-v",
+                resolved_id,
+                resolved_label,
+            );
 
-        assert!(!changed);
-        assert_eq!(settings.selected_microphone, "input-3-by-v");
-        assert_eq!(settings.microphone_priority[0].id, "input-3-by-v");
-    }
-
-    #[test]
-    fn reconcile_device_id_in_settings_noop_when_ids_equal() {
-        let mut settings =
-            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
-
-        let changed =
-            reconcile_device_id_in_settings(&mut settings, "input-3-by-v", "input-3-by-v", "BY-V");
-
-        assert!(!changed);
-    }
-
-    #[test]
-    fn reconcile_device_id_in_settings_noop_when_resolved_label_empty() {
-        // No label means we can't safely identify the device; skip.
-        let mut settings =
-            settings_with_priority("input-3-by-v", "BY-V", vec![("input-3-by-v", "BY-V")]);
-
-        let changed =
-            reconcile_device_id_in_settings(&mut settings, "input-3-by-v", "input-5-by-v", "");
-
-        assert!(!changed);
-        assert_eq!(settings.selected_microphone, "input-3-by-v");
+            let case = format!("resolved {resolved_id:?} / {resolved_label:?}");
+            assert!(!changed, "{case}");
+            assert_eq!(settings.selected_microphone, "input-3-by-v", "{case}");
+            assert_eq!(settings.microphone_priority[0].id, "input-3-by-v", "{case}");
+        }
     }
 
     fn cached_source_file(path: &Path) -> serde_json::Value {
@@ -5125,11 +5124,19 @@ mod tests {
         let day = tmp.path().join("20260510");
         std::fs::create_dir_all(&day).expect("day");
         std::fs::write(day.join("090000.txt"), "morning transcript").expect("sidecar");
+        std::fs::write(day.join("180000.txt"), "evening transcript").expect("sidecar");
+        let index_path = day.join("all.json");
 
+        // For materialized (non-evicted) files the dataless guard has no effect,
+        // so the on-navigation (download=false) and reload (download=true) reads
+        // return the same entries. The flag only matters for iCloud-evicted files.
+        // Navigation runs first so only the reload can have written all.json.
+        let local = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", false);
+        assert!(!index_path.exists());
         let transcripts = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", true);
 
-        assert_eq!(transcripts.len(), 1);
-        let index_path = day.join("all.json");
+        assert_eq!(local, transcripts);
+        assert_eq!(transcripts.len(), 2);
         assert!(index_path.exists());
         let index: serde_json::Value =
             serde_json::from_slice(&std::fs::read(index_path).expect("index")).expect("index json");
@@ -5199,7 +5206,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_days_counts_sidecars_per_day_including_uploaded() {
+    fn transcript_days_counts_nonempty_sidecars_per_day_including_uploaded() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
 
@@ -5224,32 +5231,11 @@ mod tests {
         // A non-date directory must be ignored.
         std::fs::create_dir_all(root.join("notes")).expect("notes");
 
-        let days = transcript_days_from_save_root(root);
-
-        assert_eq!(
-            days,
-            vec![
-                TranscriptDay {
-                    day: "2026-05-10".to_string(),
-                    count: 2
-                },
-                TranscriptDay {
-                    day: "2026-05-11".to_string(),
-                    count: 2
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn transcript_days_excludes_empty_sidecars_to_match_day_view() {
         // Legacy suppressed (low-confidence) transcripts were written as a
         // lone "\n" (one byte). The size-based count must continue to exclude
         // them, otherwise a day would look selectable but open to "No
         // transcripts for this day".
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path();
-
+        //
         // Day with ONLY a one-byte suppressed stub -> excluded entirely (count 0).
         let suppressed_only = root.join("20260512");
         std::fs::create_dir_all(&suppressed_only).expect("suppressed_only");
@@ -5265,10 +5251,20 @@ mod tests {
 
         assert_eq!(
             days,
-            vec![TranscriptDay {
-                day: "2026-05-13".to_string(),
-                count: 1
-            }]
+            vec![
+                TranscriptDay {
+                    day: "2026-05-10".to_string(),
+                    count: 2
+                },
+                TranscriptDay {
+                    day: "2026-05-11".to_string(),
+                    count: 2
+                },
+                TranscriptDay {
+                    day: "2026-05-13".to_string(),
+                    count: 1
+                },
+            ]
         );
     }
 
@@ -5379,23 +5375,6 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         assert!(transcripts_for_day_from_save_root(tmp.path(), "20260510", false).is_empty());
         assert!(transcripts_for_day_from_save_root(tmp.path(), "not-a-day", false).is_empty());
-    }
-
-    #[test]
-    fn transcripts_for_day_download_flag_is_equivalent_for_local_files() {
-        // For materialized (non-evicted) files the dataless guard has no effect,
-        // so the on-navigation (download=false) and reload (download=true) reads
-        // return the same entries. The flag only matters for iCloud-evicted files.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let day = tmp.path().join("20260510");
-        std::fs::create_dir_all(&day).expect("day");
-        std::fs::write(day.join("090000.txt"), "morning\n").expect("t1");
-        std::fs::write(day.join("180000.txt"), "evening\n").expect("t2");
-
-        let local = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", false);
-        let downloaded = transcripts_for_day_from_save_root(tmp.path(), "2026-05-10", true);
-        assert_eq!(local, downloaded);
-        assert_eq!(local.len(), 2);
     }
 
     #[test]

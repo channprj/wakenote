@@ -98,37 +98,6 @@ fn live_preview_model_prefers_speed_then_accuracy_then_id_without_mutating_final
 }
 
 #[test]
-fn live_preview_model_fallback_does_not_change_queued_final_model() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("capture.wav");
-    std::fs::write(&audio_path, b"audio").expect("audio");
-    let mut backend = AppBackend::default();
-    let queued = backend.enqueue_audio_file(&audio_path, Some("qwen3-asr-1.7b".to_string()));
-    let mut registry = default_model_registry();
-    let mut selected = registry.remove("qwen3-asr-1.7b").expect("selected model");
-    selected.status = ModelStatus::Ready;
-    let mut preview = registry.remove("whisper-small").expect("preview model");
-    preview.status = ModelStatus::Ready;
-    let settings = wakenote::settings::AppSettings {
-        selected_model: "qwen3-asr-1.7b".to_string(),
-        ..Default::default()
-    };
-
-    assert_eq!(
-        live_preview_model_id(
-            &settings,
-            &[selected, preview],
-            "/tmp/missing-model-directory",
-        ),
-        Some("whisper-small".to_string())
-    );
-    assert_eq!(
-        queued.jobs.last().expect("queued job").model_id,
-        "qwen3-asr-1.7b"
-    );
-}
-
-#[test]
 fn live_preview_model_accepts_each_ready_cloud_realtime_model() {
     let registry = default_model_registry();
     for model_id in ["openai-gpt-live-transcribe", "soniox-realtime-v5"] {
@@ -345,6 +314,16 @@ fn backend_derives_four_product_modes_from_independent_toggles() {
     });
     assert_eq!(backend.app_status().mode, AppMode::Paused);
     assert_eq!(backend.app_status().tray_state, TrayState::Paused);
+
+    // pause_all overrides both enabled toggles.
+    backend.update_settings(SettingsPatch {
+        recording_enabled: Some(true),
+        transcription_enabled: Some(true),
+        pause_all: Some(true),
+        ..SettingsPatch::default()
+    });
+    assert_eq!(backend.app_status().mode, AppMode::Paused);
+    assert_eq!(backend.app_status().tray_state, TrayState::Paused);
 }
 
 #[test]
@@ -402,7 +381,7 @@ fn backend_transcript_sidecars_include_recording_metadata_for_ui_links() {
 }
 
 #[test]
-fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
+fn recent_transcripts_copy_source_and_microphone_identity_from_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
@@ -415,7 +394,7 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
         "20260510/010203-youtube.txt",
         "system transcript\n",
     );
-    let metadata = ChunkMetadata {
+    let system_metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
         requested_model_id: None,
         effective_model_id: None,
@@ -448,31 +427,17 @@ fn backend_transcript_sidecars_include_audio_source_for_ui_badges() {
     let metadata_path = tmp.path().join("20260510/010203-youtube.json");
     std::fs::write(
         metadata_path,
-        serde_json::to_vec(&metadata).expect("metadata json"),
+        serde_json::to_vec(&system_metadata).expect("metadata json"),
     )
     .expect("metadata");
 
-    let transcripts = backend.recent_transcripts(1);
-
-    assert_eq!(transcripts[0].source, ChunkSource::System);
-    assert_eq!(transcripts[0].source_label.as_deref(), Some("youtube"));
-}
-
-#[test]
-fn recent_transcript_preserves_microphone_identity() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        save_root: Some(tmp.path().to_string_lossy().to_string()),
-        ..SettingsPatch::default()
-    });
     write_transcript_sidecar(
         tmp.path(),
         "20260510/010203-mic-primary-wired.txt",
         "primary transcript\n",
     );
     let started_at = chrono::Utc.with_ymd_and_hms(2026, 5, 10, 1, 2, 3).unwrap();
-    let metadata = ChunkMetadata {
+    let microphone_metadata = ChunkMetadata {
         model_id: "whisper-medium".into(),
         requested_model_id: None,
         effective_model_id: None,
@@ -504,27 +469,26 @@ fn recent_transcript_preserves_microphone_identity() {
     };
     std::fs::write(
         tmp.path().join("20260510/010203-mic-primary-wired.json"),
-        serde_json::to_vec(&metadata).expect("metadata json"),
+        serde_json::to_vec(&microphone_metadata).expect("metadata json"),
     )
     .expect("metadata");
 
-    let transcript = backend.recent_transcripts(1).remove(0);
-    assert_eq!(transcript.device_id.as_deref(), Some("input-1-wired"));
-    assert_eq!(transcript.device_name.as_deref(), Some("Wired"));
-    assert_eq!(transcript.microphone_slot, Some(MicrophoneSlot::Primary));
-}
+    let transcripts = backend.recent_transcripts(2);
+    let find = |text: &str| {
+        transcripts
+            .iter()
+            .find(|transcript| transcript.text == text)
+            .unwrap_or_else(|| panic!("missing transcript {text:?}"))
+    };
 
-#[test]
-fn pause_all_overrides_enabled_toggles() {
-    let mut backend = AppBackend::default();
+    let system = find("system transcript");
+    assert_eq!(system.source, ChunkSource::System);
+    assert_eq!(system.source_label.as_deref(), Some("youtube"));
 
-    backend.update_settings(SettingsPatch {
-        pause_all: Some(true),
-        ..SettingsPatch::default()
-    });
-
-    assert_eq!(backend.app_status().mode, AppMode::Paused);
-    assert_eq!(backend.app_status().tray_state, TrayState::Paused);
+    let microphone = find("primary transcript");
+    assert_eq!(microphone.device_id.as_deref(), Some("input-1-wired"));
+    assert_eq!(microphone.device_name.as_deref(), Some("Wired"));
+    assert_eq!(microphone.microphone_slot, Some(MicrophoneSlot::Primary));
 }
 
 #[test]
@@ -1486,62 +1450,93 @@ fn backend_regenerate_transcript_accepts_an_explicit_ready_model() {
 }
 
 #[test]
-fn backend_reprocesses_selected_attention_jobs_with_an_explicit_model() {
+fn backend_reprocesses_failed_skipped_warning_and_clean_jobs_with_an_explicit_model() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let model_dir = tmp.path().join("models");
     write_ready_local_models(&model_dir, &["whisper-medium", "whisper-small"]);
     let failed_audio = tmp.path().join("20260611").join("failed.wav");
     let skipped_audio = tmp.path().join("20260611").join("skipped.wav");
+    let warning_audio = tmp.path().join("20260611").join("warning.wav");
+    let clean_audio = tmp.path().join("20260611").join("clean.wav");
     std::fs::create_dir_all(failed_audio.parent().expect("audio parent")).expect("audio dir");
     std::fs::write(&failed_audio, b"failed audio").expect("failed audio");
     std::fs::write(&skipped_audio, b"skipped audio").expect("skipped audio");
+    std::fs::write(&warning_audio, b"warning audio").expect("warning audio");
+    std::fs::write(&clean_audio, b"clean audio").expect("clean audio");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_dir.to_string_lossy().to_string()),
         selected_model: Some("whisper-medium".into()),
         ..SettingsPatch::default()
     });
-    let first = backend.enqueue_audio_file(&failed_audio, Some("whisper-medium".into()));
-    let failed_id = first
-        .jobs
-        .iter()
-        .find(|job| job.audio_path == failed_audio)
-        .expect("failed job")
-        .id;
-    let second = backend.enqueue_audio_file(&skipped_audio, Some("whisper-medium".into()));
-    let skipped_id = second
-        .jobs
-        .iter()
-        .find(|job| job.audio_path == skipped_audio)
-        .expect("skipped job")
-        .id;
+    let mut enqueue = |audio: &PathBuf| {
+        backend
+            .enqueue_audio_file(audio, Some("whisper-medium".into()))
+            .jobs
+            .into_iter()
+            .find(|job| &job.audio_path == audio)
+            .expect("queued job")
+            .id
+    };
+    let failed_id = enqueue(&failed_audio);
+    let skipped_id = enqueue(&skipped_audio);
+    let warning_id = enqueue(&warning_audio);
+    let clean_id = enqueue(&clean_audio);
     backend
         .finish_transcription_job(TranscriptionJobOutcome::failed(failed_id, "mock failure"))
         .expect("fail first job");
     backend.skip_job(skipped_id).expect("skip second job");
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed_with_issue(
+            warning_id,
+            QueueJobIssue::warning(
+                QueueIssueCode::TranscriptArtifact,
+                "Low-confidence transcript: bracket-flood",
+            ),
+        ))
+        .expect("complete warning");
+    backend
+        .finish_transcription_job(TranscriptionJobOutcome::completed(clean_id))
+        .expect("complete clean job");
     backend.mark_all_activity_read();
     std::fs::write(failed_audio.with_extension("error.txt"), b"old error").expect("error sidecar");
     std::fs::write(skipped_audio.with_extension("txt"), b"old transcript").expect("text sidecar");
+    std::fs::write(warning_audio.with_extension("txt"), "[noise]\n").expect("warning transcript");
+    std::fs::write(clean_audio.with_extension("txt"), "clean transcript\n")
+        .expect("clean transcript");
 
     let snapshot = backend
-        .reprocess_jobs(vec![failed_id, skipped_id], "whisper-small".into())
+        .reprocess_jobs(
+            vec![failed_id, skipped_id, warning_id, clean_id],
+            "whisper-small".into(),
+        )
         .expect("reprocess selected jobs");
 
-    assert_eq!(snapshot.pending_count, 2);
+    assert_eq!(snapshot.pending_count, 4);
     assert_eq!(snapshot.failed_count, 0);
-    for id in [failed_id, skipped_id] {
-        let job = snapshot.jobs.iter().find(|job| job.id == id).expect("job");
-        assert_eq!(job.status, QueueJobStatus::Pending);
-        assert_eq!(job.model_id, "whisper-small");
-        assert_eq!(job.error, None);
-        assert!(!job.is_read);
+    for (label, id, sidecar) in [
+        (
+            "failed",
+            failed_id,
+            failed_audio.with_extension("error.txt"),
+        ),
+        ("skipped", skipped_id, skipped_audio.with_extension("txt")),
+        ("warning", warning_id, warning_audio.with_extension("txt")),
+        ("clean", clean_id, clean_audio.with_extension("txt")),
+    ] {
+        let job = snapshot.jobs.iter().find(|job| job.id == id).expect(label);
+        assert_eq!(job.status, QueueJobStatus::Pending, "{label}");
+        assert_eq!(job.model_id, "whisper-small", "{label}");
+        assert_eq!(job.error, None, "{label}");
+        assert_eq!(job.issue, None, "{label}");
+        assert!(!job.is_read, "{label}");
         assert_eq!(
             job.transcription_options,
-            Some(backend.settings().transcription_options)
+            Some(backend.settings().transcription_options),
+            "{label}"
         );
+        assert!(!sidecar.exists(), "{label} sidecar was not reset");
     }
-    assert!(!failed_audio.with_extension("error.txt").exists());
-    assert!(!skipped_audio.with_extension("txt").exists());
 }
 
 #[test]
@@ -1635,72 +1630,6 @@ fn backend_reprocesses_with_realtime_models_and_preserves_replay_after_restart()
         assert_eq!(started.job.model_id, model_id);
         assert!(started.job.replay_recorded_audio);
     }
-}
-
-#[test]
-fn backend_reprocesses_warning_and_clean_completed_jobs() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let model_dir = tmp.path().join("models");
-    write_ready_local_model(&model_dir, "whisper-medium");
-    let warning_audio = tmp.path().join("warning.wav");
-    let clean_audio = tmp.path().join("clean.wav");
-    std::fs::write(&warning_audio, b"warning audio").expect("warning audio");
-    std::fs::write(&clean_audio, b"clean audio").expect("clean audio");
-    std::fs::write(warning_audio.with_extension("txt"), "[noise]\n").expect("warning transcript");
-    std::fs::write(clean_audio.with_extension("txt"), "clean transcript\n")
-        .expect("clean transcript");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some(model_dir.to_string_lossy().to_string()),
-        selected_model: Some("whisper-medium".into()),
-        ..SettingsPatch::default()
-    });
-    let warning_id = backend
-        .enqueue_audio_file(&warning_audio, None)
-        .jobs
-        .into_iter()
-        .find(|job| job.audio_path == warning_audio)
-        .expect("warning job")
-        .id;
-    let clean_id = backend
-        .enqueue_audio_file(&clean_audio, None)
-        .jobs
-        .into_iter()
-        .find(|job| job.audio_path == clean_audio)
-        .expect("clean job")
-        .id;
-    backend
-        .finish_transcription_job(TranscriptionJobOutcome::completed_with_issue(
-            warning_id,
-            QueueJobIssue::warning(
-                QueueIssueCode::TranscriptArtifact,
-                "Low-confidence transcript: bracket-flood",
-            ),
-        ))
-        .expect("complete warning");
-    backend
-        .finish_transcription_job(TranscriptionJobOutcome::completed(clean_id))
-        .expect("complete clean job");
-
-    let snapshot = backend
-        .reprocess_jobs(vec![warning_id, clean_id], "whisper-medium".into())
-        .expect("reprocess completed jobs");
-    let warning = snapshot
-        .jobs
-        .iter()
-        .find(|job| job.id == warning_id)
-        .expect("warning job");
-    assert_eq!(warning.status, QueueJobStatus::Pending);
-    assert_eq!(warning.issue, None);
-    assert!(!warning_audio.with_extension("txt").exists());
-    let clean = snapshot
-        .jobs
-        .iter()
-        .find(|job| job.id == clean_id)
-        .expect("clean job");
-    assert_eq!(clean.status, QueueJobStatus::Pending);
-    assert_eq!(clean.issue, None);
-    assert!(!clean_audio.with_extension("txt").exists());
 }
 
 #[test]
@@ -2161,7 +2090,7 @@ fn backend_records_fallback_microphone_in_status_and_metadata() {
 }
 
 #[test]
-fn backend_surfaces_capture_start_failure_as_microphone_warning() {
+fn backend_surfaces_capture_start_failure_and_clears_recovery_after_restart() {
     let mut backend = AppBackend::default();
     backend
         .start_capture_session_for_test(10)
@@ -2186,16 +2115,6 @@ fn backend_surfaces_capture_start_failure_as_microphone_warning() {
         backend.mic_recovery_pending(),
         "capture_start_failed should leave recovery pending"
     );
-}
-
-#[test]
-fn backend_clears_mic_recovery_pending_after_successful_start() {
-    let mut backend = AppBackend::default();
-    backend
-        .start_capture_session_for_test(10)
-        .expect("start capture session");
-    let _ = backend.capture_start_failed("Microphone unavailable: device gone");
-    assert!(backend.mic_recovery_pending());
 
     backend
         .start_capture_session_for_test(10)
@@ -2253,32 +2172,16 @@ fn backend_clears_active_microphone_warning_after_healthy_audio_on_selected_devi
 }
 
 #[test]
-fn backend_reports_idle_after_capture_session_stops() {
-    let mut backend = AppBackend::default();
-    backend
-        .start_capture_session_for_test(10)
-        .expect("start capture session");
-    let active_status = backend.app_status();
-    assert!(active_status.live_input_active);
-    assert_eq!(active_status.tray_state, TrayState::Listening);
-
-    let status = backend
-        .stop_capture_session()
-        .expect("stop capture session");
-
-    assert!(!status.live_input_active);
-    assert_eq!(status.mode, AppMode::RecordingAndTranscription);
-    assert_eq!(status.tray_state, TrayState::Idle);
-}
-
-#[test]
-fn backend_resets_level_snapshot_after_capture_session_stops() {
+fn backend_stop_capture_session_reports_idle_resets_levels_and_rejects_late_frames() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();
     backend.update_settings(wav_settings_patch(tmp.path()));
     backend
         .start_capture_session_for_test(10)
         .expect("start capture session");
+    let active_status = backend.app_status();
+    assert!(active_status.live_input_active);
+    assert_eq!(active_status.tray_state, TrayState::Listening);
     let live_status = backend
         .process_audio_samples_for_test(&[0.5; 1], 100)
         .expect("speech");
@@ -2289,52 +2192,12 @@ fn backend_resets_level_snapshot_after_capture_session_stops() {
         .expect("stop capture session");
 
     assert!(!stopped_status.live_input_active);
+    assert_eq!(stopped_status.mode, AppMode::RecordingAndTranscription);
+    assert_eq!(stopped_status.tray_state, TrayState::Idle);
     assert_eq!(stopped_status.level.current_dbfs, -120.0);
     assert_eq!(stopped_status.level.peak_dbfs, -120.0);
     assert_eq!(stopped_status.level.noise_floor_dbfs, -120.0);
     assert_eq!(stopped_status.level.suggested_threshold_dbfs, -90.0);
-}
-
-#[test]
-fn backend_resets_level_snapshot_when_recording_is_disabled() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut backend = AppBackend::default();
-    backend.update_settings(wav_settings_patch(tmp.path()));
-    backend
-        .start_capture_session_for_test(10)
-        .expect("start capture session");
-    let live_status = backend
-        .process_audio_samples_for_test(&[0.5; 1], 100)
-        .expect("speech");
-    assert!(live_status.level.current_dbfs > -120.0);
-
-    backend.update_settings(SettingsPatch {
-        recording_enabled: Some(false),
-        ..SettingsPatch::default()
-    });
-    let stopped_status = backend.app_status();
-
-    assert!(!stopped_status.live_input_active);
-    assert_eq!(stopped_status.level.current_dbfs, -120.0);
-    assert_eq!(stopped_status.level.peak_dbfs, -120.0);
-    assert_eq!(stopped_status.level.noise_floor_dbfs, -120.0);
-    assert_eq!(stopped_status.level.suggested_threshold_dbfs, -90.0);
-}
-
-#[test]
-fn backend_ignores_late_audio_frames_after_capture_session_stops() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut backend = AppBackend::default();
-    backend.update_settings(wav_settings_patch(tmp.path()));
-    backend
-        .start_capture_session_for_test(10)
-        .expect("start capture session");
-    backend
-        .process_audio_samples_for_test(&[0.5; 1], 100)
-        .expect("speech");
-    backend
-        .stop_capture_session()
-        .expect("stop capture session");
 
     let error = backend
         .process_audio_samples_for_test(&[0.8; 1], 100)
@@ -2372,41 +2235,47 @@ fn backend_reports_real_level_snapshot_from_processed_audio_frames() {
 }
 
 #[test]
-fn runtime_warning_summarizes_dropped_audio_frames_without_overriding_state() {
+fn runtime_warning_prefers_stream_errors_over_dropped_frame_summary() {
     let mut backend = AppBackend::default();
     backend
         .start_capture_session_for_test(10)
         .expect("start capture session");
-    let status = with_runtime_warning(backend.app_status(), 42);
 
-    assert_eq!(status.tray_state, TrayState::Listening);
-    assert_eq!(
-        status.runtime_warning.as_deref(),
-        Some("Live input dropped 42 stale audio frames while processing was busy")
-    );
+    // Dropped frames alone keep the tray state; a stream error turns it red
+    // and replaces the dropped-frame summary.
+    for (stream_error, expected_tray, expected_warning) in [
+        (
+            None,
+            TrayState::Listening,
+            "Live input dropped 42 stale audio frames while processing was busy",
+        ),
+        (
+            Some("default input stream disconnected"),
+            TrayState::Error,
+            "Live input stream error: default input stream disconnected",
+        ),
+    ] {
+        let status = match stream_error {
+            None => with_runtime_warning(backend.app_status(), 42),
+            Some(error) => {
+                with_live_runtime_warning(backend.app_status(), 42, Some(error.to_string()))
+            }
+        };
+
+        assert_eq!(
+            status.tray_state, expected_tray,
+            "stream error {stream_error:?}"
+        );
+        assert_eq!(
+            status.runtime_warning.as_deref(),
+            Some(expected_warning),
+            "stream error {stream_error:?}"
+        );
+    }
 }
 
 #[test]
-fn runtime_warning_surfaces_input_stream_errors_before_dropped_frames() {
-    let mut backend = AppBackend::default();
-    backend
-        .start_capture_session_for_test(10)
-        .expect("start capture session");
-    let status = with_live_runtime_warning(
-        backend.app_status(),
-        42,
-        Some("default input stream disconnected".to_string()),
-    );
-
-    assert_eq!(status.tray_state, TrayState::Error);
-    assert_eq!(
-        status.runtime_warning.as_deref(),
-        Some("Live input stream error: default input stream disconnected")
-    );
-}
-
-#[test]
-fn backend_flushes_active_capture_when_recording_is_disabled() {
+fn backend_flushes_active_capture_and_resets_levels_when_recording_is_disabled() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut backend = AppBackend::default();
     backend.update_settings(wav_settings_patch(tmp.path()));
@@ -2414,11 +2283,15 @@ fn backend_flushes_active_capture_when_recording_is_disabled() {
         .start_capture_session_for_test(10)
         .expect("start capture session");
 
+    let mut live_status = None;
     for _ in 0..5 {
-        backend
-            .process_audio_samples_for_test(&[0.8; 1], 100)
-            .expect("speech");
+        live_status = Some(
+            backend
+                .process_audio_samples_for_test(&[0.8; 1], 100)
+                .expect("speech"),
+        );
     }
+    assert!(live_status.expect("live status").level.current_dbfs > -120.0);
 
     backend.update_settings(SettingsPatch {
         recording_enabled: Some(false),
@@ -2429,6 +2302,10 @@ fn backend_flushes_active_capture_when_recording_is_disabled() {
     assert_eq!(status.tray_state, TrayState::Idle);
     assert!(!status.live_input_active);
     assert_eq!(backend.queue_snapshot().pending_count, 1);
+    assert_eq!(status.level.current_dbfs, -120.0);
+    assert_eq!(status.level.peak_dbfs, -120.0);
+    assert_eq!(status.level.noise_floor_dbfs, -120.0);
+    assert_eq!(status.level.suggested_threshold_dbfs, -90.0);
 }
 
 #[test]
@@ -2497,37 +2374,6 @@ fn backend_restarting_capture_session_flushes_active_chunk() {
     let status = backend.app_status();
     assert!(status.live_input_active);
     assert_eq!(status.active_microphone, "USB Mic");
-}
-
-#[test]
-fn backend_processes_next_transcription_job_and_writes_sidecar() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230912.wav");
-    let model_directory = tmp.path().join("models");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    write_ready_local_model(&model_directory, "whisper-medium");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some(model_directory.to_string_lossy().to_string()),
-        selected_model: Some("whisper-medium".to_string()),
-        ..SettingsPatch::default()
-    });
-    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
-
-    let snapshot = backend
-        .process_next_transcription_with(StaticTranscriber::default())
-        .expect("process transcription");
-
-    assert_eq!(snapshot.pending_count, 0);
-    assert_eq!(
-        snapshot.jobs[0].status,
-        wakenote::queue::QueueJobStatus::Completed
-    );
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
-        "queued transcript\n"
-    );
 }
 
 #[test]
@@ -2943,86 +2789,92 @@ fn backend_auto_transcription_loop_respects_disabled_transcription_toggle() {
 }
 
 #[test]
-fn backend_default_transcription_worker_waits_when_model_is_missing() {
+fn backend_transcription_waits_without_failing_when_job_model_is_unavailable() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("231013.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
-        ..SettingsPatch::default()
-    });
-    backend.enqueue_audio_file(&audio_path, Some("whisper-medium".to_string()));
+    let local_models = tmp.path().join("models").to_string_lossy().to_string();
+    for (audio_name, model_directory, model_id) in [
+        ("231013.wav", local_models.as_str(), "whisper-medium"),
+        (
+            "231014.wav",
+            "~/Library/Application Support/WakeNote/models",
+            "missing-model-for-tilde-expansion",
+        ),
+    ] {
+        let audio_path = tmp.path().join("20260506").join(audio_name);
+        std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+        std::fs::write(&audio_path, b"wav bytes").expect("audio");
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            model_directory: Some(model_directory.to_string()),
+            ..SettingsPatch::default()
+        });
+        backend.enqueue_audio_file(&audio_path, Some(model_id.to_string()));
 
-    let snapshot = backend
-        .process_next_transcription()
-        .expect("process transcription");
+        let snapshot = backend
+            .process_next_transcription()
+            .expect("process transcription");
 
-    assert_eq!(snapshot.pending_count, 1);
-    assert_eq!(snapshot.failed_count, 0);
-    assert_eq!(
-        snapshot.jobs[0].status,
-        wakenote::queue::QueueJobStatus::Pending
-    );
-    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
-    assert!(audio_path.exists());
-    assert!(!audio_path.with_extension("error.txt").exists());
+        assert_eq!(snapshot.pending_count, 1, "{model_id}");
+        assert_eq!(snapshot.failed_count, 0, "{model_id}");
+        assert_eq!(
+            snapshot.jobs[0].status,
+            wakenote::queue::QueueJobStatus::Pending,
+            "{model_id}"
+        );
+        assert_eq!(
+            backend.app_status().tray_state,
+            TrayState::Idle,
+            "{model_id}"
+        );
+        assert!(audio_path.exists(), "{model_id}");
+        assert!(
+            !audio_path.with_extension("error.txt").exists(),
+            "{model_id}"
+        );
+    }
 }
 
 #[test]
-fn backend_manual_transcription_waits_when_model_directory_has_no_usable_model() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("231014.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some("~/Library/Application Support/WakeNote/models".to_string()),
-        ..SettingsPatch::default()
-    });
-    backend.enqueue_audio_file(
-        &audio_path,
-        Some("missing-model-for-tilde-expansion".to_string()),
-    );
+fn backend_cancels_active_model_download_from_either_entry_point() {
+    for entry_point in ["cancel_model_download", "cancel_current_operation"] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let model_directory = tmp.path().join("models");
+        let store = ModelStore::new(&model_directory);
+        store
+            .record_download_progress("whisper-medium", 512, Some(1024))
+            .expect("record download progress");
+        let mut backend = AppBackend::default();
+        backend.update_settings(SettingsPatch {
+            model_directory: Some(model_directory.to_string_lossy().to_string()),
+            ..SettingsPatch::default()
+        });
 
-    let snapshot = backend
-        .process_next_transcription()
-        .expect("process transcription");
+        match entry_point {
+            "cancel_model_download" => {
+                backend
+                    .cancel_model_download("whisper-medium")
+                    .expect("cancel model download");
+            }
+            "cancel_current_operation" => {
+                backend
+                    .cancel_current_operation()
+                    .expect("cancel current operation");
+            }
+            other => unreachable!("unknown entry point {other}"),
+        }
 
-    assert_eq!(snapshot.pending_count, 1);
-    assert_eq!(snapshot.failed_count, 0);
-    assert_eq!(
-        snapshot.jobs[0].status,
-        wakenote::queue::QueueJobStatus::Pending
-    );
-    assert!(!audio_path.with_extension("error.txt").exists());
-}
-
-#[test]
-fn backend_cancel_model_download_marks_model_as_recoverable_error() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let model_directory = tmp.path().join("models");
-    let store = ModelStore::new(&model_directory);
-    store
-        .record_download_progress("whisper-medium", 512, Some(1024))
-        .expect("record download progress");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some(model_directory.to_string_lossy().to_string()),
-        ..SettingsPatch::default()
-    });
-
-    let models = backend
-        .cancel_model_download("whisper-medium")
-        .expect("cancel model download");
-
-    let model = models
-        .iter()
-        .find(|model| model.id == "whisper-medium")
-        .expect("whisper medium");
-    assert_eq!(model.status, ModelStatus::Error);
-    assert_eq!(model.download_error.as_deref(), Some("cancelled by user"));
+        let model = backend
+            .model_registry()
+            .into_iter()
+            .find(|model| model.id == "whisper-medium")
+            .expect("whisper medium");
+        assert_eq!(model.status, ModelStatus::Error, "{entry_point}");
+        assert_eq!(
+            model.download_error.as_deref(),
+            Some("cancelled by user"),
+            "{entry_point}"
+        );
+    }
 }
 
 #[test]
@@ -3505,33 +3357,6 @@ fn backend_auto_transcription_waits_for_pending_job_model_readiness() {
 }
 
 #[test]
-fn backend_cancel_current_operation_cancels_active_model_download() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let model_directory = tmp.path().join("models");
-    let store = ModelStore::new(&model_directory);
-    store
-        .record_download_progress("whisper-medium", 512, Some(1024))
-        .expect("record download progress");
-    let mut backend = AppBackend::default();
-    backend.update_settings(SettingsPatch {
-        model_directory: Some(model_directory.to_string_lossy().to_string()),
-        ..SettingsPatch::default()
-    });
-
-    backend
-        .cancel_current_operation()
-        .expect("cancel current operation");
-
-    let model = backend
-        .model_registry()
-        .into_iter()
-        .find(|model| model.id == "whisper-medium")
-        .expect("whisper medium");
-    assert_eq!(model.status, ModelStatus::Error);
-    assert_eq!(model.download_error.as_deref(), Some("cancelled by user"));
-}
-
-#[test]
 fn tray_presentation_uses_voice_capture_colors_for_active_states() {
     assert_eq!(
         tray_presentation_for_state(TrayState::Idle).rgba,
@@ -3689,25 +3514,6 @@ fn tray_state_prioritizes_errors_then_transcribing_then_active_recording() {
         TrayState::Error,
         "fatal runtime errors should outrank transcribing and recording"
     );
-}
-
-#[test]
-fn system_capture_session_without_audio_does_not_report_recording_tray_state() {
-    let mut backend = AppBackend::default();
-    let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
-
-    let status = backend
-        .start_system_capture_session(
-            16_000,
-            base_time,
-            "Google Chrome".into(),
-            "youtube".into(),
-            "youtube".into(),
-        )
-        .expect("start system capture session");
-
-    assert_eq!(status.tray_state, TrayState::Idle);
-    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
 }
 
 #[test]
@@ -3903,12 +3709,12 @@ fn main_window_close_hides_settings_to_support_tray_only_mode() {
 }
 
 #[test]
-fn system_capture_session_lifecycle_reports_active_state() {
+fn system_capture_session_lifecycle_reports_active_and_tray_state() {
     let mut backend = AppBackend::default();
     assert!(!backend.is_system_capturing());
 
     let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
-    backend
+    let status = backend
         .start_system_capture_session(
             16_000,
             base_time,
@@ -3918,6 +3724,9 @@ fn system_capture_session_lifecycle_reports_active_state() {
         )
         .expect("start system capture session");
     assert!(backend.is_system_capturing());
+    // A session that has not received audio is not recording yet.
+    assert_eq!(status.tray_state, TrayState::Idle);
+    assert_eq!(backend.app_status().tray_state, TrayState::Idle);
 
     backend
         .stop_system_capture_session()
@@ -4570,86 +4379,62 @@ fn same_device_separated_audio_matches_primary_only_transcription_input() {
     );
 }
 
-fn assert_duplicate_mix_keeps_primary_level(samples: &[i16]) {
+fn assert_duplicate_mix_keeps_primary_level(label: &str, samples: &[i16]) {
     let peak = speech_peak(samples);
     assert!(
         peak > 8_000 && peak < 20_000,
-        "duplicate mix cancelled or summed the primary signal (peak {peak})"
+        "{label} duplicate mix cancelled or summed the primary signal (peak {peak})"
     );
 }
 
 #[test]
-fn same_device_merge_audio_keeps_one_primary_quality_signal() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut backend = AppBackend::default();
-    backend.update_settings(parity_settings_patch(
-        tmp.path(),
-        same_studio_microphones(),
-        true,
-        false,
-    ));
-    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
-    for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
-        backend
-            .start_capture_session_for_slot(slot, 10, base_time, "input-studio", "Studio", false)
-            .expect("start merge slot");
+fn same_device_merge_and_priority_audio_keep_one_primary_quality_signal() {
+    for (merge, priority, label) in [(true, false, "mic-merged"), (false, true, "mic-priority")] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut backend = AppBackend::default();
+        backend.update_settings(parity_settings_patch(
+            tmp.path(),
+            same_studio_microphones(),
+            merge,
+            priority,
+        ));
+        let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
+        for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
+            backend
+                .start_capture_session_for_slot(
+                    slot,
+                    10,
+                    base_time,
+                    "input-studio",
+                    "Studio",
+                    false,
+                )
+                .expect(label);
+        }
+        feed_constant_frames(
+            &mut backend,
+            &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+            0.4,
+            8,
+            8,
+        );
+        let snapshot = backend.queue_snapshot();
+        assert_eq!(snapshot.jobs.len(), 1, "{label}");
+        assert!(
+            snapshot.jobs[0]
+                .audio_path
+                .to_string_lossy()
+                .contains(label),
+            "{label}"
+        );
+        let samples = wav_pcm16_samples(&snapshot.jobs[0].audio_path);
+        assert_duplicate_mix_keeps_primary_level(label, &samples);
+        let summed = (0.8 * i16::MAX as f32) as i16;
+        assert!(
+            samples.iter().all(|sample| sample.abs() < summed - 1_000),
+            "{label} summed both copies of the same microphone"
+        );
     }
-    feed_constant_frames(
-        &mut backend,
-        &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
-        0.4,
-        8,
-        8,
-    );
-    let snapshot = backend.queue_snapshot();
-    assert_eq!(snapshot.jobs.len(), 1);
-    assert!(
-        snapshot.jobs[0]
-            .audio_path
-            .to_string_lossy()
-            .contains("mic-merged")
-    );
-    assert_duplicate_mix_keeps_primary_level(&wav_pcm16_samples(&snapshot.jobs[0].audio_path));
-}
-
-#[test]
-fn same_device_priority_audio_keeps_one_clean_signal() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut backend = AppBackend::default();
-    backend.update_settings(parity_settings_patch(
-        tmp.path(),
-        same_studio_microphones(),
-        false,
-        true,
-    ));
-    let base_time = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
-    for slot in [MicrophoneSlot::Primary, MicrophoneSlot::Secondary] {
-        backend
-            .start_capture_session_for_slot(slot, 10, base_time, "input-studio", "Studio", false)
-            .expect("start priority slot");
-    }
-    feed_constant_frames(
-        &mut backend,
-        &[MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
-        0.4,
-        8,
-        8,
-    );
-    let snapshot = backend.queue_snapshot();
-    assert_eq!(snapshot.jobs.len(), 1);
-    assert!(
-        snapshot.jobs[0]
-            .audio_path
-            .to_string_lossy()
-            .contains("mic-priority")
-    );
-    let samples = wav_pcm16_samples(&snapshot.jobs[0].audio_path);
-    assert_duplicate_mix_keeps_primary_level(&samples);
-    let summed = (0.8 * i16::MAX as f32) as i16;
-    assert!(
-        samples.iter().all(|sample| sample.abs() < summed - 1_000),
-        "priority summed both copies of the same microphone"
-    );
 }
 
 fn write_microphone_chunk(save_root: &std::path::Path, stem: &str) -> PathBuf {
