@@ -268,7 +268,10 @@ pub(crate) fn caption_line_capacity_for_width(
     style: &FloatingOverlayCaptionStyle,
     max_width: f64,
 ) -> f64 {
-    let font_size = (style.font_size_px as f64).clamp(10.0, 48.0);
+    let font_size = (style.font_size_px as f64).clamp(
+        crate::settings::FLOATING_OVERLAY_FONT_SIZE_MIN_PX as f64,
+        crate::settings::FLOATING_OVERLAY_FONT_SIZE_MAX_PX as f64,
+    );
     let content_width =
         max_width - style.padding_horizontal_px as f64 * 2.0 - style.border_width_px as f64 * 2.0;
 

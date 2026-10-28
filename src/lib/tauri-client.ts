@@ -177,7 +177,7 @@ function normalizeSubtitlePatch(
 
   if (typeof safePatch.floating_overlay_font_size_px === "number") {
     safePatch.floating_overlay_font_size_px = Math.max(
-      10,
+      8,
       Math.min(48, Math.round(safePatch.floating_overlay_font_size_px)),
     );
   }

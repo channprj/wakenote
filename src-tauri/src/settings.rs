@@ -40,7 +40,7 @@ pub enum SubtitleSourceMode {
     Both,
 }
 
-pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 10;
+pub const FLOATING_OVERLAY_FONT_SIZE_MIN_PX: u32 = 8;
 pub const FLOATING_OVERLAY_FONT_SIZE_MAX_PX: u32 = 48;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MIN: u8 = 0;
 pub const FLOATING_OVERLAY_BACKGROUND_OPACITY_MAX: u8 = 100;
@@ -2781,7 +2781,7 @@ mod tests {
             ..Default::default()
         });
 
-        assert_eq!(settings.floating_overlay_font_size_px, 10);
+        assert_eq!(settings.floating_overlay_font_size_px, 8);
         assert_eq!(settings.floating_overlay_text_color, "#f8fafc");
         assert_eq!(settings.floating_overlay_background_color, "#000000");
         assert_eq!(settings.floating_overlay_background_opacity, 100);
@@ -2806,6 +2806,31 @@ mod tests {
         assert_eq!(settings.subtitle_animation, SubtitleAnimation::Instant);
         assert_eq!(settings.dictation_bubble_background_color, "#000000");
         assert_eq!(settings.dictation_bubble_background_opacity, 0);
+    }
+
+    #[test]
+    fn subtitle_font_size_floor_is_eight_pixels() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            floating_overlay_font_size_px: Some(8),
+            ..Default::default()
+        });
+        assert_eq!(settings.floating_overlay_font_size_px, 8);
+
+        settings.apply_patch(SettingsPatch {
+            floating_overlay_font_size_px: Some(4),
+            ..Default::default()
+        });
+        assert_eq!(settings.floating_overlay_font_size_px, 8);
+
+        settings.apply_patch(SettingsPatch {
+            floating_overlay_font_size_px: Some(64),
+            ..Default::default()
+        });
+        assert_eq!(
+            settings.floating_overlay_font_size_px,
+            FLOATING_OVERLAY_FONT_SIZE_MAX_PX
+        );
     }
 
     #[test]

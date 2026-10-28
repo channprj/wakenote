@@ -345,7 +345,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Dictation language | `auto` | same language set as archival transcription |
 | Subtitle | `off` | `on` / `off` |
 | Subtitle position | top center | off; top/bottom × left/center/right |
-| Subtitle font size | `24 px` | `10 … 48 px` |
+| Subtitle font size | `24 px` | `8 … 48 px` |
 | Subtitle background | black at `82%` | black/white, `0 … 100%` |
 | Subtitle horizontal padding | `18 px` | `0 … 64 px` |
 | Subtitle vertical padding | `14 px` | `0 … 64 px` |

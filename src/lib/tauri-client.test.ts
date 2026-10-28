@@ -183,6 +183,17 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ save_root: "/tmp/confirmed-wakenote" });
   });
 
+  it("keeps an 8px subtitle font and clamps anything outside 8 to 48", async () => {
+    const kept = await saveSettingsPatch({ floating_overlay_font_size_px: 8 });
+    expect(kept.settings.floating_overlay_font_size_px).toBe(8);
+
+    const lowered = await saveSettingsPatch({ floating_overlay_font_size_px: 4 });
+    expect(lowered.settings.floating_overlay_font_size_px).toBe(8);
+
+    const raised = await saveSettingsPatch({ floating_overlay_font_size_px: 64 });
+    expect(raised.settings.floating_overlay_font_size_px).toBe(48);
+  });
+
   it("clamps subtitle maximum width without synthesizing a minimum width", async () => {
     await saveSettingsPatch({
       subtitle_max_width_px: 720,

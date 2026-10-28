@@ -103,7 +103,7 @@ export function SubtitlesSettings({
           label="Subtitle font size"
           description="A short example appears on screen when you finish adjusting the size."
           value={settings.floating_overlay_font_size_px}
-          min={10}
+          min={8}
           max={48}
           suffix=" px"
           onValueChange={(floating_overlay_font_size_px) =>

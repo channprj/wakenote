@@ -458,7 +458,7 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("preview_subtitle", {
       patch: {
         ...patch,
-        floating_overlay_font_size_px: 10,
+        floating_overlay_font_size_px: 8,
         subtitle_padding_horizontal_px: 64,
         subtitle_border_width_px: 8,
         subtitle_border_color: "#12abef",

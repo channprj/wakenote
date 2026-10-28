@@ -139,7 +139,7 @@ function rgbaColor(hex: string, opacity: number): string {
 }
 
 function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
-  const fontSize = Math.max(10, Math.min(48, Math.round(style.font_size_px)));
+  const fontSize = Math.max(8, Math.min(48, Math.round(style.font_size_px)));
   const opacity =
     Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
   const maxWidth = Math.max(

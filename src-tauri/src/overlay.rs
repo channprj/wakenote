@@ -586,7 +586,10 @@ pub(crate) fn caption_overlay_size_for_monitor(
     let available_caption_height =
         (available_window_height - OVERLAY_CAPTION_VERTICAL_WINDOW_INSET_LOGICAL).max(1.0);
 
-    let font_size = (style.font_size_px as f64).clamp(10.0, 48.0);
+    let font_size = (style.font_size_px as f64).clamp(
+        crate::settings::FLOATING_OVERLAY_FONT_SIZE_MIN_PX as f64,
+        crate::settings::FLOATING_OVERLAY_FONT_SIZE_MAX_PX as f64,
+    );
     let padding_horizontal = style.padding_horizontal_px as f64;
     let padding_vertical = style.padding_vertical_px as f64;
     let border = style.border_width_px as f64;
@@ -974,7 +977,10 @@ mod tests {
             let mut style = caption_style();
             style.font_size_px = font_size_px;
             let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &style);
-            let clamped_font_size = (font_size_px as f64).clamp(10.0, 48.0);
+            let clamped_font_size = (font_size_px as f64).clamp(
+                crate::settings::FLOATING_OVERLAY_FONT_SIZE_MIN_PX as f64,
+                crate::settings::FLOATING_OVERLAY_FONT_SIZE_MAX_PX as f64,
+            );
             // Four Korean glyphs occupy one em each and the inter-word space
             // uses the layout metric of 0.58em.
             let expected_content_width = 4.58 * clamped_font_size;

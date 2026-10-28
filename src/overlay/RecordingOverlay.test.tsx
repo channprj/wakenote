@@ -174,7 +174,7 @@ describe("caption overlay content", () => {
     expect(markup).toContain('data-animation="dissolve"');
   });
 
-  it("allows 10px subtitles and marks animated exit state", () => {
+  it("allows 8px subtitles and marks animated exit state", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
         caption={caption({
@@ -184,7 +184,7 @@ describe("caption overlay content", () => {
           visible: true,
           style: {
             ...emptyCaptionSnapshot().style,
-            font_size_px: 4,
+            font_size_px: 8,
             animation: "fade",
           },
         })}
@@ -195,7 +195,20 @@ describe("caption overlay content", () => {
       />,
     );
 
-    expect(markup).toContain("--overlay-caption-font-size:10px");
+    expect(markup).toContain("--overlay-caption-font-size:8px");
+    const clamped = render(
+      caption({
+        chunk_id: 1,
+        phase: "final",
+        text: "더 작은 자막",
+        visible: true,
+        style: {
+          ...emptyCaptionSnapshot().style,
+          font_size_px: 4,
+        },
+      } as Partial<OverlayCaptionSnapshot>),
+    );
+    expect(clamped).toContain("--overlay-caption-font-size:8px");
     expect(markup).toContain('data-animation="fade"');
     expect(markup).toContain('data-visibility="exiting"');
   });
