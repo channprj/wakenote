@@ -1017,6 +1017,40 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it("offers final-only typing with auto-type on and then sets the auto-type model aside", async () => {
+    const snapshot = mockSnapshot();
+    const actions = makeActions();
+    const page = () => (
+      <SettingsPage
+        section="advanced"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />
+    );
+    const view = render(page());
+    const finalOnly = () =>
+      screen.getByRole("switch", { name: "Type final transcripts only" });
+    const model = () =>
+      screen.getByRole("combobox", { name: "Auto-type model" });
+    expect(finalOnly().hasAttribute("disabled")).toBe(true);
+    expect(model().hasAttribute("disabled")).toBe(false);
+
+    snapshot.settings.auto_transcript_input_enabled = true;
+    view.rerender(page());
+    await userEvent.click(finalOnly());
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      auto_transcript_input_final_only: true,
+    });
+
+    snapshot.settings.auto_transcript_input_final_only = true;
+    view.rerender(page());
+    expect(model().hasAttribute("disabled")).toBe(true);
+    expect(model().getAttribute("title")).toBe(
+      "Final-only typing uses the transcription model, so this model is not used.",
+    );
+  });
+
   it("saves an independent realtime auto-type model", async () => {
     const snapshot = mockSnapshot();
     const model = snapshot.models.find(

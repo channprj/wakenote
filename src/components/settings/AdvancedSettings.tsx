@@ -52,7 +52,7 @@ export function AdvancedSettings({
       />
       <SettingsCard
         title="Text output"
-        description="Type stable speech into the active application while you speak."
+        description="Type transcribed speech into the active application."
       >
         <SettingSwitch
           label="Auto-type transcripts into cursor"
@@ -62,10 +62,30 @@ export function AdvancedSettings({
             onPatch({ auto_transcript_input_enabled })
           }
         />
+        <SettingSwitch
+          label="Type final transcripts only"
+          description="Types each phrase once Capture shows it as final, with Capture's usual chunk length and transcription model. Partial text is not typed."
+          checked={settings.auto_transcript_input_final_only}
+          disabled={!settings.auto_transcript_input_enabled}
+          title={
+            settings.auto_transcript_input_enabled
+              ? undefined
+              : "Enable auto-type before choosing final-only typing."
+          }
+          onCheckedChange={(auto_transcript_input_final_only) =>
+            onPatch({ auto_transcript_input_final_only })
+          }
+        />
         <SettingSelect
           label="Auto-type model"
           description="Choose an installed Whisper model or a configured cloud realtime model. Smaller local models usually respond faster. Final corrections stay in Activity; WakeNote never erases text you have edited."
           value={settings.auto_transcript_input_model || "__default__"}
+          disabled={settings.auto_transcript_input_final_only}
+          title={
+            settings.auto_transcript_input_final_only
+              ? "Final-only typing uses the transcription model, so this model is not used."
+              : undefined
+          }
           options={modelOptions}
           onValueChange={(model) =>
             onPatch({
