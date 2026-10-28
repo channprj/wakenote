@@ -375,7 +375,7 @@ export function DictationSettings({
     <SettingsGrid maxColumns={2}>
       <SettingsCard
         title="Dictation hotkeys"
-        description="Dictate into any app with hold or toggle recording. Press Escape to cancel."
+        description="Dictate into any app with hold or toggle recording. To cancel, press Escape in WakeNote or choose Cancel Current Operation from the menu bar."
       >
         <SettingSwitch
           label="Enable shortcut dictation"
