@@ -159,7 +159,7 @@ describe("caption overlay content", () => {
     );
 
     expect(markup).toContain("--overlay-caption-font-size:32px");
-    expect(markup).toContain("--overlay-caption-text-color:#f8fafc");
+    expect(markup).toContain("--overlay-caption-text-color:#000000");
     expect(markup).toContain("--overlay-caption-background-rgb:255 255 255");
     expect(markup).toContain("--overlay-caption-background-alpha:0.68");
     expect(markup).toContain("--overlay-caption-padding-horizontal:22px");
@@ -192,6 +192,23 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-outline-width:3px");
     expect(markup).toContain("--overlay-caption-text-color:#ffffff");
     expect(markup).not.toContain("background-color:");
+
+    const mismatchedFill = render(
+      caption({
+        chunk_id: 3,
+        phase: "final",
+        text: "색이 어긋난 자막",
+        visible: true,
+        style: {
+          ...emptyCaptionSnapshot().style,
+          background_color: "#000000",
+          text_color: "#f8fafc",
+        },
+      }),
+    );
+    expect(mismatchedFill).toContain("--overlay-caption-text-color:#ffffff");
+    expect(mismatchedFill).toContain("--overlay-caption-outline:rgba(0, 0, 0, 0.82)");
+    expect(mismatchedFill).not.toContain("background-color:");
     expect(markup.match(/overlay-caption__text/g)).toHaveLength(1);
     expect(markup).toContain("짧은 줄\n훨씬 더 긴 자막 줄입니다");
 
