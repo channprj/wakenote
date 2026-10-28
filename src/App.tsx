@@ -477,8 +477,9 @@ export default function App() {
     };
   }, []);
 
-  // Polls every 100 ms and on backend events. Loads never overlap; requests
-  // made during a load fold into one follow-up load.
+  // Polls every 100 ms and on backend events. Loads never overlap: while the
+  // backend is blocked or slow, polls fold into one follow-up load instead of
+  // queueing behind it.
   async function refreshQuietly() {
     quietRefresh.current ??= coalescedRunner(loadSnapshotQuietly);
     await quietRefresh.current();
