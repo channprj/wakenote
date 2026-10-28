@@ -335,7 +335,7 @@ Settings patches are clamped or normalized by the Rust backend.
 | Start live input on launch | `on` | `on` / `off` |
 | Input monitoring | `off` | `on` / `off`; Primary only |
 | Shortcut dictation | `off` | `on` / `off` |
-| Hold-to-dictate hotkey | `Option+Space` | supported key, key chord, or physical modifier combination |
+| Hold-to-dictate hotkey | `Control+Shift` | supported key, key chord, or physical modifier combination |
 | Toggle dictation hotkey | not set | optional separate hotkey; press to start, press again to finish |
 | Dictation language | `auto` | same language set as archival transcription |
 | Subtitle | `off` | `on` / `off` |
@@ -449,11 +449,11 @@ Selected Transcript rows can be moved to Trash together. WakeNote stages every e
 
 Enable **Settings › Dictation › Shortcut dictation**, choose a compatible model and language, then keep the cursor in the destination application:
 
-1. Use **Hold-to-dictate hotkey** (default **Option+Space**) to record while holding the keys; release to stop and transcribe.
+1. Use **Hold-to-dictate hotkey** (default **Control+Shift**) to record while holding the keys; release to stop and transcribe.
 2. Alternatively, set **Toggle dictation hotkey**. Press it once to start recording, release the keys while speaking, then press it again to stop and transcribe.
 3. WakeNote saves the dictation and types non-empty final text at the focused cursor.
 
-Click either hotkey field and press the desired keys. Release modifier-only combinations to save them. The two hotkeys and the enabled Enhanced Prompt shortcut must not overlap. **Clear** removes the optional toggle hotkey; existing hold hotkeys are preserved when updating WakeNote.
+Click either hotkey field and press the desired keys. Release modifier-only combinations to save them. The two hotkeys and the enabled Enhanced Prompt shortcut must not overlap. **Clear** removes the optional toggle hotkey; existing hold hotkeys are preserved when updating WakeNote, so a hotkey saved before the default changed to Control+Shift keeps working. A modifier-only hotkey such as Control+Shift starts recording as soon as those keys are held, including when they begin another shortcut such as Control+Shift+T; choose a key chord instead if that gets in the way.
 
 Dictation uses the Primary and optional Secondary microphones selected in Audio and automatically selects the cleanest signal. Its stream is independent from voice-activated archival capture. VOR keeps recording during Dictation, but overlapping VOR chunks stay audio-only and skip transcription to avoid saving the same speech twice. Each Dictation attempt is stored with a `dictation` source label. Very quiet or empty output is not typed, and recording stops automatically after ten minutes. To cancel, press **Escape** while the WakeNote window is focused, or choose **Cancel Current Operation** from the menu bar; Escape typed in another app goes to that app. Pressing a dictation hotkey during transcription also cancels processing. **Copy result to clipboard** keeps the inserted result by default; turn it off to restore the previous clipboard after insertion.
 
