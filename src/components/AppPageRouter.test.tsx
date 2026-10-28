@@ -20,14 +20,18 @@ const pages = Object.fromEntries(
 ) as Record<PrimaryRoute, ReactNode>;
 
 describe("AppPageRouter", () => {
-  it.each(routes)("renders only the %s workspace", (route) => {
-    const markup = renderToStaticMarkup(
-      <AppPageRouter route={route} pages={pages} />,
-    );
+  it("renders only the active workspace for every route", () => {
+    for (const route of routes) {
+      const markup = renderToStaticMarkup(
+        <AppPageRouter route={route} pages={pages} />,
+      );
 
-    expect(markup).toContain(`${route}-page`);
-    for (const otherRoute of routes.filter((candidate) => candidate !== route)) {
-      expect(markup).not.toContain(`${otherRoute}-page`);
+      expect(markup, route).toContain(`${route}-page`);
+      for (const otherRoute of routes.filter(
+        (candidate) => candidate !== route,
+      )) {
+        expect(markup, `${route} route`).not.toContain(`${otherRoute}-page`);
+      }
     }
   });
 });

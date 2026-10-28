@@ -44,12 +44,32 @@ function renderOptions(
 }
 
 describe("TranscriptionOptionsSettings", () => {
-  it("locks Streaming on for gpt-live", () => {
-    renderOptions("openai-gpt-live-transcribe");
-    const streaming = screen.getByRole("switch", { name: "Streaming" });
-    expect(streaming.getAttribute("aria-checked")).toBe("true");
-    expect((streaming as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/required by GPT Live Transcribe/i)).toBeTruthy();
+  it("locks Streaming according to model capability", () => {
+    const cases: Array<
+      [
+        string,
+        Partial<AppSettings["transcription_options"]>,
+        "true" | "false",
+        RegExp,
+      ]
+    > = [
+      ["openai-gpt-live-transcribe", {}, "true", /required by GPT Live Transcribe/i],
+      [
+        "openrouter-qwen3-asr-flash",
+        { streaming_enabled: true },
+        "false",
+        /does not support streaming/i,
+      ],
+    ];
+
+    for (const [model, options, checked, explanation] of cases) {
+      cleanup();
+      renderOptions(model, options);
+      const streaming = screen.getByRole("switch", { name: "Streaming" });
+      expect(streaming.getAttribute("aria-checked"), model).toBe(checked);
+      expect((streaming as HTMLButtonElement).disabled, model).toBe(true);
+      expect(screen.getByText(explanation), model).toBeTruthy();
+    }
   });
 
   it("allows optional Streaming for gpt-transcribe and emits a nested patch", async () => {
@@ -65,14 +85,6 @@ describe("TranscriptionOptionsSettings", () => {
         cost_limit_fallback_model_id: null,
       },
     });
-  });
-
-  it("disables unsupported Streaming for OpenRouter", () => {
-    renderOptions("openrouter-qwen3-asr-flash", { streaming_enabled: true });
-    const streaming = screen.getByRole("switch", { name: "Streaming" });
-    expect(streaming.getAttribute("aria-checked")).toBe("false");
-    expect((streaming as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/does not support streaming/i)).toBeTruthy();
   });
 
   it("shows only ready on-device fallback choices", () => {

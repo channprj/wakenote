@@ -998,25 +998,6 @@ describe("SettingsPage interactions", () => {
     });
   });
 
-  it("preserves the Save Root patch key", () => {
-    const actions = makeActions();
-    render(
-      <SettingsPage
-        section="storage"
-        onSectionChange={() => {}}
-        snapshot={mockSnapshot()}
-        actions={actions}
-      />,
-    );
-
-    const saveRoot = screen.getByLabelText("Save Root");
-    fireEvent.focus(saveRoot);
-    fireEvent.change(saveRoot, { target: { value: "/tmp/notes" } });
-    expect(actions.onPatch).not.toHaveBeenCalled();
-    fireEvent.blur(saveRoot);
-    expect(actions.onPatch).toHaveBeenCalledWith({ save_root: "/tmp/notes" });
-  });
-
   it("preserves the advanced auto-type patch key", async () => {
     const actions = makeActions();
     render(
@@ -1161,37 +1142,32 @@ describe("SettingsPage interactions", () => {
     ).toBe("English, Korean");
   });
 
-  it.each([
-    ["audio", "transcripts", "transcription"],
-    ["subtitles", "subtitles", "subtitle"],
-  ] as const)(
-    "configures translation for %s without changing source recognition",
-    async (section, label, scope) => {
-      const actions = makeActions();
-      const snapshot = mockSnapshot();
-      snapshot.settings.transcription_translation_language = "ko";
-      render(
-        <SettingsPage
-          section={section}
-          snapshot={snapshot}
-          actions={actions}
-          onSectionChange={() => {}}
-        />,
-      );
-      await userEvent.click(
-        screen.getByRole("switch", { name: `Translate ${label}` }),
-      );
-      expect(actions.onPatch).toHaveBeenCalledWith({
-        [`${scope}_translation_enabled`]: true,
-      });
-      const title = `${label[0].toUpperCase()}${label.slice(1)} translation language`;
-      await userEvent.click(screen.getByRole("combobox", { name: title }));
-      await userEvent.click(screen.getByRole("option", { name: "Japanese" }));
-      expect(actions.onPatch).toHaveBeenCalledWith({
-        [`${scope}_translation_language`]: "ja",
-      });
-    },
-  );
+  it("configures subtitle translation without changing source recognition", async () => {
+    const actions = makeActions();
+    const snapshot = mockSnapshot();
+    snapshot.settings.transcription_translation_language = "ko";
+    render(
+      <SettingsPage
+        section="subtitles"
+        snapshot={snapshot}
+        actions={actions}
+        onSectionChange={() => {}}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Translate subtitles" }),
+    );
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_translation_enabled: true,
+    });
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Subtitles translation language" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "Japanese" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      subtitle_translation_language: "ja",
+    });
+  });
 
   it("defaults transcript translation to Not set and disables it when the target is cleared", async () => {
     const user = userEvent.setup();

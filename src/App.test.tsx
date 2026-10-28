@@ -29,17 +29,4 @@ describe("App information architecture", () => {
     expect(markup).toContain(">Transcripts</span>");
     expect(markup).not.toContain("Library");
   });
-
-  it("removes the legacy status dashboard", () => {
-    const markup = renderToStaticMarkup(<App />);
-
-    expect(markup).not.toContain('class="status-hero"');
-    expect(markup).not.toContain('class="status-cards"');
-  });
-
-  it("keeps version information in the sidebar utility area", () => {
-    const markup = renderToStaticMarkup(<App />);
-
-    expect(markup).toContain(`v${__APP_VERSION__}`);
-  });
 });

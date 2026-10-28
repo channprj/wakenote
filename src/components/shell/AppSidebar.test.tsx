@@ -24,20 +24,32 @@ describe("AppSidebar", () => {
     expect(markup).toContain(`v${__APP_VERSION__}`);
   });
 
-  it("shows queue attention only beside Activity", () => {
-    const markup = renderToStaticMarkup(
-      <AppSidebar
-        activeRoute="capture"
-        queueAttentionCount={3}
-        queueAttentionTone="danger"
-        onNavigate={() => {}}
-      />,
-    );
+  it("shows the queue attention badge beside Activity with its tone", () => {
+    const cases = [
+      ["danger", 3, 1],
+      ["warning", 1, 0],
+    ] as const;
 
-    expect(markup).toMatch(
-      /data-route="activity"[\s\S]*?data-tone="danger"[\s\S]*?>3<\/span>/,
-    );
-    expect(markup.match(/data-tone="danger"/g)).toHaveLength(1);
+    for (const [tone, count, dangerCount] of cases) {
+      const markup = renderToStaticMarkup(
+        <AppSidebar
+          activeRoute="capture"
+          queueAttentionCount={count}
+          queueAttentionTone={tone}
+          onNavigate={() => {}}
+        />,
+      );
+
+      expect(markup, tone).toMatch(
+        new RegExp(
+          `data-route="activity"[\\s\\S]*?data-tone="${tone}"[\\s\\S]*?>${count}<\\/span>`,
+        ),
+      );
+      expect(
+        (markup.match(/data-tone="danger"/g) ?? []).length,
+        tone,
+      ).toBe(dangerCount);
+    }
   });
 
   it("keeps every icon-rail destination named and caps large attention counts", () => {
@@ -63,21 +75,5 @@ describe("AppSidebar", () => {
     }
     expect(markup).toContain(">99+</span>");
     expect(markup).not.toContain(">120</span>");
-  });
-
-  it("shows recent quality attention as a warning badge", () => {
-    const markup = renderToStaticMarkup(
-      <AppSidebar
-        activeRoute="capture"
-        queueAttentionCount={1}
-        queueAttentionTone="warning"
-        onNavigate={() => {}}
-      />,
-    );
-
-    expect(markup).toMatch(
-      /data-route="activity"[\s\S]*?data-tone="warning"[\s\S]*?>1<\/span>/,
-    );
-    expect(markup).not.toContain('data-tone="danger"');
   });
 });

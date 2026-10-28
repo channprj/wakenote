@@ -447,20 +447,28 @@ describe("native permission guidance", () => {
 });
 
 describe("transcript event privacy", () => {
-  it.each(["live-transcript-partial", "live-transcript-final", "text-transform-error"])(
-    "does not write %s content to the console",
-    async (eventName) => {
-      const handlers = new Map<string, (event: { payload: unknown }) => void>();
-      mocks.listen.mockImplementation(async (name, handler) => {
-        handlers.set(name, handler);
-        return () => {};
+  it("does not write transcript event content to the console", async () => {
+    const eventNames = [
+      "live-transcript-partial",
+      "live-transcript-final",
+      "text-transform-error",
+    ];
+    const handlers = new Map<string, (event: { payload: unknown }) => void>();
+    mocks.listen.mockImplementation(async (name, handler) => {
+      handlers.set(name, handler);
+      return () => {};
+    });
+    mocks.loadSnapshot.mockResolvedValue(nativeSnapshot(true, null));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      render(<App />);
+      await waitFor(() => {
+        for (const eventName of eventNames) {
+          expect(handlers.has(eventName), eventName).toBe(true);
+        }
       });
-      mocks.loadSnapshot.mockResolvedValue(nativeSnapshot(true, null));
-      const log = vi.spyOn(console, "log").mockImplementation(() => {});
-      try {
-        render(<App />);
-        await waitFor(() => expect(handlers.has(eventName)).toBe(true));
-        const marker = "PRIVATE_TRANSCRIPT_SENTINEL";
+      const marker = "PRIVATE_TRANSCRIPT_SENTINEL";
+      for (const eventName of eventNames) {
         const payload = eventName === "text-transform-error" ? marker : {
           source_key: "microphone",
           source_label: "Microphone",
@@ -469,12 +477,12 @@ describe("transcript event privacy", () => {
           text: marker,
         };
         await act(async () => handlers.get(eventName)!({ payload }));
-        expect(JSON.stringify(log.mock.calls)).not.toContain(marker);
-      } finally {
-        log.mockRestore();
+        expect(JSON.stringify(log.mock.calls), eventName).not.toContain(marker);
       }
-    },
-  );
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("snapshot polling", () => {

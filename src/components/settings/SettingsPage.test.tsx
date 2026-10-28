@@ -182,22 +182,23 @@ describe("SettingsPage ownership", () => {
 });
 
 describe("SettingsPage balanced masonry", () => {
-  it.each([
-    ["general", "2"],
-    ["advanced", "2"],
-    ["storage", "3"],
-    ["integrations", "2"],
-    ["subtitles", "2"],
-    ["audio", "3"],
-    ["dictation", "2"],
-  ] as const)(
-    "caps the %s grid by its rendered card count",
-    (section, maxColumns) => {
-      expect(renderSection(section)).toContain(
+  it("caps each settings section grid by its rendered card count", () => {
+    const cases = [
+      ["general", "2"],
+      ["advanced", "2"],
+      ["storage", "3"],
+      ["integrations", "2"],
+      ["subtitles", "2"],
+      ["audio", "3"],
+      ["dictation", "2"],
+    ] as const;
+
+    for (const [section, maxColumns] of cases) {
+      expect(renderSection(section), section).toContain(
         `data-max-columns="${maxColumns}"`,
       );
-    },
-  );
+    }
+  });
 
   it("places Model files before a separate model-card grid", () => {
     const markup = renderSection("models");
@@ -209,25 +210,32 @@ describe("SettingsPage balanced masonry", () => {
     expect(models).toBeGreaterThan(files);
   });
 
-  it("caps a three-child Settings grid at two columns", () => {
-    const markup = renderToStaticMarkup(
-      <SettingsGrid maxColumns={2}>
-        <div>One</div>
-        <div>Two</div>
-        <div>Three</div>
-      </SettingsGrid>,
-    );
+  it("caps SettingsGrid columns by child count", () => {
+    const cases = [
+      {
+        label: "three children capped at two columns",
+        maxColumns: 2,
+        children: ["One", "Two", "Three"],
+        expected: "2",
+      },
+      {
+        label: "one-column fallback for a single child",
+        maxColumns: 3,
+        children: ["Only"],
+        expected: "1",
+      },
+    ] as const;
 
-    expect(markup).toContain('data-max-columns="2"');
-  });
+    for (const { label, maxColumns, children, expected } of cases) {
+      const markup = renderToStaticMarkup(
+        <SettingsGrid maxColumns={maxColumns}>
+          {children.map((child) => (
+            <div key={child}>{child}</div>
+          ))}
+        </SettingsGrid>,
+      );
 
-  it("keeps the one-column fallback for a single child", () => {
-    const markup = renderToStaticMarkup(
-      <SettingsGrid maxColumns={3}>
-        <div>Only</div>
-      </SettingsGrid>,
-    );
-
-    expect(markup).toContain('data-max-columns="1"');
+      expect(markup, label).toContain(`data-max-columns="${expected}"`);
+    }
   });
 });
