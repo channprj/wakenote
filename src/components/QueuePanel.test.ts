@@ -207,28 +207,7 @@ describe("Activity issue views", () => {
 });
 
 describe("Activity issue reprocessing", () => {
-  it.each([
-    ["failed", true],
-    ["cancelled", true],
-    ["skipped", true],
-    ["pending", false],
-    ["running", false],
-    ["completed", true],
-  ] satisfies Array<[QueueJobStatus, boolean]>)(
-    "allows %s jobs to be selected for reprocessing",
-    (status, expected) => {
-      expect(
-        isReprocessableJob({
-          id: 1,
-          audio_path: "/recording.wav",
-          model_id: "old",
-          status,
-        }),
-      ).toBe(expected);
-    },
-  );
-
-  it("allows both warning and clean completed jobs to be reprocessed", () => {
+  it("marks finished jobs reprocessable and keeps completed warnings in attention", () => {
     const completedWarning: QueueJob = {
       id: 1,
       audio_path: "/warning.wav",
@@ -246,9 +225,26 @@ describe("Activity issue reprocessing", () => {
       id: 2,
       issue: null,
     };
+    const statusJob = (status: QueueJobStatus): QueueJob => ({
+      id: 1,
+      audio_path: "/recording.wav",
+      model_id: "old",
+      status,
+    });
+    const cases: Array<[string, QueueJob, boolean]> = [
+      ["failed", statusJob("failed"), true],
+      ["cancelled", statusJob("cancelled"), true],
+      ["skipped", statusJob("skipped"), true],
+      ["pending", statusJob("pending"), false],
+      ["running", statusJob("running"), false],
+      ["completed", statusJob("completed"), true],
+      ["completed with warning", completedWarning, true],
+      ["completed with null issue", cleanCompleted, true],
+    ];
 
-    expect(isReprocessableJob(completedWarning)).toBe(true);
-    expect(isReprocessableJob(cleanCompleted)).toBe(true);
+    for (const [label, job, expected] of cases) {
+      expect(isReprocessableJob(job), label).toBe(expected);
+    }
     expect(filterActivityJobs([completedWarning], "attention")).toEqual([
       completedWarning,
     ]);
@@ -293,135 +289,161 @@ describe("Activity issue reprocessing", () => {
 });
 
 describe("queue row actions", () => {
-  it.each([
-    ["pending", false, true],
-    ["running", false, false],
-    ["completed", true, false],
-    ["failed", true, true],
-    ["cancelled", true, true],
-    ["skipped", true, false],
-  ] satisfies Array<[QueueJobStatus, boolean, boolean]>)(
-    "derives valid actions for %s jobs",
-    (status, canRetry, canSkip) => {
-      expect(queueJobActionState(status)).toEqual({ canRetry, canSkip });
-    },
-  );
+  it("derives row Retry/Skip availability and disabled reasons for every status", () => {
+    const cases: Array<{
+      status: QueueJobStatus;
+      canRetry: boolean;
+      canSkip: boolean;
+      retryReason: string | null;
+      skipReason: string | null;
+    }> = [
+      {
+        status: "pending",
+        canRetry: false,
+        canSkip: true,
+        retryReason: "Job has not run yet",
+        skipReason: null,
+      },
+      {
+        status: "running",
+        canRetry: false,
+        canSkip: false,
+        retryReason: "Job is still running",
+        skipReason: "Job is still running",
+      },
+      {
+        status: "completed",
+        canRetry: true,
+        canSkip: false,
+        retryReason: null,
+        skipReason: "Job already completed",
+      },
+      {
+        status: "failed",
+        canRetry: true,
+        canSkip: true,
+        retryReason: null,
+        skipReason: null,
+      },
+      {
+        status: "cancelled",
+        canRetry: true,
+        canSkip: true,
+        retryReason: null,
+        skipReason: null,
+      },
+      {
+        status: "skipped",
+        canRetry: true,
+        canSkip: false,
+        retryReason: null,
+        skipReason: "Job already skipped",
+      },
+    ];
+
+    for (const { status, canRetry, canSkip, retryReason, skipReason } of cases) {
+      expect(queueJobActionState(status), `${status} actions`).toEqual({
+        canRetry,
+        canSkip,
+      });
+      expect(queueJobRetryDisabledReason(status), `${status} retry`).toBe(
+        retryReason,
+      );
+      expect(queueJobSkipDisabledReason(status), `${status} skip`).toBe(
+        skipReason,
+      );
+    }
+  });
 });
 
 describe("queue toolbar actions", () => {
-  it("enables process next only when pending work can be transcribed", () => {
-    const queue = {
-      jobs: [],
-      pending_count: 1,
-      running_count: 0,
-      failed_count: 0,
-    };
+  it("derives toolbar Process next/Cancel current availability and reasons", () => {
+    const cases: Array<{
+      pending_count: number;
+      running_count: number;
+      canProcess: boolean;
+      canProcessNext: boolean;
+      canCancelCurrent: boolean;
+      processReason: string | null;
+      cancelReason: string | null;
+    }> = [
+      {
+        pending_count: 1,
+        running_count: 0,
+        canProcess: true,
+        canProcessNext: true,
+        canCancelCurrent: false,
+        processReason: null,
+        cancelReason: "No running job to cancel",
+      },
+      {
+        pending_count: 1,
+        running_count: 0,
+        canProcess: false,
+        canProcessNext: false,
+        canCancelCurrent: false,
+        processReason: "Transcription unavailable",
+        cancelReason: "No running job to cancel",
+      },
+      {
+        pending_count: 0,
+        running_count: 1,
+        canProcess: true,
+        canProcessNext: false,
+        canCancelCurrent: true,
+        processReason: "A job is already running",
+        cancelReason: null,
+      },
+      {
+        pending_count: 1,
+        running_count: 1,
+        canProcess: true,
+        canProcessNext: false,
+        canCancelCurrent: true,
+        processReason: "A job is already running",
+        cancelReason: null,
+      },
+      // An in-flight job takes precedence over any other disabled reason.
+      {
+        pending_count: 1,
+        running_count: 1,
+        canProcess: false,
+        canProcessNext: false,
+        canCancelCurrent: true,
+        processReason: "A job is already running",
+        cancelReason: null,
+      },
+      {
+        pending_count: 0,
+        running_count: 0,
+        canProcess: true,
+        canProcessNext: false,
+        canCancelCurrent: false,
+        processReason: "No pending jobs",
+        cancelReason: "No running job to cancel",
+      },
+    ];
 
-    expect(queueToolbarActionState(queue, true)).toEqual({
-      canProcessNext: true,
-      canCancelCurrent: false,
-    });
-    expect(queueToolbarActionState(queue, false)).toEqual({
-      canProcessNext: false,
-      canCancelCurrent: false,
-    });
+    for (const {
+      pending_count,
+      running_count,
+      canProcess,
+      canProcessNext,
+      canCancelCurrent,
+      processReason,
+      cancelReason,
+    } of cases) {
+      const label = `pending=${pending_count} running=${running_count} canProcess=${canProcess}`;
+      const queue = { jobs: [], pending_count, running_count, failed_count: 0 };
+
+      expect(queueToolbarActionState(queue, canProcess), label).toEqual({
+        canProcessNext,
+        canCancelCurrent,
+      });
+      expect(processNextDisabledReason(queue, canProcess), label).toBe(
+        processReason,
+      );
+      expect(cancelCurrentDisabledReason(queue), label).toBe(cancelReason);
+    }
   });
-
-  it("enables cancel current only while a queue job is running", () => {
-    const queue = {
-      jobs: [],
-      pending_count: 0,
-      running_count: 1,
-      failed_count: 0,
-    };
-
-    expect(queueToolbarActionState(queue, true)).toEqual({
-      canProcessNext: false,
-      canCancelCurrent: true,
-    });
-  });
-
-  it("disables process next while a queue job is already running", () => {
-    const queue = {
-      jobs: [],
-      pending_count: 1,
-      running_count: 1,
-      failed_count: 0,
-    };
-
-    expect(queueToolbarActionState(queue, true)).toEqual({
-      canProcessNext: false,
-      canCancelCurrent: true,
-    });
-  });
-});
-
-describe("process next disabled reason", () => {
-  it("returns null while process next is operable", () => {
-    expect(
-      processNextDisabledReason({ pending_count: 1, running_count: 0 }, true),
-    ).toBeNull();
-  });
-
-  it("flags an in-flight job ahead of any other disabled reason", () => {
-    expect(
-      processNextDisabledReason({ pending_count: 1, running_count: 1 }, false),
-    ).toBe("A job is already running");
-  });
-
-  it("falls back to an empty-queue message when nothing is pending", () => {
-    expect(
-      processNextDisabledReason({ pending_count: 0, running_count: 0 }, true),
-    ).toBe("No pending jobs");
-  });
-
-  it("blames the transcription pipeline when pending work cannot be processed", () => {
-    expect(
-      processNextDisabledReason({ pending_count: 1, running_count: 0 }, false),
-    ).toBe("Transcription unavailable");
-  });
-});
-
-describe("cancel current disabled reason", () => {
-  it("returns null while a job is running", () => {
-    expect(cancelCurrentDisabledReason({ running_count: 1 })).toBeNull();
-  });
-
-  it("returns an empty-runner message when nothing is in flight", () => {
-    expect(cancelCurrentDisabledReason({ running_count: 0 })).toBe(
-      "No running job to cancel",
-    );
-  });
-});
-
-describe("queue job retry disabled reason", () => {
-  it.each([
-    ["failed", null],
-    ["cancelled", null],
-    ["pending", "Job has not run yet"],
-    ["running", "Job is still running"],
-    ["completed", null],
-    ["skipped", null],
-  ] satisfies Array<[QueueJobStatus, string | null]>)(
-    "describes retry availability for %s jobs",
-    (status, reason) => {
-      expect(queueJobRetryDisabledReason(status)).toBe(reason);
-    },
-  );
-});
-
-describe("queue job skip disabled reason", () => {
-  it.each([
-    ["pending", null],
-    ["failed", null],
-    ["cancelled", null],
-    ["running", "Job is still running"],
-    ["completed", "Job already completed"],
-    ["skipped", "Job already skipped"],
-  ] satisfies Array<[QueueJobStatus, string | null]>)(
-    "describes skip availability for %s jobs",
-    (status, reason) => {
-      expect(queueJobSkipDisabledReason(status)).toBe(reason);
-    },
-  );
 });

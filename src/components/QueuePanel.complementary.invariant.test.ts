@@ -26,23 +26,19 @@ const QUEUE_JOB_STATUSES = [
 ] as const satisfies readonly QueueJobStatus[];
 
 describe("queueJobActionState ↔ per-row disabled-reason invariants", () => {
-  it.each(QUEUE_JOB_STATUSES)(
-    "canRetry agrees with queueJobRetryDisabledReason for %s",
-    (status) => {
-      const { canRetry } = queueJobActionState(status);
-      const reason = queueJobRetryDisabledReason(status);
-      expect(canRetry).toBe(reason === null);
-    },
-  );
-
-  it.each(QUEUE_JOB_STATUSES)(
-    "canSkip agrees with queueJobSkipDisabledReason for %s",
-    (status) => {
-      const { canSkip } = queueJobActionState(status);
-      const reason = queueJobSkipDisabledReason(status);
-      expect(canSkip).toBe(reason === null);
-    },
-  );
+  it("keeps every row action flag in agreement with its disabled reason", () => {
+    for (const status of QUEUE_JOB_STATUSES) {
+      const { canRetry, canSkip } = queueJobActionState(status);
+      expect(
+        canRetry,
+        `canRetry vs queueJobRetryDisabledReason for ${status}`,
+      ).toBe(queueJobRetryDisabledReason(status) === null);
+      expect(
+        canSkip,
+        `canSkip vs queueJobSkipDisabledReason for ${status}`,
+      ).toBe(queueJobSkipDisabledReason(status) === null);
+    }
+  });
 });
 
 const TOOLBAR_CASES: Array<[number, number, boolean]> = [];
@@ -55,23 +51,22 @@ for (const pending_count of [0, 1, 3]) {
 }
 
 describe("queueToolbarActionState ↔ toolbar disabled-reason invariants", () => {
-  it.each(TOOLBAR_CASES)(
-    "canProcessNext agrees with processNextDisabledReason for pending=%i running=%i canProcess=%s",
-    (pending_count, running_count, canProcess) => {
+  it("keeps every toolbar action flag in agreement with its disabled reason", () => {
+    for (const [pending_count, running_count, canProcess] of TOOLBAR_CASES) {
+      const label = `pending=${pending_count} running=${running_count} canProcess=${canProcess}`;
       const queue = { jobs: [], pending_count, running_count, failed_count: 0 };
-      const { canProcessNext } = queueToolbarActionState(queue, canProcess);
-      const reason = processNextDisabledReason(queue, canProcess);
-      expect(canProcessNext).toBe(reason === null);
-    },
-  );
-
-  it.each(TOOLBAR_CASES)(
-    "canCancelCurrent agrees with cancelCurrentDisabledReason for pending=%i running=%i canProcess=%s",
-    (pending_count, running_count, _canProcess) => {
-      const queue = { jobs: [], pending_count, running_count, failed_count: 0 };
-      const { canCancelCurrent } = queueToolbarActionState(queue, _canProcess);
-      const reason = cancelCurrentDisabledReason(queue);
-      expect(canCancelCurrent).toBe(reason === null);
-    },
-  );
+      const { canProcessNext, canCancelCurrent } = queueToolbarActionState(
+        queue,
+        canProcess,
+      );
+      expect(
+        canProcessNext,
+        `canProcessNext vs processNextDisabledReason for ${label}`,
+      ).toBe(processNextDisabledReason(queue, canProcess) === null);
+      expect(
+        canCancelCurrent,
+        `canCancelCurrent vs cancelCurrentDisabledReason for ${label}`,
+      ).toBe(cancelCurrentDisabledReason(queue) === null);
+    }
+  });
 });

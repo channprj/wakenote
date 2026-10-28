@@ -363,18 +363,19 @@ describe("TranscriptsView recoverable deletion", () => {
 });
 
 describe("TranscriptsView pagination and order", () => {
-  it.each([30, 50, 100, 200])(
-    "shows %i rows per page and resets later pages when the size changes",
-    async (size) => {
+  it("shows each page size option's row count and resets later pages when the size changes", async () => {
+    const entries = Array.from({ length: 201 }, (_, index) => ({
+      ...entry,
+      transcript_path: `/tmp/WakeNote/20260510/transcript-${index}.txt`,
+      recorded_at: new Date(
+        Date.parse("2026-05-10T01:00:00+09:00") + index * 1000,
+      ).toISOString(),
+      text: `Transcript ${index + 1}`,
+    }));
+
+    for (const size of [30, 50, 100, 200]) {
+      cleanup();
       const user = userEvent.setup();
-      const entries = Array.from({ length: 201 }, (_, index) => ({
-        ...entry,
-        transcript_path: `/tmp/WakeNote/20260510/transcript-${index}.txt`,
-        recorded_at: new Date(
-          Date.parse("2026-05-10T01:00:00+09:00") + index * 1000,
-        ).toISOString(),
-        text: `Transcript ${index + 1}`,
-      }));
       const { container } = render(
         <TranscriptsView
           today={new Date("2026-05-10T12:00:00+09:00")}
@@ -383,7 +384,7 @@ describe("TranscriptsView pagination and order", () => {
         />,
       );
       const visibleRows = () => container.querySelectorAll(".transcript-entry");
-      expect(visibleRows()).toHaveLength(50);
+      expect(visibleRows(), `size ${size}: default rows`).toHaveLength(50);
 
       if (size === 50) {
         await user.click(
@@ -399,24 +400,28 @@ describe("TranscriptsView pagination and order", () => {
       );
       expect(
         screen.getAllByRole("option").map((option) => option.textContent),
+        `size ${size}: options`,
       ).toEqual(["30", "50", "100", "200"]);
       await user.click(screen.getByRole("option", { name: String(size) }));
 
-      expect(visibleRows()).toHaveLength(size);
+      expect(visibleRows(), `size ${size}: rows`).toHaveLength(size);
       expect(screen.getByText(`1–${size} of 201`)).toBeTruthy();
       expect(
         screen.getByText(`Page 1 of ${Math.ceil(201 / size)}`),
       ).toBeTruthy();
-      expect(visibleRows()[0].textContent).toContain("Transcript 201");
+      expect(
+        visibleRows()[0].textContent,
+        `size ${size}: first row`,
+      ).toContain("Transcript 201");
       if (size === 200) {
         await user.click(
           screen.getByRole("button", { name: "Next Transcript page" }),
         );
-        expect(visibleRows()).toHaveLength(1);
+        expect(visibleRows(), `size ${size}: last page rows`).toHaveLength(1);
         expect(screen.getByText("201–201 of 201")).toBeTruthy();
       }
-    },
-  );
+    }
+  }, 30_000);
 
   it("keeps the page size control available for one page and clears selection on change", async () => {
     const user = userEvent.setup();

@@ -62,8 +62,8 @@ describe("QueuePanel compact layout", () => {
     expect(markup).not.toContain('data-tone="danger"');
   });
 
-  it("offers one resolve action for unread outcomes and hides resolved history", () => {
-    const markup = renderQueue({
+  it("enables Mark all resolved only while unread outcomes remain", () => {
+    const unreadMarkup = renderQueue({
       jobs: [
         { id: 1, audio_path: "/failed.wav", model_id: "m", status: "failed" },
         {
@@ -86,16 +86,14 @@ describe("QueuePanel compact layout", () => {
       failed_count: 2,
     });
 
-    expect(markup).toContain("Mark all resolved");
-    expect(markup).toContain("Mark 3 outcomes as resolved");
-    expect(markup).toMatch(
+    expect(unreadMarkup).toContain("Mark all resolved");
+    expect(unreadMarkup).toContain("Mark 3 outcomes as resolved");
+    expect(unreadMarkup).toMatch(
       /<button[^>]*title="Mark 3 outcomes as resolved"(?![^>]*disabled)/,
     );
-    expect(markup).not.toContain('data-read="true"');
-  });
+    expect(unreadMarkup).not.toContain('data-read="true"');
 
-  it("disables mark all resolved when every attention outcome is resolved", () => {
-    const markup = renderQueue({
+    const allReadMarkup = renderQueue({
       jobs: [
         {
           id: 1,
@@ -110,7 +108,7 @@ describe("QueuePanel compact layout", () => {
       failed_count: 1,
     });
 
-    expect(markup).toMatch(
+    expect(allReadMarkup).toMatch(
       /<button[^>]*disabled=""[^>]*title="No unresolved outcomes"/,
     );
   });

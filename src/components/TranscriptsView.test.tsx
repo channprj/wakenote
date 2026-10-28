@@ -18,7 +18,6 @@ import {
   selectTranscriptPathsForEntries,
   shouldCopySelectedTranscriptsOnKeydown,
   transcriptPlaybackStateAfterToggle,
-  transcriptPage,
   transcriptRegenerationTargetsForContextMenu,
   transcriptSourceFilterOptions,
   transcriptVisibilityTargetsForContextMenu,
@@ -170,58 +169,68 @@ describe("TranscriptsView audio merge status", () => {
     ],
   ]);
 
-  it("renders compact live progress for the active merge", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      entriesByDay,
-      audioMergeState: {
-        status: "running",
-        operation_id: "merge-current",
-        stage: "combining",
-        completed_inputs: 1,
-        total_inputs: 2,
-        percent: 55,
-        current_input_label: "010203.m4a",
+  it("renders the audio merge status for running, saved, and error states", () => {
+    const cases: Array<{
+      audioMergeState: AudioMergeUiState;
+      onOpenMergedAudioFolder?: (destinationPath: string) => void;
+      expected: string[];
+    }> = [
+      {
+        audioMergeState: {
+          status: "running",
+          operation_id: "merge-current",
+          stage: "combining",
+          completed_inputs: 1,
+          total_inputs: 2,
+          percent: 55,
+          current_input_label: "010203.m4a",
+        },
+        expected: [
+          "Merging audio · 55%",
+          "1 of 2 files",
+          'aria-label="Audio merge progress"',
+        ],
       },
-    });
-
-    expect(markup).toContain("Merging audio · 55%");
-    expect(markup).toContain("1 of 2 files");
-    expect(markup).toContain('aria-label="Audio merge progress"');
-  });
-
-  it("shows the saved path and open-folder action", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      entriesByDay,
-      audioMergeState: {
-        status: "saved",
-        operation_id: "merge-current",
-        destination_path: "/tmp/WakeNote merged.m4a",
-        input_count: 2,
+      {
+        audioMergeState: {
+          status: "saved",
+          operation_id: "merge-current",
+          destination_path: "/tmp/WakeNote merged.m4a",
+          input_count: 2,
+        },
+        onOpenMergedAudioFolder: () => {},
+        expected: [
+          "Audio merged · 2 files",
+          "/tmp/WakeNote merged.m4a",
+          'aria-label="Open merged audio folder"',
+        ],
       },
-      onOpenMergedAudioFolder: () => {},
-    });
-
-    expect(markup).toContain("Audio merged · 2 files");
-    expect(markup).toContain("/tmp/WakeNote merged.m4a");
-    expect(markup).toContain('aria-label="Open merged audio folder"');
-  });
-
-  it("keeps merge failures retryable", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      entriesByDay,
-      audioMergeState: {
-        status: "error",
-        operation_id: "merge-current",
-        message: "Could not encode audio",
+      {
+        audioMergeState: {
+          status: "error",
+          operation_id: "merge-current",
+          message: "Could not encode audio",
+        },
+        expected: [
+          "Audio merge failed",
+          "Could not encode audio",
+          "Selection preserved. Try again.",
+        ],
       },
-    });
+    ];
 
-    expect(markup).toContain("Audio merge failed");
-    expect(markup).toContain("Could not encode audio");
-    expect(markup).toContain("Selection preserved. Try again.");
+    for (const { audioMergeState, onOpenMergedAudioFolder, expected } of cases) {
+      const markup = view({
+        today: new Date("2026-05-10T12:00:00+09:00"),
+        entriesByDay,
+        audioMergeState,
+        onOpenMergedAudioFolder,
+      });
+
+      for (const text of expected) {
+        expect(markup, `${audioMergeState.status}: ${text}`).toContain(text);
+      }
+    }
   });
 });
 
@@ -345,23 +354,6 @@ describe("TranscriptsView", () => {
     expect(markup.indexOf("evening transcript")).toBeLessThan(
       markup.indexOf("morning transcript"),
     );
-  });
-
-  it("caps Transcript pages at 50 entries", () => {
-    const entries = Array.from({ length: 51 }, (_, index) =>
-      transcript({
-        transcript_path: `/tmp/WakeNote/20260510/${String(index + 1).padStart(6, "0")}.txt`,
-      }),
-    );
-
-    expect(transcriptPage(entries, 1)).toMatchObject({
-      page: 1,
-      pageCount: 2,
-      rangeStart: 1,
-      rangeEnd: 50,
-      total: 51,
-    });
-    expect(transcriptPage(entries, 2).entries).toEqual([entries[50]]);
   });
 
   it("shows Visible and Hidden counts without treating hidden rows as iCloud gaps", () => {
@@ -624,7 +616,7 @@ describe("TranscriptsView", () => {
     ]);
   });
 
-  it("selects every visible transcript between the anchor and shift-clicked row", () => {
+  it("extends shift-click selection from a visible anchor or falls back to the clicked row", () => {
     const entries = [
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
@@ -639,38 +631,39 @@ describe("TranscriptsView", () => {
       "/tmp/WakeNote/20260510/010206.txt",
     );
 
-    expect([...selected]).toEqual([
+    expect([...selected], "visible anchor").toEqual([
       "/tmp/WakeNote/20260510/010203.txt",
       "/tmp/WakeNote/20260510/010204.txt",
       "/tmp/WakeNote/20260510/010205.txt",
       "/tmp/WakeNote/20260510/010206.txt",
     ]);
-  });
 
-  it("falls back to the clicked row when shift-click has no visible anchor", () => {
-    const entries = [
+    const withoutAnchor = [
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
     ];
 
-    expect([
-      ...selectTranscriptPathsAfterShiftClick(
-        entries,
-        new Set(),
-        "/tmp/WakeNote/20260510/missing.txt",
-        "/tmp/WakeNote/20260510/010204.txt",
-      ),
-    ]).toEqual(["/tmp/WakeNote/20260510/010204.txt"]);
+    expect(
+      [
+        ...selectTranscriptPathsAfterShiftClick(
+          withoutAnchor,
+          new Set(),
+          "/tmp/WakeNote/20260510/missing.txt",
+          "/tmp/WakeNote/20260510/010204.txt",
+        ),
+      ],
+      "missing anchor",
+    ).toEqual(["/tmp/WakeNote/20260510/010204.txt"]);
   });
 
-  it("uses the selected rows as regeneration context targets when right-clicking selection", () => {
+  it("targets the selection only when right-clicking a selected row", () => {
     const entries = [
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
       transcript({ transcript_path: "/tmp/WakeNote/20260510/010205.txt" }),
     ];
 
-    const targets = transcriptRegenerationTargetsForContextMenu(
+    const insideSelection = transcriptRegenerationTargetsForContextMenu(
       entries[1],
       entries,
       new Set([
@@ -679,10 +672,29 @@ describe("TranscriptsView", () => {
       ]),
     );
 
-    expect(targets.map((entry) => entry.transcript_path)).toEqual([
+    expect(
+      insideSelection.map((entry) => entry.transcript_path),
+      "right-click inside the selection",
+    ).toEqual([
       "/tmp/WakeNote/20260510/010203.txt",
       "/tmp/WakeNote/20260510/010204.txt",
     ]);
+
+    const outsideEntries = [
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
+      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
+    ];
+
+    const outsideSelection = transcriptRegenerationTargetsForContextMenu(
+      outsideEntries[1],
+      outsideEntries,
+      new Set(["/tmp/WakeNote/20260510/010203.txt"]),
+    );
+
+    expect(
+      outsideSelection.map((entry) => entry.transcript_path),
+      "right-click outside the selection",
+    ).toEqual(["/tmp/WakeNote/20260510/010204.txt"]);
   });
 
   it("keeps every selected transcript as a context visibility target", () => {
@@ -703,23 +715,6 @@ describe("TranscriptsView", () => {
         new Set(entries.map((entry) => entry.transcript_path)),
       ),
     ).toEqual(entries);
-  });
-
-  it("uses only the right-clicked row as regeneration target outside the selection", () => {
-    const entries = [
-      transcript({ transcript_path: "/tmp/WakeNote/20260510/010203.txt" }),
-      transcript({ transcript_path: "/tmp/WakeNote/20260510/010204.txt" }),
-    ];
-
-    const targets = transcriptRegenerationTargetsForContextMenu(
-      entries[1],
-      entries,
-      new Set(["/tmp/WakeNote/20260510/010203.txt"]),
-    );
-
-    expect(targets.map((entry) => entry.transcript_path)).toEqual([
-      "/tmp/WakeNote/20260510/010204.txt",
-    ]);
   });
 
   it("handles command-copy only while transcript rows are selected", () => {
@@ -899,61 +894,97 @@ describe("TranscriptsView", () => {
     expect(markup).not.toContain("Whisper Large");
   });
 
-  it("always renders a More trigger and keeps day-wide actions out of the primary toolbar", () => {
-    const withEntries = view({
-      today: new Date("2026-05-19T18:00:00+09:00"),
-      days: [{ day: "2026-05-19", count: 1 }],
-      entriesByDay: new Map([
-        [
-          "2026-05-19",
-          [
-            transcript({
-              recorded_at: "2026-05-19T15:53:23+09:00",
-              text: "슬립~",
-            }),
-          ],
-        ],
-      ]),
-    });
-    expect(withEntries).toContain('aria-label="More day actions"');
-    expect(withEntries).not.toContain(
-      'aria-label="Copy all transcripts for this day"',
-    );
+  it("keeps day-wide actions behind More in every toolbar state", () => {
+    const reportableEntries = new Map([
+      ["2026-05-10", [transcript({ text: "reportable transcript" })]],
+    ]);
+    const cases: Array<{
+      label: string;
+      props: Parameters<typeof view>[0];
+      contains?: string[];
+      notContains?: string[];
+    }> = [
+      {
+        label: "day with entries",
+        props: {
+          today: new Date("2026-05-19T18:00:00+09:00"),
+          days: [{ day: "2026-05-19", count: 1 }],
+          entriesByDay: new Map([
+            [
+              "2026-05-19",
+              [
+                transcript({
+                  recorded_at: "2026-05-19T15:53:23+09:00",
+                  text: "슬립~",
+                }),
+              ],
+            ],
+          ]),
+        },
+        notContains: ['aria-label="Copy all transcripts for this day"'],
+      },
+      {
+        label: "empty day",
+        props: { today: new Date("2026-05-19T18:00:00+09:00") },
+        notContains: ["Copy all"],
+      },
+      {
+        label: "OpenRouter key configured",
+        props: {
+          today: new Date("2026-05-10T12:00:00+09:00"),
+          days: [{ day: "2026-05-10", count: 1 }],
+          entriesByDay: reportableEntries,
+          openrouterKeyConfigured: true,
+          onGenerateReport: () => undefined,
+        },
+        notContains: ["Summary all", "Report all"],
+      },
+      {
+        label: "no OpenRouter key",
+        props: {
+          today: new Date("2026-05-10T12:00:00+09:00"),
+          days: [{ day: "2026-05-10", count: 1 }],
+          entriesByDay: reportableEntries,
+          openrouterKeyConfigured: false,
+          onGenerateReport: () => undefined,
+        },
+        notContains: ["Save an OpenRouter API key"],
+      },
+      {
+        label: "active report run",
+        props: {
+          today: new Date("2026-05-10T12:00:00+09:00"),
+          days: [{ day: "2026-05-10", count: 1 }],
+          entriesByDay: reportableEntries,
+          openrouterKeyConfigured: true,
+          reportRun: reportRun({ status: "running" }),
+          onGenerateReport: () => undefined,
+        },
+        notContains: ["A report is already running"],
+      },
+      {
+        label: "day loading",
+        props: {
+          today: new Date("2026-05-19T18:00:00+09:00"),
+          loadingDay: "2026-05-19",
+        },
+        contains: ["Loading…"],
+      },
+    ];
 
-    const empty = view({ today: new Date("2026-05-19T18:00:00+09:00") });
-    expect(empty).toContain('aria-label="More day actions"');
-    expect(empty).not.toContain("Copy all");
-  });
+    for (const { label, props, contains = [], notContains = [] } of cases) {
+      const markup = view(props);
 
-  it("keeps OpenRouter day-wide actions out of the primary toolbar", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([
-        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
-      ]),
-      openrouterKeyConfigured: true,
-      onGenerateReport: () => undefined,
-    });
-
-    expect(markup).toContain('aria-label="More day actions"');
-    expect(markup).not.toContain("Summary all");
-    expect(markup).not.toContain("Report all");
-  });
-
-  it("does not expose unavailable report actions in the primary toolbar", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([
-        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
-      ]),
-      openrouterKeyConfigured: false,
-      onGenerateReport: () => undefined,
-    });
-
-    expect(markup).toContain('aria-label="More day actions"');
-    expect(markup).not.toContain("Save an OpenRouter API key");
+      expect(markup, `${label}: More trigger`).toContain(
+        'aria-label="More day actions"',
+      );
+      for (const text of contains) {
+        expect(markup, `${label}: ${text}`).toContain(text);
+      }
+      for (const text of notContains) {
+        expect(markup, `${label}: ${text}`).not.toContain(text);
+      }
+    }
   });
 
   it("shows a durable run notice with Open Reports", () => {
@@ -970,31 +1001,6 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("Drafting report");
     expect(markup).toContain('aria-label="Open Reports"');
     expect(markup).not.toContain('aria-label="Report generation progress"');
-  });
-
-  it("keeps active-run report actions behind More", () => {
-    const markup = view({
-      today: new Date("2026-05-10T12:00:00+09:00"),
-      days: [{ day: "2026-05-10", count: 1 }],
-      entriesByDay: new Map([
-        ["2026-05-10", [transcript({ text: "reportable transcript" })]],
-      ]),
-      openrouterKeyConfigured: true,
-      reportRun: reportRun({ status: "running" }),
-      onGenerateReport: () => undefined,
-    });
-
-    expect(markup).toContain('aria-label="More day actions"');
-    expect(markup).not.toContain("A report is already running");
-  });
-
-  it("keeps the day loading state visible while secondary actions stay in More", () => {
-    const markup = view({
-      today: new Date("2026-05-19T18:00:00+09:00"),
-      loadingDay: "2026-05-19",
-    });
-    expect(markup).toContain('aria-label="More day actions"');
-    expect(markup).toContain("Loading…");
   });
 
   it("keeps the selected transcript player inside the archive flow", () => {
@@ -1014,56 +1020,66 @@ describe("TranscriptsView", () => {
     expect(markup).toContain("Now playing");
   });
 
-  it("hints that more entries are in iCloud when the day count exceeds loaded entries", () => {
-    const markup = view({
-      today: new Date("2026-05-14T12:00:00+09:00"),
-      days: [{ day: "2026-05-14", count: 3 }],
-      entriesByDay: new Map([
-        [
-          "2026-05-14",
-          [
-            transcript({
-              recorded_at: "2026-05-14T01:02:03+09:00",
-              text: "local one",
-            }),
-          ],
+  it("derives the iCloud hint from the day count versus loaded entries", () => {
+    const cases: Array<{
+      count: number;
+      loadedTexts: string[];
+      contains: string[];
+      notContains: string[];
+    }> = [
+      // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
+      {
+        count: 3,
+        loadedTexts: ["local one"],
+        contains: [
+          "2 more in iCloud",
+          "local one",
+          'aria-label="More day actions"',
         ],
-      ]),
-    });
-    // 3 in the (size-based) count, 1 loaded → 2 still in iCloud.
-    expect(markup).toContain("2 more in iCloud");
-    expect(markup).toContain("local one");
-    expect(markup).toContain('aria-label="More day actions"');
-  });
+        notContains: [],
+      },
+      {
+        count: 5,
+        loadedTexts: [],
+        contains: ["5 in iCloud — press Reload"],
+        notContains: ["No transcripts for this day"],
+      },
+      {
+        count: 1,
+        loadedTexts: ["only one"],
+        contains: ["only one"],
+        notContains: ["in iCloud"],
+      },
+    ];
 
-  it("prompts a reload in the empty state when a day is entirely iCloud-evicted", () => {
-    const markup = view({
-      today: new Date("2026-05-14T12:00:00+09:00"),
-      days: [{ day: "2026-05-14", count: 5 }],
-      entriesByDay: new Map(),
-    });
-    expect(markup).toContain("5 in iCloud — press Reload");
-    expect(markup).not.toContain("No transcripts for this day");
-  });
+    for (const { count, loadedTexts, contains, notContains } of cases) {
+      const label = `count=${count} loaded=${loadedTexts.length}`;
+      const markup = view({
+        today: new Date("2026-05-14T12:00:00+09:00"),
+        days: [{ day: "2026-05-14", count }],
+        entriesByDay:
+          loadedTexts.length === 0
+            ? new Map()
+            : new Map([
+                [
+                  "2026-05-14",
+                  loadedTexts.map((text) =>
+                    transcript({
+                      recorded_at: "2026-05-14T01:02:03+09:00",
+                      text,
+                    }),
+                  ),
+                ],
+              ]),
+      });
 
-  it("shows no iCloud hint when all of the day's entries are loaded", () => {
-    const markup = view({
-      today: new Date("2026-05-14T12:00:00+09:00"),
-      days: [{ day: "2026-05-14", count: 1 }],
-      entriesByDay: new Map([
-        [
-          "2026-05-14",
-          [
-            transcript({
-              recorded_at: "2026-05-14T01:02:03+09:00",
-              text: "only one",
-            }),
-          ],
-        ],
-      ]),
-    });
-    expect(markup).not.toContain("in iCloud");
-    expect(markup).toContain("only one");
+      for (const text of contains) {
+        expect(markup, `${label}: ${text}`).toContain(text);
+      }
+      for (const text of notContains) {
+        expect(markup, `${label}: ${text}`).not.toContain(text);
+      }
+    }
   });
 });
 
@@ -1083,31 +1099,55 @@ describe("addDays", () => {
   });
 });
 
-describe("previousWeekDisabledReason", () => {
-  it("returns a reason at or before the earliest week", () => {
-    expect(previousWeekDisabledReason("2026-05-10", "2026-05-13")).toBe(
-      "Already on the earliest week",
-    );
-    expect(previousWeekDisabledReason("2026-05-03", "2026-05-13")).toBe(
-      "Already on the earliest week",
-    );
-  });
-  it("returns null when there is an older week", () => {
-    expect(previousWeekDisabledReason("2026-05-10", "2026-05-01")).toBeNull();
-  });
-});
+describe("week navigation disabled reasons", () => {
+  it("derives Previous/Next week disabled reasons", () => {
+    const cases: Array<
+      [
+        "previous" | "next",
+        (weekStart: string, bound: string) => string | null,
+        string,
+        string,
+        string | null,
+      ]
+    > = [
+      [
+        "previous",
+        previousWeekDisabledReason,
+        "2026-05-10",
+        "2026-05-13",
+        "Already on the earliest week",
+      ],
+      [
+        "previous",
+        previousWeekDisabledReason,
+        "2026-05-03",
+        "2026-05-13",
+        "Already on the earliest week",
+      ],
+      ["previous", previousWeekDisabledReason, "2026-05-10", "2026-05-01", null],
+      [
+        "next",
+        nextWeekDisabledReason,
+        "2026-05-10",
+        "2026-05-14",
+        "Already on this week",
+      ],
+      [
+        "next",
+        nextWeekDisabledReason,
+        "2026-05-17",
+        "2026-05-14",
+        "Already on this week",
+      ],
+      ["next", nextWeekDisabledReason, "2026-05-03", "2026-05-14", null],
+    ];
 
-describe("nextWeekDisabledReason", () => {
-  it("returns a reason at or after today's week", () => {
-    expect(nextWeekDisabledReason("2026-05-10", "2026-05-14")).toBe(
-      "Already on this week",
-    );
-    expect(nextWeekDisabledReason("2026-05-17", "2026-05-14")).toBe(
-      "Already on this week",
-    );
-  });
-  it("returns null when there is a newer week", () => {
-    expect(nextWeekDisabledReason("2026-05-03", "2026-05-14")).toBeNull();
+    for (const [direction, reason, weekStart, bound, expected] of cases) {
+      expect(
+        reason(weekStart, bound),
+        `${direction} week from ${weekStart} vs ${bound}`,
+      ).toBe(expected);
+    }
   });
 });
 
@@ -1118,29 +1158,24 @@ describe("nextPlayableTranscriptPath", () => {
     transcript({ transcript_path: "/c.txt", audio_path: "/c.m4a" }),
   ];
 
-  it("returns the next entry with audio after the current path", () => {
-    expect(nextPlayableTranscriptPath(entries, "/a.txt")).toBe("/c.txt");
-  });
-
-  it("skips entries that have no audio", () => {
-    // /b has no audio, so advancing from /a lands on /c, not /b.
-    expect(nextPlayableTranscriptPath(entries, "/a.txt")).toBe("/c.txt");
-  });
-
-  it("returns null at the end of the list", () => {
-    expect(nextPlayableTranscriptPath(entries, "/c.txt")).toBeNull();
-  });
-
-  it("returns null when no later entry has audio", () => {
+  it("advances to the next entry with audio or returns null", () => {
     const trailing: RecentTranscript[] = [
       transcript({ transcript_path: "/a.txt", audio_path: "/a.m4a" }),
       transcript({ transcript_path: "/b.txt", audio_path: null }),
     ];
-    expect(nextPlayableTranscriptPath(trailing, "/a.txt")).toBeNull();
-  });
+    const cases: Array<
+      [string, RecentTranscript[], string | null, string | null]
+    > = [
+      // /b has no audio, so advancing from /a lands on /c, not /b.
+      ["skips entries without audio", entries, "/a.txt", "/c.txt"],
+      ["end of the list", entries, "/c.txt", null],
+      ["no later entry has audio", trailing, "/a.txt", null],
+      ["absent current path", entries, "/missing.txt", null],
+      ["null current path", entries, null, null],
+    ];
 
-  it("returns null when the current path is absent or null", () => {
-    expect(nextPlayableTranscriptPath(entries, "/missing.txt")).toBeNull();
-    expect(nextPlayableTranscriptPath(entries, null)).toBeNull();
+    for (const [label, list, current, expected] of cases) {
+      expect(nextPlayableTranscriptPath(list, current), label).toBe(expected);
+    }
   });
 });

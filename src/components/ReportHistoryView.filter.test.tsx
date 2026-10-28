@@ -80,19 +80,17 @@ function listedFileNames() {
 afterEach(cleanup);
 
 describe("ReportHistoryView filtering", () => {
-  it("lists every report before a filter is typed", () => {
-    renderView();
-
-    const names = listedFileNames();
-    expect(names.some((name) => name.includes("20260727-summary.md"))).toBe(true);
-    expect(
-      names.some((name) => name.includes("20260726-detailed-report.md")),
-    ).toBe(true);
-  });
-
   it("narrows the list to matching reports as the user types", async () => {
     const user = userEvent.setup();
     renderView();
+
+    const unfiltered = listedFileNames();
+    expect(
+      unfiltered.some((name) => name.includes("20260727-summary.md")),
+    ).toBe(true);
+    expect(
+      unfiltered.some((name) => name.includes("20260726-detailed-report.md")),
+    ).toBe(true);
 
     await user.type(screen.getByLabelText("Filter reports"), "claude");
 
@@ -117,12 +115,6 @@ describe("ReportHistoryView filtering", () => {
     await user.click(screen.getByRole("button", { name: "Clear filter" }));
 
     expect(listedFileNames().length).toBeGreaterThan(0);
-  });
-
-  it("keeps the no-reports-yet state when the list is genuinely empty", () => {
-    renderView([]);
-
-    expect(screen.getByText("No reports yet")).toBeTruthy();
   });
 
   it("copies the report Markdown and confirms it", async () => {

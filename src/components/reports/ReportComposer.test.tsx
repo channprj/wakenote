@@ -128,12 +128,6 @@ describe("ReportComposer", () => {
     expect(listed[1]).toContain("3 captures");
   });
 
-  it("preselects the newest day and states the scope", () => {
-    renderComposer();
-
-    expect(screen.getByText("4 captures from 2026-07-27")).toBeTruthy();
-  });
-
   it("generates the chosen kind for the selected days", async () => {
     const user = userEvent.setup();
     const { onGenerate } = renderComposer();
@@ -151,6 +145,8 @@ describe("ReportComposer", () => {
   it("recomputes the scope as days are toggled", async () => {
     const user = userEvent.setup();
     renderComposer();
+
+    expect(screen.getByText("4 captures from 2026-07-27")).toBeTruthy();
 
     await user.click(screen.getByRole("checkbox", { name: /2026-07-25/ }));
 
@@ -171,11 +167,31 @@ describe("ReportComposer", () => {
     expect(onOpenIntegrationSettings).toHaveBeenCalled();
   });
 
-  it("blocks generation while another run is active", () => {
-    renderComposer({ hasActiveRun: true });
+  it("disables Generate with an explanation for prop-level gates", () => {
+    const cases: Array<{
+      label: string;
+      overrides: Partial<Parameters<typeof ReportComposer>[0]>;
+      explanation: string | RegExp;
+    }> = [
+      {
+        label: "active run",
+        overrides: { hasActiveRun: true },
+        explanation: /already being generated/,
+      },
+      {
+        label: "no capture days",
+        overrides: { days: [] },
+        explanation: "No captures to report on yet",
+      },
+    ];
 
-    expect(generateButton().disabled).toBe(true);
-    expect(screen.getByText(/already being generated/)).toBeTruthy();
+    for (const { label, overrides, explanation } of cases) {
+      cleanup();
+      renderComposer(overrides);
+
+      expect(generateButton().disabled, label).toBe(true);
+      expect(screen.getByText(explanation)).toBeTruthy();
+    }
   });
 
   it("blocks generation once every day is deselected", async () => {
@@ -189,27 +205,30 @@ describe("ReportComposer", () => {
     expect(screen.getByText("No captures selected")).toBeTruthy();
   });
 
-  it("explains when there is nothing to report on", () => {
-    renderComposer({ days: [] });
+  it("surfaces day-loading and run-start failures in an alert", () => {
+    const cases: Array<{
+      label: string;
+      overrides: Partial<Parameters<typeof ReportComposer>[0]>;
+      message: string;
+    }> = [
+      {
+        label: "day-loading failure",
+        overrides: { days: [], daysError: "transcript index unavailable" },
+        message: "transcript index unavailable",
+      },
+      {
+        label: "run-start failure",
+        overrides: { error: "OpenRouter returned 429" },
+        message: "OpenRouter returned 429",
+      },
+    ];
 
-    expect(screen.getByText("No captures to report on yet")).toBeTruthy();
-    expect(generateButton().disabled).toBe(true);
-  });
+    for (const { label, overrides, message } of cases) {
+      cleanup();
+      renderComposer(overrides);
 
-  it("surfaces a day-loading failure instead of an empty picker", () => {
-    renderComposer({ days: [], daysError: "transcript index unavailable" });
-
-    expect(screen.getByRole("alert").textContent).toContain(
-      "transcript index unavailable",
-    );
-  });
-
-  it("surfaces a failure to start the run", () => {
-    renderComposer({ error: "OpenRouter returned 429" });
-
-    expect(screen.getByRole("alert").textContent).toContain(
-      "OpenRouter returned 429",
-    );
+      expect(screen.getByRole("alert").textContent, label).toContain(message);
+    }
   });
 
   it("shows the model and iteration budget the run will use", () => {
