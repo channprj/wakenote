@@ -317,13 +317,25 @@ mod macos {
 
     impl Drop for SystemAudioStreamHandle {
         fn drop(&mut self) {
-            unsafe {
+            // Dropped on the source watcher thread, which has no autorelease pool.
+            autoreleasepool(|_| unsafe {
                 self.stream.stopCaptureWithCompletionHandler(None);
-            }
+            });
         }
     }
 
     pub(super) fn start_system_audio(
+        target: Option<SystemAudioTarget>,
+        sample_rate: u32,
+        on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
+    ) -> Result<Box<dyn AudioStreamHandle>, LiveCaptureError> {
+        // The source watcher starts capture from a long-lived thread with no
+        // autorelease pool, so drain ScreenCaptureKit and NSString temporaries
+        // here, including on every failed retry.
+        autoreleasepool(|_| start_system_audio_stream(target, sample_rate, on_frame))
+    }
+
+    fn start_system_audio_stream(
         target: Option<SystemAudioTarget>,
         sample_rate: u32,
         on_frame: Arc<dyn Fn(AudioFrame) + Send + Sync>,
@@ -365,7 +377,12 @@ mod macos {
                 })?;
         }
 
-        start_capture_blocking(&stream)?;
+        if let Err(error) = start_capture_blocking(&stream) {
+            // A start that times out may still finish later; stop it so no
+            // capture keeps running without an owner.
+            unsafe { stream.stopCaptureWithCompletionHandler(None) };
+            return Err(error);
+        }
 
         Ok(Box::new(SystemAudioStreamHandle {
             stream,
