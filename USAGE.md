@@ -185,7 +185,7 @@ With two configured microphones, **Microphone processing** offers three modes. *
 
 Recording, Transcription, and Pause are independent controls. You can retain audio without creating new transcription jobs, process an existing backlog without recording, or pause both.
 
-To watch the input without opening WakeNote, turn on **Settings › General › Show input level in menu bar**. While input is running, the Primary input level appears in dBFS beside the menu bar icon and refreshes about four times a second. It is off by default and unavailable while the menu bar icon is hidden. To move the icon, hold Command and drag it along the menu bar; WakeNote keeps that position after relaunch.
+To watch the input without opening WakeNote, turn on **Settings › General › Show input level in menu bar**. While input is running, the Primary input level appears in dBFS beside the menu bar icon and refreshes about four times a second. The number always takes the width of a sign and three digits, so the menu bar does not shift as the level moves between two and three digits. It is off by default and unavailable while the menu bar icon is hidden. Two options below it refine the readout: **Show dB unit**, on by default, follows the number with dB; turn it off to show the number alone. **Color the level instead of the status dot**, off by default, hides the colored dot while the level shows and draws the number in the dot's color: green while recording, amber while transcribing, red for errors, and the usual text color otherwise. The dot returns whenever no level is shown, such as after input stops. To move the icon, hold Command and drag it along the menu bar; WakeNote keeps that position after relaunch.
 
 ### Output layout
 
@@ -333,6 +333,9 @@ Settings patches are clamped or normalized by the Rust backend.
 | Shared Dictionary | `on` | `on` / `off` |
 | Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start live input on launch | `on` | `on` / `off` |
+| Show input level in menu bar | `off` | `on` / `off`; needs the menu bar icon |
+| Show dB unit | `on` | `on` / `off`; while the menu bar level is on |
+| Color the level instead of the status dot | `off` | `on` / `off`; while the menu bar level is on |
 | Input monitoring | `off` | `on` / `off`; Primary only |
 | Auto-type transcripts into cursor | `off` | `on` / `off`; Primary or merged microphones only |
 | Type final transcripts only | `off` | `on` / `off`; available while auto-type is on |
