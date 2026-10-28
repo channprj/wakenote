@@ -118,7 +118,12 @@ impl ManualMeetingMixer {
             let missing_source_grace =
                 MISSING_SOURCE_GRACE_MS.saturating_mul(MANUAL_MEETING_SAMPLE_RATE as u64) / 1_000;
             match (self.microphone_end, self.system_end) {
-                (Some(microphone), Some(system)) => microphone.min(system).saturating_sub(jitter),
+                // A source that stops after joining may hold the mix back only
+                // for the grace period; otherwise the buffer grows until finish.
+                (Some(microphone), Some(system)) => microphone
+                    .min(system)
+                    .saturating_sub(jitter)
+                    .max(microphone.max(system).saturating_sub(missing_source_grace)),
                 (Some(microphone), None) => microphone.saturating_sub(missing_source_grace),
                 (None, Some(system)) => system.saturating_sub(missing_source_grace),
                 (None, None) => self.cursor,
@@ -372,6 +377,39 @@ mod tests {
             samples: vec![0.2; 100],
         });
         assert_eq!(mixer.dropped_late_frames(), 1);
+    }
+
+    #[test]
+    fn manual_meeting_mixer_bounds_a_source_that_stops_after_joining() {
+        let started = Utc::now();
+        let mut mixer = ManualMeetingMixer::new(started);
+        let one_second = MANUAL_MEETING_SAMPLE_RATE as usize;
+        let mut committed = 0;
+        for source in [ManualMeetingSource::Microphone, ManualMeetingSource::System] {
+            committed += mixer
+                .push(ManualMeetingFrame {
+                    source,
+                    captured_at: started,
+                    sample_rate: MANUAL_MEETING_SAMPLE_RATE,
+                    samples: vec![0.1; one_second],
+                })
+                .len();
+        }
+
+        for second in 1..=60 {
+            committed += mixer
+                .push(ManualMeetingFrame {
+                    source: ManualMeetingSource::Microphone,
+                    captured_at: started + TimeDelta::seconds(second),
+                    sample_rate: MANUAL_MEETING_SAMPLE_RATE,
+                    samples: vec![0.1; one_second],
+                })
+                .len();
+        }
+
+        assert!(mixer.sums.len() <= one_second * 5);
+        assert_eq!(committed, one_second * (61 - 5));
+        assert_eq!(committed + mixer.finish().len(), one_second * 61);
     }
 
     #[test]
