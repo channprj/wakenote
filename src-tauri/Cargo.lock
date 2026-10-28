@@ -5320,7 +5320,7 @@ dependencies = [
 
 [[package]]
 name = "wakenote"
-version = "0.261028.11"
+version = "0.261028.12"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
