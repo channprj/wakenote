@@ -348,23 +348,79 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("recent_dictations", { limit: 10 });
   });
 
-  it("routes supported app-list permissions through the native drag shelf", async () => {
+  it("routes thin client wrappers to their exact Tauri commands", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.invoke.mockImplementation(mockInvoke);
-    const {
-      openAccessibilityPermissionAssistant,
-      openScreenRecordingPermissionAssistant,
-    } = await import("./tauri-client");
+    const audioPath = "/tmp/WakeNote/20260611/024304-spotify.m4a";
+    const cases: Array<{
+      call: (client: typeof import("./tauri-client")) => Promise<unknown>;
+      command: string;
+      args?: Record<string, unknown>;
+      reloadsQueue?: boolean;
+    }> = [
+      {
+        call: (client) => client.openAccessibilityPermissionAssistant(),
+        command: "open_permission_drag_shelf",
+        args: { target: "accessibility" },
+      },
+      {
+        call: (client) => client.openScreenRecordingPermissionAssistant(),
+        command: "open_permission_drag_shelf",
+        args: { target: "screen_recording" },
+      },
+      {
+        call: (client) => client.openDictionaryFile(),
+        command: "open_dictionary_file",
+      },
+      {
+        call: (client) => client.reloadDictionaryFile(),
+        command: "reload_dictionary_file",
+      },
+      {
+        call: (client) => client.saveSonioxApiKey(" soniox-key "),
+        command: "save_soniox_api_key",
+        args: { apiKey: " soniox-key " },
+      },
+      {
+        call: (client) => client.deleteSonioxApiKey(),
+        command: "delete_soniox_api_key",
+      },
+      {
+        call: (client) => client.regenerateTranscript(audioPath, "whisper-small"),
+        command: "regenerate_transcript",
+        args: { audioPath, modelId: "whisper-small" },
+        reloadsQueue: true,
+      },
+      {
+        call: (client) => client.openTranscriptFolder(audioPath),
+        command: "open_transcript_folder",
+        args: { path: audioPath },
+      },
+      {
+        call: (client) => client.cancelActivityJob(17),
+        command: "cancel_activity_job",
+        args: { id: 17 },
+        reloadsQueue: true,
+      },
+    ];
 
-    await openAccessibilityPermissionAssistant();
-    await openScreenRecordingPermissionAssistant();
+    for (const { call, command, args, reloadsQueue } of cases) {
+      const label = args ? `${command} ${JSON.stringify(args)}` : command;
+      vi.resetModules();
+      mocks.invoke.mockClear();
 
-    expect(mocks.invoke).toHaveBeenCalledWith("open_permission_drag_shelf", {
-      target: "accessibility",
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("open_permission_drag_shelf", {
-      target: "screen_recording",
-    });
+      await call(await import("./tauri-client"));
+
+      expect(mocks.invoke, label).toHaveBeenCalledWith(
+        command,
+        ...(args ? [args] : []),
+      );
+      if (reloadsQueue) {
+        expect(mocks.invoke, `${label} reload`).toHaveBeenCalledWith(
+          "queue_snapshot",
+        );
+      }
+    }
   });
 
   it("loads a fresh permission snapshot without requesting access", async () => {
@@ -411,36 +467,6 @@ describe("tauri runtime client snapshots", () => {
         subtitle_max_height_px: 900,
       },
     });
-  });
-
-  it("opens and reloads the stable dictionary file through exact commands", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { openDictionaryFile, reloadDictionaryFile } = await import(
-      "./tauri-client"
-    );
-
-    await openDictionaryFile();
-    await reloadDictionaryFile();
-
-    expect(mocks.invoke).toHaveBeenCalledWith("open_dictionary_file");
-    expect(mocks.invoke).toHaveBeenCalledWith("reload_dictionary_file");
-  });
-
-  it("saves and deletes the Soniox key through exact commands", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { saveSonioxApiKey, deleteSonioxApiKey } = await import(
-      "./tauri-client"
-    );
-
-    await saveSonioxApiKey(" soniox-key ");
-    await deleteSonioxApiKey();
-
-    expect(mocks.invoke).toHaveBeenCalledWith("save_soniox_api_key", {
-      apiKey: " soniox-key ",
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("delete_soniox_api_key");
   });
 
   it("controls manual meeting recording through explicit commands", async () => {
@@ -612,35 +638,6 @@ describe("tauri runtime client snapshots", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("invokes regenerate_transcript and reloads the Tauri snapshot", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { regenerateTranscript } = await import("./tauri-client");
-
-    await regenerateTranscript(
-      "/tmp/WakeNote/20260611/024304-spotify.m4a",
-      "whisper-small",
-    );
-
-    expect(mocks.invoke).toHaveBeenCalledWith("regenerate_transcript", {
-      audioPath: "/tmp/WakeNote/20260611/024304-spotify.m4a",
-      modelId: "whisper-small",
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
-  });
-
-  it("invokes open_transcript_folder for a transcript row path", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { openTranscriptFolder } = await import("./tauri-client");
-
-    await openTranscriptFolder("/tmp/WakeNote/20260611/024304-spotify.m4a");
-
-    expect(mocks.invoke).toHaveBeenCalledWith("open_transcript_folder", {
-      path: "/tmp/WakeNote/20260611/024304-spotify.m4a",
-    });
-  });
-
   it("moves selected Activity jobs to Trash and reloads the Tauri snapshot", async () => {
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
     mocks.invoke.mockImplementation(mockInvoke);
@@ -651,19 +648,6 @@ describe("tauri runtime client snapshots", () => {
     expect(outcome.removed_ids).toEqual([7]);
     expect(mocks.invoke).toHaveBeenCalledWith("trash_activity_jobs", {
       ids: [7],
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
-  });
-
-  it("cancels an exact running Activity job", async () => {
-    (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { cancelActivityJob } = await import("./tauri-client");
-
-    await cancelActivityJob(17);
-
-    expect(mocks.invoke).toHaveBeenCalledWith("cancel_activity_job", {
-      id: 17,
     });
     expect(mocks.invoke).toHaveBeenCalledWith("queue_snapshot");
   });
@@ -856,20 +840,6 @@ describe("tauri runtime client snapshots", () => {
       runId: "run-1",
     });
     expect(unlisten).toHaveBeenCalledOnce();
-  });
-
-  it("does not invoke the legacy blocking report command", async () => {
-    (globalThis as { window?: unknown }).window = {
-      __TAURI_INTERNALS__: {},
-    };
-    mocks.invoke.mockImplementation(mockInvoke);
-    const { startLlmReport } = await import("./tauri-client");
-
-    await startLlmReport({
-      kind: "summary",
-      transcripts: [],
-    });
-
     expect(mocks.invoke.mock.calls.map(([command]) => command)).not.toContain(
       "generate_transcript_report",
     );

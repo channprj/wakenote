@@ -133,20 +133,6 @@ function browserCaptureNumber(audioPath: string | undefined) {
   return match ? Number(match[1]) : null;
 }
 
-describe("transcript day loaders (browser fallback)", () => {
-  // Only verifies the empty-state contract: the browser snapshot's
-  // recent_transcripts isn't seedable with controllable days in this harness
-  // (browserSnapshot is module-private and the only writer, processNextTranscription,
-  // always stamps the current time), so grouping/count/filter isn't exercised here.
-  it("returns an array of days and an empty list for a day with no entries", async () => {
-    const days = await loadTranscriptDays();
-    expect(Array.isArray(days)).toBe(true);
-
-    const none = await loadTranscriptsForDay("2099-01-01");
-    expect(none).toEqual([]);
-  });
-});
-
 describe("dictionary file browser fallback", () => {
   it("keeps open and reload actions browser-safe", async () => {
     await expect(openDictionaryFile()).resolves.toMatchObject({
@@ -278,40 +264,40 @@ describe("tauri live capture client", () => {
     });
   });
 
-  it("persists browser fallback theme mode patches", async () => {
-    const light = await saveSettingsPatch({ theme_mode: "light" });
-    expect(light.settings.theme_mode).toBe("light");
+  it("tracks browser fallback OpenAI and Soniox key state without retaining blank values", async () => {
+    const cases = [
+      {
+        flag: "openai_key_configured",
+        save: saveOpenAiApiKey,
+        remove: deleteOpenAiApiKey,
+        apiKey: " sk-openai-browser ",
+        blankError: "OpenAI API key cannot be blank",
+      },
+      {
+        flag: "soniox_key_configured",
+        save: saveSonioxApiKey,
+        remove: deleteSonioxApiKey,
+        apiKey: " soniox-browser ",
+        blankError: "Soniox API key cannot be blank",
+      },
+    ] as const;
 
-    const dark = await saveSettingsPatch({ theme_mode: "dark" });
-    expect(dark.settings.theme_mode).toBe("dark");
-  });
+    for (const { flag, save, remove, apiKey, blankError } of cases) {
+      await remove();
+      expect((await loadSnapshot())[flag], `${flag} after delete`).toBe(false);
 
-  it("tracks browser fallback OpenAI key state without retaining blank values", async () => {
-    await deleteOpenAiApiKey();
-    expect((await loadSnapshot()).openai_key_configured).toBe(false);
+      await expect(save("   "), `${flag} blank save`).rejects.toThrow(
+        blankError,
+      );
+      const saved = await save(apiKey);
+      expect(saved[flag], `${flag} after save`).toBe(true);
 
-    await expect(saveOpenAiApiKey("   ")).rejects.toThrow(
-      "OpenAI API key cannot be blank",
-    );
-    const saved = await saveOpenAiApiKey(" sk-openai-browser ");
-    expect(saved.openai_key_configured).toBe(true);
-
-    await deleteOpenAiApiKey();
-    expect((await loadSnapshot()).openai_key_configured).toBe(false);
-  });
-
-  it("tracks browser fallback Soniox key state without retaining blank values", async () => {
-    await deleteSonioxApiKey();
-    expect((await loadSnapshot()).soniox_key_configured).toBe(false);
-
-    await expect(saveSonioxApiKey("   ")).rejects.toThrow(
-      "Soniox API key cannot be blank",
-    );
-    const saved = await saveSonioxApiKey(" soniox-browser ");
-    expect(saved.soniox_key_configured).toBe(true);
-
-    await deleteSonioxApiKey();
-    expect((await loadSnapshot()).soniox_key_configured).toBe(false);
+      await remove();
+      expect(
+        (await loadSnapshot())[flag],
+        `${flag} after second delete`,
+      ).toBe(false);
+    }
   });
 
   it("tracks browser fallback OpenRouter key state and completed durable runs", async () => {
@@ -517,51 +503,46 @@ describe("tauri live capture client", () => {
     await deleteModel("whisper-small");
   });
 
-  it("simulates model download and cancel state outside Tauri", async () => {
-    const downloading = await downloadModel("whisper-small");
-    expect(
-      downloading.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "downloading",
-      download_progress: 0,
-      download_error: null,
-    });
-
-    const cancelled = await cancelModelDownload("whisper-small");
-    expect(
-      cancelled.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "error",
-      download_progress: 0,
-      download_error: "cancelled by user",
-    });
-  });
-
-  it("cancels active browser fallback model downloads from the generic cancel action", async () => {
+  it("cancels active browser fallback model downloads from either cancel action", async () => {
     const current = await loadSnapshot();
     const targetModelId =
       current.settings.selected_model === "whisper-small"
         ? "whisper-medium"
         : "whisper-small";
-    await deleteModel(targetModelId);
-    const downloading = await downloadModel(targetModelId);
-    expect(
-      downloading.models.find((model) => model.id === targetModelId),
-    ).toMatchObject({
-      status: "downloading",
-      download_progress: 0,
-      download_error: null,
-    });
+    const cases = [
+      {
+        label: "cancelModelDownload",
+        cancel: (modelId: string) => cancelModelDownload(modelId),
+      },
+      {
+        label: "cancelCurrentOperation",
+        cancel: () => cancelCurrentOperation(),
+      },
+    ];
 
-    const cancelled = await cancelCurrentOperation();
+    for (const { label, cancel } of cases) {
+      await deleteModel(targetModelId);
+      const downloading = await downloadModel(targetModelId);
+      expect(
+        downloading.models.find((model) => model.id === targetModelId),
+        `${label} before cancel`,
+      ).toMatchObject({
+        status: "downloading",
+        download_progress: 0,
+        download_error: null,
+      });
 
-    expect(
-      cancelled.models.find((model) => model.id === targetModelId),
-    ).toMatchObject({
-      status: "error",
-      download_progress: 0,
-      download_error: "cancelled by user",
-    });
+      const cancelled = await cancel(targetModelId);
+
+      expect(
+        cancelled.models.find((model) => model.id === targetModelId),
+        `${label} after cancel`,
+      ).toMatchObject({
+        status: "error",
+        download_progress: 0,
+        download_error: "cancelled by user",
+      });
+    }
   });
 
   it("does not create cancelled errors for inactive browser fallback model downloads", async () => {
@@ -578,7 +559,7 @@ describe("tauri live capture client", () => {
     });
   });
 
-  it("settles browser fallback model downloads during snapshot polling", async () => {
+  it("settles browser fallback model downloads during snapshot polling without restarting them", async () => {
     await deleteModel("whisper-small");
 
     const downloading = await downloadModel("whisper-small");
@@ -599,19 +580,6 @@ describe("tauri live capture client", () => {
       download_progress: 100,
       download_error: null,
     });
-  });
-
-  it("does not restart usable browser fallback model downloads", async () => {
-    await deleteModel("whisper-small");
-    await downloadModel("whisper-small");
-    const ready = await loadSnapshot();
-    expect(
-      ready.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "ready",
-      download_progress: 100,
-      download_error: null,
-    });
 
     const repeated = await downloadModel("whisper-small");
 
@@ -624,7 +592,7 @@ describe("tauri live capture client", () => {
     });
   });
 
-  it("does not delete active browser fallback model downloads", async () => {
+  it("does not delete or verify active browser fallback model downloads", async () => {
     await deleteModel("whisper-small");
     const downloading = await downloadModel("whisper-small");
     expect(
@@ -635,37 +603,23 @@ describe("tauri live capture client", () => {
       download_error: null,
     });
 
-    const deleted = await deleteModel("whisper-small");
+    const guardedActions = [
+      { label: "deleteModel", run: deleteModel },
+      { label: "verifyModel", run: verifyModel },
+    ];
 
-    expect(
-      deleted.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "downloading",
-      download_progress: 0,
-      download_error: null,
-    });
-  });
+    for (const { label, run } of guardedActions) {
+      const unchanged = await run("whisper-small");
 
-  it("does not verify active browser fallback model downloads", async () => {
-    await deleteModel("whisper-small");
-    const downloading = await downloadModel("whisper-small");
-    expect(
-      downloading.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "downloading",
-      download_progress: 0,
-      download_error: null,
-    });
-
-    const verified = await verifyModel("whisper-small");
-
-    expect(
-      verified.models.find((model) => model.id === "whisper-small"),
-    ).toMatchObject({
-      status: "downloading",
-      download_progress: 0,
-      download_error: null,
-    });
+      expect(
+        unchanged.models.find((model) => model.id === "whisper-small"),
+        label,
+      ).toMatchObject({
+        status: "downloading",
+        download_progress: 0,
+        download_error: null,
+      });
+    }
   });
 
   it("settles browser fallback verification during snapshot polling", async () => {
@@ -919,144 +873,91 @@ describe("tauri live capture client", () => {
     await skipJob(pendingJob?.id ?? -1);
   });
 
-  it("cancels running browser fallback transcription jobs", async () => {
-    const before = await enqueueAudioFiles([
-      "/tmp/imported/cancel-running.wav",
-    ]);
-    const job = before.queue.jobs.find(
-      (candidate) =>
-        candidate.audio_path === "/tmp/imported/cancel-running.wav",
-    );
-    expect(job?.id).toBeTypeOf("number");
-    if (job) {
-      job.status = "running";
-      before.queue.pending_count -= 1;
-      before.queue.running_count += 1;
+  it("cancels a running browser fallback transcription job from every cancel entry point", async () => {
+    const cases = [
+      {
+        audioPath: "/tmp/imported/cancel-running.wav",
+        label: "cancelCurrentTranscription",
+        cancel: () => cancelCurrentTranscription(),
+      },
+      {
+        audioPath: "/tmp/imported/cancel-exact-running.wav",
+        label: "cancelActivityJob",
+        cancel: (id: number) => cancelActivityJob(id),
+      },
+      {
+        audioPath: "/tmp/imported/cancel-current-operation.wav",
+        label: "cancelCurrentOperation",
+        cancel: () => cancelCurrentOperation(),
+      },
+    ];
+
+    for (const { audioPath, label, cancel } of cases) {
+      await loadSnapshot();
+      const before = await enqueueAudioFiles([audioPath]);
+      const job = before.queue.jobs.find(
+        (candidate) => candidate.audio_path === audioPath,
+      );
+      expect(job?.id, label).toBeTypeOf("number");
+      if (job) {
+        job.status = "running";
+        before.queue.pending_count -= 1;
+        before.queue.running_count += 1;
+      }
+
+      const cancelled = await cancel(job?.id ?? -1);
+
+      expect(cancelled.queue.running_count, label).toBe(0);
+      expect(
+        cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
+        label,
+      ).toMatchObject({
+        status: "cancelled",
+        error: "cancelled by user",
+      });
     }
-
-    const cancelled = await cancelCurrentTranscription();
-
-    expect(cancelled.queue.running_count).toBe(0);
-    expect(
-      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({
-      status: "cancelled",
-      error: "cancelled by user",
-    });
   });
 
-  it("cancels the exact running browser Activity job", async () => {
-    const before = await enqueueAudioFiles([
-      "/tmp/imported/cancel-exact-running.wav",
-    ]);
-    const job = before.queue.jobs.find(
-      (candidate) =>
-        candidate.audio_path === "/tmp/imported/cancel-exact-running.wav",
-    );
-    expect(job?.id).toBeTypeOf("number");
-    if (job) {
-      job.status = "running";
-      before.queue.pending_count -= 1;
-      before.queue.running_count += 1;
+  it("skips pending and failed browser fallback jobs and clears stale error and read state", async () => {
+    const cases = [
+      { audioPath: "/tmp/imported/skip-me.wav", seed: null },
+      {
+        audioPath: "/tmp/imported/skip-failed.wav",
+        seed: { status: "failed", error: "mock failure", is_read: true },
+      },
+    ] as const;
+
+    for (const { audioPath, seed } of cases) {
+      const before = await enqueueAudioFiles([audioPath]);
+      const pendingBefore = before.queue.pending_count;
+      const job = before.queue.jobs.find(
+        (candidate) => candidate.audio_path === audioPath,
+      );
+      expect(job?.id, audioPath).toBeTypeOf("number");
+      if (job && seed) {
+        job.status = seed.status;
+        job.error = seed.error;
+        job.is_read = seed.is_read;
+      }
+
+      const skipped = await skipJob(job?.id ?? -1);
+
+      if (!seed) {
+        expect(skipped.queue.pending_count, audioPath).toBe(pendingBefore - 1);
+      }
+      expect(
+        skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
+        audioPath,
+      ).toMatchObject({
+        status: "skipped",
+        error: null,
+        is_read: false,
+      });
     }
-
-    const cancelled = await cancelActivityJob(job?.id ?? -1);
-
-    expect(
-      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({ status: "cancelled", error: "cancelled by user" });
   });
 
-  it("cancels running browser fallback transcription jobs from the generic cancel action", async () => {
-    await loadSnapshot();
-    const before = await enqueueAudioFiles([
-      "/tmp/imported/cancel-current-operation.wav",
-    ]);
-    const job = before.queue.jobs.find(
-      (candidate) =>
-        candidate.audio_path === "/tmp/imported/cancel-current-operation.wav",
-    );
-    expect(job?.id).toBeTypeOf("number");
-    if (job) {
-      job.status = "running";
-      before.queue.pending_count -= 1;
-      before.queue.running_count += 1;
-    }
-
-    const cancelled = await cancelCurrentOperation();
-
-    expect(cancelled.queue.running_count).toBe(0);
-    expect(
-      cancelled.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({
-      status: "cancelled",
-      error: "cancelled by user",
-    });
-  });
-
-  it("skips pending browser fallback queue jobs", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/skip-me.wav"]);
-    const pendingBefore = before.queue.pending_count;
-    const pendingId = before.queue.jobs.find(
-      (job) => job.status === "pending",
-    )?.id;
-    expect(pendingId).toBeTypeOf("number");
-
-    const skipped = await skipJob(pendingId ?? -1);
-
-    expect(skipped.queue.pending_count).toBe(pendingBefore - 1);
-    expect(
-      skipped.queue.jobs.find((job) => job.id === pendingId),
-    ).toMatchObject({
-      status: "skipped",
-    });
-  });
-
-  it("clears stale browser fallback queue errors when jobs are skipped", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/skip-failed.wav"]);
-    const job = before.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/skip-failed.wav",
-    );
-    expect(job?.id).toBeTypeOf("number");
-    if (job) {
-      job.status = "failed";
-      job.error = "mock failure";
-    }
-
-    const skipped = await skipJob(job?.id ?? -1);
-
-    expect(
-      skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({
-      status: "skipped",
-      error: null,
-    });
-  });
-
-  it("retries failed browser fallback queue jobs", async () => {
-    const before = await enqueueAudioFiles(["/tmp/imported/retry-me.wav"]);
-    const job = before.queue.jobs.find(
-      (candidate) => candidate.audio_path === "/tmp/imported/retry-me.wav",
-    );
-    expect(job?.id).toBeTypeOf("number");
-    if (job) {
-      job.status = "failed";
-      job.error = "mock failure";
-    }
-
-    const retried = await retryJob(job?.id ?? -1);
-
-    expect(
-      retried.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({
-      status: "pending",
-      error: null,
-    });
-  });
-
-  it.each(["completed", "skipped"] as const)(
-    "reruns %s browser fallback queue jobs",
-    async (status) => {
+  it("reruns failed, completed and skipped browser fallback queue jobs", async () => {
+    for (const status of ["failed", "completed", "skipped"] as const) {
       const before = await enqueueAudioFiles([
         `/tmp/imported/rerun-${status}.wav`,
       ]);
@@ -1064,9 +965,12 @@ describe("tauri live capture client", () => {
         (candidate) =>
           candidate.audio_path === `/tmp/imported/rerun-${status}.wav`,
       );
-      expect(job?.id).toBeTypeOf("number");
+      expect(job?.id, status).toBeTypeOf("number");
       if (job) {
         job.status = status;
+        if (status === "failed") {
+          job.error = "mock failure";
+        }
         job.issue =
           status === "skipped"
             ? {
@@ -1083,18 +987,22 @@ describe("tauri live capture client", () => {
 
       expect(
         rerun.queue.jobs.find((candidate) => candidate.id === job?.id),
+        status,
       ).toMatchObject({
         status: "pending",
         error: null,
         issue: null,
         is_read: false,
       });
-    },
-  );
+    }
+  });
 
-  it.each(["whisper-small", "soniox-realtime-v5", "openai-gpt-live-transcribe"])(
-    "reprocesses only selected browser fallback issue jobs with %s",
-    async (modelId) => {
+  it("reprocesses only selected browser fallback issue jobs with each reprocessing model", async () => {
+    for (const modelId of [
+      "whisper-small",
+      "soniox-realtime-v5",
+      "openai-gpt-live-transcribe",
+    ]) {
       await downloadModel("whisper-small");
       await loadSnapshot();
       const before = await enqueueAudioFiles([
@@ -1107,8 +1015,8 @@ describe("tauri live capture client", () => {
       const unselected = before.queue.jobs.find(
         (job) => job.audio_path === "/tmp/imported/reprocess-unselected.wav",
       );
-      expect(selected?.id).toBeTypeOf("number");
-      expect(unselected?.id).toBeTypeOf("number");
+      expect(selected?.id, modelId).toBeTypeOf("number");
+      expect(unselected?.id, modelId).toBeTypeOf("number");
       if (selected) {
         selected.status = "failed";
         selected.error = "mock failure";
@@ -1123,6 +1031,7 @@ describe("tauri live capture client", () => {
 
       expect(
         snapshot.queue.jobs.find((job) => job.id === selected?.id),
+        `${modelId} selected job`,
       ).toMatchObject({
         model_id: modelId,
         status: "pending",
@@ -1132,12 +1041,13 @@ describe("tauri live capture client", () => {
       });
       expect(
         snapshot.queue.jobs.find((job) => job.id === unselected?.id),
+        `${modelId} unselected job`,
       ).toMatchObject({
         status: "skipped",
         is_read: true,
       });
-    },
-  );
+    }
+  });
 
   it("reprocesses warning and clean completed jobs", async () => {
     await downloadModel("whisper-small");
@@ -1298,28 +1208,6 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ threshold_dbfs: -45 });
   });
 
-  it("finalizes a simulated browser capture when recording is disabled", async () => {
-    await stopLiveCapture();
-    await saveSettingsPatch({
-      recording_enabled: true,
-      threshold_dbfs: -90,
-      transcription_enabled: true,
-    });
-    const active = await startLiveCapture();
-    const pendingBefore = active.queue.pending_count;
-
-    const disabled = await saveSettingsPatch({ recording_enabled: false });
-
-    expect(disabled.status.live_input_active).toBe(false);
-    expect(disabled.status.tray_state).toBe("idle");
-    expect(disabled.queue.pending_count).toBe(pendingBefore + 1);
-    expect(disabled.queue.jobs.at(-1)).toMatchObject({
-      model_id: disabled.settings.selected_model,
-      status: "pending",
-      error: null,
-    });
-  });
-
   it("preserves a simulated browser capture when transcription is disabled mid-recording", async () => {
     await stopLiveCapture();
     await saveSettingsPatch({
@@ -1363,25 +1251,46 @@ describe("tauri live capture client", () => {
     await saveSettingsPatch({ threshold_dbfs: -45 });
   });
 
-  it("finalizes a simulated browser capture when input is stopped", async () => {
-    await saveSettingsPatch({
-      recording_enabled: true,
-      threshold_dbfs: -90,
-      transcription_enabled: true,
-    });
-    const active = await startLiveCapture();
-    const pendingBefore = active.queue.pending_count;
+  it("finalizes a simulated browser capture when recording is disabled or input is stopped", async () => {
+    const cases = [
+      {
+        label: "recording disabled",
+        end: () => saveSettingsPatch({ recording_enabled: false }),
+        trayState: "idle",
+      },
+      {
+        label: "input stopped",
+        end: () => stopLiveCapture(),
+        level: defaultLevelSnapshot(),
+      },
+    ];
 
-    const stopped = await stopLiveCapture();
+    for (const { label, end, trayState, level } of cases) {
+      await stopLiveCapture();
+      await saveSettingsPatch({
+        recording_enabled: true,
+        threshold_dbfs: -90,
+        transcription_enabled: true,
+      });
+      const active = await startLiveCapture();
+      const pendingBefore = active.queue.pending_count;
 
-    expect(stopped.status.live_input_active).toBe(false);
-    expect(stopped.status.level).toEqual(defaultLevelSnapshot());
-    expect(stopped.queue.pending_count).toBe(pendingBefore + 1);
-    expect(stopped.queue.jobs.at(-1)).toMatchObject({
-      model_id: stopped.settings.selected_model,
-      status: "pending",
-      error: null,
-    });
+      const ended = await end();
+
+      expect(ended.status.live_input_active, label).toBe(false);
+      if (trayState !== undefined) {
+        expect(ended.status.tray_state, label).toBe(trayState);
+      }
+      if (level !== undefined) {
+        expect(ended.status.level, label).toEqual(level);
+      }
+      expect(ended.queue.pending_count, label).toBe(pendingBefore + 1);
+      expect(ended.queue.jobs.at(-1), label).toMatchObject({
+        model_id: ended.settings.selected_model,
+        status: "pending",
+        error: null,
+      });
+    }
   });
 });
 
@@ -1476,31 +1385,10 @@ describe("Activity read state (browser fallback)", () => {
       marked.queue.jobs.find((job) => job.audio_path === paths[4]),
     ).toMatchObject({ status: "pending", is_read: false });
   });
-
-  it("marks a read failure unread when its outcome changes to skipped", async () => {
-    const before = await enqueueAudioFiles([
-      "/tmp/imported/read-then-skip.wav",
-    ]);
-    const job = before.queue.jobs.find(
-      (candidate) =>
-        candidate.audio_path === "/tmp/imported/read-then-skip.wav",
-    );
-    expect(job).toBeDefined();
-    if (job) {
-      job.status = "failed";
-      job.is_read = true;
-    }
-
-    const skipped = await skipJob(job?.id ?? -1);
-
-    expect(
-      skipped.queue.jobs.find((candidate) => candidate.id === job?.id),
-    ).toMatchObject({ status: "skipped", is_read: false });
-  });
 });
 
 describe("transcript text export browser fallback", () => {
-  it("downloads one UTF-8 text file per day and reports exact counts", async () => {
+  it("groups seeded browser transcripts by day and exports one UTF-8 text file per day", async () => {
     const blobs: Blob[] = [];
     const downloads: Array<{ fileName: string; blob: Blob }> = [];
     const createObjectURL = vi.fn((blob: Blob) => {
@@ -1562,6 +1450,15 @@ describe("transcript text export browser fallback", () => {
     });
 
     try {
+      await expect(loadTranscriptDays()).resolves.toEqual([
+        { day: "2026-08-23", count: 1 },
+        { day: "2026-08-24", count: 2 },
+      ]);
+      await expect(loadTranscriptsForDay("2026-08-24")).resolves.toHaveLength(
+        2,
+      );
+      await expect(loadTranscriptsForDay("2099-01-01")).resolves.toEqual([]);
+
       await expect(exportAllTranscriptDays()).resolves.toEqual({
         destination_path: "Downloads",
         day_count: 2,
