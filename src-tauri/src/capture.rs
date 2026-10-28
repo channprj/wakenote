@@ -340,7 +340,11 @@ impl CaptureProcessor {
     }
 
     pub fn flush(&mut self) -> Result<(), RecorderError> {
-        if self.gate.is_recording() && !self.active_samples.is_empty() {
+        // A chunk that just rolled over may have no samples yet; committing it
+        // still reports it as discarded, so listeners waiting on it move on.
+        if self.gate.is_recording()
+            && (!self.active_samples.is_empty() || self.current_chunk_id.is_some())
+        {
             self.commit_active_chunk(self.elapsed_ms)?;
         }
         Ok(())

@@ -7936,22 +7936,27 @@ fn kick_transcription_worker(
                 outcome.status
             );
 
-            let cancelled = match backend_state.lock() {
-                Ok(backend) if backend.transcription_job_was_cancelled(outcome.id) => true,
-                Ok(mut backend) => {
-                    if let Err(error) = backend.finish_transcription_job(outcome.clone()) {
+            let (cancelled, committed) = match backend_state.lock() {
+                Ok(backend) if backend.transcription_job_was_cancelled(outcome.id) => (true, true),
+                Ok(mut backend) => match backend.finish_transcription_job(outcome.clone()) {
+                    Ok(_) => (false, true),
+                    Err(error) => {
                         log_error!(
                             "[wakenote] queue worker: failed to commit job {} outcome: {error}",
                             outcome.id
                         );
-                        active_jobs = active_jobs.saturating_sub(1);
-                        continue;
+                        (false, false)
                     }
-                    false
-                }
+                },
                 Err(_) => break,
             };
+            if !committed {
+                release_auto_type_chunk(&app, &backend_state, &audio_path);
+                active_jobs = active_jobs.saturating_sub(1);
+                continue;
+            }
             if cancelled {
+                release_auto_type_chunk(&app, &backend_state, &audio_path);
                 let chunk = wakenote::recorder::RecordedChunk::from_audio_path(audio_path.clone());
                 if let Err(error) = TranscriptionSidecar::discard_cancelled_output(&chunk) {
                     log_error!(
@@ -8308,6 +8313,34 @@ fn emit_outcome_to_frontend(
             }
         }
     }
+}
+
+/// A job that ends without a final, because it was cancelled or its outcome
+/// could not be saved, still releases its auto-type slot so later chunks type.
+fn release_auto_type_chunk(app: &AppHandle, backend_state: &BackendState, audio_path: &Path) {
+    let (chunk_id, capture_microphones) = backend_state
+        .lock()
+        .ok()
+        .map(|backend| {
+            (
+                backend
+                    .chunk_id_for_audio_path(audio_path)
+                    .or_else(|| chunk_id_from_metadata(audio_path)),
+                backend.settings().capture_microphones,
+            )
+        })
+        .unwrap_or_else(|| (chunk_id_from_metadata(audio_path), Vec::new()));
+    let Some(chunk_id) = chunk_id else {
+        return;
+    };
+    let source_identity = capture_source_identity_from_metadata(audio_path, &capture_microphones);
+    dispatch_auto_type(
+        app,
+        &source_identity.source_key,
+        source_identity.microphone_slot,
+        chunk_id,
+        AutoTypeUpdate::Failed,
+    );
 }
 
 fn chunk_id_from_metadata(audio_path: &Path) -> Option<u64> {

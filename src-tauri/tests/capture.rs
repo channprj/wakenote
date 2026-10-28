@@ -72,6 +72,77 @@ fn auto_type_bounds_microphone_chunks_and_snapshots_its_model_without_changing_a
     assert_eq!(metadata.max_chunk_ms, 30_000);
 }
 
+fn controller(save_root: &std::path::Path, settings: &AppSettings) -> CaptureController {
+    CaptureController::new(CaptureControllerConfig {
+        save_root: save_root.to_path_buf(),
+        settings: settings.clone(),
+        sample_rate: 10,
+        device_id: "mic".into(),
+        device_name: "Mic".into(),
+        used_fallback_device: false,
+        base_time: Utc.with_ymd_and_hms(2026, 9, 6, 0, 0, 0).unwrap(),
+        app_version: "test".into(),
+        source: ChunkSource::Microphone,
+        source_label: None,
+    })
+}
+
+#[test]
+fn final_only_auto_type_keeps_the_rollover_overlap_that_streaming_auto_type_drops() {
+    let mut configured = settings();
+    configured.attack_ms = 100;
+    configured.pre_roll_ms = 200;
+    configured.max_chunk_ms = 500;
+    configured.auto_transcript_input_enabled = true;
+    for (final_only, overlap) in [(false, 0), (true, 2)] {
+        let tmp = tempfile::tempdir().unwrap();
+        configured.auto_transcript_input_final_only = final_only;
+        let mut mic = controller(tmp.path(), &configured);
+        for index in 0..10 {
+            mic.process_samples(&[0.2 + index as f32 * 0.05], 100)
+                .unwrap();
+        }
+        let chunks = mic.completed_chunks();
+        assert_eq!(chunks.len(), 2, "final_only={final_only}");
+        let first = wav_samples(&chunks[0].audio_path);
+        let second = wav_samples(&chunks[1].audio_path);
+        assert_eq!(second.len(), 5 + overlap, "final_only={final_only}");
+        assert_eq!(&second[..overlap], &first[first.len() - overlap..]);
+    }
+}
+
+#[test]
+fn flushing_right_after_an_empty_rollover_discards_the_chunk_it_started() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut configured = settings();
+    configured.attack_ms = 100;
+    configured.pre_roll_ms = 0;
+    configured.max_chunk_ms = 500;
+    let mut mic = controller(tmp.path(), &configured);
+    let mut started = Vec::new();
+    for _ in 0..20 {
+        for event in mic.process_samples(&[0.8], 100).unwrap() {
+            if let CaptureControllerEvent::ChunkStarted { chunk_id, .. } = event {
+                started.push(chunk_id);
+            }
+        }
+        if !mic.completed_chunks().is_empty() {
+            break;
+        }
+    }
+    assert_eq!(mic.completed_chunks().len(), 1);
+    assert_eq!(
+        started.len(),
+        2,
+        "the rollover starts a second, still empty chunk"
+    );
+
+    let events = mic.flush().unwrap();
+    assert!(events.contains(&CaptureControllerEvent::ChunkDiscarded {
+        chunk_id: started[1],
+    }));
+}
+
 fn wav_sample_count(path: &std::path::Path) -> usize {
     let reader = hound::WavReader::open(path).expect("wav");
     reader.into_samples::<i16>().count()

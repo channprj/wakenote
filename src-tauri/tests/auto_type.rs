@@ -117,7 +117,7 @@ fn final_only_ignores_partials_and_types_each_final_once_in_chunk_order() {
     session.start(2).unwrap();
     let mut output = String::new();
 
-    // A streaming session would type "내일 회의는 세 " here and then stop at the revised final.
+    // A streaming session would type "내일 회의는 세 시에 " here and then stop at the revised final.
     session.partial(1, "내일 회의는 세 시에 해");
     session.partial(1, "내일 회의는 세 시에 해요 그리고");
     flush_into(&mut session, &mut output);

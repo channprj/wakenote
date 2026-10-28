@@ -3178,12 +3178,26 @@ fn backend_delete_model_rejects_active_selected_model() {
             "speed_score": 7,
             "accuracy_score": 6,
             "offline": true
+          },
+          {
+            "id": "other-local",
+            "display_name": "Other Local",
+            "engine": "whisper.cpp",
+            "provider_runtime": "whisper-rs",
+            "download_url": null,
+            "checksum_sha256": null,
+            "size_mb": 42,
+            "languages": ["en"],
+            "speed_score": 7,
+            "accuracy_score": 6,
+            "offline": true
           }
         ]"#,
     )
     .expect("registry json");
     let model_path = model_directory.join("ready-local.bin");
     std::fs::write(&model_path, b"ready model").expect("ready model");
+    std::fs::write(model_directory.join("other-local.bin"), b"other model").expect("other model");
     let mut backend = AppBackend::default();
     backend.update_settings(SettingsPatch {
         model_directory: Some(model_directory.to_string_lossy().to_string()),
@@ -3199,6 +3213,22 @@ fn backend_delete_model_rejects_active_selected_model() {
     assert_eq!(error, "cannot delete model ready-local while it is in use");
     assert!(model_path.exists());
     assert_eq!(backend.settings().selected_model, "ready-local");
+
+    // Final-only typing sets the auto-type model aside, but turning it off uses that model again.
+    backend.update_settings(SettingsPatch {
+        selected_model: Some("other-local".to_string()),
+        meeting_model: Some("other-local".to_string()),
+        auto_transcript_input_enabled: Some(true),
+        auto_transcript_input_model: Some("ready-local".to_string()),
+        auto_transcript_input_final_only: Some(true),
+        ..SettingsPatch::default()
+    });
+    let error = backend
+        .delete_model("ready-local")
+        .expect_err("the auto-type model should not be deleted while auto-type is on");
+    assert_eq!(backend.settings().selected_model, "other-local");
+    assert_eq!(error, "cannot delete model ready-local while it is in use");
+    assert!(model_path.exists());
 }
 
 #[test]

@@ -1143,6 +1143,8 @@ impl AppBackend {
     pub fn delete_model(&self, model_id: &str) -> Result<Vec<ModelDescriptor>, String> {
         if model_id == self.settings.selected_model
             || model_id == self.settings.effective_auto_type_model()
+            || (self.settings.auto_transcript_input_enabled
+                && model_id == self.settings.auto_transcript_input_model.trim())
             || model_id == self.settings.effective_dictation_model()
             || model_id == self.settings.effective_meeting_model()
         {

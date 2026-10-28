@@ -2421,6 +2421,22 @@ mod tests {
     }
 
     #[test]
+    fn final_only_auto_type_keeps_the_transcription_model() {
+        let mut settings = AppSettings {
+            auto_transcript_input_enabled: true,
+            auto_transcript_input_model: "whisper-small".into(),
+            selected_model: "whisper-medium".into(),
+            ..AppSettings::default()
+        };
+        assert!(settings.auto_type_streams_partials());
+        assert_eq!(settings.effective_auto_type_model(), "whisper-small");
+
+        settings.auto_transcript_input_final_only = true;
+        assert!(!settings.auto_type_streams_partials());
+        assert_eq!(settings.effective_auto_type_model(), "whisper-medium");
+    }
+
+    #[test]
     fn patch_sets_dictation_fields() {
         let mut settings = AppSettings::default();
         assert!(!settings.dictation_enabled);
