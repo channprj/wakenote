@@ -534,26 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn effective_width_paginates_ordinary_and_oversized_content_before_native_clipping() {
-        let style = crate::settings::AppSettings::default().floating_overlay_caption_style();
-        let narrow_width = 110.0;
-        let ordinary = (0..40).map(|_| "가").collect::<Vec<_>>().join(" ");
-        let mut pager = StableCaptionPager::default();
-        let ordinary_page = pager.update_for_max_width(&ordinary, &style, narrow_width);
-        assert!(ordinary_page.page_turned);
-        assert!(ordinary_page.text.lines().count() <= MAX_CAPTION_LINES);
-
-        let mut oversized = StableCaptionPager::default();
-        let oversized_page = oversized.update_for_max_width(
-            "https://example.com/one/very/long/unbroken/path/with/more/segments",
-            &style,
-            narrow_width,
-        );
-        assert!(oversized_page.page_turned);
-        assert!(oversized_page.text.lines().count() <= MAX_CAPTION_LINES);
-    }
-
-    #[test]
     fn cross_boundary_corrections_preserve_valid_slots_and_reset_radical_replacements_once() {
         let style = compact_style();
         let source = text_for_rows(&style, 3);

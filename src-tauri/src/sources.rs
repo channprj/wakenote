@@ -151,89 +151,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn matches_google_meet_titles() {
-        assert_eq!(
-            match_recognized_source("Meet - 주간회의").map(|s| s.id),
-            Some("meet")
-        );
-        assert_eq!(
-            match_recognized_source("팀 회의 - Google Meet").map(|s| s.id),
-            Some("meet")
-        );
-        assert_eq!(
-            match_recognized_source("Meet – 주간 회의").map(|s| s.id),
-            Some("meet")
-        );
-        assert_eq!(
-            match_recognized_source("Meet—Product review").map(|s| s.id),
-            Some("meet")
-        );
+    fn match_recognized_source_attributes_titles() {
+        for (title, expected) in [
+            // Google Meet tabs, including en/em dash separators.
+            ("Meet - 주간회의", Some("meet")),
+            ("팀 회의 - Google Meet", Some("meet")),
+            ("Meet – 주간 회의", Some("meet")),
+            ("Meet—Product review", Some("meet")),
+            // Google Meet floating call window.
+            ("meet.google.com", Some("meet")),
+            ("example.com", None),
+            ("Meeting notes", None),
+            // YouTube, case-insensitively.
+            ("Lo-fi beats - YouTube - Chrome", Some("youtube")),
+            ("YouTube Music", Some("youtube")),
+            // Zoom, case-insensitively.
+            ("Daily sync - Zoom Meeting", Some("zoom")),
+            ("Zoom Workplace", Some("zoom")),
+            // Unrelated or empty titles.
+            ("Slack | general", None),
+            // 한글 "유튜브"는 ASCII "youtube" 패턴과 매칭되지 않는다(오탐 방지).
+            ("내 유튜브 정리 메모", None),
+            ("", None),
+            ("   ", None),
+            // Meet wins over YouTube when a title mentions both.
+            ("Google Meet — shared YouTube tab", Some("meet")),
+        ] {
+            assert_eq!(
+                match_recognized_source(title).map(|source| source.id),
+                expected,
+                "{title:?}"
+            );
+        }
     }
 
     #[test]
-    fn matches_google_meet_floating_call_window() {
-        assert_eq!(
-            match_recognized_source("meet.google.com").map(|source| source.id),
-            Some("meet")
-        );
-        assert!(match_recognized_source("example.com").is_none());
-        assert!(match_recognized_source("Meeting notes").is_none());
-    }
-
-    #[test]
-    fn matches_youtube_titles_case_insensitively() {
-        assert_eq!(
-            match_recognized_source("Lo-fi beats - YouTube - Chrome").map(|s| s.id),
-            Some("youtube")
-        );
-        assert_eq!(
-            match_recognized_source("YouTube Music").map(|s| s.id),
-            Some("youtube")
-        );
-    }
-
-    #[test]
-    fn ignores_unrelated_or_empty_titles() {
-        assert!(match_recognized_source("Slack | general").is_none());
-        // 한글 "유튜브"는 ASCII "youtube" 패턴과 매칭되지 않는다(오탐 방지).
-        assert!(match_recognized_source("내 유튜브 정리 메모").is_none());
-        assert!(match_recognized_source("").is_none());
-        assert!(match_recognized_source("   ").is_none());
-    }
-
-    #[test]
-    fn meet_wins_over_youtube_on_overlap() {
-        assert_eq!(
-            match_recognized_source("Google Meet — shared YouTube tab").map(|s| s.id),
-            Some("meet")
-        );
-    }
-
-    #[test]
-    fn lookup_by_id_and_list_shape() {
-        assert!(recognized_source("meet").is_some());
-        assert!(recognized_source("youtube").is_some());
-        assert!(recognized_source("zoom").is_some());
+    fn builtin_sources_are_listed_and_auto_prompt_by_default() {
+        for id in ["meet", "youtube", "zoom"] {
+            assert!(recognized_source(id).expect(id).default_auto_prompt, "{id}");
+        }
         assert_eq!(recognized_sources().len(), 3);
-    }
-
-    #[test]
-    fn default_auto_prompt_builtin_sources_on() {
-        assert!(recognized_source("meet").unwrap().default_auto_prompt);
-        assert!(recognized_source("youtube").unwrap().default_auto_prompt);
-        assert!(recognized_source("zoom").unwrap().default_auto_prompt);
-    }
-
-    #[test]
-    fn matches_zoom_titles_case_insensitively() {
-        assert_eq!(
-            match_recognized_source("Daily sync - Zoom Meeting").map(|s| s.id),
-            Some("zoom")
-        );
-        assert_eq!(
-            match_recognized_source("Zoom Workplace").map(|s| s.id),
-            Some("zoom")
-        );
     }
 
     #[test]

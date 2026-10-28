@@ -498,34 +498,37 @@ mod tests {
     }
 
     #[test]
-    fn screen_recording_granted_state_is_not_requestable() {
-        let state = screen_recording_permission_state_for_status(PermissionGrantStatus::Granted);
-        assert_eq!(state.status, PermissionGrantStatus::Granted);
-        assert!(!state.can_request);
-        assert!(state.can_open_settings);
+    fn screen_recording_states_never_request_natively_and_always_open_settings() {
+        for status in [
+            PermissionGrantStatus::Granted,
+            PermissionGrantStatus::NotDetermined,
+            PermissionGrantStatus::Denied,
+        ] {
+            let state = screen_recording_permission_state_for_status(status);
+            assert_eq!(state.status, status);
+            assert!(!state.can_request, "{status:?}");
+            assert!(state.can_open_settings, "{status:?}");
+            if status == PermissionGrantStatus::NotDetermined {
+                assert_eq!(state.label, "Needs access");
+                assert!(state.detail.contains("System Settings"));
+            }
+        }
     }
 
     #[test]
-    fn screen_recording_not_determined_points_to_settings_without_native_request() {
-        let state =
-            screen_recording_permission_state_for_status(PermissionGrantStatus::NotDetermined);
-        assert_eq!(state.label, "Needs access");
-        assert!(state.detail.contains("System Settings"));
-        assert!(!state.can_request);
-        assert!(state.can_open_settings);
-    }
-
-    #[test]
-    fn screen_recording_denied_points_to_settings() {
-        let state = screen_recording_permission_state_for_status(PermissionGrantStatus::Denied);
-        assert!(!state.can_request);
-        assert!(state.can_open_settings);
-    }
-
-    #[test]
-    fn screen_recording_settings_link_targets_screen_capture_pane() {
-        let request = screen_recording_permission_settings_request();
-        assert!(request.target.contains("Privacy_ScreenCapture"));
+    fn settings_links_target_their_own_privacy_panes() {
+        for (request, pane) in [
+            (
+                screen_recording_permission_settings_request(),
+                "Privacy_ScreenCapture",
+            ),
+            (
+                accessibility_permission_settings_request(),
+                "Privacy_Accessibility",
+            ),
+        ] {
+            assert!(request.target.contains(pane), "{pane}");
+        }
     }
 
     #[test]
@@ -534,12 +537,6 @@ mod tests {
         assert!(state.detail.contains("Dictation"));
         assert!(state.can_request);
         assert!(state.can_open_settings);
-    }
-
-    #[test]
-    fn accessibility_settings_link_targets_accessibility_pane() {
-        let request = accessibility_permission_settings_request();
-        assert!(request.target.contains("Privacy_Accessibility"));
     }
 
     #[cfg(target_os = "macos")]

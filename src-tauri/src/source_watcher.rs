@@ -243,48 +243,78 @@ mod tests {
     }
 
     #[test]
-    fn detects_when_idle_and_a_meet_window_appears() {
-        let windows = [window("Weekly sync - Google Meet", "Google Chrome", 42)];
-        match compute_source_transition(None, &windows, &sources()) {
-            SourceTransition::Detected(d) => {
-                assert_eq!(d.source_id, "meet");
-                assert_eq!(d.app_name, "Google Chrome");
-                assert_eq!(d.pid, 42);
-            }
-            other => panic!("expected Detected, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn detects_meet_floating_window_beside_unrelated_chrome_tab() {
-        let windows = [
-            window("Weekly plan - Confluence", "Google Chrome", 42),
-            window("meet.google.com", "Google Chrome", 42),
-        ];
-
-        match compute_source_transition(None, &windows, &sources()) {
-            SourceTransition::Detected(detected) => {
-                assert_eq!(detected.source_id, "meet");
-                assert_eq!(detected.app_name, "Google Chrome");
-                assert_eq!(detected.pid, 42);
-            }
-            other => panic!("expected Detected, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn detects_untitled_google_meet_app_window_by_owning_application() {
-        let windows = [window("", "Google Meet", 84)];
-
-        assert!(matches!(
-            compute_source_transition(None, &windows, &sources()),
+    fn idle_detection_matches_titles_app_names_and_custom_sources() {
+        let detected = |source_id: &str, label: &str, app_name: &str, pid: i32| {
             SourceTransition::Detected(DetectedSource {
-                source_id,
-                app_name,
-                pid: 84,
-                ..
-            }) if source_id == "meet" && app_name == "Google Meet"
-        ));
+                source_id: source_id.into(),
+                label: label.into(),
+                app_name: app_name.into(),
+                pid,
+            })
+        };
+        let custom = |id: &str, label: &str, description: &str, pattern: &str| {
+            vec![SourceDefinition {
+                id: id.into(),
+                label: label.into(),
+                description: description.into(),
+                title_patterns: vec![pattern.into()],
+                default_auto_prompt: true,
+                custom: true,
+            }]
+        };
+
+        for (label, sources, windows, expected) in [
+            (
+                "meet window title",
+                sources(),
+                vec![window("Weekly sync - Google Meet", "Google Chrome", 42)],
+                detected("meet", "Google Meet", "Google Chrome", 42),
+            ),
+            (
+                "meet floating window beside an unrelated chrome tab",
+                sources(),
+                vec![
+                    window("Weekly plan - Confluence", "Google Chrome", 42),
+                    window("meet.google.com", "Google Chrome", 42),
+                ],
+                detected("meet", "Google Meet", "Google Chrome", 42),
+            ),
+            (
+                "untitled google meet app window by owning application",
+                sources(),
+                vec![window("", "Google Meet", 84)],
+                detected("meet", "Google Meet", "Google Meet", 84),
+            ),
+            (
+                "custom source by title",
+                custom(
+                    "zoom",
+                    "Zoom",
+                    "Zoom desktop app or windows titled Zoom Meeting",
+                    "zoom meeting",
+                ),
+                vec![window("Daily sync - Zoom Meeting", "zoom.us", 77)],
+                detected("zoom", "Zoom", "zoom.us", 77),
+            ),
+            (
+                "custom source by app name when the title does not match",
+                custom("spotify", "Spotify", "Spotify", "spotify"),
+                vec![window("Song Title - Artist", "Spotify", 5819)],
+                detected("spotify", "Spotify", "Spotify", 5819),
+            ),
+            (
+                "unrecognized windows are ignored",
+                sources(),
+                vec![window("Slack | general", "Slack", 7)],
+                SourceTransition::Unchanged,
+            ),
+        ] {
+            assert_eq!(
+                compute_source_transition(None, &windows, &sources),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -387,62 +417,45 @@ mod tests {
     }
 
     #[test]
-    fn idle_ignores_unrecognized_windows() {
-        let windows = [window("Slack | general", "Slack", 7)];
-        assert_eq!(
-            compute_source_transition(None, &windows, &sources()),
-            SourceTransition::Unchanged
-        );
-    }
-
-    #[test]
-    fn first_matching_window_wins() {
+    fn idle_candidate_priority_follows_auto_capture_then_window_order() {
         let windows = [
             window("Lo-fi - YouTube", "Google Chrome", 10),
             window("Standup - Google Meet", "Google Chrome", 10),
         ];
-        match compute_source_transition(None, &windows, &sources()) {
-            SourceTransition::Detected(d) => assert_eq!(d.source_id, "youtube"),
-            other => panic!("expected Detected(youtube), got {other:?}"),
+        let meet_only: &[&str] = &["meet"];
+        let none: &[&str] = &[];
+
+        for (label, auto_capture_ids, expected_id) in [
+            ("default settings keep window order", None, "youtube"),
+            (
+                "auto-capture source beats an earlier disabled source",
+                Some(meet_only),
+                "meet",
+            ),
+            (
+                "first window wins when no source auto-captures",
+                Some(none),
+                "youtube",
+            ),
+        ] {
+            let mut sources = sources();
+            if let Some(auto_capture_ids) = auto_capture_ids {
+                for source in &mut sources {
+                    source.default_auto_prompt = auto_capture_ids.contains(&source.id.as_str());
+                }
+            }
+
+            match compute_source_transition(None, &windows, &sources) {
+                SourceTransition::Detected(detected) => {
+                    assert_eq!(detected.source_id, expected_id, "{label}")
+                }
+                other => panic!("{label}: expected Detected({expected_id}), got {other:?}"),
+            }
         }
     }
 
     #[test]
-    fn idle_prefers_auto_capture_enabled_source_over_earlier_disabled_source() {
-        let mut sources = sources();
-        for source in &mut sources {
-            source.default_auto_prompt = source.id == "meet";
-        }
-        let windows = [
-            window("Lo-fi - YouTube", "Google Chrome", 10),
-            window("Standup - Google Meet", "Google Chrome", 10),
-        ];
-
-        match compute_source_transition(None, &windows, &sources) {
-            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "meet"),
-            other => panic!("expected Detected(meet), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn idle_falls_back_to_first_source_when_none_auto_capture() {
-        let mut sources = sources();
-        for source in &mut sources {
-            source.default_auto_prompt = false;
-        }
-        let windows = [
-            window("Lo-fi - YouTube", "Google Chrome", 10),
-            window("Standup - Google Meet", "Google Chrome", 10),
-        ];
-
-        match compute_source_transition(None, &windows, &sources) {
-            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "youtube"),
-            other => panic!("expected Detected(youtube), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn active_auto_disabled_source_yields_to_auto_capture_candidate() {
+    fn active_manual_source_yields_to_auto_candidate_only_when_preemption_is_allowed() {
         let active = DetectedSource {
             source_id: "youtube".into(),
             label: "YouTube".into(),
@@ -458,50 +471,33 @@ mod tests {
             window("Standup - Google Meet", "Google Chrome", 10),
         ];
 
-        match compute_source_transition_with_missing_grace_and_auto_preemption(
-            Some(&active),
-            &windows,
-            &sources,
-            0,
-            SOURCE_MISSING_GRACE_POLLS,
-            true,
-        )
-        .0
-        {
-            SourceTransition::Detected(detected) => assert_eq!(detected.source_id, "meet"),
-            other => panic!("expected Detected(meet), got {other:?}"),
+        for (allow_auto_preemption, expected) in [
+            (
+                true,
+                SourceTransition::Detected(DetectedSource {
+                    source_id: "meet".into(),
+                    label: "Google Meet".into(),
+                    app_name: "Google Chrome".into(),
+                    pid: 10,
+                }),
+            ),
+            // A manual capture stays sticky when preemption is not allowed.
+            (false, SourceTransition::Unchanged),
+        ] {
+            assert_eq!(
+                compute_source_transition_with_missing_grace_and_auto_preemption(
+                    Some(&active),
+                    &windows,
+                    &sources,
+                    0,
+                    SOURCE_MISSING_GRACE_POLLS,
+                    allow_auto_preemption,
+                )
+                .0,
+                expected,
+                "allow_auto_preemption={allow_auto_preemption}"
+            );
         }
-    }
-
-    #[test]
-    fn active_manual_capture_stays_sticky_when_an_auto_candidate_appears() {
-        let active = DetectedSource {
-            source_id: "youtube".into(),
-            label: "YouTube".into(),
-            app_name: "Google Chrome".into(),
-            pid: 10,
-        };
-        let mut sources = sources();
-        for source in &mut sources {
-            source.default_auto_prompt = source.id == "meet";
-        }
-        let windows = [
-            window("Lo-fi - YouTube", "Google Chrome", 10),
-            window("Standup - Google Meet", "Google Chrome", 10),
-        ];
-
-        assert_eq!(
-            compute_source_transition_with_missing_grace_and_auto_preemption(
-                Some(&active),
-                &windows,
-                &sources,
-                0,
-                SOURCE_MISSING_GRACE_POLLS,
-                false,
-            )
-            .0,
-            SourceTransition::Unchanged
-        );
     }
 
     #[test]
@@ -563,49 +559,5 @@ mod tests {
             true,
             true
         ));
-    }
-
-    #[test]
-    fn detects_custom_source_when_definition_is_provided() {
-        let sources = vec![crate::sources::SourceDefinition {
-            id: "zoom".into(),
-            label: "Zoom".into(),
-            description: "Zoom desktop app or windows titled Zoom Meeting".into(),
-            title_patterns: vec!["zoom meeting".into()],
-            default_auto_prompt: true,
-            custom: true,
-        }];
-        let windows = [window("Daily sync - Zoom Meeting", "zoom.us", 77)];
-
-        match compute_source_transition(None, &windows, &sources) {
-            SourceTransition::Detected(detected) => {
-                assert_eq!(detected.source_id, "zoom");
-                assert_eq!(detected.label, "Zoom");
-                assert_eq!(detected.pid, 77);
-            }
-            other => panic!("expected Detected(zoom), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn detects_custom_source_by_app_name_when_title_does_not_match() {
-        let sources = vec![crate::sources::SourceDefinition {
-            id: "spotify".into(),
-            label: "Spotify".into(),
-            description: "Spotify".into(),
-            title_patterns: vec!["spotify".into()],
-            default_auto_prompt: true,
-            custom: true,
-        }];
-        let windows = [window("Song Title - Artist", "Spotify", 5819)];
-
-        match compute_source_transition(None, &windows, &sources) {
-            SourceTransition::Detected(detected) => {
-                assert_eq!(detected.source_id, "spotify");
-                assert_eq!(detected.label, "Spotify");
-                assert_eq!(detected.pid, 5819);
-            }
-            other => panic!("expected Detected(spotify), got {other:?}"),
-        }
     }
 }

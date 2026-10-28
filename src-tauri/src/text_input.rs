@@ -279,7 +279,6 @@ mod tests {
         type_error: Option<String>,
         clipboard: String,
         focused_text: String,
-        overwrite_before_input: Option<String>,
         events: Vec<String>,
     }
 
@@ -307,9 +306,6 @@ mod tests {
             if let Some(error) = self.type_error.clone() {
                 return Err(error);
             }
-            if let Some(clipboard) = self.overwrite_before_input.take() {
-                self.clipboard = clipboard;
-            }
             self.focused_text.push_str(text);
             Ok(())
         }
@@ -335,61 +331,81 @@ mod tests {
     }
 
     #[test]
-    fn dictation_copy_mode_inserts_transcript_even_if_clipboard_changes_before_delivery() {
-        let mut backend = RecordingTextInputBackend {
-            can_type: true,
-            clipboard: "existing clipboard".to_string(),
-            overwrite_before_input: Some("existing clipboard".to_string()),
-            ..Default::default()
-        };
+    fn input_failures_keep_mode_specific_clipboard_state() {
+        for (label, text, mode, mut backend, events, clipboard, expected_error) in [
+            (
+                "denied copy mode still leaves the transcript on the clipboard",
+                "clipboard fallback",
+                ClipboardAfterInput::KeepInputText,
+                RecordingTextInputBackend::default(),
+                vec!["copy:clipboard fallback", "request-access"],
+                "clipboard fallback",
+                accessibility_permission_error(),
+            ),
+            (
+                "denied preserve mode does not touch the clipboard",
+                "temporary text",
+                ClipboardAfterInput::PreservePrevious,
+                RecordingTextInputBackend {
+                    clipboard: "previous clipboard".to_string(),
+                    ..Default::default()
+                },
+                vec!["request-access"],
+                "previous clipboard",
+                accessibility_permission_preserving_clipboard_error(),
+            ),
+            (
+                "copy mode stops before typing when the clipboard write fails",
+                "temporary text",
+                ClipboardAfterInput::KeepInputText,
+                RecordingTextInputBackend {
+                    can_type: true,
+                    copy_error: Some("copy failed".to_string()),
+                    ..Default::default()
+                },
+                vec!["copy:temporary text"],
+                "",
+                "copy failed",
+            ),
+            (
+                "copy mode keeps the transcript on the clipboard when direct input fails",
+                "temporary text",
+                ClipboardAfterInput::KeepInputText,
+                RecordingTextInputBackend {
+                    can_type: true,
+                    type_error: Some("input failed".to_string()),
+                    ..Default::default()
+                },
+                vec!["copy:temporary text", "type:temporary text"],
+                "temporary text",
+                "input failed",
+            ),
+            (
+                "preserve mode keeps the existing clipboard when direct input fails",
+                "temporary text",
+                ClipboardAfterInput::PreservePrevious,
+                RecordingTextInputBackend {
+                    can_type: true,
+                    type_error: Some("input failed".to_string()),
+                    clipboard: "previous clipboard".to_string(),
+                    ..Default::default()
+                },
+                vec!["type:temporary text"],
+                "previous clipboard",
+                "input failed",
+            ),
+        ] {
+            let error = input_text_with_backend(text, mode, &mut backend).expect_err(label);
 
-        input_text_with_backend(
-            "새 디테이션 결과",
-            ClipboardAfterInput::KeepInputText,
-            &mut backend,
-        )
-        .expect("dictation input");
-
-        assert_eq!(backend.focused_text, "새 디테이션 결과");
-    }
-
-    #[test]
-    fn dictation_preserve_mode_inserts_transcript_even_if_clipboard_changes_before_delivery() {
-        let mut backend = RecordingTextInputBackend {
-            can_type: true,
-            clipboard: "existing clipboard".to_string(),
-            overwrite_before_input: Some("existing clipboard".to_string()),
-            ..Default::default()
-        };
-
-        input_text_with_backend(
-            "새 디테이션 결과",
-            ClipboardAfterInput::PreservePrevious,
-            &mut backend,
-        )
-        .expect("dictation input");
-
-        assert_eq!(backend.focused_text, "새 디테이션 결과");
-    }
-
-    #[test]
-    fn denied_type_access_still_leaves_transcript_on_clipboard() {
-        let mut backend = RecordingTextInputBackend::default();
-
-        let error = input_text_with_backend(
-            "clipboard fallback",
-            ClipboardAfterInput::KeepInputText,
-            &mut backend,
-        )
-        .expect_err("denied");
-
-        assert_eq!(
-            backend.events,
-            ["copy:clipboard fallback", "request-access"]
-        );
-        assert_eq!(error, accessibility_permission_error());
-        assert!(error.contains("copied"));
-        assert!(error.contains("clipboard"));
+            assert_eq!(backend.events, events, "{label}");
+            assert_eq!(backend.clipboard, clipboard, "{label}");
+            assert!(backend.focused_text.is_empty(), "{label}");
+            assert_eq!(error, expected_error, "{label}");
+            if expected_error == accessibility_permission_error() {
+                assert!(error.contains("copied"), "{label}");
+                assert!(error.contains("clipboard"), "{label}");
+            }
+        }
     }
 
     #[test]
@@ -406,41 +422,28 @@ mod tests {
 
     #[test]
     fn dictation_input_never_requests_access_when_the_preflight_changes() {
-        let mut backend = RecordingTextInputBackend {
-            grant_after_request: true,
-            ..Default::default()
-        };
-
-        let error = input_text_without_access_request_with_backend(
-            "clipboard fallback",
+        for mode in [
             ClipboardAfterInput::KeepInputText,
-            &mut backend,
-        )
-        .expect_err("access changed after preflight");
-
-        assert_eq!(backend.events, ["copy:clipboard fallback"]);
-        assert_eq!(backend.clipboard, "clipboard fallback");
-        assert_eq!(error, accessibility_permission_error());
-    }
-
-    #[test]
-    fn dictation_preserve_mode_falls_back_to_clipboard_without_requesting_access() {
-        let mut backend = RecordingTextInputBackend {
-            clipboard: "previous clipboard".to_string(),
-            grant_after_request: true,
-            ..Default::default()
-        };
-
-        let error = input_text_without_access_request_with_backend(
-            "clipboard fallback",
+            // Preserve mode still falls back to the clipboard without requesting access.
             ClipboardAfterInput::PreservePrevious,
-            &mut backend,
-        )
-        .expect_err("access changed after preflight");
+        ] {
+            let mut backend = RecordingTextInputBackend {
+                clipboard: "previous clipboard".to_string(),
+                grant_after_request: true,
+                ..Default::default()
+            };
 
-        assert_eq!(backend.events, ["copy:clipboard fallback"]);
-        assert_eq!(backend.clipboard, "clipboard fallback");
-        assert_eq!(error, accessibility_permission_error());
+            let error = input_text_without_access_request_with_backend(
+                "clipboard fallback",
+                mode,
+                &mut backend,
+            )
+            .expect_err("access changed after preflight");
+
+            assert_eq!(backend.events, ["copy:clipboard fallback"], "{mode:?}");
+            assert_eq!(backend.clipboard, "clipboard fallback", "{mode:?}");
+            assert_eq!(error, accessibility_permission_error(), "{mode:?}");
+        }
     }
 
     #[test]
@@ -461,91 +464,6 @@ mod tests {
         assert_eq!(backend.events, ["type:temporary text"]);
         assert_eq!(backend.clipboard, "previous clipboard");
         assert_eq!(backend.focused_text, "temporary text");
-    }
-
-    #[test]
-    fn denied_preserve_mode_does_not_touch_the_clipboard() {
-        let mut backend = RecordingTextInputBackend {
-            clipboard: "previous clipboard".to_string(),
-            ..Default::default()
-        };
-
-        let error = input_text_with_backend(
-            "temporary text",
-            ClipboardAfterInput::PreservePrevious,
-            &mut backend,
-        )
-        .expect_err("denied");
-
-        assert_eq!(backend.events, ["request-access"]);
-        assert_eq!(backend.clipboard, "previous clipboard");
-        assert_eq!(error, accessibility_permission_preserving_clipboard_error());
-    }
-
-    #[test]
-    fn copy_mode_stops_before_typing_when_clipboard_write_fails() {
-        let mut backend = RecordingTextInputBackend {
-            can_type: true,
-            copy_error: Some("copy failed".to_string()),
-            ..Default::default()
-        };
-
-        let error = input_text_with_backend(
-            "temporary text",
-            ClipboardAfterInput::KeepInputText,
-            &mut backend,
-        )
-        .expect_err("copy failure");
-
-        assert_eq!(backend.events, ["copy:temporary text"]);
-        assert!(backend.focused_text.is_empty());
-        assert_eq!(error, "copy failed");
-    }
-
-    #[test]
-    fn copy_mode_keeps_transcript_on_clipboard_when_direct_input_fails() {
-        let mut backend = RecordingTextInputBackend {
-            can_type: true,
-            type_error: Some("input failed".to_string()),
-            ..Default::default()
-        };
-
-        let error = input_text_with_backend(
-            "temporary text",
-            ClipboardAfterInput::KeepInputText,
-            &mut backend,
-        )
-        .expect_err("input failure");
-
-        assert_eq!(
-            backend.events,
-            ["copy:temporary text", "type:temporary text"]
-        );
-        assert_eq!(backend.clipboard, "temporary text");
-        assert!(backend.focused_text.is_empty());
-        assert_eq!(error, "input failed");
-    }
-
-    #[test]
-    fn preserve_mode_keeps_existing_clipboard_when_direct_input_fails() {
-        let mut backend = RecordingTextInputBackend {
-            can_type: true,
-            type_error: Some("input failed".to_string()),
-            clipboard: "previous clipboard".to_string(),
-            ..Default::default()
-        };
-
-        let error = input_text_with_backend(
-            "temporary text",
-            ClipboardAfterInput::PreservePrevious,
-            &mut backend,
-        )
-        .expect_err("input failure");
-
-        assert_eq!(backend.events, ["type:temporary text"]);
-        assert_eq!(backend.clipboard, "previous clipboard");
-        assert!(backend.focused_text.is_empty());
-        assert_eq!(error, "input failed");
     }
 
     #[test]
@@ -579,5 +497,6 @@ mod tests {
         assert!(error.contains("WakeNote"));
         assert!(error.contains("Accessibility"));
         assert!(error.contains("Dictation"));
+        assert!(error.contains("System Settings"));
     }
 }

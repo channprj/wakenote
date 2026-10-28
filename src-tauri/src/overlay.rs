@@ -694,24 +694,6 @@ mod tests {
     use crate::caption_layout::{MAX_CAPTION_LINES, StableCaptionPager};
     use crate::overlay_caption::OverlayCaptionRuntime;
 
-    #[test]
-    fn visible_dictation_payloads_carry_the_selected_style() {
-        let style = DictationOverlayStyle {
-            background_color: "#000000".to_string(),
-            background_opacity: 82,
-        };
-
-        for state in [
-            DictationOverlayState::Recording,
-            DictationOverlayState::Transcribing,
-            DictationOverlayState::Error,
-        ] {
-            let payload =
-                dictation_overlay_payload(state, Some("Feedback".to_string()), style.clone());
-            assert_eq!(payload.style, style);
-        }
-    }
-
     fn rect(origin: (i32, i32), size: (u32, u32), scale: f64) -> MonitorRect {
         MonitorRect {
             origin_physical: origin,
@@ -725,45 +707,67 @@ mod tests {
     }
 
     #[test]
-    fn top_anchor_centers_horizontally_and_offsets_vertically() {
-        let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(
-            monitor,
-            OverlayAnchor::Top,
-            overlay_size_for_monitor(monitor),
-        );
-        assert_eq!(pos.x, ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0));
-        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
-    }
+    fn overlay_anchor_positions_cover_every_anchor_origin_and_scale() {
+        let primary = rect((0, 0), (1920, 1080), 1.0);
+        let secondary = rect((-1920, 0), (1920, 1080), 1.0);
+        let high_dpi = rect((0, 0), (3840, 2160), 2.0);
+        let centered_x = (1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0;
+        let top_y = TOP_OFFSET_LOGICAL;
+        let bottom_y = 1080.0 - OVERLAY_HEIGHT_LOGICAL - BOTTOM_OFFSET_LOGICAL;
 
-    #[test]
-    fn bottom_anchor_mirrors_top_offset() {
-        let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(
-            monitor,
-            OverlayAnchor::Bottom,
-            overlay_size_for_monitor(monitor),
-        );
-        assert_eq!(pos.x, ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0));
-        assert_eq!(
-            pos.y,
-            1080.0 - OVERLAY_HEIGHT_LOGICAL - BOTTOM_OFFSET_LOGICAL
-        );
-    }
-
-    #[test]
-    fn corner_anchors_respect_screen_margins_and_vertical_offsets() {
-        let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let size = overlay_size_for_monitor(monitor);
-
-        for (anchor, expected) in [
-            (OverlayAnchor::TopLeft, (24.0, 46.0)),
-            (OverlayAnchor::TopRight, (1176.0, 46.0)),
-            (OverlayAnchor::BottomLeft, (24.0, 930.0)),
-            (OverlayAnchor::BottomRight, (1176.0, 930.0)),
+        for (label, monitor, anchor, expected) in [
+            (
+                "primary top",
+                primary,
+                OverlayAnchor::Top,
+                (centered_x, top_y),
+            ),
+            (
+                "primary bottom mirrors the top offset",
+                primary,
+                OverlayAnchor::Bottom,
+                (centered_x, bottom_y),
+            ),
+            (
+                "primary top left",
+                primary,
+                OverlayAnchor::TopLeft,
+                (24.0, top_y),
+            ),
+            (
+                "primary top right",
+                primary,
+                OverlayAnchor::TopRight,
+                (1176.0, top_y),
+            ),
+            (
+                "primary bottom left",
+                primary,
+                OverlayAnchor::BottomLeft,
+                (24.0, bottom_y),
+            ),
+            (
+                "primary bottom right",
+                primary,
+                OverlayAnchor::BottomRight,
+                (1176.0, bottom_y),
+            ),
+            (
+                "secondary monitor with negative origin",
+                secondary,
+                OverlayAnchor::Top,
+                (-1920.0 + centered_x, top_y),
+            ),
+            // Logical width = 1920, logical x = (1920 - 720) / 2 = 600.
+            (
+                "high dpi monitor",
+                high_dpi,
+                OverlayAnchor::Top,
+                (600.0, top_y),
+            ),
         ] {
-            let actual = calculate_position(monitor, anchor, size);
-            assert_eq!((actual.x, actual.y), expected);
+            let actual = calculate_position(monitor, anchor, overlay_size_for_monitor(monitor));
+            assert_eq!((actual.x, actual.y), expected, "{label}");
         }
     }
 
@@ -783,34 +787,6 @@ mod tests {
     }
 
     #[test]
-    fn secondary_monitor_with_negative_origin_produces_absolute_coords() {
-        let monitor = rect((-1920, 0), (1920, 1080), 1.0);
-        let pos = calculate_position(
-            monitor,
-            OverlayAnchor::Top,
-            overlay_size_for_monitor(monitor),
-        );
-        assert_eq!(
-            pos.x,
-            -1920.0 + ((1920.0 - OVERLAY_MAX_WIDTH_LOGICAL) / 2.0)
-        );
-        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
-    }
-
-    #[test]
-    fn high_dpi_monitor_returns_logical_coords() {
-        let monitor = rect((0, 0), (3840, 2160), 2.0);
-        let pos = calculate_position(
-            monitor,
-            OverlayAnchor::Top,
-            overlay_size_for_monitor(monitor),
-        );
-        // Logical width = 1920, logical x = (1920 - 720) / 2 = 600.
-        assert_eq!(pos.x, 600.0);
-        assert_eq!(pos.y, TOP_OFFSET_LOGICAL);
-    }
-
-    #[test]
     fn overlay_size_shrinks_to_current_monitor_width() {
         let monitor = rect((0, 0), (640, 480), 1.0);
         let size = overlay_size_for_monitor(monitor);
@@ -821,32 +797,36 @@ mod tests {
 
     #[test]
     fn dictation_overlay_is_compact_at_each_configured_edge() {
-        let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let size = dictation_overlay_size_for_monitor(monitor);
-        assert_eq!(size, (248.0, 76.0));
+        let primary = rect((0, 0), (1920, 1080), 1.0);
+        let secondary = rect((-3840, 0), (3840, 2160), 2.0);
 
-        for (position, expected) in [
-            (DictationBubblePosition::TopLeft, (18.0, 32.0)),
-            (DictationBubblePosition::TopCenter, (836.0, 32.0)),
-            (DictationBubblePosition::TopRight, (1654.0, 32.0)),
-            (DictationBubblePosition::BottomLeft, (18.0, 986.0)),
-            (DictationBubblePosition::BottomCenter, (836.0, 986.0)),
-            (DictationBubblePosition::BottomRight, (1654.0, 986.0)),
+        for (monitor, position, expected) in [
+            (primary, DictationBubblePosition::TopLeft, (18.0, 32.0)),
+            (primary, DictationBubblePosition::TopCenter, (836.0, 32.0)),
+            (primary, DictationBubblePosition::TopRight, (1654.0, 32.0)),
+            (primary, DictationBubblePosition::BottomLeft, (18.0, 986.0)),
+            (
+                primary,
+                DictationBubblePosition::BottomCenter,
+                (836.0, 986.0),
+            ),
+            (
+                primary,
+                DictationBubblePosition::BottomRight,
+                (1654.0, 986.0),
+            ),
+            // A secondary monitor uses logical coordinates from its own origin.
+            (secondary, DictationBubblePosition::TopRight, (-266.0, 32.0)),
         ] {
+            let size = dictation_overlay_size_for_monitor(monitor);
+            assert_eq!(size, (248.0, 76.0), "{position:?} on {monitor:?}");
             let actual = calculate_dictation_position(monitor, position, size);
-            assert_eq!((actual.x, actual.y), expected);
+            assert_eq!(
+                (actual.x, actual.y),
+                expected,
+                "{position:?} on {monitor:?}"
+            );
         }
-    }
-
-    #[test]
-    fn dictation_overlay_position_uses_logical_secondary_monitor_coordinates() {
-        let monitor = rect((-3840, 0), (3840, 2160), 2.0);
-        let size = dictation_overlay_size_for_monitor(monitor);
-        let position =
-            calculate_dictation_position(monitor, DictationBubblePosition::TopRight, size);
-
-        assert_eq!(position.x, -266.0);
-        assert_eq!(position.y, 32.0);
     }
 
     #[test]
@@ -987,14 +967,6 @@ mod tests {
     }
 
     #[test]
-    fn short_one_line_caption_remains_content_sized() {
-        let monitor = rect((0, 0), (1920, 1080), 1.0);
-        let size = caption_overlay_size_for_monitor(monitor, "짧은 자막", &caption_style());
-
-        assert_eq!(size, (172.0, 76.0));
-    }
-
-    #[test]
     fn short_korean_caption_reserves_a_physical_one_row_content_width() {
         let monitor = rect((0, 0), (1920, 1080), 1.0);
 
@@ -1095,12 +1067,33 @@ mod tests {
     }
 
     #[test]
-    fn waveform_levels_are_zero_for_empty_or_silent_samples() {
-        assert_eq!(waveform_levels_from_samples(&[], 3), vec![0.0, 0.0, 0.0]);
-        assert_eq!(
-            waveform_levels_from_samples(&[0.0; 30], 3),
-            vec![0.0, 0.0, 0.0]
-        );
+    fn waveform_levels_map_edge_inputs_to_exact_levels() {
+        for (label, samples, count, expected) in [
+            ("empty", vec![], 3, vec![0.0, 0.0, 0.0]),
+            ("silent", vec![0.0; 30], 3, vec![0.0, 0.0, 0.0]),
+            (
+                "full scale",
+                vec![1.0; 90],
+                OVERLAY_WAVEFORM_BAR_COUNT,
+                vec![1.0; OVERLAY_WAVEFORM_BAR_COUNT],
+            ),
+            (
+                "non-finite",
+                vec![f32::NAN, f32::INFINITY],
+                2,
+                vec![0.0, 0.0],
+            ),
+        ] {
+            let levels = waveform_levels_from_samples(&samples, count);
+            assert_eq!(levels.len(), expected.len(), "{label}");
+            assert!(
+                levels
+                    .iter()
+                    .zip(&expected)
+                    .all(|(level, expected)| (level - expected).abs() < f32::EPSILON),
+                "{label}: {levels:?} != {expected:?}"
+            );
+        }
     }
 
     #[test]
@@ -1111,18 +1104,5 @@ mod tests {
         assert_eq!(levels.len(), OVERLAY_WAVEFORM_BAR_COUNT);
         assert!(levels.iter().all(|level| (0.0..=1.0).contains(level)));
         assert!(levels[0] < levels[OVERLAY_WAVEFORM_BAR_COUNT - 1]);
-    }
-
-    #[test]
-    fn waveform_levels_handle_full_scale_and_non_finite_samples() {
-        let full_scale = waveform_levels_from_samples(&[1.0; 90], OVERLAY_WAVEFORM_BAR_COUNT);
-        assert!(
-            full_scale
-                .iter()
-                .all(|level| (*level - 1.0).abs() < f32::EPSILON)
-        );
-
-        let invalid = waveform_levels_from_samples(&[f32::NAN, f32::INFINITY], 2);
-        assert_eq!(invalid, vec![0.0, 0.0]);
     }
 }

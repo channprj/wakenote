@@ -196,38 +196,18 @@ mod tests {
     }
 
     #[test]
-    fn source_slug_suffixes_the_stem() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("meet"))
-            .expect("target");
-        let name = target.audio_path.file_name().unwrap().to_string_lossy();
-        let expected = ts()
-            .with_timezone(&Local)
-            .format("%y%m%d-%H%M%S-meet.m4a")
-            .to_string();
-        assert_eq!(name, expected);
-    }
-
-    #[test]
-    fn source_slug_suffix_is_normalized_for_human_labels() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some("Spotify"))
-            .expect("target");
-        let name = target.audio_path.file_name().unwrap().to_string_lossy();
-        assert!(name.ends_with("-spotify.m4a"), "got {name}");
-    }
-
-    #[test]
-    fn mic_path_has_no_source_suffix() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let target =
-            next_available_output(tmp.path(), ts(), AudioFormat::M4a, None).expect("target");
-        let name = target.audio_path.file_name().unwrap().to_string_lossy();
-        let expected = ts()
-            .with_timezone(&Local)
-            .format("%y%m%d-%H%M%S.m4a")
-            .to_string();
-        assert_eq!(name, expected);
+    fn source_slug_is_normalized_into_the_stem_suffix() {
+        for (slug, suffix) in [("meet", "-meet"), ("Spotify", "-spotify")] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let target = next_available_output(tmp.path(), ts(), AudioFormat::M4a, Some(slug))
+                .expect("target");
+            let name = target.audio_path.file_name().unwrap().to_string_lossy();
+            let expected = format!(
+                "{}{suffix}.m4a",
+                ts().with_timezone(&Local).format("%y%m%d-%H%M%S")
+            );
+            assert_eq!(name, expected, "{slug}");
+        }
     }
 
     #[test]

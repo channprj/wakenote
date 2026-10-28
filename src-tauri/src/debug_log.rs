@@ -430,9 +430,11 @@ mod tests {
         configure(None);
         event("[test] before enabling");
         configure(Some(root.path().to_path_buf()));
+        assert!(enabled());
         event("[test] while enabled");
         crate::log_error!("[test] macro error {}", 7);
         configure(None);
+        assert!(!enabled());
         event("[test] after disabling");
         flush(Duration::from_secs(2));
 

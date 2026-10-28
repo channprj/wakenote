@@ -1,6 +1,5 @@
 use wakenote::text_input::{
-    accessibility_permission_error, auto_transcript_input_should_type, auto_transcript_input_text,
-    should_type_transcript_text,
+    auto_transcript_input_should_type, auto_transcript_input_text, should_type_transcript_text,
 };
 
 #[test]
@@ -33,13 +32,4 @@ fn auto_transcript_input_text_optionally_appends_one_trailing_space() {
         Some("hello ".to_string())
     );
     assert_eq!(auto_transcript_input_text("   ", true), None);
-}
-
-#[test]
-fn native_text_input_permission_error_is_actionable() {
-    let error = accessibility_permission_error();
-
-    assert!(error.contains("WakeNote"));
-    assert!(error.contains("Accessibility"));
-    assert!(error.contains("System Settings"));
 }

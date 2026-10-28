@@ -178,29 +178,26 @@ mod tests {
     }
 
     #[test]
-    fn executable_inside_app_resolves_the_bundle_ancestor() {
-        let executable = Path::new("/Applications/WakeNote.app/Contents/MacOS/wakenote");
-        assert_eq!(
-            app_bundle_ancestor(executable),
-            Some(PathBuf::from("/Applications/WakeNote.app"))
-        );
-    }
-
-    #[test]
-    fn closest_app_ancestor_wins_for_nested_paths() {
-        let executable =
-            Path::new("/Applications/Outer.app/Contents/Helpers/Inner.app/Contents/MacOS/helper");
-        assert_eq!(
-            app_bundle_ancestor(executable),
-            Some(PathBuf::from(
-                "/Applications/Outer.app/Contents/Helpers/Inner.app"
-            ))
-        );
-    }
-
-    #[test]
-    fn ordinary_executable_is_not_a_drag_source() {
-        assert_eq!(app_bundle_ancestor(Path::new("/tmp/wakenote")), None);
+    fn app_bundle_ancestor_returns_the_closest_app_or_none() {
+        for (executable, expected) in [
+            (
+                "/Applications/WakeNote.app/Contents/MacOS/wakenote",
+                Some("/Applications/WakeNote.app"),
+            ),
+            // The closest app ancestor wins for nested bundles.
+            (
+                "/Applications/Outer.app/Contents/Helpers/Inner.app/Contents/MacOS/helper",
+                Some("/Applications/Outer.app/Contents/Helpers/Inner.app"),
+            ),
+            // An ordinary executable is not a drag source.
+            ("/tmp/wakenote", None),
+        ] {
+            assert_eq!(
+                app_bundle_ancestor(Path::new(executable)),
+                expected.map(PathBuf::from),
+                "{executable}"
+            );
+        }
     }
 
     #[test]
@@ -223,42 +220,42 @@ mod tests {
     }
 
     #[test]
-    fn shelf_prefers_below_and_centers_on_system_settings() {
-        let origin = shelf_origin(
-            ScreenRect::new(100.0, 220.0, 900.0, 650.0),
-            ScreenSize::new(360.0, 112.0),
-            ScreenRect::new(0.0, 0.0, 1100.0, 900.0),
-        );
-        assert_eq!(origin, ScreenPoint::new(370.0, 96.0));
-    }
-
-    #[test]
-    fn shelf_moves_above_when_bottom_space_is_insufficient() {
-        let origin = shelf_origin(
-            ScreenRect::new(100.0, 40.0, 900.0, 650.0),
-            ScreenSize::new(360.0, 112.0),
-            ScreenRect::new(0.0, 0.0, 1100.0, 900.0),
-        );
-        assert_eq!(origin, ScreenPoint::new(370.0, 702.0));
-    }
-
-    #[test]
-    fn shelf_clamps_to_negative_origin_secondary_display() {
-        let origin = shelf_origin(
-            ScreenRect::new(-1_400.0, 180.0, 1_000.0, 700.0),
-            ScreenSize::new(360.0, 112.0),
-            ScreenRect::new(-1_440.0, 0.0, 1_440.0, 900.0),
-        );
-        assert_eq!(origin, ScreenPoint::new(-1_080.0, 56.0));
-    }
-
-    #[test]
-    fn shelf_clamps_horizontally_to_visible_frame() {
-        let origin = shelf_origin(
-            ScreenRect::new(980.0, 220.0, 100.0, 650.0),
-            ScreenSize::new(360.0, 112.0),
-            ScreenRect::new(0.0, 0.0, 1_100.0, 900.0),
-        );
-        assert_eq!(origin, ScreenPoint::new(740.0, 96.0));
+    fn shelf_origin_places_below_or_above_and_clamps_to_the_visible_frame() {
+        for (label, settings_rect, shelf_size, visible_frame, expected) in [
+            (
+                "prefers below and centers on System Settings",
+                ScreenRect::new(100.0, 220.0, 900.0, 650.0),
+                ScreenSize::new(360.0, 112.0),
+                ScreenRect::new(0.0, 0.0, 1100.0, 900.0),
+                ScreenPoint::new(370.0, 96.0),
+            ),
+            (
+                "moves above when bottom space is insufficient",
+                ScreenRect::new(100.0, 40.0, 900.0, 650.0),
+                ScreenSize::new(360.0, 112.0),
+                ScreenRect::new(0.0, 0.0, 1100.0, 900.0),
+                ScreenPoint::new(370.0, 702.0),
+            ),
+            (
+                "clamps to a negative-origin secondary display",
+                ScreenRect::new(-1_400.0, 180.0, 1_000.0, 700.0),
+                ScreenSize::new(360.0, 112.0),
+                ScreenRect::new(-1_440.0, 0.0, 1_440.0, 900.0),
+                ScreenPoint::new(-1_080.0, 56.0),
+            ),
+            (
+                "clamps horizontally to the visible frame",
+                ScreenRect::new(980.0, 220.0, 100.0, 650.0),
+                ScreenSize::new(360.0, 112.0),
+                ScreenRect::new(0.0, 0.0, 1_100.0, 900.0),
+                ScreenPoint::new(740.0, 96.0),
+            ),
+        ] {
+            assert_eq!(
+                shelf_origin(settings_rect, shelf_size, visible_frame),
+                expected,
+                "{label}"
+            );
+        }
     }
 }

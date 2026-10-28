@@ -4,22 +4,25 @@ use wakenote::permissions::{
 };
 
 #[test]
-fn microphone_permission_state_allows_request_only_before_first_decision() {
-    let state = microphone_permission_state_for_status(PermissionGrantStatus::NotDetermined);
+fn microphone_permission_state_requests_before_decision_and_opens_settings_after_denial() {
+    for (status, label, can_request, can_open_settings) in [
+        (
+            PermissionGrantStatus::NotDetermined,
+            "Not requested",
+            true,
+            false,
+        ),
+        (PermissionGrantStatus::Denied, "Denied", false, true),
+    ] {
+        let state = microphone_permission_state_for_status(status);
 
-    assert_eq!(state.label, "Not requested");
-    assert!(state.can_request);
-    assert!(!state.can_open_settings);
-}
-
-#[test]
-fn microphone_permission_state_opens_settings_after_denial() {
-    let state = microphone_permission_state_for_status(PermissionGrantStatus::Denied);
-
-    assert_eq!(state.label, "Denied");
-    assert!(!state.can_request);
-    assert!(state.can_open_settings);
-    assert!(state.detail.contains("System Settings"));
+        assert_eq!(state.label, label, "{status:?}");
+        assert_eq!(state.can_request, can_request, "{status:?}");
+        assert_eq!(state.can_open_settings, can_open_settings, "{status:?}");
+        if status == PermissionGrantStatus::Denied {
+            assert!(state.detail.contains("System Settings"));
+        }
+    }
 }
 
 #[test]

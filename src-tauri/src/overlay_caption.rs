@@ -574,30 +574,24 @@ mod tests {
 
     #[test]
     fn adaptive_hold_uses_minimum_and_reading_time_with_a_thirty_second_cap() {
-        assert_eq!(
-            adaptive_caption_hold("짧은 자막", 5),
-            Duration::from_secs(5)
-        );
-        assert_eq!(
-            adaptive_caption_hold(&"가".repeat(80), 5),
-            Duration::from_secs(10)
-        );
-        assert_eq!(
-            adaptive_caption_hold(&"가".repeat(160), 5),
-            Duration::from_secs(20)
-        );
-        assert_eq!(
-            adaptive_caption_hold(&"가".repeat(241), 5),
-            Duration::from_secs(30)
-        );
-    }
-
-    #[test]
-    fn whitespace_does_not_inflate_reading_time() {
-        assert_eq!(
-            adaptive_caption_hold(&format!("{}   \n\t", "가".repeat(80)), 5),
-            Duration::from_secs(10)
-        );
+        for (label, text, minimum_seconds, expected_seconds) in [
+            ("short caption", "짧은 자막".to_string(), 5, 5),
+            ("80 glyphs", "가".repeat(80), 5, 10),
+            ("160 glyphs", "가".repeat(160), 5, 20),
+            ("241 glyphs hit the cap", "가".repeat(241), 5, 30),
+            (
+                "whitespace does not inflate reading time",
+                format!("{}   \n\t", "가".repeat(80)),
+                5,
+                10,
+            ),
+        ] {
+            assert_eq!(
+                adaptive_caption_hold(&text, minimum_seconds),
+                Duration::from_secs(expected_seconds),
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -828,30 +822,29 @@ mod tests {
     }
 
     #[test]
-    fn commit_keeps_partial_visible_as_refining() {
-        let mut runtime = OverlayCaptionRuntime::default();
-        runtime.show_partial(7, "초안 자막", FloatingOverlayPosition::Top, style());
-        runtime.mark_committed(7, PathBuf::from("/tmp/chunk.wav"), true);
+    fn commit_keeps_partial_visible_with_phase_from_refinement_flag() {
+        for (will_transcribe, partial, expected_phase) in [
+            (true, "초안 자막", OverlayCaptionPhase::Refining),
+            // Without refinement the committed partial is final and its hold
+            // is scheduled immediately.
+            (false, "짧은 자막", OverlayCaptionPhase::Final),
+        ] {
+            let mut runtime = OverlayCaptionRuntime::default();
+            runtime.show_partial(7, partial, FloatingOverlayPosition::Top, style());
+            runtime.mark_committed(7, PathBuf::from("/tmp/chunk.wav"), will_transcribe);
 
-        let snapshot = runtime.snapshot();
-        assert!(snapshot.visible);
-        assert_eq!(snapshot.phase, OverlayCaptionPhase::Refining);
-        assert_eq!(snapshot.text, "초안 자막");
-        assert_eq!(snapshot.audio_path.as_deref(), Some("/tmp/chunk.wav"));
-        assert_eq!(snapshot.final_hold_ms, Some(5_000));
-    }
-
-    #[test]
-    fn commit_without_refinement_schedules_hold_for_partial_caption() {
-        let mut runtime = OverlayCaptionRuntime::default();
-        runtime.show_partial(7, "짧은 자막", FloatingOverlayPosition::Top, style());
-        runtime.mark_committed(7, PathBuf::from("/tmp/chunk.wav"), false);
-
-        let snapshot = runtime.snapshot();
-        assert!(snapshot.visible);
-        assert_eq!(snapshot.phase, OverlayCaptionPhase::Final);
-        assert_eq!(snapshot.text, "짧은 자막");
-        assert_eq!(snapshot.final_hold_ms, Some(5_000));
+            let snapshot = runtime.snapshot();
+            let label = format!("will_transcribe={will_transcribe}");
+            assert!(snapshot.visible, "{label}");
+            assert_eq!(snapshot.phase, expected_phase, "{label}");
+            assert_eq!(snapshot.text, partial, "{label}");
+            assert_eq!(
+                snapshot.audio_path.as_deref(),
+                Some("/tmp/chunk.wav"),
+                "{label}"
+            );
+            assert_eq!(snapshot.final_hold_ms, Some(5_000), "{label}");
+        }
     }
 
     #[test]

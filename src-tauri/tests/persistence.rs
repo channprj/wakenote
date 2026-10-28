@@ -1,6 +1,7 @@
 use wakenote::commands::AppBackend;
 use wakenote::persistence::{
-    AppPersistence, ListVisibilityKind, ListVisibilityTarget, SetListVisibilityRequest,
+    AppPersistence, ListVisibilityKind, ListVisibilityTarget, PersistenceError,
+    SetListVisibilityRequest,
 };
 use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
 use wakenote::settings::{
@@ -28,6 +29,9 @@ fn persistence_round_trips_settings_json() {
             enabled: true,
         }]),
         permission_onboarding_seen: Some(true),
+        floating_overlay_position: Some(FloatingOverlayPosition::BottomRight),
+        subtitle_duration_seconds: Some(9),
+        subtitle_animation: Some(SubtitleAnimation::Dissolve),
         ..SettingsPatch::default()
     });
 
@@ -47,123 +51,90 @@ fn persistence_round_trips_settings_json() {
     assert_eq!(loaded.dictionary[0].aliases, vec!["wake note"]);
     assert!(loaded.save_root_confirmed);
     assert!(loaded.permission_onboarding_seen);
-}
-
-#[test]
-fn persistence_round_trips_openrouter_api_key_separately_from_settings() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
-
-    assert!(
-        !store
-            .openrouter_api_key_configured()
-            .expect("configured check")
-    );
-
-    store
-        .save_openrouter_api_key("  sk-or-test-key  ")
-        .expect("save api key");
-
-    assert!(
-        store
-            .openrouter_api_key_configured()
-            .expect("configured check")
-    );
     assert_eq!(
-        store.load_openrouter_api_key().expect("load key"),
-        Some("sk-or-test-key".to_string())
+        loaded.floating_overlay_position,
+        FloatingOverlayPosition::BottomRight
     );
-    assert!(!tmp.path().join("settings.json").exists());
-
-    store.delete_openrouter_api_key().expect("delete api key");
-    assert!(
-        !store
-            .openrouter_api_key_configured()
-            .expect("configured check")
-    );
-    assert_eq!(store.load_openrouter_api_key().expect("load key"), None);
+    assert_eq!(loaded.subtitle_duration_seconds, 9);
+    assert_eq!(loaded.subtitle_animation, SubtitleAnimation::Dissolve);
 }
 
 #[test]
-fn persistence_rejects_blank_openrouter_api_key() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
+fn persistence_round_trips_each_provider_api_key_in_its_own_file() {
+    struct ProviderApiKey {
+        secrets_file: &'static str,
+        padded_key: &'static str,
+        trimmed_key: &'static str,
+        save: fn(&AppPersistence, &str) -> Result<(), PersistenceError>,
+        load: fn(&AppPersistence) -> Result<Option<String>, PersistenceError>,
+        delete: fn(&AppPersistence) -> Result<(), PersistenceError>,
+        configured: fn(&AppPersistence) -> Result<bool, PersistenceError>,
+    }
 
-    assert!(store.save_openrouter_api_key("  ").is_err());
-    assert!(
-        !store
-            .openrouter_api_key_configured()
-            .expect("configured check")
-    );
-}
+    let providers = [
+        ProviderApiKey {
+            secrets_file: "openrouter-secrets.json",
+            padded_key: "  sk-or-test-key  ",
+            trimmed_key: "sk-or-test-key",
+            save: AppPersistence::save_openrouter_api_key,
+            load: AppPersistence::load_openrouter_api_key,
+            delete: AppPersistence::delete_openrouter_api_key,
+            configured: AppPersistence::openrouter_api_key_configured,
+        },
+        ProviderApiKey {
+            secrets_file: "openai-secrets.json",
+            padded_key: "  sk-openai-test-key  ",
+            trimmed_key: "sk-openai-test-key",
+            save: AppPersistence::save_openai_api_key,
+            load: AppPersistence::load_openai_api_key,
+            delete: AppPersistence::delete_openai_api_key,
+            configured: AppPersistence::openai_api_key_configured,
+        },
+        ProviderApiKey {
+            secrets_file: "soniox-secrets.json",
+            padded_key: "  soniox-test-key  ",
+            trimmed_key: "soniox-test-key",
+            save: AppPersistence::save_soniox_api_key,
+            load: AppPersistence::load_soniox_api_key,
+            delete: AppPersistence::delete_soniox_api_key,
+            configured: AppPersistence::soniox_api_key_configured,
+        },
+    ];
+    let secrets_files = providers.each_ref().map(|provider| provider.secrets_file);
 
-#[test]
-fn persistence_round_trips_openai_api_key_separately_from_other_state() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
+    for provider in &providers {
+        let label = provider.secrets_file;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = AppPersistence::new(tmp.path());
 
-    assert!(!store.openai_api_key_configured().expect("configured check"));
-    store
-        .save_openai_api_key("  sk-openai-test-key  ")
-        .expect("save api key");
+        assert!(!(provider.configured)(&store).expect(label), "{label}");
+        assert!((provider.save)(&store, "  ").is_err(), "{label}");
+        assert!(!(provider.configured)(&store).expect(label), "{label}");
 
-    assert!(store.openai_api_key_configured().expect("configured check"));
-    assert_eq!(
-        store.load_openai_api_key().expect("load key"),
-        Some("sk-openai-test-key".to_string())
-    );
-    assert!(!tmp.path().join("settings.json").exists());
-    assert!(!tmp.path().join("openrouter-secrets.json").exists());
+        (provider.save)(&store, provider.padded_key).expect(label);
+        assert!((provider.configured)(&store).expect(label), "{label}");
+        assert_eq!(
+            (provider.load)(&store).expect(label),
+            Some(provider.trimmed_key.to_string()),
+            "{label}"
+        );
+        assert!(tmp.path().join(provider.secrets_file).exists(), "{label}");
+        assert!(!tmp.path().join("settings.json").exists(), "{label}");
+        for other_file in secrets_files
+            .iter()
+            .filter(|file| **file != provider.secrets_file)
+        {
+            assert!(
+                !tmp.path().join(other_file).exists(),
+                "{label} wrote {other_file}"
+            );
+        }
 
-    store.delete_openai_api_key().expect("delete api key");
-    store
-        .delete_openai_api_key()
-        .expect("idempotent delete api key");
-    assert!(!store.openai_api_key_configured().expect("configured check"));
-}
-
-#[test]
-fn persistence_rejects_blank_openai_api_key() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
-
-    assert!(store.save_openai_api_key("  ").is_err());
-    assert!(!store.openai_api_key_configured().expect("configured check"));
-}
-
-#[test]
-fn persistence_round_trips_soniox_api_key_separately_from_other_state() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
-
-    assert!(!store.soniox_api_key_configured().expect("configured check"));
-    store
-        .save_soniox_api_key("  soniox-test-key  ")
-        .expect("save api key");
-
-    assert!(store.soniox_api_key_configured().expect("configured check"));
-    assert_eq!(
-        store.load_soniox_api_key().expect("load key"),
-        Some("soniox-test-key".to_string())
-    );
-    assert!(!tmp.path().join("settings.json").exists());
-    assert!(!tmp.path().join("openrouter-secrets.json").exists());
-    assert!(!tmp.path().join("openai-secrets.json").exists());
-
-    store.delete_soniox_api_key().expect("delete api key");
-    store
-        .delete_soniox_api_key()
-        .expect("idempotent delete api key");
-    assert!(!store.soniox_api_key_configured().expect("configured check"));
-}
-
-#[test]
-fn persistence_rejects_blank_soniox_api_key() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
-
-    assert!(store.save_soniox_api_key("  ").is_err());
-    assert!(!store.soniox_api_key_configured().expect("configured check"));
+        (provider.delete)(&store).expect(label);
+        (provider.delete)(&store).expect(label);
+        assert!(!(provider.configured)(&store).expect(label), "{label}");
+        assert_eq!((provider.load)(&store).expect(label), None, "{label}");
+    }
 }
 
 #[test]
@@ -226,32 +197,6 @@ fn persistence_migrates_legacy_settings_with_missing_fields() {
             .contains("{{transcripts}}")
     );
     assert!(loaded.llm_report_prompt_template.contains("# Action Items"));
-}
-
-#[test]
-fn persistence_round_trips_subtitle_presentation() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = AppPersistence::new(tmp.path());
-    let mut settings = AppSettings::default();
-    settings.apply_patch(SettingsPatch {
-        floating_overlay_position: Some(FloatingOverlayPosition::BottomRight),
-        subtitle_duration_seconds: Some(9),
-        subtitle_animation: Some(SubtitleAnimation::Dissolve),
-        ..SettingsPatch::default()
-    });
-
-    store.save_settings(&settings).expect("save settings");
-
-    let loaded = store
-        .load_settings()
-        .expect("load settings")
-        .expect("settings");
-    assert_eq!(
-        loaded.floating_overlay_position,
-        FloatingOverlayPosition::BottomRight
-    );
-    assert_eq!(loaded.subtitle_duration_seconds, 9);
-    assert_eq!(loaded.subtitle_animation, SubtitleAnimation::Dissolve);
 }
 
 #[test]

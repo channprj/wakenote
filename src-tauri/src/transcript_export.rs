@@ -375,13 +375,14 @@ mod tests {
     }
 
     #[test]
-    fn formats_microphone_source_labels_like_the_transcript_list() {
+    fn formats_source_labels_like_the_transcript_list() {
         let entries = vec![
             microphone_entry(Some("dictation"), Some("Built-in Mic"), "dictation"),
             microphone_entry(Some("mic-merged"), Some("Merged Device"), "merged"),
             microphone_entry(Some("mic-priority"), Some("Priority Device"), "priority"),
             microphone_entry(None, Some("  Studio Mic  "), "device"),
             microphone_entry(None, Some("  "), "fallback"),
+            system_entry("2026-08-24T01:02:03+09:00", "", "system audio"),
         ];
 
         let exported = format_transcript_day(&entries, &[]);
@@ -391,19 +392,6 @@ mod tests {
         assert!(exported.contains("[Priority Mic] - priority"), "{exported}");
         assert!(exported.contains("[Studio Mic] - device"), "{exported}");
         assert!(exported.contains("[Mic] - fallback"), "{exported}");
-    }
-
-    #[test]
-    fn formats_blank_system_source_as_system() {
-        let exported = format_transcript_day(
-            &[system_entry(
-                "2026-08-24T01:02:03+09:00",
-                "",
-                "system audio",
-            )],
-            &[],
-        );
-
         assert!(exported.contains("[System] - system audio"), "{exported}");
     }
 
