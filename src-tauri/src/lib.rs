@@ -39,6 +39,7 @@ pub mod soniox_async;
 pub mod soniox_realtime;
 pub mod source_watcher;
 pub mod sources;
+pub mod speaker;
 pub mod storage;
 pub mod subtitle_translation;
 pub mod system_audio;

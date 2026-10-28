@@ -7,6 +7,10 @@ edition = "2024"
 name = "wakenote"
 path = "src/lib.rs"
 
+[[example]]
+name = "speaker_eval"
+required-features = ["asr-sherpa"]
+
 [features]
 default = []
 # Bundles sherpa-onnx (onnxruntime) so Parakeet/SenseVoice run in-process with
