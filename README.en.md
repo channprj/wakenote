@@ -30,16 +30,17 @@ VOR (voice-operated recording) records only while the input is louder than a thr
 
 ### Dictation
 
-![Dictation: hold Option+Space, speak, and the text is typed at your cursor](assets/readme/dictation.en.jpg)
+![Dictation: hold Control+Shift, speak, and release to type at your cursor](assets/readme/dictation.en.jpg)
 
 Hold a hotkey in any app, speak, and the transcript is typed wherever your cursor is.
 
-- **Hold or toggle** — Hold **Option+Space** (the default) to record, then release it to transcribe and type. You can also set a separate toggle hotkey: press it once to start recording and again to stop. To cancel, press **Escape** in the WakeNote window, press a dictation hotkey again while it is transcribing, or choose **Cancel Current Operation** from the menu bar.
+- **Hold to dictate** — Hold **Control+Shift**, the default **Hold-to-dictate hotkey**, to record, then release it to transcribe and type. A hotkey you saved earlier keeps working.
+- **Toggle and cancel** — You can also set a separate **Toggle dictation hotkey**: press it once to start recording and again to stop. To cancel, press **Escape** in the WakeNote window, press a dictation hotkey again while it is transcribing, or choose **Cancel Current Operation** from the menu bar.
 - **Picks the cleaner microphone** — Dictation uses the Primary and optional Secondary microphones and keeps whichever signal is cleaner. VOR recording continues during Dictation, but overlapping speech is transcribed only once.
 - **Recent results** — **Recent Dictations** shows the ten latest results to reread or copy, and **Transcripts** can filter to dictations only.
 - **Translation and Enhanced Prompt (optional)** — Have WakeNote type a translation instead of the original transcript, or use the separate Enhanced Prompt shortcut (default **Control+Option+Space**) to turn a spoken draft into a structured prompt. Both use OpenRouter and are off by default.
 
-Turn on Dictation in **Settings › Dictation**. Typing at the cursor requires the Accessibility permission.
+Turn on Dictation in **Settings › Dictation**. Typing at the cursor requires the Accessibility permission. Because Control+Shift uses modifier keys only, it also starts recording when you begin another shortcut such as Control+Shift+T; choose a combination with a regular key if that gets in the way.
 
 ![Settings › Dictation: dictation hotkeys and Recent Dictations](assets/readme/screen-dictation.png)
 

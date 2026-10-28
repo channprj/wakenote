@@ -33,16 +33,17 @@ VOR(Voice-Operated Recording)은 소리가 임계값을 넘을 때만 녹음하�
 
 ### 받아쓰기
 
-![받아쓰기: Option+Space를 누른 채로 말하면 커서 위치에 글이 입력되는 흐름](assets/readme/dictation.ko.jpg)
+![받아쓰기: Control+Shift를 누른 채로 말하고 손을 떼면 커서 위치에 글이 입력되는 흐름](assets/readme/dictation.ko.jpg)
 
 어느 앱에서든 단축키를 누르고 말하면, 전사한 글이 지금 커서가 있는 곳에 바로 입력됩니다.
 
-- **두 가지 단축키** — 기본 단축키 **Option+Space**를 누르고 있는 동안 녹음하고, 손을 떼면 전사해 입력합니다. 한 번 눌러 시작하고 다시 눌러 끝내는 토글 단축키도 따로 정할 수 있습니다. 취소하려면 WakeNote 창에서 **Escape**를 누르거나, 전사 중에 받아쓰기 단축키를 다시 누르거나, 메뉴 막대의 **Cancel Current Operation**을 고르세요.
+- **Hold to dictate** — 기본 **Hold-to-dictate hotkey**인 **Control+Shift**를 누르고 있는 동안 녹음하고, 손을 떼면 전사해 입력합니다. 이전에 저장해 둔 단축키가 있으면 그 단축키를 그대로 씁니다.
+- **토글 단축키와 취소** — 한 번 눌러 시작하고 다시 눌러 끝내는 **Toggle dictation hotkey**도 따로 정할 수 있습니다. 취소하려면 WakeNote 창에서 **Escape**를 누르거나, 전사 중에 받아쓰기 단축키를 다시 누르거나, 메뉴 막대의 **Cancel Current Operation**을 고르세요.
 - **더 깨끗한 마이크 선택** — Primary와 Secondary 마이크 중 신호가 더 깨끗한 쪽을 자동으로 씁니다. 받아쓰기 중에도 VOR 녹음은 이어지지만, 겹친 구간은 한 번만 전사합니다.
 - **최근 기록** — **Recent Dictations**에서 최근 10개 결과를 다시 읽고 복사할 수 있고, **Transcripts**에서는 받아쓰기만 골라 볼 수 있습니다.
 - **번역과 Enhanced Prompt(선택)** — 받아쓴 내용을 번역해 입력하거나, 별도 단축키(기본값 **Control+Option+Space**)로 말한 초안을 정리된 프롬프트로 바꿔 입력합니다. 둘 다 OpenRouter를 쓰며 기본적으로 꺼져 있습니다.
 
-받아쓰기는 **Settings › Dictation**에서 켜야 동작하고, 커서 위치에 글을 입력하려면 손쉬운 사용(Accessibility) 권한이 필요합니다.
+받아쓰기는 **Settings › Dictation**에서 켜야 동작하고, 커서 위치에 글을 입력하려면 손쉬운 사용(Accessibility) 권한이 필요합니다. Control+Shift는 수정 키만으로 된 단축키라 Control+Shift+T 같은 다른 단축키를 누를 때도 녹음이 시작됩니다. 불편하면 일반 키가 들어간 조합으로 바꾸세요.
 
 ![Settings › Dictation 화면: 받아쓰기 단축키와 Recent Dictations](assets/readme/screen-dictation.png)
 
