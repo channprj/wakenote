@@ -170,8 +170,49 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-max-width:840px");
     expect(markup).toContain("--overlay-caption-min-height:64px");
     expect(markup).toContain("--overlay-caption-max-height:640px");
-    expect(markup).toContain("background-color:rgba(255, 255, 255, 0.68)");
+    expect(markup).toContain(
+      "--overlay-caption-outline:rgba(255, 255, 255, 0.68)",
+    );
+    expect(markup).toContain("--overlay-caption-outline-width:4px");
+    expect(markup).not.toContain("background-color:");
     expect(markup).toContain('data-animation="dissolve"');
+  });
+
+  it("strokes unequal caption lines without a filled plate", () => {
+    const markup = render(
+      caption({
+        chunk_id: 1,
+        phase: "final",
+        text: "짧은 줄\n훨씬 더 긴 자막 줄입니다",
+        visible: true,
+      }),
+    );
+
+    expect(markup).toContain("--overlay-caption-outline:rgba(0, 0, 0, 0.82)");
+    expect(markup).toContain("--overlay-caption-outline-width:3px");
+    expect(markup).toContain("--overlay-caption-text-color:#ffffff");
+    expect(markup).not.toContain("background-color:");
+    expect(markup.match(/overlay-caption__text/g)).toHaveLength(1);
+    expect(markup).toContain("짧은 줄\n훨씬 더 긴 자막 줄입니다");
+
+    const white = render(
+      caption({
+        chunk_id: 2,
+        phase: "final",
+        text: "흰 윤곽",
+        visible: true,
+        style: {
+          ...emptyCaptionSnapshot().style,
+          background_color: "#ffffff",
+          background_opacity: 100,
+          text_color: "#000000",
+          font_size_px: 48,
+        },
+      }),
+    );
+    expect(white).toContain("--overlay-caption-outline:rgba(255, 255, 255, 1)");
+    expect(white).toContain("--overlay-caption-outline-width:6px");
+    expect(white).not.toContain("background-color:");
   });
 
   it("allows 8px subtitles and marks animated exit state", () => {
@@ -196,6 +237,7 @@ describe("caption overlay content", () => {
     );
 
     expect(markup).toContain("--overlay-caption-font-size:8px");
+    expect(markup).toContain("--overlay-caption-outline-width:1px");
     const clamped = render(
       caption({
         chunk_id: 1,
