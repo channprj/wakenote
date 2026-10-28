@@ -280,34 +280,12 @@ describe("MeetingTranscriptionDialog", () => {
     });
   });
 
-  it("stays open when submission fails", async () => {
+  it("stays open and shows the submission error when submission fails", async () => {
     const onOpenChange = vi.fn();
     render(
       <MeetingTranscriptionDialog
         open
         onOpenChange={onOpenChange}
-        models={readyModels()}
-        initialModelId="whisper-medium"
-        initialLanguage="auto"
-        targetCount={1}
-        busy={false}
-        onSubmit={vi.fn().mockResolvedValue(false)}
-      />,
-    );
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Start transcription" }),
-    );
-
-    expect(onOpenChange).not.toHaveBeenCalledWith(false);
-    expect(screen.getByRole("dialog")).toBeTruthy();
-  });
-
-  it("keeps a submission error visible inside the open dialog", () => {
-    render(
-      <MeetingTranscriptionDialog
-        open
-        onOpenChange={vi.fn()}
         models={readyModels()}
         initialModelId="whisper-medium"
         initialLanguage="auto"
@@ -318,6 +296,12 @@ describe("MeetingTranscriptionDialog", () => {
       />,
     );
 
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start 2 transcriptions" }),
+    );
+
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain(
       "Could not start 1 of 2 selected meetings.",
     );

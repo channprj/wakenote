@@ -14,10 +14,7 @@ vi.mock("@/lib/tauri-client", () => ({
   subscribeLlmReportRuns: mocks.subscribe,
 }));
 
-import {
-  llmReportRunsReducer,
-  useLlmReportRuns,
-} from "./use-llm-report-runs";
+import { useLlmReportRuns } from "./use-llm-report-runs";
 
 function run(
   overrides: Partial<LlmReportRunSnapshot> = {},
@@ -51,33 +48,6 @@ function run(
     ...overrides,
   };
 }
-
-describe("llmReportRunsReducer", () => {
-  it("does not let stale hydration replace a newer event revision", () => {
-    const eventState = llmReportRunsReducer(
-      { runs: [], loading: true, error: null },
-      {
-        type: "update",
-        run: run({
-          revision: 3,
-          status: "running",
-          stage: "generating",
-        }),
-      },
-    );
-
-    const hydrated = llmReportRunsReducer(eventState, {
-      type: "hydrate",
-      runs: [run({ revision: 1 })],
-    });
-
-    expect(hydrated.runs[0]).toMatchObject({
-      revision: 3,
-      status: "running",
-      stage: "generating",
-    });
-  });
-});
 
 describe("useLlmReportRuns", () => {
   beforeEach(() => {
@@ -128,6 +98,7 @@ describe("useLlmReportRuns", () => {
     expect(result.current.runs[0]).toMatchObject({
       revision: 3,
       status: "running",
+      stage: "generating",
     });
     expect(result.current.activeRun?.run_id).toBe("run-1");
 

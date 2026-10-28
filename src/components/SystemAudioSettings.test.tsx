@@ -32,39 +32,34 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SystemAudioSettings permission preflight", () => {
-  it("does not resume a detected source when Screen Recording is missing", async () => {
-    const user = userEvent.setup();
-    const onPermissionRequired = vi.fn().mockResolvedValue(false);
-    render(
-      <SystemAudioSettings
-        settings={mockSnapshot().settings}
-        onPatch={() => {}}
-        onPermissionRequired={onPermissionRequired}
-      />,
-    );
+  it("gates Resume capture on the Screen Recording preflight", async () => {
+    for (const granted of [false, true]) {
+      cleanup();
+      mocks.startSourceCapture.mockReset();
+      if (granted) {
+        mocks.startSourceCapture.mockResolvedValue(mockSnapshot());
+      }
+      const user = userEvent.setup();
+      const onPermissionRequired = vi.fn().mockResolvedValue(granted);
+      render(
+        <SystemAudioSettings
+          settings={mockSnapshot().settings}
+          onPatch={() => {}}
+          onPermissionRequired={onPermissionRequired}
+        />,
+      );
 
-    await user.click(await screen.findByRole("button", { name: "Resume capture" }));
+      await user.click(await screen.findByRole("button", { name: "Resume capture" }));
 
-    expect(onPermissionRequired).toHaveBeenCalledOnce();
-    expect(mocks.startSourceCapture).not.toHaveBeenCalled();
-  });
-
-  it("resumes a detected source after permission is granted", async () => {
-    const user = userEvent.setup();
-    const onPermissionRequired = vi.fn().mockResolvedValue(true);
-    mocks.startSourceCapture.mockResolvedValue(mockSnapshot());
-    render(
-      <SystemAudioSettings
-        settings={mockSnapshot().settings}
-        onPatch={() => {}}
-        onPermissionRequired={onPermissionRequired}
-      />,
-    );
-
-    await user.click(await screen.findByRole("button", { name: "Resume capture" }));
-
-    await waitFor(() =>
-      expect(mocks.startSourceCapture).toHaveBeenCalledWith("meet"),
-    );
+      const label = `Screen Recording granted=${granted}`;
+      expect(onPermissionRequired, label).toHaveBeenCalledOnce();
+      if (granted) {
+        await waitFor(() =>
+          expect(mocks.startSourceCapture, label).toHaveBeenCalledWith("meet"),
+        );
+      } else {
+        expect(mocks.startSourceCapture, label).not.toHaveBeenCalled();
+      }
+    }
   });
 });

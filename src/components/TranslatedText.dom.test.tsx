@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TranslatedText } from "./TranslatedText";
 import { transformText, cancelTextTransform } from "@/lib/tauri-client";
+import type { TranslationPreferences } from "@/lib/text-translation";
 
 vi.mock("@/lib/tauri-client", () => ({
   transformText: vi.fn(),
@@ -21,21 +22,29 @@ afterEach(() => {
 });
 
 describe("transcript translation", () => {
-  it("shows only the original text when automatic translation is off", () => {
-    render(
-      <TranslatedText
-        text="Original one"
-        preferences={{
-          enabled: false,
-          language: "ko",
-          model: "model",
-          configured: true,
-        }}
-      />,
-    );
-    expect(transformText).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.getByText("Original one")).toBeTruthy();
+  it("preserves source text without requesting translation when translation is off or untargeted", () => {
+    const base: TranslationPreferences = {
+      enabled: true,
+      language: "ko",
+      model: "model",
+      configured: true,
+    };
+    const cases: { label: string; preferences: TranslationPreferences }[] = [
+      { label: "translation off", preferences: { ...base, enabled: false } },
+      { label: "language null", preferences: { ...base, language: null } },
+      { label: "language auto", preferences: { ...base, language: "auto" } },
+    ];
+
+    for (const { label, preferences } of cases) {
+      cleanup();
+      vi.clearAllMocks();
+      render(<TranslatedText text="Original one" preferences={preferences} />);
+
+      expect(screen.getByText("Original one"), label).toBeTruthy();
+      expect(transformText, label).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button"), label).toBeNull();
+      expect(screen.queryByRole("status"), label).toBeNull();
+    }
   });
 
   it("ignores a late result after the target language changes and cancels old work", async () => {
@@ -126,21 +135,6 @@ describe("unset transcript translation language", () => {
     configured: true,
     model: "model",
   };
-
-  it.each([null, "auto"] as const)(
-    "preserves source text without requesting translation for %s",
-    (language) => {
-      render(
-        <TranslatedText
-          text="Unset target source"
-          preferences={{ ...preferences, language }}
-        />,
-      );
-      expect(screen.getByText("Unset target source")).toBeTruthy();
-      expect(transformText).not.toHaveBeenCalled();
-      expect(screen.queryByRole("status")).toBeNull();
-    },
-  );
 
   it("cancels pending work and ignores its result when the target is cleared", async () => {
     let finish!: (value: Awaited<ReturnType<typeof transformText>>) => void;

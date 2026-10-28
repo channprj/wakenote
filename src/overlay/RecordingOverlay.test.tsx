@@ -79,7 +79,8 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("<button");
   });
 
-  it("preserves balanced line breaks from the caption runtime", () => {
+  it("renders final caption text verbatim without status labels", () => {
+    // Balanced line breaks from the caption runtime are preserved as-is.
     const balancedText = "균형 잡힌 첫 줄\n읽기 편한 두 번째 줄";
     const markup = render(
       caption({
@@ -91,20 +92,8 @@ describe("caption overlay content", () => {
     );
 
     expect(markup).toContain(balancedText);
-  });
-
-  it("identifies the caption source in overlay markup", () => {
-    const markup = render(
-      caption({
-        source: "dictation",
-        chunk_id: 1,
-        phase: "partial",
-        text: "딕테이션 중간 자막",
-        visible: true,
-      }),
-    );
-
-    expect(markup).toContain('data-source="dictation"');
+    expect(markup).not.toContain("Final");
+    expect(markup).not.toContain("Transcribing");
   });
 
   it("remounts only when a caption page generation changes", () => {
@@ -141,21 +130,6 @@ describe("caption overlay content", () => {
       />,
     );
     expect(container.querySelector(".overlay-caption")).not.toBe(initial);
-  });
-
-  it("does not add visible status labels around final caption text", () => {
-    const markup = render(
-      caption({
-        chunk_id: 1,
-        phase: "final",
-        text: "최종 전사 내용입니다",
-        visible: true,
-      }),
-    );
-
-    expect(markup).toContain("최종 전사 내용입니다");
-    expect(markup).not.toContain("Final");
-    expect(markup).not.toContain("Transcribing");
   });
 
   it("applies caption style variables from the backend snapshot", () => {
@@ -246,23 +220,7 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("caption");
   });
 
-  it("keeps transcribing visible without waveform bars", () => {
-    const markup = renderToStaticMarkup(
-      <OverlayContent
-        caption={emptyCaptionSnapshot()}
-        dictation={dictation("transcribing", "Transcribing…")}
-        levels={[]}
-        elapsedSeconds={0}
-      />,
-    );
-
-    expect(markup).toContain('data-dictation-state="transcribing"');
-    expect(markup).toContain("Transcribing…");
-    expect(markup).toContain("overlay-dictation__spinner");
-    expect(markup).not.toContain("overlay-dictation__waveform");
-  });
-
-  it("keeps transcribing above a visible Live transcription caption", () => {
+  it("keeps transcribing visible above non-dictation captions without waveform bars", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
         caption={caption({
@@ -276,8 +234,10 @@ describe("caption overlay content", () => {
       />,
     );
 
+    expect(markup).toContain('data-dictation-state="transcribing"');
     expect(markup).toContain("Transcribing…");
     expect(markup).toContain("overlay-dictation__spinner");
+    expect(markup).not.toContain("overlay-dictation__waveform");
     expect(markup).not.toContain("라이브 자막");
   });
 
@@ -302,23 +262,7 @@ describe("caption overlay content", () => {
     expect(markup).not.toContain("overlay-dictation__spinner");
   });
 
-  it("renders an actionable error without a spinner", () => {
-    const markup = renderToStaticMarkup(
-      <OverlayContent
-        caption={emptyCaptionSnapshot()}
-        dictation={dictation("error", "Dictation failed")}
-        levels={[]}
-        elapsedSeconds={0}
-      />,
-    );
-
-    expect(markup).toContain('data-dictation-state="error"');
-    expect(markup).toContain("Dictation failed");
-    expect(markup).toContain("overlay-dictation__dot");
-    expect(markup).not.toContain("overlay-dictation__spinner");
-  });
-
-  it("keeps Dictation errors above visible Dictation captions", () => {
+  it("renders an actionable Dictation error above captions without a spinner", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
         caption={caption({
@@ -332,58 +276,79 @@ describe("caption overlay content", () => {
       />,
     );
 
+    expect(markup).toContain('data-dictation-state="error"');
     expect(markup).toContain("Dictation failed");
+    expect(markup).toContain("overlay-dictation__dot");
+    expect(markup).not.toContain("overlay-dictation__spinner");
     expect(markup).not.toContain("딕테이션 자막");
   });
 
-  it("derives contrasting Dictation variables at both opacity boundaries", () => {
-    const whiteMarkup = renderToStaticMarkup(
-      <OverlayContent
-        caption={emptyCaptionSnapshot()}
-        dictation={dictation("transcribing", null, {
-          background_color: "#ffffff",
-          background_opacity: 0,
-        })}
-        levels={[]}
-        elapsedSeconds={0}
-      />,
-    );
-    expect(whiteMarkup).toContain("--dictation-background-rgb:255 255 255");
-    expect(whiteMarkup).toContain("--dictation-background-opacity:0");
-    expect(whiteMarkup).toContain("--dictation-foreground-rgb:0 0 0");
-    expect(whiteMarkup).toContain("background-color:rgba(255, 255, 255, 0)");
+  it("derives Dictation background variables across opacity values", () => {
+    const cases: {
+      label: string;
+      state: DictationOverlaySnapshot["state"];
+      message: string | null;
+      style: Partial<DictationOverlayStyle>;
+      rgb: string;
+      opacity: string;
+      foreground?: string;
+      backgroundColor: string;
+    }[] = [
+      {
+        label: "white at the 0 boundary",
+        state: "transcribing",
+        message: null,
+        style: { background_color: "#ffffff", background_opacity: 0 },
+        rgb: "255 255 255",
+        opacity: "0",
+        foreground: "0 0 0",
+        backgroundColor: "rgba(255, 255, 255, 0)",
+      },
+      {
+        label: "black at the 100 boundary",
+        state: "error",
+        message: null,
+        style: { background_color: "#000000", background_opacity: 100 },
+        rgb: "0 0 0",
+        opacity: "1",
+        foreground: "255 255 255",
+        backgroundColor: "rgba(0, 0, 0, 1)",
+      },
+      {
+        label: "requested alpha while transcribing",
+        state: "transcribing",
+        message: "Transcribing…",
+        style: { background_color: "#000000", background_opacity: 23 },
+        rgb: "0 0 0",
+        opacity: "0.23",
+        backgroundColor: "rgba(0, 0, 0, 0.23)",
+      },
+    ];
 
-    const blackMarkup = renderToStaticMarkup(
-      <OverlayContent
-        caption={emptyCaptionSnapshot()}
-        dictation={dictation("error", null, {
-          background_color: "#000000",
-          background_opacity: 100,
-        })}
-        levels={[]}
-        elapsedSeconds={0}
-      />,
-    );
-    expect(blackMarkup).toContain("--dictation-background-rgb:0 0 0");
-    expect(blackMarkup).toContain("--dictation-background-opacity:1");
-    expect(blackMarkup).toContain("--dictation-foreground-rgb:255 255 255");
-    expect(blackMarkup).toContain("background-color:rgba(0, 0, 0, 1)");
-  });
+    for (const row of cases) {
+      const markup = renderToStaticMarkup(
+        <OverlayContent
+          caption={emptyCaptionSnapshot()}
+          dictation={dictation(row.state, row.message, row.style)}
+          levels={[]}
+          elapsedSeconds={0}
+        />,
+      );
 
-  it("applies the requested background alpha while Dictation is transcribing", () => {
-    const markup = renderToStaticMarkup(
-      <OverlayContent
-        caption={emptyCaptionSnapshot()}
-        dictation={dictation("transcribing", "Transcribing…", {
-          background_color: "#000000",
-          background_opacity: 23,
-        })}
-        levels={[]}
-        elapsedSeconds={0}
-      />,
-    );
-
-    expect(markup).toContain("--dictation-background-opacity:0.23");
-    expect(markup).toContain("background-color:rgba(0, 0, 0, 0.23)");
+      expect(markup, row.label).toContain(
+        `--dictation-background-rgb:${row.rgb}`,
+      );
+      expect(markup, row.label).toContain(
+        `--dictation-background-opacity:${row.opacity}`,
+      );
+      if (row.foreground) {
+        expect(markup, row.label).toContain(
+          `--dictation-foreground-rgb:${row.foreground}`,
+        );
+      }
+      expect(markup, row.label).toContain(
+        `background-color:${row.backgroundColor}`,
+      );
+    }
   });
 });

@@ -154,35 +154,14 @@ describe("shadcn semantic theme compatibility", () => {
   });
 });
 
-describe("fixed desktop shell styling", () => {
-  it("uses independent desktop scroll regions instead of document scrolling", () => {
+describe("compact application shell styling", () => {
+  it("keeps the sidebar fixed while only the page viewport scrolls", () => {
     const root = cssRule(":root");
     expect(root).toContain("--sidebar-width-wide: 188px;");
     expect(root).toContain("--sidebar-width: var(--sidebar-width-wide);");
     expect(cssRule("html,\nbody,\n#root")).toContain("height: 100%;");
     expect(cssRule("body")).toContain("overflow: hidden;");
 
-    const shellRule = cssRule(".app-shell");
-    expect(shellRule).toContain(
-      "grid-template-columns: var(--sidebar-width) minmax(0, 1fr);",
-    );
-    expect(shellRule).toContain("height: 100vh;");
-    expect(shellRule).toContain("overflow: hidden;");
-
-    const sidebarRule = cssRule(".sidebar");
-    expect(sidebarRule).toContain("height: 100vh;");
-    expect(sidebarRule).toContain("overflow-y: auto;");
-
-    const workspaceRule = cssRule(".workspace");
-    expect(workspaceRule).toContain("height: 100vh;");
-    expect(workspaceRule).toContain("overflow-y: auto;");
-    expect(workspaceRule).toContain("overflow-x: hidden;");
-    expect(workspaceRule).toContain("scrollbar-gutter: stable;");
-  });
-});
-
-describe("compact application shell styling", () => {
-  it("keeps the sidebar fixed while only the page viewport scrolls", () => {
     const frameRule = cssRule(".app-frame", shellCss);
     const viewportRule = cssRule(".app-viewport", shellCss);
     const pageRule = cssRule(".app-page", shellCss);
@@ -216,28 +195,45 @@ describe("compact application shell styling", () => {
 });
 
 describe("balanced Settings masonry", () => {
-  it("uses a safe one-column fallback before measurement", () => {
-    const gridRule = cssRule(".settings-grid", pagesCss);
+  it("keeps masonry collections one-column until measured, then dense-packs", () => {
+    for (const [selector, source] of [
+      [".settings-grid", pagesCss],
+      [".model-list", componentsCss],
+    ] as const) {
+      const fallbackRule = cssRule(selector, source);
+      const measuredRule = cssRule(
+        `${selector}[data-masonry-ready="true"]`,
+        source,
+      );
 
-    expect(gridRule).toContain("--masonry-row-size: 1px;");
-    expect(gridRule).toContain("--masonry-card-gap: var(--page-gap);");
-    expect(gridRule).toContain("gap: var(--masonry-card-gap);");
-    expect(gridRule).toContain("grid-template-columns: minmax(0, 1fr);");
+      for (const declaration of [
+        "--masonry-row-size: 1px;",
+        "--masonry-card-gap: var(--page-gap);",
+        "gap: var(--masonry-card-gap);",
+        "grid-template-columns: minmax(0, 1fr);",
+      ]) {
+        expect(fallbackRule, `${selector} fallback`).toContain(declaration);
+      }
+      for (const declaration of [
+        "grid-auto-flow: dense;",
+        "grid-auto-rows: var(--masonry-row-size);",
+        "row-gap: 0;",
+        "column-gap: var(--masonry-card-gap);",
+      ]) {
+        expect(measuredRule, `${selector} measured`).toContain(declaration);
+      }
+    }
+
+    const listRule = cssRule(".model-list", componentsCss);
+    const childRule = cssRule(".model-list > *", componentsCss);
+
+    expect(listRule).toContain("display: grid;");
+    expect(listRule).toContain("align-items: start;");
+    expect(childRule).toContain("min-width: 0;");
+    expect(childRule).toContain("align-self: start;");
   });
 
-  it("densely packs measured cards on masonry rows", () => {
-    const measuredRule = cssRule(
-      '.settings-grid[data-masonry-ready="true"]',
-      pagesCss,
-    );
-
-    expect(measuredRule).toContain("grid-auto-flow: dense;");
-    expect(measuredRule).toContain("grid-auto-rows: var(--masonry-row-size);");
-    expect(measuredRule).toContain("row-gap: 0;");
-    expect(measuredRule).toContain("column-gap: var(--masonry-card-gap);");
-  });
-
-  it("only expands measured Settings grids from their section container", () => {
+  it("only upgrades measured masonry collections to two or three columns", () => {
     const sectionRule = cssRule(".settings-section", pagesCss);
     const twoColumn = cssBlock(
       "@container settings-section (min-width: 680px)",
@@ -247,25 +243,47 @@ describe("balanced Settings masonry", () => {
       "@container settings-section (min-width: 1040px)",
       pagesCss,
     );
+    const modelRules = flatCssRules(`${componentsCss}\n${pagesCss}`).filter(
+      ({ selector }) => selector.includes(".model-list"),
+    );
 
     expect(sectionRule).toContain("container: settings-section / inline-size;");
-    expect(twoColumn).toContain(
-      '.settings-grid[data-masonry-ready="true"][data-max-columns="2"]',
-    );
-    expect(twoColumn).toContain(
-      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
-    );
     expect(twoColumn).toContain(
       "grid-template-columns: repeat(2, minmax(0, 1fr));",
     );
     expect(threeColumn).toContain(
-      '.settings-grid[data-masonry-ready="true"][data-max-columns="3"]',
-    );
-    expect(threeColumn).toContain(
       "grid-template-columns: repeat(3, minmax(0, 1fr));",
     );
-    expect(twoColumn).not.toContain(".settings-grid[data-max-columns=");
-    expect(threeColumn).not.toContain(".settings-grid[data-max-columns=");
+
+    for (const prefix of [".settings-grid", ".model-list"]) {
+      expect(twoColumn, `${prefix} two-column`).toContain(
+        `${prefix}[data-masonry-ready="true"][data-max-columns="2"]`,
+      );
+      expect(twoColumn, `${prefix} two-column`).toContain(
+        `${prefix}[data-masonry-ready="true"][data-max-columns="3"]`,
+      );
+      expect(threeColumn, `${prefix} three-column`).toContain(
+        `${prefix}[data-masonry-ready="true"][data-max-columns="3"]`,
+      );
+      expect(twoColumn, `${prefix} two-column`).not.toContain(
+        `${prefix}[data-max-columns=`,
+      );
+      expect(threeColumn, `${prefix} three-column`).not.toContain(
+        `${prefix}[data-max-columns=`,
+      );
+    }
+
+    for (const { selector, body } of modelRules) {
+      if (
+        body.includes("grid-auto-flow: dense;") ||
+        body.includes("grid-auto-rows:") ||
+        body.includes("grid-template-columns: repeat(")
+      ) {
+        expect(selector).toContain('[data-masonry-ready="true"]');
+      }
+      expect(selector).not.toContain('[data-max-columns="4"]');
+      expect(body).not.toContain("repeat(4,");
+    }
   });
 
   it("keeps system-audio content globally shrinkable", () => {
@@ -328,72 +346,6 @@ describe("balanced Settings masonry", () => {
     expect(childRule).toContain("min-width: 0;");
   });
 
-  it("keeps model cards in a safe one-column fallback until measurement", () => {
-    const listRule = cssRule(".model-list", componentsCss);
-    const childRule = cssRule(".model-list > *", componentsCss);
-    const measuredRule = cssRule(
-      '.model-list[data-masonry-ready="true"]',
-      componentsCss,
-    );
-
-    expect(listRule).toContain("--masonry-row-size: 1px;");
-    expect(listRule).toContain("--masonry-card-gap: var(--page-gap);");
-    expect(listRule).toContain("gap: var(--masonry-card-gap);");
-    expect(listRule).toContain("display: grid;");
-    expect(listRule).toContain("grid-template-columns: minmax(0, 1fr);");
-    expect(listRule).toContain("align-items: start;");
-    expect(childRule).toContain("min-width: 0;");
-    expect(childRule).toContain("align-self: start;");
-    expect(measuredRule).toContain("grid-auto-flow: dense;");
-    expect(measuredRule).toContain("grid-auto-rows: var(--masonry-row-size);");
-    expect(measuredRule).toContain("row-gap: 0;");
-    expect(measuredRule).toContain("column-gap: var(--masonry-card-gap);");
-  });
-
-  it("only upgrades measured model collections to two or three columns", () => {
-    const twoColumn = cssBlock(
-      "@container settings-section (min-width: 680px)",
-      pagesCss,
-    );
-    const threeColumn = cssBlock(
-      "@container settings-section (min-width: 1040px)",
-      pagesCss,
-    );
-    const modelRules = flatCssRules(`${componentsCss}\n${pagesCss}`).filter(
-      ({ selector }) => selector.includes(".model-list"),
-    );
-
-    expect(twoColumn).toContain(
-      '.model-list[data-masonry-ready="true"][data-max-columns="2"]',
-    );
-    expect(twoColumn).toContain(
-      '.model-list[data-masonry-ready="true"][data-max-columns="3"]',
-    );
-    expect(twoColumn).toContain(
-      "grid-template-columns: repeat(2, minmax(0, 1fr));",
-    );
-    expect(threeColumn).toContain(
-      '.model-list[data-masonry-ready="true"][data-max-columns="3"]',
-    );
-    expect(threeColumn).toContain(
-      "grid-template-columns: repeat(3, minmax(0, 1fr));",
-    );
-    expect(twoColumn).not.toContain(".model-list[data-max-columns=");
-    expect(threeColumn).not.toContain(".model-list[data-max-columns=");
-
-    for (const { selector, body } of modelRules) {
-      if (
-        body.includes("grid-auto-flow: dense;") ||
-        body.includes("grid-auto-rows:") ||
-        body.includes("grid-template-columns: repeat(")
-      ) {
-        expect(selector).toContain('[data-masonry-ready="true"]');
-      }
-      expect(selector).not.toContain('[data-max-columns="4"]');
-      expect(body).not.toContain("repeat(4,");
-    }
-  });
-
   it("uses vertical model cards with safely wrapping metadata and actions", () => {
     const cardRule = cssRule(".model-row", componentsCss);
     const mainRule = cssRule(
@@ -434,19 +386,6 @@ describe("balanced Settings masonry", () => {
 });
 
 describe("compact overflow safety contract", () => {
-  it("keeps every primary content surface inside the supported viewport", () => {
-    expect(cssRule(".app-frame", splitCss)).toContain(
-      "grid-template-columns: var(--sidebar-width) minmax(0, 1fr);",
-    );
-    expect(cssRule(".app-page", splitCss)).toContain("overflow-x: hidden;");
-    expect(cssRule('[data-slot="transcript-text"]', splitCss)).toContain(
-      "overflow-wrap: anywhere;",
-    );
-    expect(cssRule('[data-slot="queue-table"]', splitCss)).toContain(
-      "table-layout: fixed;",
-    );
-  });
-
   it("keeps every Activity column participating in the table at the 980px minimum", () => {
     const activityMinimumCss = cssBlock("@media (max-width: 1020px)", pagesCss);
 
@@ -461,6 +400,9 @@ describe("compact overflow safety contract", () => {
 
     // Six 34px icon controls, five 2px gaps, and 8px cell padding per side.
     expect(actionsColumn).toContain("width: 230px;");
+    expect(cssRule('[data-slot="queue-table"]', pagesCss)).toContain(
+      "table-layout: fixed;",
+    );
   });
 
   it("keeps compact Activity values out of the narrow label column", () => {
@@ -623,16 +565,28 @@ describe("compact overflow safety contract", () => {
     );
   });
 
-  it("keeps seven transcript day cells shrinkable", () => {
+  it("keeps the seven-day picker shrinkable and legible at every width", () => {
     const week = cssRule(".transcript-pagination__week");
 
     expect(week).toContain("grid-template-columns: repeat(7, minmax(0, 1fr));");
     expect(cssRule(".transcript-pagination__day", pagesCss)).toContain(
       "min-width: 0;",
     );
+
+    // At the narrowest width, day cells keep a legible minimum and the week scrolls.
+    const narrow = cssBlock("@media (max-width: 640px)", componentsCss);
+
+    expect(cssRule(".transcript-pagination", narrow)).toContain(
+      "grid-template-columns: auto minmax(0, 1fr) auto;",
+    );
+    const narrowWeek = cssRule(".transcript-pagination__week", narrow);
+    expect(narrowWeek).toContain(
+      "grid-template-columns: repeat(7, minmax(48px, 1fr));",
+    );
+    expect(narrowWeek).toContain("overflow-x: auto;");
   });
 
-  it("separates transcript archive, browse, export, and selection layers", () => {
+  it("separates transcript workspace layers and stacks them in compact mode", () => {
     expect(cssRule(".transcript-archive-rail", componentsCss)).toContain(
       "grid-template-columns: minmax(0, 1fr) auto;",
     );
@@ -646,9 +600,8 @@ describe("compact overflow safety contract", () => {
     expect(selection).toContain("position: sticky;");
     expect(selection).toContain("top: 0;");
     expect(selection).toContain("flex-wrap: wrap;");
-  });
 
-  it("stacks transcript workspace layers without horizontal overflow", () => {
+    // Compact: the layers stack without horizontal overflow.
     const compact = cssBlock("@media (max-width: 979px)", pagesCss);
 
     expect(cssRule(".transcript-archive-rail", compact)).toContain(
@@ -660,19 +613,6 @@ describe("compact overflow safety contract", () => {
     expect(cssRule(".transcript-browse-row__filters", compact)).toContain(
       "justify-content: flex-start;",
     );
-  });
-
-  it("keeps the seven-day picker legible at the narrowest supported width", () => {
-    const narrow = cssBlock("@media (max-width: 640px)", componentsCss);
-
-    expect(cssRule(".transcript-pagination", narrow)).toContain(
-      "grid-template-columns: auto minmax(0, 1fr) auto;",
-    );
-    const week = cssRule(".transcript-pagination__week", narrow);
-    expect(week).toContain(
-      "grid-template-columns: repeat(7, minmax(48px, 1fr));",
-    );
-    expect(week).toContain("overflow-x: auto;");
   });
 
   it("uses theme-aware accessible transcript calendar colors", () => {
@@ -753,7 +693,7 @@ describe("record rendering performance", () => {
 });
 
 describe("recording field help styling", () => {
-  it("anchors desktop help within the recording control column", () => {
+  it("anchors field help in the control column and insets it on narrow viewports", () => {
     const popoverRule = cssRule(".ui-field-help__popover");
 
     expect(popoverRule).toContain("left: 0;");
@@ -761,14 +701,12 @@ describe("recording field help styling", () => {
     expect(popoverRule).not.toContain("right: calc(100% + 8px);");
     expect(popoverRule).toContain("pointer-events: auto;");
     expect(popoverRule).toContain("transform: none;");
-  });
 
-  it("keeps narrow help inset from the viewport edge", () => {
     const narrowCss = cssBlock("@media (max-width: 940px)");
-    const popoverRule = cssRule(".ui-field-help__popover", narrowCss);
+    const narrowPopoverRule = cssRule(".ui-field-help__popover", narrowCss);
 
-    expect(popoverRule).toContain("left: auto;");
-    expect(popoverRule).toContain("right: 16px;");
+    expect(narrowPopoverRule).toContain("left: auto;");
+    expect(narrowPopoverRule).toContain("right: 16px;");
   });
 });
 

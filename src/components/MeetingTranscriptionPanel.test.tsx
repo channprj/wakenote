@@ -120,47 +120,44 @@ function meetingSummary(
 }
 
 describe("MeetingTranscriptionPanel permission preflight", () => {
-  it("does not start a manual meeting when required permissions are missing", async () => {
-    const user = userEvent.setup();
-    const onPermissionRequired = vi.fn().mockResolvedValue(false);
-    render(
-      <MeetingTranscriptionPanel
-        onPermissionRequired={onPermissionRequired}
-        models={[]}
-        meetingModelId=""
-        selectedModelId="whisper-medium"
-        onMeetingModelChange={vi.fn()}
-      />,
-    );
+  it("gates manual meeting start on the permission preflight", async () => {
+    for (const granted of [false, true]) {
+      cleanup();
+      mocks.startManualMeetingRecording.mockClear();
+      const user = userEvent.setup();
+      const onPermissionRequired = vi.fn().mockResolvedValue(granted);
+      render(
+        <MeetingTranscriptionPanel
+          onPermissionRequired={onPermissionRequired}
+          models={[]}
+          meetingModelId=""
+          selectedModelId="whisper-medium"
+          onMeetingModelChange={vi.fn()}
+        />,
+      );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Start meeting recording" }),
-    );
+      await user.click(
+        await screen.findByRole("button", { name: "Start meeting recording" }),
+      );
 
-    expect(onPermissionRequired).toHaveBeenCalledWith("manual_meeting");
-    expect(mocks.startManualMeetingRecording).not.toHaveBeenCalled();
-  });
-
-  it("starts a manual meeting after the permission preflight succeeds", async () => {
-    const user = userEvent.setup();
-    const onPermissionRequired = vi.fn().mockResolvedValue(true);
-    render(
-      <MeetingTranscriptionPanel
-        onPermissionRequired={onPermissionRequired}
-        models={[]}
-        meetingModelId=""
-        selectedModelId="whisper-medium"
-        onMeetingModelChange={vi.fn()}
-      />,
-    );
-
-    await user.click(
-      await screen.findByRole("button", { name: "Start meeting recording" }),
-    );
-
-    await waitFor(() =>
-      expect(mocks.startManualMeetingRecording).toHaveBeenCalledOnce(),
-    );
+      const label = `permission granted=${granted}`;
+      expect(onPermissionRequired, label).toHaveBeenCalledWith(
+        "manual_meeting",
+      );
+      if (granted) {
+        await waitFor(() =>
+          expect(
+            mocks.startManualMeetingRecording,
+            label,
+          ).toHaveBeenCalledOnce(),
+        );
+      } else {
+        expect(
+          mocks.startManualMeetingRecording,
+          label,
+        ).not.toHaveBeenCalled();
+      }
+    }
   });
 
   it("opens configuration without starting transcription after import", async () => {
@@ -280,9 +277,11 @@ describe("MeetingTranscriptionPanel permission preflight", () => {
     await userEvent.click(
       screen.getByRole("checkbox", { name: "Select Completed retro" }),
     );
+    expect(screen.getByText("2 ready · 1 skipped")).toBeTruthy();
     await userEvent.click(
       screen.getByRole("button", { name: "Transcribe selected" }),
     );
+    expect(screen.getByText("Transcribe 2 meetings")).toBeTruthy();
     await userEvent.click(
       screen.getByRole("button", { name: "Start 2 transcriptions" }),
     );

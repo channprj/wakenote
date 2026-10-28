@@ -187,31 +187,23 @@ describe("masonry grid measurement", () => {
     expect(grid.dataset.masonryReady).toBe("true");
   });
 
-  it("rejects a row-size token with trailing garbage", () => {
-    const { grid, items } = createGrid(100);
-    grid.style.setProperty("--masonry-row-size", "4garbage");
+  it("rejects malformed or unsupported masonry tokens", () => {
+    for (const [property, token] of [
+      // Trailing garbage after a row size.
+      ["--masonry-row-size", "4garbage"],
+      // Unsupported row-size unit.
+      ["--masonry-row-size", "0.25rem"],
+      // Percentage card gap.
+      ["--masonry-card-gap", "10%"],
+    ]) {
+      const label = `${property}: ${token}`;
+      const { grid, items } = createGrid(100);
+      grid.style.setProperty(property, token);
 
-    expect(measureMasonryGrid(grid)).toBe(false);
-    expect(items[0].style.gridRowEnd).toBe("");
-    expect(grid.dataset.masonryReady).toBeUndefined();
-  });
-
-  it("rejects an unsupported row-size unit", () => {
-    const { grid, items } = createGrid(100);
-    grid.style.setProperty("--masonry-row-size", "0.25rem");
-
-    expect(measureMasonryGrid(grid)).toBe(false);
-    expect(items[0].style.gridRowEnd).toBe("");
-    expect(grid.dataset.masonryReady).toBeUndefined();
-  });
-
-  it("rejects a percentage card gap", () => {
-    const { grid, items } = createGrid(100);
-    grid.style.setProperty("--masonry-card-gap", "10%");
-
-    expect(measureMasonryGrid(grid)).toBe(false);
-    expect(items[0].style.gridRowEnd).toBe("");
-    expect(grid.dataset.masonryReady).toBeUndefined();
+      expect(measureMasonryGrid(grid), label).toBe(false);
+      expect(items[0].style.gridRowEnd, label).toBe("");
+      expect(grid.dataset.masonryReady, label).toBeUndefined();
+    }
   });
 
   it("returns to the ordinary-grid fallback when an item measurement throws", () => {

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
 import type { TrayState } from "../lib/types";
-import { openSettingsDisabledReason, TrayPreview } from "./TrayPreview";
+import { TrayPreview } from "./TrayPreview";
 
 function collectButtons(node: ReactNode, buttons: ReactElement[] = []): ReactElement[] {
   if (Array.isArray(node)) {
@@ -53,10 +53,6 @@ describe("tray preview", () => {
     expect(buttonByText(preview, "Open Settings").props.disabled).toBe(true);
   });
 
-  it("derives why-disabled tooltip text for the Open Settings button", () => {
-    expect(openSettingsDisabledReason()).toBe("Settings panel is already open");
-  });
-
   it("surfaces a why-disabled tooltip on the always-disabled Open Settings button", () => {
     const snapshot = mockSnapshot();
     const preview = TrayPreview({
@@ -71,21 +67,23 @@ describe("tray preview", () => {
       disabled?: boolean;
       title?: string;
     }>;
-    expect(openSettings.props.title).toBe(openSettingsDisabledReason());
+    expect(openSettings.props.title).toBe("Settings panel is already open");
 
     const revealMarkup = renderToStaticMarkup(buttonByText(preview, "Reveal Save Folder"));
     expect(revealMarkup).not.toContain("title=");
   });
 
-  describe.each<[TrayState, string]>([
-    ["idle", "neutral"],
-    ["listening", "primary"],
-    ["recording", "success"],
-    ["transcribing", "warning"],
-    ["paused", "warning"],
-    ["error", "danger"],
-  ])("tray-state Badge tone for %s", (trayState, expectedTone) => {
-    it(`derives data-tone=${expectedTone} from the shared trayStateBadgeTone helper`, () => {
+  it("derives the tray-state Badge tone from trayStateBadgeTone for every state", () => {
+    const cases: [TrayState, string][] = [
+      ["idle", "neutral"],
+      ["listening", "primary"],
+      ["recording", "success"],
+      ["transcribing", "warning"],
+      ["paused", "warning"],
+      ["error", "danger"],
+    ];
+
+    for (const [trayState, expectedTone] of cases) {
       const snapshot = mockSnapshot();
       const preview = TrayPreview({
         settings: snapshot.settings,
@@ -95,9 +93,9 @@ describe("tray preview", () => {
         onCancelCurrentOperation: vi.fn(),
       });
       const markup = renderToStaticMarkup(preview);
-      expect(markup).toMatch(
+      expect(markup, `tray_state=${trayState}`).toMatch(
         new RegExp(`<span [^>]*data-tone="${expectedTone}">[^<]*</span>`),
       );
-    });
+    }
   });
 });

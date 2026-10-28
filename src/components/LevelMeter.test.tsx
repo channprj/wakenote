@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { mockSnapshot } from "../lib/app-state";
 import type { TrayState } from "../lib/types";
-import { LevelMeter, calibrateDisabledReason } from "./LevelMeter";
+import { LevelMeter } from "./LevelMeter";
 
 function renderLevelMeter(liveInputActive: boolean, trayState?: TrayState) {
   const snapshot = mockSnapshot();
@@ -71,34 +71,27 @@ describe("level meter", () => {
     expect(hasButton(active, "Apply")).toBe(false);
   });
 
-  it("title-cases the tray_state Badge text to match QueuePanel's status badges", () => {
-    const inactive = renderLevelMeter(false);
-    expect(inactive).toMatch(/<span [^>]*data-tone="neutral">Idle<\/span>/);
-    expect(inactive).not.toMatch(/<span [^>]*data-tone="neutral">idle<\/span>/);
+  it("tones and title-cases the tray_state Badge for every tray_state", () => {
+    const cases: [TrayState, string, string][] = [
+      ["idle", "neutral", "Idle"],
+      ["listening", "primary", "Listening"],
+      ["recording", "success", "Recording"],
+      ["transcribing", "warning", "Transcribing"],
+      ["paused", "warning", "Paused"],
+      ["error", "danger", "Error"],
+    ];
 
-    const active = renderLevelMeter(true);
-    expect(active).toMatch(/<span [^>]*data-tone="primary">Listening<\/span>/);
-    expect(active).not.toMatch(/<span [^>]*data-tone="primary">listening<\/span>/);
+    for (const [trayState, expectedTone, expectedText] of cases) {
+      const markup = renderLevelMeter(trayState !== "idle", trayState);
+      // Title-cased to match QueuePanel's status badges, toned via trayStateBadgeTone.
+      expect(markup, `tray_state=${trayState}`).toMatch(
+        new RegExp(`<span [^>]*data-tone="${expectedTone}">${expectedText}</span>`),
+      );
+      expect(markup, `tray_state=${trayState}`).not.toMatch(
+        new RegExp(`<span [^>]*data-tone="${expectedTone}">${trayState}</span>`),
+      );
+    }
   });
-
-  describe.each<[TrayState, string, string]>([
-    ["idle", "neutral", "Idle"],
-    ["listening", "primary", "Listening"],
-    ["recording", "success", "Recording"],
-    ["transcribing", "warning", "Transcribing"],
-    ["paused", "warning", "Paused"],
-    ["error", "danger", "Error"],
-  ])(
-    "tones the tray_state Badge via trayStateBadgeTone for every tray_state value",
-    (trayState, expectedTone, expectedText) => {
-      it(`renders data-tone=${expectedTone} for tray_state=${trayState}`, () => {
-        const markup = renderLevelMeter(trayState !== "idle", trayState);
-        expect(markup).toMatch(
-          new RegExp(`<span [^>]*data-tone="${expectedTone}">${expectedText}</span>`),
-        );
-      });
-    },
-  );
 
   it("surfaces a 'why disabled' title on the Calibrate button when live input is inactive", () => {
     const inactive = renderLevelMeter(false);
@@ -106,17 +99,5 @@ describe("level meter", () => {
 
     const active = renderLevelMeter(true);
     expect(titleOf(buttonTag(active, "Calibrate"))).toBeNull();
-  });
-});
-
-describe("calibrateDisabledReason", () => {
-  it("returns a reason when live input is inactive", () => {
-    expect(calibrateDisabledReason({ live_input_active: false })).toBe(
-      "Start input to calibrate",
-    );
-  });
-
-  it("returns null when live input is active", () => {
-    expect(calibrateDisabledReason({ live_input_active: true })).toBeNull();
   });
 });

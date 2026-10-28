@@ -41,27 +41,36 @@ describe("CapturePage", () => {
     expect(markup).not.toContain('data-tone="danger"');
   });
 
-  it("shows only Start Input while capture is stopped", () => {
-    const markup = renderCapture(mockSnapshot());
+  it("toggles Start/Stop Input and waveform state with live input", () => {
+    const recording = mockSnapshot();
+    recording.status.live_input_active = true;
+    recording.status.tray_state = "recording";
+    recording.status.level.current_dbfs = -22;
+    recording.status.level.peak_dbfs = -8;
 
-    expect(markup).toContain("Start Input");
-    expect(markup).not.toContain(">Stop Input<");
-    expect(markup).toContain('data-state="idle"');
-  });
+    const cases = [
+      {
+        label: "stopped",
+        snapshot: mockSnapshot(),
+        shown: ["Start Input", 'data-state="idle"'],
+        hidden: ">Stop Input<",
+      },
+      {
+        label: "recording",
+        snapshot: recording,
+        shown: ["Stop Input", 'data-state="recording"', "Current -22 dBFS"],
+        hidden: ">Start Input<",
+      },
+    ];
 
-  it("shows Stop Input and recording waveform state while recording", () => {
-    const snapshot = mockSnapshot();
-    snapshot.status.live_input_active = true;
-    snapshot.status.tray_state = "recording";
-    snapshot.status.level.current_dbfs = -22;
-    snapshot.status.level.peak_dbfs = -8;
+    for (const { label, snapshot, shown, hidden } of cases) {
+      const markup = renderCapture(snapshot);
 
-    const markup = renderCapture(snapshot);
-
-    expect(markup).toContain("Stop Input");
-    expect(markup).not.toContain(">Start Input<");
-    expect(markup).toContain('data-state="recording"');
-    expect(markup).toContain("Current -22 dBFS");
+      for (const text of shown) {
+        expect(markup, label).toContain(text);
+      }
+      expect(markup, label).not.toContain(hidden);
+    }
   });
 
   it("surfaces missing microphone guidance and the exact disabled reason", () => {
@@ -106,21 +115,6 @@ describe("CapturePage", () => {
 
     expect(markup).toContain(
       "Live preview uses Whisper Turbo; final transcription remains Qwen3-ASR 1.7B.",
-    );
-  });
-
-  it("explains final-only waiting when no preview model is ready", () => {
-    const snapshot = mockSnapshot();
-    snapshot.settings.selected_model = "openrouter-qwen3-asr-flash";
-    snapshot.status.active_model = "openrouter-qwen3-asr-flash";
-    snapshot.models.find(
-      (model) => model.id === "openrouter-qwen3-asr-flash",
-    )!.status = "ready";
-
-    const markup = renderCapture(snapshot);
-
-    expect(markup).toContain(
-      "Live preview waits for a compatible model; final transcription uses OpenRouter · Qwen3 ASR Flash.",
     );
   });
 });

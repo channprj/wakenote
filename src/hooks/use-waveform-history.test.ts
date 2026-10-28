@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createAnimationFrameBatcher,
   reduceWaveformHistory,
+  type WaveformHistoryState,
+  type WaveformPhase,
 } from "./use-waveform-history";
 
 describe("reduceWaveformHistory", () => {
@@ -14,13 +16,34 @@ describe("reduceWaveformHistory", () => {
     ).toEqual({ levels: [0.2, 0.4, 0.8], phase: "recording" });
   });
 
-  it("starts decay after a recording with visible energy stops", () => {
-    expect(
-      reduceWaveformHistory(
-        { levels: [0.8], phase: "recording" },
-        { type: "stop" },
-      ).phase,
-    ).toBe("decaying");
+  it("decays only a stopped history that has visible energy", () => {
+    const cases: {
+      label: string;
+      history: WaveformHistoryState;
+      phase: WaveformPhase;
+      exact?: WaveformHistoryState;
+    }[] = [
+      {
+        label: "recording with visible energy",
+        history: { levels: [0.8], phase: "recording" },
+        phase: "decaying",
+      },
+      {
+        label: "empty idle history",
+        history: { levels: [], phase: "idle" },
+        phase: "idle",
+        exact: { levels: [], phase: "idle" },
+      },
+    ];
+
+    for (const { label, history, phase, exact } of cases) {
+      const next = reduceWaveformHistory(history, { type: "stop" });
+
+      expect(next.phase, label).toBe(phase);
+      if (exact) {
+        expect(next, label).toEqual(exact);
+      }
+    }
   });
 
   it("returns to a clean idle state after the decay reaches zero", () => {
@@ -28,15 +51,6 @@ describe("reduceWaveformHistory", () => {
       reduceWaveformHistory(
         { levels: [0, 0], phase: "decaying" },
         { type: "decay" },
-      ),
-    ).toEqual({ levels: [], phase: "idle" });
-  });
-
-  it("does not schedule decay for an empty stopped history", () => {
-    expect(
-      reduceWaveformHistory(
-        { levels: [], phase: "idle" },
-        { type: "stop" },
       ),
     ).toEqual({ levels: [], phase: "idle" });
   });

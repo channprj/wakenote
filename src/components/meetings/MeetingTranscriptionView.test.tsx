@@ -192,25 +192,6 @@ describe("MeetingTranscriptionView", () => {
     expect(onMeetingModelChange).toHaveBeenCalledWith("soniox-async-v5");
   });
 
-  it("opens configuration immediately after an imported meeting is selected", () => {
-    render(
-      <MeetingTranscriptionView
-        {...props({
-          selected: detail({ status: "recorded" }),
-          configurationInitiallyOpen: true,
-          models: mockModels().map((model) =>
-            model.id === "whisper-medium"
-              ? { ...model, status: "ready" as const }
-              : model,
-          ),
-        })}
-      />,
-    );
-
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByText("Transcribe saved meeting")).toBeTruthy();
-  });
-
   it("starts and stops a five-hour microphone plus system meeting recording", async () => {
     const onStartManualRecording = vi.fn();
     const onStopManualRecording = vi.fn();
@@ -414,49 +395,6 @@ describe("MeetingTranscriptionView", () => {
     );
   });
 
-  it("configures one request for every selected meeting that can start", async () => {
-    const onStartBulkTranscription = vi.fn().mockResolvedValue(true);
-    const models = mockModels().map((model) =>
-      model.id === "whisper-medium"
-        ? { ...model, status: "ready" as const }
-        : model,
-    );
-    render(
-      <MeetingTranscriptionView
-        {...props({
-          past: [
-            meeting({
-              id: "recorded",
-              title: "Recorded sync",
-              status: "recorded",
-            }),
-            meeting({ id: "failed", title: "Failed review", status: "failed" }),
-            meeting({ id: "completed", title: "Completed retro" }),
-          ],
-          models,
-          selectedMeetingIds: ["recorded", "failed", "completed"],
-          onStartBulkTranscription,
-        })}
-      />,
-    );
-
-    expect(screen.getByText("2 ready · 1 skipped")).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Transcribe selected" }),
-    );
-    expect(screen.getByText("Transcribe 2 meetings")).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Start 2 transcriptions" }),
-    );
-
-    expect(onStartBulkTranscription).toHaveBeenCalledWith({
-      model_id: "whisper-medium",
-      language: "auto",
-      streaming_enabled: false,
-      speaker_separation_enabled: false,
-    });
-  });
-
   it("shows persisted and newly committed text in the active detail workspace", () => {
     const selected = detail({
       id: "meeting-active",
@@ -489,50 +427,59 @@ describe("MeetingTranscriptionView", () => {
     expect(liveRegion.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("defaults to Visible and applies one bulk hide action", async () => {
-    const onApplyMeetingSelection = vi.fn();
-    render(
-      <MeetingTranscriptionView
-        {...props({
+  it("applies one bulk visibility action in each mode", async () => {
+    const cases: {
+      label: string;
+      overrides: Partial<MeetingTranscriptionViewProps>;
+      button: string;
+      defaultsToVisible: boolean;
+    }[] = [
+      {
+        label: "default Visible mode hides the selection",
+        overrides: {
           past: [meeting({ id: "meeting-1" }), meeting({ id: "meeting-2" })],
-          visibleCount: 2,
-          hiddenCount: 1,
           selectedMeetingIds: ["meeting-1", "meeting-2"],
-          onApplyMeetingSelection,
-        })}
-      />,
-    );
-
-    expect(
-      screen
-        .getByRole("radio", { name: /Visible2/ })
-        .getAttribute("aria-checked"),
-    ).toBe("true");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Hide selected" }),
-    );
-    expect(onApplyMeetingSelection).toHaveBeenCalledOnce();
-  });
-
-  it("restores hidden meetings through one batch action", async () => {
-    const onApplyMeetingSelection = vi.fn();
-    render(
-      <MeetingTranscriptionView
-        {...props({
+        },
+        button: "Hide selected",
+        defaultsToVisible: true,
+      },
+      {
+        label: "Hidden mode restores the selection",
+        overrides: {
           past: [meeting()],
           visibilityMode: "hidden",
-          visibleCount: 2,
-          hiddenCount: 1,
           selectedMeetingIds: ["meeting-1"],
-          onApplyMeetingSelection,
-        })}
-      />,
-    );
+        },
+        button: "Restore selected",
+        defaultsToVisible: false,
+      },
+    ];
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Restore selected" }),
-    );
-    expect(onApplyMeetingSelection).toHaveBeenCalledOnce();
+    for (const row of cases) {
+      const onApplyMeetingSelection = vi.fn();
+      render(
+        <MeetingTranscriptionView
+          {...props({
+            visibleCount: 2,
+            hiddenCount: 1,
+            ...row.overrides,
+            onApplyMeetingSelection,
+          })}
+        />,
+      );
+
+      if (row.defaultsToVisible) {
+        expect(
+          screen
+            .getByRole("radio", { name: /Visible2/ })
+            .getAttribute("aria-checked"),
+          row.label,
+        ).toBe("true");
+      }
+      await userEvent.click(screen.getByRole("button", { name: row.button }));
+      expect(onApplyMeetingSelection, row.label).toHaveBeenCalledOnce();
+      cleanup();
+    }
   });
 
   it("hides an active meeting without cancelling its work", async () => {

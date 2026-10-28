@@ -23,14 +23,10 @@ describe("overlay caption css", () => {
     expect(css).not.toContain("-webkit-line-clamp");
   });
 
-  it("lets short captions shrink to content while enforcing the configured maximum width", () => {
-    const rule = ruleBody(".overlay-caption");
-    expect(rule).not.toMatch(/(^|\s)min-width\s*:/);
-    expect(rule).toContain("--overlay-caption-max-width");
-  });
-
   it("drives caption geometry and border from style variables", () => {
     const rule = ruleBody(".overlay-caption");
+    // Short captions shrink to content; only the configured maximum width bounds them.
+    expect(rule).not.toMatch(/(^|\s)min-width\s*:/);
     for (const variable of [
       "--overlay-caption-max-width",
       "--overlay-caption-min-height",
@@ -51,29 +47,28 @@ describe("overlay caption css", () => {
     expect(ruleBody(".overlay-caption")).toContain("calc(100vh - 16px)");
   });
 
-  it.each([
-    [
-      ".overlay-caption",
-      "var(--overlay-caption-background-rgb, 0 0 0)",
-      "var(--overlay-caption-background-alpha, 0.82)",
-    ],
-    [
-      ".overlay-dictation",
-      "var(--dictation-background-rgb, 0 0 0)",
-      "var(--dictation-background-opacity, 0.88)",
-    ],
-  ])(
-    "uses one solid variable-driven background for %s",
-    (selector, rgb, opacity) => {
+  it("uses one solid variable-driven background for captions and dictation", () => {
+    for (const [selector, rgb, opacity] of [
+      [
+        ".overlay-caption",
+        "var(--overlay-caption-background-rgb, 0 0 0)",
+        "var(--overlay-caption-background-alpha, 0.82)",
+      ],
+      [
+        ".overlay-dictation",
+        "var(--dictation-background-rgb, 0 0 0)",
+        "var(--dictation-background-opacity, 0.88)",
+      ],
+    ]) {
       const rule = ruleBody(selector);
       const normalizedRule = rule.replace(/\s+/g, " ");
-      expect(rule).not.toContain("linear-gradient");
-      expect(rule).not.toContain("inset");
-      expect(normalizedRule).toContain(
+      expect(rule, selector).not.toContain("linear-gradient");
+      expect(rule, selector).not.toContain("inset");
+      expect(normalizedRule, selector).toContain(
         `background: rgb( ${rgb} / ${opacity} )`,
       );
-    },
-  );
+    }
+  });
 
   it("styles a compact dictation capsule and responsive waveform bars", () => {
     expect(css).toMatch(/\.overlay-dictation\s*\{[^}]*height:\s*44px/);
@@ -86,10 +81,15 @@ describe("overlay caption css", () => {
     );
   });
 
-  it("removes dictation motion when reduced motion is requested", () => {
-    expect(css).toMatch(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.overlay-dictation[\s\S]*animation:\s*none/,
-    );
+  it("removes caption and dictation motion when reduced motion is requested", () => {
+    for (const selector of [".overlay-dictation", ".overlay-caption"]) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(css, selector).toMatch(
+        new RegExp(
+          `@media\\s*\\(prefers-reduced-motion:\\s*reduce\\)[\\s\\S]*${escaped}[\\s\\S]*animation:\\s*none`,
+        ),
+      );
+    }
   });
 
   it("supports instant, fade, and dissolve subtitle transitions", () => {
@@ -107,12 +107,6 @@ describe("overlay caption css", () => {
     );
     expect(css).not.toMatch(
       /\.overlay-caption\[data-animation="instant"\][^{]*animation:/,
-    );
-  });
-
-  it("removes subtitle motion when reduced motion is requested", () => {
-    expect(css).toMatch(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.overlay-caption[\s\S]*animation:\s*none/,
     );
   });
 });
