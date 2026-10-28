@@ -29,15 +29,16 @@ describe("overlay caption css", () => {
     expect(rule).not.toMatch(/(^|\s)min-width\s*:/);
     for (const variable of [
       "--overlay-caption-max-width",
+      "--overlay-caption-min-height",
       "--overlay-caption-max-height",
       "--overlay-caption-padding-horizontal",
       "--overlay-caption-padding-vertical",
+      "--overlay-caption-border-width",
+      "--overlay-caption-border-rgb",
+      "--overlay-caption-border-radius",
     ]) {
       expect(rule).toContain(variable);
     }
-    expect(rule).not.toContain("--overlay-caption-min-height");
-    expect(rule).toContain("background: transparent");
-    expect(rule).not.toContain("box-shadow: 0");
   });
 
   it("keeps vertical breathing room inside the overlay window", () => {
@@ -46,19 +47,13 @@ describe("overlay caption css", () => {
     expect(ruleBody(".overlay-caption")).toContain("calc(100vh - 16px)");
   });
 
-  it("outlines caption letters and keeps one solid dictation background", () => {
-    const caption = ruleBody(".overlay-caption");
-    const text = ruleBody(".overlay-caption__text");
-    expect(caption).toContain("background: transparent");
-    expect(caption).not.toContain("linear-gradient");
-    expect(text).toContain(
-      "-webkit-text-stroke-color: var(--overlay-caption-outline, #000)",
-    );
-    expect(text).toContain(
-      "-webkit-text-stroke-width: var(--overlay-caption-outline-width, 2px)",
-    );
-    expect(text).toContain("paint-order: stroke fill");
+  it("uses one solid variable-driven background for captions and dictation", () => {
     for (const [selector, rgb, opacity] of [
+      [
+        ".overlay-caption",
+        "var(--overlay-caption-background-rgb, 0 0 0)",
+        "var(--overlay-caption-background-alpha, 0.82)",
+      ],
       [
         ".overlay-dictation",
         "var(--dictation-background-rgb, 0 0 0)",

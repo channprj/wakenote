@@ -159,7 +159,7 @@ describe("caption overlay content", () => {
     );
 
     expect(markup).toContain("--overlay-caption-font-size:32px");
-    expect(markup).toContain("--overlay-caption-text-color:#000000");
+    expect(markup).toContain("--overlay-caption-text-color:#f8fafc");
     expect(markup).toContain("--overlay-caption-background-rgb:255 255 255");
     expect(markup).toContain("--overlay-caption-background-alpha:0.68");
     expect(markup).toContain("--overlay-caption-padding-horizontal:22px");
@@ -170,69 +170,11 @@ describe("caption overlay content", () => {
     expect(markup).toContain("--overlay-caption-max-width:840px");
     expect(markup).toContain("--overlay-caption-min-height:64px");
     expect(markup).toContain("--overlay-caption-max-height:640px");
-    expect(markup).toContain(
-      "--overlay-caption-outline:rgba(255, 255, 255, 0.68)",
-    );
-    expect(markup).toContain("--overlay-caption-outline-width:4px");
-    expect(markup).not.toContain("background-color:");
+    expect(markup).toContain("background-color:rgba(255, 255, 255, 0.68)");
     expect(markup).toContain('data-animation="dissolve"');
   });
 
-  it("strokes unequal caption lines without a filled plate", () => {
-    const markup = render(
-      caption({
-        chunk_id: 1,
-        phase: "final",
-        text: "짧은 줄\n훨씬 더 긴 자막 줄입니다",
-        visible: true,
-      }),
-    );
-
-    expect(markup).toContain("--overlay-caption-outline:rgba(0, 0, 0, 0.82)");
-    expect(markup).toContain("--overlay-caption-outline-width:3px");
-    expect(markup).toContain("--overlay-caption-text-color:#ffffff");
-    expect(markup).not.toContain("background-color:");
-
-    const mismatchedFill = render(
-      caption({
-        chunk_id: 3,
-        phase: "final",
-        text: "색이 어긋난 자막",
-        visible: true,
-        style: {
-          ...emptyCaptionSnapshot().style,
-          background_color: "#000000",
-          text_color: "#f8fafc",
-        },
-      }),
-    );
-    expect(mismatchedFill).toContain("--overlay-caption-text-color:#ffffff");
-    expect(mismatchedFill).toContain("--overlay-caption-outline:rgba(0, 0, 0, 0.82)");
-    expect(mismatchedFill).not.toContain("background-color:");
-    expect(markup.match(/overlay-caption__text/g)).toHaveLength(1);
-    expect(markup).toContain("짧은 줄\n훨씬 더 긴 자막 줄입니다");
-
-    const white = render(
-      caption({
-        chunk_id: 2,
-        phase: "final",
-        text: "흰 윤곽",
-        visible: true,
-        style: {
-          ...emptyCaptionSnapshot().style,
-          background_color: "#ffffff",
-          background_opacity: 100,
-          text_color: "#000000",
-          font_size_px: 48,
-        },
-      }),
-    );
-    expect(white).toContain("--overlay-caption-outline:rgba(255, 255, 255, 1)");
-    expect(white).toContain("--overlay-caption-outline-width:6px");
-    expect(white).not.toContain("background-color:");
-  });
-
-  it("allows 8px subtitles and marks animated exit state", () => {
+  it("allows 10px subtitles and marks animated exit state", () => {
     const markup = renderToStaticMarkup(
       <OverlayContent
         caption={caption({
@@ -242,7 +184,7 @@ describe("caption overlay content", () => {
           visible: true,
           style: {
             ...emptyCaptionSnapshot().style,
-            font_size_px: 8,
+            font_size_px: 4,
             animation: "fade",
           },
         })}
@@ -253,21 +195,7 @@ describe("caption overlay content", () => {
       />,
     );
 
-    expect(markup).toContain("--overlay-caption-font-size:8px");
-    expect(markup).toContain("--overlay-caption-outline-width:1px");
-    const clamped = render(
-      caption({
-        chunk_id: 1,
-        phase: "final",
-        text: "더 작은 자막",
-        visible: true,
-        style: {
-          ...emptyCaptionSnapshot().style,
-          font_size_px: 4,
-        },
-      } as Partial<OverlayCaptionSnapshot>),
-    );
-    expect(clamped).toContain("--overlay-caption-font-size:8px");
+    expect(markup).toContain("--overlay-caption-font-size:10px");
     expect(markup).toContain('data-animation="fade"');
     expect(markup).toContain('data-visibility="exiting"');
   });

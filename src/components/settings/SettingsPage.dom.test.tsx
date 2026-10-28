@@ -1452,7 +1452,7 @@ describe("SettingsPage interactions", () => {
     );
   });
 
-  it("configures all subtitle positions, 8px type, duration, animation, and live preview", async () => {
+  it("configures all subtitle positions, 10px type, duration, animation, and live preview", async () => {
     const user = userEvent.setup();
     const actions = makeActions();
     const snapshot = mockSnapshot();
@@ -1472,11 +1472,11 @@ describe("SettingsPage interactions", () => {
     });
     fireEvent.keyDown(fontSize, { key: "Home" });
     expect(actions.onPatch).toHaveBeenCalledWith({
-      floating_overlay_font_size_px: 8,
+      floating_overlay_font_size_px: 10,
     });
     await waitFor(() =>
       expect(actions.onPreviewSubtitle).toHaveBeenCalledWith({
-        floating_overlay_font_size_px: 8,
+        floating_overlay_font_size_px: 10,
       }),
     );
 

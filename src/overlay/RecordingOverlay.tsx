@@ -138,21 +138,10 @@ function rgbaColor(hex: string, opacity: number): string {
   return `rgba(${hexToRgbTriplet(hex).replaceAll(" ", ", ")}, ${opacity})`;
 }
 
-function captionLetterColors(backgroundColor: string): {
-  fill: "#000000" | "#ffffff";
-  stroke: "#000000" | "#ffffff";
-} {
-  const whiteStroke = backgroundColor.trim().toLowerCase() === "#ffffff";
-  return whiteStroke
-    ? { fill: "#000000", stroke: "#ffffff" }
-    : { fill: "#ffffff", stroke: "#000000" };
-}
-
 function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
-  const fontSize = Math.max(8, Math.min(48, Math.round(style.font_size_px)));
+  const fontSize = Math.max(10, Math.min(48, Math.round(style.font_size_px)));
   const opacity =
     Math.max(0, Math.min(100, Math.round(style.background_opacity))) / 100;
-  const letters = captionLetterColors(style.background_color);
   const maxWidth = Math.max(
     0,
     Math.min(1_600, Math.round(style.max_width_px)),
@@ -165,14 +154,11 @@ function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
     minHeight,
     Math.min(1_200, Math.round(Math.max(style.min_height_px, style.max_height_px))),
   );
-  const outlineWidth = Math.max(1, Math.round(fontSize * 0.12));
   return {
     "--overlay-caption-font-size": `${fontSize}px`,
-    "--overlay-caption-text-color": letters.fill,
+    "--overlay-caption-text-color": style.text_color,
     "--overlay-caption-background-rgb": hexToRgbTriplet(style.background_color),
     "--overlay-caption-background-alpha": `${opacity}`,
-    "--overlay-caption-outline": rgbaColor(letters.stroke, opacity),
-    "--overlay-caption-outline-width": `${outlineWidth}px`,
     "--overlay-caption-padding-horizontal": `${Math.max(0, Math.min(64, Math.round(style.padding_horizontal_px)))}px`,
     "--overlay-caption-padding-vertical": `${Math.max(0, Math.min(64, Math.round(style.padding_vertical_px)))}px`,
     "--overlay-caption-border-width": `${Math.max(0, Math.min(8, Math.round(style.border_width_px)))}px`,
@@ -181,6 +167,7 @@ function captionStyleVariables(style: OverlayCaptionStyle): CSSProperties {
     "--overlay-caption-max-width": `${maxWidth}px`,
     "--overlay-caption-min-height": `${minHeight}px`,
     "--overlay-caption-max-height": `${maxHeight}px`,
+    backgroundColor: rgbaColor(style.background_color, opacity),
   } as CSSProperties;
 }
 

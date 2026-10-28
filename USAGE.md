@@ -345,14 +345,14 @@ Settings patches are clamped or normalized by the Rust backend.
 | Dictation language | `auto` | same language set as archival transcription |
 | Subtitle | `off` | `on` / `off` |
 | Subtitle position | top center | off; top/bottom × left/center/right |
-| Subtitle font size | `24 px` | `8 … 48 px` |
-| Subtitle background | black at `82%` | black/white letter outline, `0 … 100%` |
+| Subtitle font size | `24 px` | `10 … 48 px` |
+| Subtitle background | black at `82%` | black/white, `0 … 100%` |
 | Subtitle horizontal padding | `18 px` | `0 … 64 px` |
 | Subtitle vertical padding | `14 px` | `0 … 64 px` |
 | Subtitle border | `1 px`, `#ffffff` | `0 … 8 px`, six-digit hex color |
 | Subtitle corner radius | `8 px` | `0 … 48 px` |
 | Subtitle maximum width | `720 px` | `0 … 1,600 px` |
-| Subtitle height | `58 … 1,000 px` | minimum/maximum `0 … 1,200 px`; the minimum does not add empty space around the letters |
+| Subtitle height | `58 … 1,000 px` | minimum/maximum `0 … 1,200 px`; normalized so minimum ≤ maximum |
 | Minimum subtitle duration | `5 sec` | `1 … 10 sec` |
 | Subtitle animation | fade | instant / fade / dissolve |
 | Theme | dark | light / dark |
