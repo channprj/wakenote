@@ -345,7 +345,7 @@ function MicrophoneInputVolumeRows({
 
     return (
       <SettingSlider
-        key={microphone.id}
+        key={`${index}:${microphone.id}`}
         label={label}
         description={description}
         value={value}
@@ -503,9 +503,6 @@ function MicrophoneSelectors({
       fallback: false,
     });
   }
-  const explicitDevices = stableMicrophones.filter(
-    (device) => device.id !== "default",
-  );
   const optionLabel = (id: string) => {
     const device = stableMicrophones.find((microphone) => microphone.id === id);
     if (!device) return null;
@@ -527,9 +524,9 @@ function MicrophoneSelectors({
       <FieldContent>
         <FieldLabel>Capture microphones</FieldLabel>
         <FieldDescription>
-          Choose one required Primary and one optional Secondary. Each slot
-          records and reconnects. The same physical microphone is captured once
-          and used for both slots.
+          Choose one required Primary and one optional Secondary. Either slot
+          can follow System Default. Each slot records and reconnects. The same
+          physical microphone is captured once and used for both slots.
         </FieldDescription>
       </FieldContent>
       <div className="grid gap-3">
@@ -590,7 +587,7 @@ function MicrophoneSelectors({
           <SelectContent>
             <SelectGroup>
               <SelectItem value="__none__">No Secondary microphone</SelectItem>
-              {explicitDevices.map((device) => (
+              {stableMicrophones.map((device) => (
                 <SelectItem key={device.id} value={device.id}>
                   {device.label}
                   {device.available ? "" : " (Unavailable)"}

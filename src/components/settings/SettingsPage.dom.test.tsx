@@ -886,6 +886,85 @@ describe("SettingsPage interactions", () => {
     });
   });
 
+  it("offers System Default for the Secondary microphone", async () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "usb", label: "USB microphone", core_audio_uid: "usb" },
+    ];
+    snapshot.microphones = [
+      {
+        id: "default",
+        label: "System Default",
+        core_audio_uid: "built-in",
+        available: true,
+        fallback: false,
+      },
+      {
+        id: "usb",
+        label: "USB microphone",
+        core_audio_uid: "usb",
+        available: true,
+        fallback: false,
+      },
+    ];
+    const actions = makeActions();
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={actions}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Secondary microphone" }),
+    );
+    await userEvent.click(screen.getByRole("option", { name: "System Default" }));
+    expect(actions.onPatch).toHaveBeenCalledWith({
+      capture_microphones: [
+        { id: "usb", label: "USB microphone", core_audio_uid: "usb" },
+        { id: "default", label: "System Default", core_audio_uid: "built-in" },
+      ],
+    });
+  });
+
+  it("lets both microphone slots follow System Default", async () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.capture_microphones = [
+      { id: "default", label: "System Default", core_audio_uid: "built-in" },
+      { id: "default", label: "System Default", core_audio_uid: "built-in" },
+    ];
+    snapshot.microphones = [
+      {
+        id: "default",
+        label: "System Default",
+        core_audio_uid: "built-in",
+        available: true,
+        fallback: false,
+      },
+    ];
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <SettingsPage
+        section="audio"
+        onSectionChange={() => {}}
+        snapshot={snapshot}
+        actions={makeActions()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Primary microphone" }).textContent,
+    ).toContain("System Default");
+    expect(
+      screen.getByRole("combobox", { name: "Secondary microphone" }).textContent,
+    ).toContain("System Default");
+    expect(
+      errors.mock.calls.some((call) => String(call[0]).includes("same key")),
+    ).toBe(false);
+    errors.mockRestore();
+  });
+
   it("enables voice-aware auto level by default and explains hardware fallback", async () => {
     const actions = makeActions();
     const snapshot = mockSnapshot();
