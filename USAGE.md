@@ -181,7 +181,7 @@ The shelf follows System Settings and closes when the permission is granted, Sys
 
 The speech gate starts a chunk only after the input remains above Threshold for the Attack duration. It closes only after the input remains below Threshold for Release, while Pre-roll, Lead-in, and Post-roll protect the edges. Max Chunk splits continuous audio into bounded recordings.
 
-With two configured microphones, **Microphone processing** offers three modes. **Separated Audio** writes independent Primary and Secondary artifacts. **Merge Audio** is the default: it buffers up to 220 ms, estimates fractional delay and clock drift, corrects gain and polarity, and blends only while alignment confidence is sufficient. **Priority Audio** instead writes one sufficiently loud, clean source at a time, using switching hysteresis and a 50 ms equal-power crossfade so two room responses are never summed. Every mode retains physical-device identity in metadata and transcript filters. Both slots may name the same physical microphone. That device is opened and leveled once, and both slots use that capture.
+With two configured microphones, **Microphone processing** offers three modes. **Separated Audio** writes independent Primary and Secondary artifacts. **Merge Audio** is the default: it buffers up to 220 ms, estimates fractional delay and clock drift, corrects gain and polarity, and blends only while alignment confidence is sufficient. **Priority Audio** instead writes one sufficiently loud, clean source at a time, using switching hysteresis and a 50 ms equal-power crossfade so two room responses are never summed. Every mode retains physical-device identity in metadata and transcript filters. Either slot may follow System Default, and both slots may name the same physical microphone. That device is opened and leveled once, and both slots use that capture.
 
 Recording, Transcription, and Pause are independent controls. You can retain audio without creating new transcription jobs, process an existing backlog without recording, or pause both.
 
@@ -557,7 +557,7 @@ The browser fixture includes captures, reports, runs, queue outcomes, and instal
 
 ### Keep two microphone identities separate
 
-1. Select Primary and Secondary devices in **Settings › Audio**. The same physical microphone may fill both slots.
+1. Select Primary and Secondary devices in **Settings › Audio**. Either slot may follow **System Default**, and the same physical microphone may fill both slots.
 2. Choose **Separated Audio** under **Microphone processing**.
 3. Record normally.
 
