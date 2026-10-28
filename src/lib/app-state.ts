@@ -246,6 +246,7 @@ export function defaultSettings(): AppSettings {
     show_tray_icon: true,
     tray_left_click_action: "open_menu",
     show_menu_bar_level: false,
+    show_menu_bar_level_unit: true,
     show_floating_overlay: false,
     subtitle_source_mode: "both",
     floating_overlay_position: "top",

@@ -646,6 +646,9 @@ pub struct AppSettings {
     /// Show the live input level beside the menu bar icon while input runs.
     #[serde(default)]
     pub show_menu_bar_level: bool,
+    /// Follow the menu bar input level with " dB".
+    #[serde(default = "default_true")]
+    pub show_menu_bar_level_unit: bool,
     pub show_floating_overlay: bool,
     #[serde(default)]
     pub subtitle_source_mode: SubtitleSourceMode,
@@ -784,6 +787,7 @@ pub struct SettingsPatch {
     pub show_tray_icon: Option<bool>,
     pub tray_left_click_action: Option<TrayClickAction>,
     pub show_menu_bar_level: Option<bool>,
+    pub show_menu_bar_level_unit: Option<bool>,
     pub show_floating_overlay: Option<bool>,
     pub subtitle_source_mode: Option<SubtitleSourceMode>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
@@ -1624,6 +1628,9 @@ impl AppSettings {
         if let Some(value) = patch.show_menu_bar_level {
             self.show_menu_bar_level = value;
         }
+        if let Some(value) = patch.show_menu_bar_level_unit {
+            self.show_menu_bar_level_unit = value;
+        }
         if let Some(value) = patch.show_floating_overlay {
             self.show_floating_overlay = value;
         }
@@ -1823,6 +1830,7 @@ impl Default for AppSettings {
             show_tray_icon: true,
             tray_left_click_action: default_tray_left_click_action(),
             show_menu_bar_level: false,
+            show_menu_bar_level_unit: true,
             show_floating_overlay: false,
             subtitle_source_mode: SubtitleSourceMode::default(),
             floating_overlay_position: FloatingOverlayPosition::Top,
@@ -2244,6 +2252,13 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.show_menu_bar_level);
+        assert!(settings.show_menu_bar_level_unit);
+
+        settings.apply_patch(SettingsPatch {
+            show_menu_bar_level_unit: Some(false),
+            ..Default::default()
+        });
+        assert!(!settings.show_menu_bar_level_unit);
     }
 
     #[test]
@@ -2672,6 +2687,7 @@ mod tests {
         assert!(!settings.diagnostic_logging_enabled);
         assert!(!settings.discard_transcript_audio);
         assert!(!settings.show_menu_bar_level);
+        assert!(settings.show_menu_bar_level_unit);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(!settings.auto_transcript_input_final_only);
         assert!(!settings.dictation_enabled);

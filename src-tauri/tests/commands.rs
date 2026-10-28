@@ -3607,6 +3607,16 @@ fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
         Some("\u{2007}\u{2212}42 dB")
     );
 
+    // Without the unit only the four fixed-width cells remain.
+    backend.update_settings(SettingsPatch {
+        show_menu_bar_level_unit: Some(false),
+        ..SettingsPatch::default()
+    });
+    assert_eq!(
+        tray_level_title(&backend.settings(), &status).as_deref(),
+        Some("\u{2007}\u{2212}42")
+    );
+
     status.live_input_active = false;
     assert_eq!(tray_level_title(&backend.settings(), &status), None);
 
@@ -3620,16 +3630,22 @@ fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
 
 #[test]
 fn tray_level_keeps_a_steady_width_and_clamps_to_the_dbfs_range() {
-    assert_eq!(format_tray_level(-41.6), "\u{2007}\u{2212}42 dB");
-    assert_eq!(format_tray_level(-5.2), "\u{2007}\u{2007}\u{2212}5 dB");
-    assert_eq!(format_tray_level(-0.2), "\u{2007}\u{2007}\u{2007}0 dB");
-    assert_eq!(format_tray_level(3.0), "\u{2007}\u{2007}\u{2007}0 dB");
-    assert_eq!(format_tray_level(-150.0), "\u{2212}120 dB");
-    assert_eq!(format_tray_level(f32::NAN), "\u{2212}120 dB");
+    assert_eq!(format_tray_level(-41.6, true), "\u{2007}\u{2212}42 dB");
+    assert_eq!(
+        format_tray_level(-5.2, true),
+        "\u{2007}\u{2007}\u{2212}5 dB"
+    );
+    assert_eq!(
+        format_tray_level(-0.2, true),
+        "\u{2007}\u{2007}\u{2007}0 dB"
+    );
+    assert_eq!(format_tray_level(3.0, true), "\u{2007}\u{2007}\u{2007}0 dB");
+    assert_eq!(format_tray_level(-150.0, true), "\u{2212}120 dB");
+    assert_eq!(format_tray_level(f32::NAN, true), "\u{2212}120 dB");
 
     // Every reading is four digit-wide cells, so 2- and 3-digit levels line up.
     for dbfs in -120..=0 {
-        let readout = format_tray_level(dbfs as f32);
+        let readout = format_tray_level(dbfs as f32, true);
         let number = readout.strip_suffix(" dB").expect("unit");
         assert_eq!(number.chars().count(), 4, "{readout:?}");
         assert!(

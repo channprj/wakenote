@@ -97,6 +97,13 @@ export function GeneralSettings({
           disabled={!settings.show_tray_icon}
           onCheckedChange={(show_menu_bar_level) => onPatch({ show_menu_bar_level })}
         />
+        <SettingSwitch
+          label="Show dB unit"
+          description="Follow the menu bar input level with dB. Turn it off to show the number alone."
+          checked={settings.show_menu_bar_level_unit}
+          disabled={!settings.show_tray_icon || !settings.show_menu_bar_level}
+          onCheckedChange={(show_menu_bar_level_unit) => onPatch({ show_menu_bar_level_unit })}
+        />
       </SettingsCard>
     </SettingsGrid>
   );

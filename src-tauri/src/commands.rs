@@ -249,14 +249,14 @@ pub fn tray_runtime_presentation(
 /// Live input level shown beside the menu bar icon, or `None` for the icon alone.
 pub fn tray_level_title(settings: &AppSettings, status: &AppStatus) -> Option<String> {
     (settings.show_menu_bar_level && settings.show_tray_icon && status.live_input_active)
-        .then(|| format_tray_level(status.level.current_dbfs))
+        .then(|| format_tray_level(status.level.current_dbfs, settings.show_menu_bar_level_unit))
 }
 
 /// Right-aligns the level in four cells, a sign and three digits. The menu
 /// bar's monospaced-digit font draws the minus sign (U+2212) and figure spaces
 /// (U+2007) as wide as a digit, so `0` and `-120` take the same width and the
-/// menu bar does not shift while the level moves.
-pub fn format_tray_level(dbfs: f32) -> String {
+/// menu bar does not shift while the level moves. `unit` appends " dB".
+pub fn format_tray_level(dbfs: f32, unit: bool) -> String {
     let level = if dbfs.is_finite() {
         dbfs.round().clamp(-120.0, 0.0) as i32
     } else {
@@ -267,7 +267,8 @@ pub fn format_tray_level(dbfs: f32) -> String {
     } else {
         level.to_string()
     };
-    format!("{number:\u{2007}>4} dB")
+    let unit = if unit { " dB" } else { "" };
+    format!("{number:\u{2007}>4}{unit}")
 }
 
 fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {

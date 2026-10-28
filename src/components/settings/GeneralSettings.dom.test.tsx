@@ -25,6 +25,19 @@ describe("GeneralSettings", () => {
     expect(onPatch).toHaveBeenCalledWith({ show_menu_bar_level: true });
   });
 
+  it("offers the dB unit while the menu bar level is shown, on by default", async () => {
+    const unit = () => screen.getByRole("switch", { name: "Show dB unit" });
+    renderGeneral();
+    expect(unit().getAttribute("aria-checked")).toBe("true");
+    expect((unit() as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+
+    const onPatch = renderGeneral({ show_menu_bar_level: true });
+    expect((unit() as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.setup().click(unit());
+    expect(onPatch).toHaveBeenCalledWith({ show_menu_bar_level_unit: false });
+  });
+
   it("disables the menu bar input level while the menu bar icon is hidden", () => {
     renderGeneral({ show_tray_icon: false, show_menu_bar_level: true });
 
