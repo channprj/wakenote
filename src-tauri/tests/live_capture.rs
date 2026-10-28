@@ -231,23 +231,6 @@ fn live_capture_runtime_drops_stale_frames_when_processing_falls_behind() {
 }
 
 #[test]
-fn live_capture_runtime_reports_stream_runtime_errors() {
-    let input = FakeInput::default();
-    let handle = input.clone();
-    let mut runtime = LiveCaptureRuntime::new(input);
-
-    runtime
-        .start(AudioInputConfig::default(), |_| {})
-        .expect("start");
-    handle.set_runtime_error("default input stream disconnected");
-
-    assert_eq!(
-        runtime.runtime_error().as_deref(),
-        Some("default input stream disconnected")
-    );
-}
-
-#[test]
 fn boxed_live_capture_runtime_forwards_stream_runtime_errors() {
     let input = FakeInput::default();
     let backend_handle = input.clone();

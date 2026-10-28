@@ -948,15 +948,27 @@ mod microphone_frame_tests {
     }
 
     #[test]
-    fn usb_microphone_does_not_attenuate_a_single_active_stereo_channel() {
-        let mono = captured_samples(&[0.2, 0.0, -0.4, 0.0, 0.6, 0.0], 2);
-        assert_eq!(mono, vec![0.2, -0.4, 0.6]);
-    }
-
-    #[test]
-    fn microphone_downmix_does_not_cancel_opposite_polarity_voice() {
-        let mono = captured_samples(&[0.2, -0.2, -0.4, 0.4, 0.6, -0.6], 2);
-        assert_eq!(mono, vec![0.2, -0.4, 0.6]);
+    fn stereo_microphone_downmix_preserves_each_channel_layout() {
+        let cases: [(&str, &[f32], &[f32]); 3] = [
+            (
+                "usb microphone with a single active channel is not attenuated",
+                &[0.2, 0.0, -0.4, 0.0, 0.6, 0.0],
+                &[0.2, -0.4, 0.6],
+            ),
+            (
+                "opposite polarity voice is not cancelled",
+                &[0.2, -0.2, -0.4, 0.4, 0.6, -0.6],
+                &[0.2, -0.4, 0.6],
+            ),
+            (
+                "stereo transmitters with different voices are both retained",
+                &[0.4, 0.1, -0.4, 0.1, 0.4, -0.1, -0.4, -0.1],
+                &[0.25, -0.15, 0.15, -0.25],
+            ),
+        ];
+        for (label, interleaved, expected) in cases {
+            assert_eq!(captured_samples(interleaved, 2), expected, "{label}");
+        }
     }
 
     #[test]
@@ -983,28 +995,32 @@ mod microphone_frame_tests {
     }
 
     #[test]
-    fn microphone_clock_preserves_real_capture_gaps() {
-        let mut clock = CaptureFrameClock::default();
-        let first = cpal::InputStreamTimestamp {
-            capture: cpal::StreamInstant::new(1, 0),
-            callback: cpal::StreamInstant::new(1, 10_000_000),
-        };
-        let second = cpal::InputStreamTimestamp {
-            capture: cpal::StreamInstant::new(2, 0),
-            callback: cpal::StreamInstant::new(2, 10_000_000),
-        };
+    fn microphone_clock_preserves_capture_gaps() {
         let base = DateTime::<Utc>::UNIX_EPOCH;
-        assert_eq!(clock.frame_end(first, 480, 48_000, base), base);
-        assert_eq!(
-            clock.frame_end(second, 480, 48_000, base),
-            base + chrono::Duration::seconds(1)
-        );
-    }
-
-    #[test]
-    fn stereo_transmitters_with_different_voices_are_both_retained() {
-        let mono = captured_samples(&[0.4, 0.1, -0.4, 0.1, 0.4, -0.1, -0.4, -0.1], 2);
-        assert_eq!(mono, vec![0.25, -0.15, 0.15, -0.25]);
+        // (capture secs, capture nanos, expected frame end ms)
+        type Capture = (i64, u32, i64);
+        let cases: [(&str, &[Capture]); 2] = [
+            ("real one second gap", &[(1, 0, 0), (2, 0, 1_000)]),
+            (
+                "one missing ten millisecond buffer",
+                &[(1, 0, 0), (1, 20_000_000, 20), (1, 30_000_000, 30)],
+            ),
+        ];
+        for (label, frames) in cases {
+            let mut clock = CaptureFrameClock::default();
+            for &(secs, nanos, expected_ms) in frames {
+                let capture = cpal::StreamInstant::new(secs, nanos);
+                let timestamp = cpal::InputStreamTimestamp {
+                    capture,
+                    callback: capture.add(Duration::from_millis(10)).unwrap(),
+                };
+                assert_eq!(
+                    clock.frame_end(timestamp, 480, 48_000, base),
+                    base + chrono::Duration::milliseconds(expected_ms),
+                    "{label}: capture at {secs}s + {nanos}ns",
+                );
+            }
+        }
     }
 
     #[test]
@@ -1026,23 +1042,6 @@ mod microphone_frame_tests {
         let mono = mixer.process(&recovered, 2, 48_000);
         for (actual, stereo) in mono.iter().zip(recovered.chunks_exact(2)) {
             assert!((actual - stereo[1]).abs() < 0.0001);
-        }
-    }
-
-    #[test]
-    fn microphone_clock_preserves_one_missing_ten_millisecond_buffer() {
-        let mut clock = CaptureFrameClock::default();
-        let base = DateTime::<Utc>::UNIX_EPOCH;
-        for (chunk, expected_ms) in [(0_u32, 0), (2, 20), (3, 30)] {
-            let capture = cpal::StreamInstant::new(1, chunk * 10_000_000);
-            let timestamp = cpal::InputStreamTimestamp {
-                capture,
-                callback: capture.add(Duration::from_millis(10)).unwrap(),
-            };
-            assert_eq!(
-                clock.frame_end(timestamp, 480, 48_000, base),
-                base + chrono::Duration::milliseconds(expected_ms)
-            );
         }
     }
 }

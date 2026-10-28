@@ -2057,18 +2057,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_force_cuts_at_max_without_silence() {
-        let frames = (200_000 / FRAME_MS) as usize;
-        let rms = vec![0.3f32; frames]; // never silent
-        let segments = plan_segments(&rms, FRAME_MS, 200_000, SegmentPlanOptions::default());
-        assert_eq!(segments[0], (0, MAX_SEGMENT_MS));
-    }
-
-    #[test]
     fn plan_tiles_without_gaps_or_overlap() {
         let frames = (500_000 / FRAME_MS) as usize;
-        let rms = vec![0.3f32; frames];
+        let rms = vec![0.3f32; frames]; // never silent
         let segments = plan_segments(&rms, FRAME_MS, 500_000, SegmentPlanOptions::default());
+        // With no silence to cut at, the first cut is forced at the max length.
+        assert_eq!(segments[0], (0, MAX_SEGMENT_MS));
         assert_eq!(segments.first().unwrap().0, 0);
         assert_eq!(segments.last().unwrap().1, 500_000);
         for pair in segments.windows(2) {

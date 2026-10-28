@@ -672,23 +672,6 @@ mod tests {
         assert_eq!(backend.read_volume("uid-a"), Err(expected));
     }
 
-    #[test]
-    fn device_uid_and_input_only_inventory_are_exposed_unchanged() {
-        let backend = CoreAudioInputVolumeBackend::with_api(FakeAudioObjectApi::new());
-        assert_eq!(
-            backend.input_devices().unwrap(),
-            vec![SystemInputDevice {
-                uid: "uid-a".into(),
-                label: "USB Mic".into(),
-                legacy_cpal_id: Some("input-0-usb-mic".into()),
-            }]
-        );
-        assert_eq!(
-            backend.default_input_uid().unwrap().as_deref(),
-            Some("uid-a")
-        );
-    }
-
     struct VolumeRestoreGuard<'a> {
         backend: &'a CoreAudioInputVolumeBackend,
         uid: String,

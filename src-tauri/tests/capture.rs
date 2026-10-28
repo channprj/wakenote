@@ -276,34 +276,6 @@ fn capture_processor_writes_configured_post_roll_audio_samples() {
 }
 
 #[test]
-fn capture_processor_rolls_over_at_max_chunk_without_dropping_stream() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut config_settings = settings();
-    config_settings.attack_ms = 100;
-    config_settings.max_chunk_ms = 500;
-    let mut processor = CaptureProcessor::new(CaptureProcessorConfig {
-        save_root: tmp.path().to_path_buf(),
-        settings: config_settings,
-        sample_rate: 10,
-        device_id: "default".to_string(),
-        device_name: "System Default".to_string(),
-        used_fallback_device: false,
-        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
-        app_version: "0.1.0".to_string(),
-        source: ChunkSource::Microphone,
-        source_label: None,
-    });
-
-    for _ in 0..10 {
-        processor.process_samples(&[0.8; 1], 100).expect("speech");
-    }
-
-    let chunks = processor.completed_chunks();
-    assert_eq!(chunks.len(), 2);
-    assert!(processor.is_recording());
-}
-
-#[test]
 fn capture_processor_rollover_repeats_tail_context_for_next_chunk() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config_settings = settings();
@@ -330,6 +302,10 @@ fn capture_processor_rollover_repeats_tail_context_for_next_chunk() {
 
     let chunks = processor.completed_chunks();
     assert_eq!(chunks.len(), 2);
+    assert!(
+        processor.is_recording(),
+        "rolling over at max chunk must not drop the stream"
+    );
     let first = wav_samples(&chunks[0].audio_path);
     let second = wav_samples(&chunks[1].audio_path);
 
@@ -386,95 +362,57 @@ fn capture_processor_rollover_does_not_write_silence_only_chunk_when_speech_stop
 }
 
 #[test]
-fn capture_controller_flushes_active_chunk_when_recording_is_disabled() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut controller = CaptureController::new(CaptureControllerConfig {
-        save_root: tmp.path().to_path_buf(),
-        settings: settings(),
-        sample_rate: 10,
-        device_id: "default".to_string(),
-        device_name: "System Default".to_string(),
-        used_fallback_device: false,
-        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
-        app_version: "0.1.0".to_string(),
-        source: ChunkSource::Microphone,
-        source_label: None,
-    });
+fn capture_controller_flushes_active_chunk_on_settings_update() {
+    type SettingsChange = fn(&mut AppSettings);
+    // (label, settings change, listening after the update)
+    let cases: [(&str, SettingsChange, bool); 3] = [
+        (
+            "recording disabled",
+            |settings| settings.recording_enabled = false,
+            false,
+        ),
+        ("paused", |settings| settings.pause_all = true, false),
+        (
+            "threshold changed",
+            |settings| settings.threshold_dbfs = -35.0,
+            true,
+        ),
+    ];
+    for (label, change, listening) in cases {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut controller = CaptureController::new(CaptureControllerConfig {
+            save_root: tmp.path().to_path_buf(),
+            settings: settings(),
+            sample_rate: 10,
+            device_id: "default".to_string(),
+            device_name: "System Default".to_string(),
+            used_fallback_device: false,
+            base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
+            app_version: "0.1.0".to_string(),
+            source: ChunkSource::Microphone,
+            source_label: None,
+        });
 
-    for _ in 0..5 {
-        controller.process_samples(&[0.8; 1], 100).expect("speech");
+        for _ in 0..5 {
+            controller.process_samples(&[0.8; 1], 100).expect("speech");
+        }
+        assert!(
+            controller.is_recording(),
+            "{label}: recording before update"
+        );
+
+        let mut changed = settings();
+        change(&mut changed);
+        let events = controller.update_settings(changed).expect(label);
+
+        assert_eq!(completed_event_count(&events), 1, "{label}");
+        assert!(!controller.is_recording(), "{label}");
+        assert_eq!(controller.is_listening(), listening, "{label}");
+        assert!(
+            controller.completed_chunks()[0].audio_path.exists(),
+            "{label}"
+        );
     }
-    assert!(controller.is_recording());
-
-    let mut disabled = settings();
-    disabled.recording_enabled = false;
-    let events = controller.update_settings(disabled).expect("disable");
-
-    assert!(!controller.is_listening());
-    assert!(!controller.is_recording());
-    assert_eq!(completed_event_count(&events), 1);
-    assert!(controller.completed_chunks()[0].audio_path.exists());
-}
-
-#[test]
-fn capture_controller_flushes_active_chunk_when_paused() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut controller = CaptureController::new(CaptureControllerConfig {
-        save_root: tmp.path().to_path_buf(),
-        settings: settings(),
-        sample_rate: 10,
-        device_id: "default".to_string(),
-        device_name: "System Default".to_string(),
-        used_fallback_device: false,
-        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
-        app_version: "0.1.0".to_string(),
-        source: ChunkSource::Microphone,
-        source_label: None,
-    });
-
-    for _ in 0..5 {
-        controller.process_samples(&[0.8; 1], 100).expect("speech");
-    }
-
-    let mut paused = settings();
-    paused.pause_all = true;
-    let events = controller.update_settings(paused).expect("pause");
-
-    assert!(!controller.is_listening());
-    assert_eq!(completed_event_count(&events), 1);
-    assert!(controller.completed_chunks()[0].audio_path.exists());
-}
-
-#[test]
-fn capture_controller_flushes_active_chunk_before_threshold_settings_change() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let mut controller = CaptureController::new(CaptureControllerConfig {
-        save_root: tmp.path().to_path_buf(),
-        settings: settings(),
-        sample_rate: 10,
-        device_id: "default".to_string(),
-        device_name: "System Default".to_string(),
-        used_fallback_device: false,
-        base_time: Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap(),
-        app_version: "0.1.0".to_string(),
-        source: ChunkSource::Microphone,
-        source_label: None,
-    });
-
-    for _ in 0..5 {
-        controller.process_samples(&[0.8; 1], 100).expect("speech");
-    }
-    assert!(controller.is_recording());
-
-    let mut changed = settings();
-    changed.threshold_dbfs = -35.0;
-    let events = controller
-        .update_settings(changed)
-        .expect("change threshold");
-
-    assert_eq!(completed_event_count(&events), 1);
-    assert!(!controller.is_recording());
-    assert!(controller.completed_chunks()[0].audio_path.exists());
 }
 
 #[test]

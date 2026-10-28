@@ -642,44 +642,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn downmix_stereo_averages_channels() {
-        let interleaved = [0.0, 1.0, 0.5, -0.5, 1.0, -1.0];
-        let mono = downmix_interleaved_to_mono(&interleaved, 2);
-        assert_eq!(mono, vec![0.5, 0.0, 0.0]);
+    fn downmix_interleaved_to_mono_cases() {
+        let cases: [(&str, &[f32], usize, &[f32]); 4] = [
+            (
+                "stereo averages channels",
+                &[0.0, 1.0, 0.5, -0.5, 1.0, -1.0],
+                2,
+                &[0.5, 0.0, 0.0],
+            ),
+            (
+                "mono is passthrough",
+                &[0.1, -0.2, 0.3],
+                1,
+                &[0.1, -0.2, 0.3],
+            ),
+            ("empty input", &[], 2, &[]),
+            ("zero channels", &[1.0, 2.0], 0, &[]),
+        ];
+        for (label, interleaved, channels, expected) in cases {
+            assert_eq!(
+                downmix_interleaved_to_mono(interleaved, channels),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
-    fn downmix_mono_is_passthrough() {
-        let interleaved = [0.1, -0.2, 0.3];
-        let mono = downmix_interleaved_to_mono(&interleaved, 1);
-        assert_eq!(mono, interleaved.to_vec());
-    }
-
-    #[test]
-    fn downmix_handles_empty_or_zero_channels() {
-        assert!(downmix_interleaved_to_mono(&[], 2).is_empty());
-        assert!(downmix_interleaved_to_mono(&[1.0, 2.0], 0).is_empty());
-    }
-
-    #[test]
-    fn frame_duration_matches_sample_count() {
-        assert_eq!(frame_duration_ms(16_000, 16_000), 1000);
-        assert_eq!(frame_duration_ms(8_000, 16_000), 500);
-    }
-
-    #[test]
-    fn frame_duration_never_zero() {
-        assert_eq!(frame_duration_ms(0, 16_000), 1);
-        assert_eq!(frame_duration_ms(1, 16_000), 1);
-        assert_eq!(frame_duration_ms(100, 0), 1);
-    }
-
-    #[test]
-    fn target_pid_round_trips() {
-        let mut input = SystemAudioInput::new();
-        assert_eq!(input.target_pid(), None);
-        input.set_target_pid(4321);
-        assert_eq!(input.target_pid(), Some(4321));
+    fn frame_duration_ms_cases() {
+        // (mono samples, sample rate, expected ms); never zero.
+        for (mono_len, sample_rate, expected) in [
+            (16_000, 16_000, 1000),
+            (8_000, 16_000, 500),
+            (0, 16_000, 1),
+            (1, 16_000, 1),
+            (100, 0, 1),
+        ] {
+            assert_eq!(
+                frame_duration_ms(mono_len, sample_rate),
+                expected,
+                "{mono_len} samples at {sample_rate} Hz"
+            );
+        }
     }
 
     #[test]

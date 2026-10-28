@@ -600,30 +600,18 @@ mod tests {
     }
 
     #[test]
-    fn metadata_round_trips_system_source() {
-        let meta = sample_metadata(ChunkSource::System, Some("meet".into()));
+    fn metadata_round_trips_source_and_capture_timing_options() {
+        let mut meta = sample_metadata(ChunkSource::System, Some("meet".into()));
+        meta.post_roll_ms = 600;
         let json = serde_json::to_string(&meta).unwrap();
         let back: ChunkMetadata = serde_json::from_str(&json).unwrap();
+
         assert_eq!(back.source, ChunkSource::System);
         assert_eq!(back.source_label.as_deref(), Some("meet"));
-    }
-
-    #[test]
-    fn metadata_round_trips_capture_timing_options() {
-        let mut meta = sample_metadata(ChunkSource::Microphone, None);
-        meta.attack_ms = 100;
-        meta.release_ms = 1_000;
-        meta.pre_roll_ms = 1_000;
-        meta.lead_in_padding_ms = 300;
-        meta.post_roll_ms = 600;
-        meta.min_chunk_ms = 600;
-        meta.max_chunk_ms = 120_000;
-        let json = serde_json::to_string(&meta).unwrap();
-        let back: ChunkMetadata = serde_json::from_str(&json).unwrap();
-
         assert_eq!(back.attack_ms, 100);
         assert_eq!(back.pre_roll_ms, 1_000);
         assert_eq!(back.lead_in_padding_ms, 300);
+        assert_eq!(back.post_roll_ms, 600);
         assert_eq!(back.max_chunk_ms, 120_000);
     }
 

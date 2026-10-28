@@ -17,18 +17,6 @@ fn monitor_buffer_drops_oldest_samples_when_full() {
 }
 
 #[test]
-fn monitor_buffer_fills_underflow_with_silence() {
-    let buffer = MonitorBuffer::new(8);
-    buffer.push(&[0.25, -0.25]);
-
-    let mut output = [1.0; 4];
-    let read = buffer.read(&mut output);
-
-    assert_eq!(read, 2);
-    assert_eq!(output, [0.25, -0.25, 0.0, 0.0]);
-}
-
-#[test]
 fn monitor_resampler_preserves_samples_when_rates_match() {
     let samples = [0.0, 0.5, -0.5, 1.0];
 

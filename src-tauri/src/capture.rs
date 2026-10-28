@@ -728,17 +728,14 @@ mod tests {
     }
 
     #[test]
-    fn microphone_samples_reach_capture_without_a_second_gain_stage() {
+    fn capture_input_samples_pass_through_without_gain_for_every_source() {
         let input = [-0.75, -0.25, 0.25, 0.75];
-        assert_eq!(
-            input_samples_for_source(&input, ChunkSource::Microphone),
-            input
-        );
-    }
-
-    #[test]
-    fn system_audio_samples_remain_unchanged() {
-        let input = [-0.75, 0.75];
-        assert_eq!(input_samples_for_source(&input, ChunkSource::System), input);
+        for source in [ChunkSource::Microphone, ChunkSource::System] {
+            assert_eq!(
+                input_samples_for_source(&input, source),
+                input,
+                "{source:?} samples must reach capture without a second gain stage",
+            );
+        }
     }
 }

@@ -345,49 +345,46 @@ fn same_physical_microphone_opens_once_and_fans_one_leveling_pass_to_both_slots(
 }
 
 #[test]
-fn same_core_audio_uid_shares_one_open_even_when_ids_differ() {
-    reset_capture_script();
-    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
-    runtime
-        .start_slot(
-            MicrophoneSlot::Primary,
-            device_config("default", "built-in"),
-            |_| {},
-        )
-        .expect("open default");
-    runtime
-        .start_slot(
-            MicrophoneSlot::Secondary,
-            device_config("internal", "built-in"),
-            |_| {},
-        )
-        .expect("attach built-in");
-    assert_eq!(capture_starts(), 1);
-    assert_eq!(
-        runtime.active_slots(),
-        vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary]
-    );
-}
-
-#[test]
-fn distinct_microphones_still_open_independently() {
-    reset_capture_script();
-    let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
-    runtime
-        .start_slot(
-            MicrophoneSlot::Primary,
-            device_config("wired", "uid-wired"),
-            |_| {},
-        )
-        .expect("open wired");
-    runtime
-        .start_slot(
-            MicrophoneSlot::Secondary,
-            device_config("wireless", "uid-wireless"),
-            |_| {},
-        )
-        .expect("open wireless");
-    assert_eq!(capture_starts(), 2);
+fn core_audio_uid_decides_whether_two_slots_share_one_open() {
+    // (label, primary (device id, uid), secondary (device id, uid), expected opens)
+    let cases = [
+        (
+            "same uid with different ids shares one open",
+            ("default", "built-in"),
+            ("internal", "built-in"),
+            1,
+        ),
+        (
+            "distinct microphones open independently",
+            ("wired", "uid-wired"),
+            ("wireless", "uid-wireless"),
+            2,
+        ),
+    ];
+    for (label, (primary_id, primary_uid), (secondary_id, secondary_uid), expected_opens) in cases {
+        reset_capture_script();
+        let mut runtime = MultiCaptureRuntime::<CountingInput>::default();
+        runtime
+            .start_slot(
+                MicrophoneSlot::Primary,
+                device_config(primary_id, primary_uid),
+                |_| {},
+            )
+            .expect("start primary");
+        runtime
+            .start_slot(
+                MicrophoneSlot::Secondary,
+                device_config(secondary_id, secondary_uid),
+                |_| {},
+            )
+            .expect("start secondary");
+        assert_eq!(capture_starts(), expected_opens, "{label}");
+        assert_eq!(
+            runtime.active_slots(),
+            vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+            "{label}"
+        );
+    }
 }
 
 #[test]
