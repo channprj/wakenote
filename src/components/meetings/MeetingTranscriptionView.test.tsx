@@ -269,6 +269,25 @@ describe("MeetingTranscriptionView", () => {
     expect(markup).toContain("현재 회의 내용을 전사");
   });
 
+  it("waits for the first or next segment until live text arrives", () => {
+    const active = meeting({ id: "meeting-active", status: "processing" });
+    const waiting = (segmentsDone: number) =>
+      renderToStaticMarkup(
+        <MeetingTranscriptionView
+          {...props({
+            active: [active],
+            progressById: {
+              [active.id]: { ...liveProgress, segments_done: segmentsDone },
+            },
+          })}
+        />,
+      );
+
+    expect(waiting(0)).toContain("Transcribing the first segment…");
+    expect(waiting(2)).toContain("Transcribing the next segment…");
+    expect(waiting(2)).not.toContain("first segment");
+  });
+
   it("truncates long past titles while exposing the complete title", () => {
     const longTitle =
       "아주 긴 회의 제목이 목록 너비를 넘어가더라도 전체 제목을 확인할 수 있어야 합니다";

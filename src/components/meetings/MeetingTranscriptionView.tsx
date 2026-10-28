@@ -512,7 +512,10 @@ function MeetingProgressRow({
           className="meeting-progress-row__preview"
           title={previewText || undefined}
         >
-          {previewText || "Transcribing the first segment…"}
+          {previewText ||
+            (segmentsDone > 0
+              ? "Transcribing the next segment…"
+              : "Transcribing the first segment…")}
         </span>
       </CardFooter>
     </Card>
