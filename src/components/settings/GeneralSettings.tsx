@@ -104,6 +104,13 @@ export function GeneralSettings({
           disabled={!settings.show_tray_icon || !settings.show_menu_bar_level}
           onCheckedChange={(show_menu_bar_level_unit) => onPatch({ show_menu_bar_level_unit })}
         />
+        <SettingSwitch
+          label="Color the level instead of the status dot"
+          description="While the level shows, hide the colored dot and draw the number in its color: green while recording, amber while transcribing, red for errors. The dot returns when input stops."
+          checked={settings.menu_bar_level_colored}
+          disabled={!settings.show_tray_icon || !settings.show_menu_bar_level}
+          onCheckedChange={(menu_bar_level_colored) => onPatch({ menu_bar_level_colored })}
+        />
       </SettingsCard>
     </SettingsGrid>
   );

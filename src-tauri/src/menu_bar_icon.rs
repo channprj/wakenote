@@ -11,18 +11,21 @@
 //! after the icon is hidden and created again.
 //!
 //! The optional level readout beside the icon uses monospaced digits, so a
-//! changing level does not shift the status items to its left.
+//! changing level does not shift the status items to its left. When it stands
+//! in for the status dot, it is drawn in the dot's color.
 
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::thread;
 
 use crate::log_error;
+use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{ffi, sel};
 use objc2_app_kit::{
-    NSApplication, NSEventModifierFlags, NSEventType, NSFont, NSFontWeightRegular,
+    NSApplication, NSColor, NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName,
+    NSFontWeightRegular, NSForegroundColorAttributeName,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
+use objc2_foundation::{MainThreadMarker, NSAttributedString, NSDictionary, NSPoint, NSString};
 use tauri::Runtime;
 use tauri::tray::TrayIcon;
 
@@ -186,8 +189,19 @@ fn persist_menu_bar_icon_position<R: Runtime>(tray: TrayIcon<R>) {
     }
 }
 
+fn level_font() -> Retained<NSFont> {
+    let size = NSFont::menuBarFontOfSize(0.0).pointSize();
+    let weight = unsafe { NSFontWeightRegular };
+    NSFont::monospacedDigitSystemFontOfSize_weight(size, weight)
+}
+
 /// Shows `title` beside the menu bar icon, or the icon alone for `None`.
-pub fn set_menu_bar_icon_title<R: Runtime>(tray: &TrayIcon<R>, title: Option<&str>) {
+/// `color` draws the title in an sRGB color; `None` keeps the label color.
+pub fn set_menu_bar_icon_title<R: Runtime>(
+    tray: &TrayIcon<R>,
+    title: Option<&str>,
+    color: Option<[u8; 3]>,
+) {
     if title.is_some() {
         // Style before the title is set: setting it resizes the click target.
         let styled = tray.with_inner_tray_icon(|icon| {
@@ -196,10 +210,7 @@ pub fn set_menu_bar_icon_title<R: Runtime>(tray: &TrayIcon<R>, title: Option<&st
                 return;
             };
             if let Some(button) = item.button(marker) {
-                let size = NSFont::menuBarFontOfSize(0.0).pointSize();
-                let weight = unsafe { NSFontWeightRegular };
-                let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, weight);
-                button.setFont(Some(&font));
+                button.setFont(Some(&level_font()));
             }
         });
         if let Err(error) = styled {
@@ -208,6 +219,37 @@ pub fn set_menu_bar_icon_title<R: Runtime>(tray: &TrayIcon<R>, title: Option<&st
     }
     if let Err(error) = tray.set_title(title) {
         log_error!("[tray] could not show the menu bar level: {error}");
+    }
+    let (Some(title), Some([red, green, blue])) = (title, color) else {
+        return;
+    };
+    // The plain title above keeps tray-icon's state and click target in sync;
+    // the attributed title only adds the color, so its width is unchanged.
+    let title = title.to_owned();
+    let colored = tray.with_inner_tray_icon(move |icon| {
+        let (Some(item), Some(marker)) = (icon.ns_status_item(), MainThreadMarker::new()) else {
+            return;
+        };
+        let Some(button) = item.button(marker) else {
+            return;
+        };
+        let font = level_font();
+        let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+            f64::from(red) / 255.0,
+            f64::from(green) / 255.0,
+            f64::from(blue) / 255.0,
+            1.0,
+        );
+        let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
+        let values: [&AnyObject; 2] = [&font, &color];
+        let attributes = NSDictionary::<NSString, AnyObject>::from_slices(&keys, &values);
+        let text = NSString::from_str(&title);
+        // SAFETY: both attributes carry the value types AppKit expects for them.
+        let attributed = unsafe { NSAttributedString::new_with_attributes(&text, &attributes) };
+        button.setAttributedTitle(&attributed);
+    });
+    if let Err(error) = colored {
+        log_error!("[tray] could not color the menu bar level: {error}");
     }
 }
 

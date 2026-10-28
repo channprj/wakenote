@@ -649,6 +649,10 @@ pub struct AppSettings {
     /// Follow the menu bar input level with " dB".
     #[serde(default = "default_true")]
     pub show_menu_bar_level_unit: bool,
+    /// While the level shows, hide the status dot and draw the level in the
+    /// dot's color instead.
+    #[serde(default)]
+    pub menu_bar_level_colored: bool,
     pub show_floating_overlay: bool,
     #[serde(default)]
     pub subtitle_source_mode: SubtitleSourceMode,
@@ -788,6 +792,7 @@ pub struct SettingsPatch {
     pub tray_left_click_action: Option<TrayClickAction>,
     pub show_menu_bar_level: Option<bool>,
     pub show_menu_bar_level_unit: Option<bool>,
+    pub menu_bar_level_colored: Option<bool>,
     pub show_floating_overlay: Option<bool>,
     pub subtitle_source_mode: Option<SubtitleSourceMode>,
     pub floating_overlay_position: Option<FloatingOverlayPosition>,
@@ -1631,6 +1636,9 @@ impl AppSettings {
         if let Some(value) = patch.show_menu_bar_level_unit {
             self.show_menu_bar_level_unit = value;
         }
+        if let Some(value) = patch.menu_bar_level_colored {
+            self.menu_bar_level_colored = value;
+        }
         if let Some(value) = patch.show_floating_overlay {
             self.show_floating_overlay = value;
         }
@@ -1831,6 +1839,7 @@ impl Default for AppSettings {
             tray_left_click_action: default_tray_left_click_action(),
             show_menu_bar_level: false,
             show_menu_bar_level_unit: true,
+            menu_bar_level_colored: false,
             show_floating_overlay: false,
             subtitle_source_mode: SubtitleSourceMode::default(),
             floating_overlay_position: FloatingOverlayPosition::Top,
@@ -2259,6 +2268,13 @@ mod tests {
             ..Default::default()
         });
         assert!(!settings.show_menu_bar_level_unit);
+
+        assert!(!settings.menu_bar_level_colored);
+        settings.apply_patch(SettingsPatch {
+            menu_bar_level_colored: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.menu_bar_level_colored);
     }
 
     #[test]
@@ -2688,6 +2704,7 @@ mod tests {
         assert!(!settings.discard_transcript_audio);
         assert!(!settings.show_menu_bar_level);
         assert!(settings.show_menu_bar_level_unit);
+        assert!(!settings.menu_bar_level_colored);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(!settings.auto_transcript_input_final_only);
         assert!(!settings.dictation_enabled);

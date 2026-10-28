@@ -252,6 +252,19 @@ pub fn tray_level_title(settings: &AppSettings, status: &AppStatus) -> Option<St
         .then(|| format_tray_level(status.level.current_dbfs, settings.show_menu_bar_level_unit))
 }
 
+/// The colored level replaces the status dot only while a level is shown, so
+/// the menu bar item never ends up empty.
+pub fn tray_level_replaces_icon(settings: &AppSettings, status: &AppStatus) -> bool {
+    settings.menu_bar_level_colored && tray_level_title(settings, status).is_some()
+}
+
+/// Color for a level that replaces the status dot, or `None` for the default
+/// label color where the dot would be the neutral one.
+pub fn tray_level_color(presentation: TrayPresentation) -> Option<[u8; 3]> {
+    let [red, green, blue, _] = presentation.rgba;
+    (presentation.rgba != TRAY_ICON_NORMAL_RGBA).then_some([red, green, blue])
+}
+
 /// Right-aligns the level in four cells, a sign and three digits. The menu
 /// bar's monospaced-digit font draws the minus sign (U+2212) and figure spaces
 /// (U+2007) as wide as a digit, so `0` and `-120` take the same width and the

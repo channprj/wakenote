@@ -38,6 +38,20 @@ describe("GeneralSettings", () => {
     expect(onPatch).toHaveBeenCalledWith({ show_menu_bar_level_unit: false });
   });
 
+  it("offers the colored level instead of the status dot, off by default", async () => {
+    const colored = () =>
+      screen.getByRole("switch", { name: "Color the level instead of the status dot" });
+    renderGeneral();
+    expect(colored().getAttribute("aria-checked")).toBe("false");
+    expect((colored() as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+
+    const onPatch = renderGeneral({ show_menu_bar_level: true });
+    expect((colored() as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.setup().click(colored());
+    expect(onPatch).toHaveBeenCalledWith({ menu_bar_level_colored: true });
+  });
+
   it("disables the menu bar input level while the menu bar icon is hidden", () => {
     renderGeneral({ show_tray_icon: false, show_menu_bar_level: true });
 

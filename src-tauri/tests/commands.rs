@@ -10,9 +10,9 @@ use wakenote::commands::{
     audio_playback_content_type, format_tray_level, live_preview_model_id,
     main_window_close_action, microphone_devices_from_input_devices,
     open_containing_folder_request, reveal_save_folder_request, tray_icon_image_for_presentation,
-    tray_level_title, tray_menu_presentation, tray_presentation_for_state,
-    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
-    with_runtime_warning,
+    tray_level_color, tray_level_replaces_icon, tray_level_title, tray_menu_presentation,
+    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
+    with_live_runtime_warning, with_runtime_warning,
 };
 use wakenote::debug_log;
 use wakenote::live_capture::AudioFrame;
@@ -3626,6 +3626,45 @@ fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
         ..SettingsPatch::default()
     });
     assert_eq!(tray_level_title(&backend.settings(), &status), None);
+}
+
+#[test]
+fn colored_level_replaces_the_dot_only_while_a_level_shows() {
+    let mut backend = AppBackend::default();
+    let mut status = backend.app_status();
+    status.live_input_active = true;
+    backend.update_settings(SettingsPatch {
+        show_menu_bar_level: Some(true),
+        ..SettingsPatch::default()
+    });
+    assert!(!tray_level_replaces_icon(&backend.settings(), &status));
+
+    backend.update_settings(SettingsPatch {
+        menu_bar_level_colored: Some(true),
+        ..SettingsPatch::default()
+    });
+    assert!(tray_level_replaces_icon(&backend.settings(), &status));
+
+    // Without a level the dot comes back, so the menu bar item never goes empty.
+    status.live_input_active = false;
+    assert!(!tray_level_replaces_icon(&backend.settings(), &status));
+
+    assert_eq!(
+        tray_level_color(tray_presentation_for_state(TrayState::Listening)),
+        None
+    );
+    assert_eq!(
+        tray_level_color(tray_presentation_for_state(TrayState::Recording)),
+        Some([22, 163, 74])
+    );
+    assert_eq!(
+        tray_level_color(tray_presentation_for_state(TrayState::Transcribing)),
+        Some([217, 119, 6])
+    );
+    assert_eq!(
+        tray_level_color(tray_presentation_for_state(TrayState::Error)),
+        Some([220, 38, 38])
+    );
 }
 
 #[test]

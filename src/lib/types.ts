@@ -237,6 +237,7 @@ export interface AppSettings {
   tray_left_click_action: TrayClickAction;
   show_menu_bar_level: boolean;
   show_menu_bar_level_unit: boolean;
+  menu_bar_level_colored: boolean;
   show_floating_overlay: boolean;
   subtitle_source_mode: SubtitleSourceMode;
   floating_overlay_position: FloatingOverlayPosition;

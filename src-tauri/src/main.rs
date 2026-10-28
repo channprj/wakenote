@@ -35,9 +35,10 @@ use wakenote::commands::{
     UploadedAudio, live_preview_model_id, main_window_close_action,
     microphone_devices_from_input_devices, open_containing_folder_request,
     recorded_at_for_audio_path, refresh_transcript_day_index_for_recording_path,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_level_title,
-    tray_menu_presentation, tray_presentation_for_dictation, tray_presentation_for_state,
-    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_level_color,
+    tray_level_replaces_icon, tray_level_title, tray_menu_presentation,
+    tray_presentation_for_dictation, tray_presentation_for_state, tray_runtime_presentation,
+    validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
@@ -712,6 +713,7 @@ struct TrayPresentationSnapshot {
     menu: TrayMenuPresentation,
     show_menu_on_left_click: bool,
     dictation_stage: DictationStage,
+    level_replaces_icon: bool,
 }
 
 /// Menu bar level readout requested by the latest audio status.
@@ -719,6 +721,8 @@ struct TrayPresentationSnapshot {
 struct TrayLevelTitle {
     desired: Option<String>,
     changed_at: Option<Instant>,
+    /// Status color while the level stands in for the dot; `None` keeps the label color.
+    color: Option<[u8; 3]>,
 }
 
 impl TrayLevelTitle {
@@ -9705,6 +9709,7 @@ fn tray_presentation_snapshot(
         menu: tray_menu_presentation(settings, status),
         show_menu_on_left_click: tray_show_menu_on_left_click(settings),
         dictation_stage,
+        level_replaces_icon: tray_level_replaces_icon(settings, status),
     }
 }
 
@@ -9778,12 +9783,33 @@ fn apply_tray_presentation(
     };
     let presentation = tray_runtime_presentation(settings, status);
     let icon = tray_presentation_for_dictation(dictation_stage).unwrap_or(presentation.icon);
-    let icon_image = tray_icon_image_for_presentation(icon);
-    let _ = tray.set_icon(Some(Image::new_owned(
-        icon_image.rgba,
-        icon_image.width,
-        icon_image.height,
-    )));
+    let level_replaces_icon = tray_level_replaces_icon(settings, status);
+    if level_replaces_icon {
+        let _ = tray.set_icon(None);
+    } else {
+        let icon_image = tray_icon_image_for_presentation(icon);
+        let _ = tray.set_icon(Some(Image::new_owned(
+            icon_image.rgba,
+            icon_image.width,
+            icon_image.height,
+        )));
+    }
+    let level_color = level_replaces_icon
+        .then(|| tray_level_color(icon))
+        .flatten();
+    let recolor = app
+        .try_state::<TrayLevelTitleState>()
+        .and_then(|state| {
+            state.lock().ok().map(|mut level| {
+                let changed = level.color != level_color;
+                level.color = level_color;
+                changed
+            })
+        })
+        .unwrap_or(false);
+    if recolor {
+        apply_tray_level_title(app);
+    }
     let _ = tray.set_tooltip(Some(icon.tooltip));
     let _ = tray.set_visible(presentation.visible);
     #[cfg(target_os = "macos")]
@@ -9838,11 +9864,17 @@ fn apply_tray_level_title(app: &tauri::AppHandle) {
         return;
     };
     // Updates can arrive out of order; always apply the newest readout.
-    let title = app
+    let (title, color) = app
         .try_state::<TrayLevelTitleState>()
-        .and_then(|state| state.lock().ok().and_then(|level| level.desired.clone()));
+        .and_then(|state| {
+            state
+                .lock()
+                .ok()
+                .map(|level| (level.desired.clone(), level.color))
+        })
+        .unwrap_or_default();
     #[cfg(target_os = "macos")]
-    wakenote::menu_bar_icon::set_menu_bar_icon_title(&tray, title.as_deref());
+    wakenote::menu_bar_icon::set_menu_bar_icon_title(&tray, title.as_deref(), color);
     #[cfg(not(target_os = "macos"))]
     let _ = tray.set_title(title.as_deref());
 }
@@ -11880,6 +11912,34 @@ mod tests {
                 DictationStage::Recording,
             )
             .is_some()
+        );
+    }
+
+    #[test]
+    fn colored_level_option_reapplies_the_tray_presentation() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
+        let mut settings = backend.settings();
+        settings.show_menu_bar_level = true;
+        let mut status = backend.app_status();
+        status.live_input_active = true;
+        let mut cache = None;
+
+        assert!(
+            next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle)
+                .is_some()
+        );
+        settings.menu_bar_level_colored = true;
+        assert!(
+            next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle)
+                .is_some(),
+            "turning the option on must hide the dot"
+        );
+        status.live_input_active = false;
+        assert!(
+            next_tray_presentation_update(&mut cache, &settings, &status, DictationStage::Idle)
+                .is_some(),
+            "losing the level must bring the dot back"
         );
     }
 
