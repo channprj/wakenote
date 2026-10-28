@@ -133,6 +133,31 @@ export function pollSnapshotDependencyKey(
   });
 }
 
+/**
+ * Runs `load` one call at a time. Calls made while it runs schedule a single
+ * follow-up run, so a slow backend cannot stack polls and a refresh requested
+ * mid-load still sees the newer state.
+ */
+export function coalescedRunner(load: () => Promise<void>): () => Promise<void> {
+  let running = false;
+  let again = false;
+  return async () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      do {
+        again = false;
+        await load();
+      } while (again);
+    } finally {
+      running = false;
+    }
+  };
+}
+
 export function shouldRefreshSnapshotForTauriEvent(eventName: string) {
   return (
     eventName === "source-capture-started" ||

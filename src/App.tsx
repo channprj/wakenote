@@ -71,6 +71,7 @@ import {
   verifyModel,
 } from "./lib/tauri-client";
 import {
+  coalescedRunner,
   mockSnapshot,
   pollSnapshotDependencyKey,
   shouldRefreshSnapshotForTauriEvent,
@@ -160,6 +161,7 @@ export default function App() {
     pending: 0,
     revision: 0,
   });
+  const quietRefresh = useRef<(() => Promise<void>) | null>(null);
   const [transcriptLog, setTranscriptLog] = useState<TranscriptEntry[]>([]);
   const [dictationState, setDictationState] = useState<DictationStatePayload>({
     state: "idle",
@@ -475,7 +477,14 @@ export default function App() {
     };
   }, []);
 
+  // Polls every 100 ms and on backend events; one load at a time so a busy
+  // backend cannot accumulate pending snapshot requests.
   async function refreshQuietly() {
+    quietRefresh.current ??= coalescedRunner(loadSnapshotQuietly);
+    await quietRefresh.current();
+  }
+
+  async function loadSnapshotQuietly() {
     if (settingsWrites.current.pending > 0) return;
     const revision = settingsWrites.current.revision;
     try {

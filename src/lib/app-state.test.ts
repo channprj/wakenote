@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  coalescedRunner,
   defaultSettings,
   deriveProductMode,
   deriveTrayState,
@@ -515,5 +516,51 @@ describe("app state derivation", () => {
       suggested_threshold_dbfs: -90,
     });
     expect(snapshot.recent_transcripts).toEqual([]);
+  });
+});
+
+describe("coalescedRunner", () => {
+  it("runs one load at a time and folds overlapping calls into one more run", async () => {
+    const releases: Array<() => void> = [];
+    let starts = 0;
+    const run = coalescedRunner(
+      () =>
+        new Promise<void>((resolve) => {
+          starts += 1;
+          releases.push(resolve);
+        }),
+    );
+
+    const first = run();
+    void run();
+    void run();
+    void run();
+    expect(starts).toBe(1);
+
+    releases.shift()?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(starts).toBe(2);
+
+    releases.shift()?.();
+    await first;
+    expect(starts).toBe(2);
+
+    const next = run();
+    expect(starts).toBe(3);
+    releases.shift()?.();
+    await next;
+  });
+
+  it("keeps running after a load fails", async () => {
+    let calls = 0;
+    const run = coalescedRunner(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("backend busy");
+    });
+
+    await expect(run()).rejects.toThrow("backend busy");
+    await run();
+    expect(calls).toBe(2);
   });
 });
