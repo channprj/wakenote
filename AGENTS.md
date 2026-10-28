@@ -13,8 +13,8 @@
 - The `에이전트 세션` table records each session that works on the issue: role, tool and version, model ID, reasoning effort, real session ID, resume command, working path and branch, and the actual start time in KST (`YYYY-MM-DD HH:mm`). Take the values from the running tool (for Claude Code, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_EFFORT`; for Codex, `CODEX_THREAD_ID`). When a value cannot be confirmed, write `확인 불가` with the reason rather than guessing. Add a row when the session, tool, model, or effort changes.
 - Never paste transcripts, raw logs, or credentials into issues. Cite verification as the command you ran and a one-line result.
 - Update the board Status when each event happens, not at the end, and re-read the issue's `projectItems` after every change:
-  - `Backlog` while the scope is unsettled or any `--blocked-by` prerequisite is still open. Never move a blocked leaf to `In progress`.
-  - `To do` when the leaf criteria are met and every prerequisite is `Done`.
+  - `Backlog` while the scope is unsettled or any `--blocked-by` prerequisite has not reached `In review`. Never move a blocked leaf to `In progress`.
+  - `To do` when the leaf criteria are met and every prerequisite is `In review` or `Done`, meaning its verified commits are pushed.
   - `In progress` with a start comment naming the agent, model, effort, session ID, and scope.
   - `In review` with a comment listing the changed scope and verification evidence once the leaf's commits are verified locally.
   - `Done` once those commits, the `chore(release)` commit, and the annotated `v<version>` tag are pushed and local, tracking, and live-remote parity is confirmed. One version bump may cover several leaves.
