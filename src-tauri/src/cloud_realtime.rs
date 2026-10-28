@@ -11,6 +11,10 @@ use crate::transcription::TranscriptionExecution;
 
 const RESULT_WAIT_TIMEOUT: Duration = Duration::from_secs(75);
 const RESULT_CANCEL_POLL: Duration = Duration::from_millis(100);
+/// Results normally leave through `wait`. A job that never runs (skipped,
+/// cancelled, or held while transcription is off) leaves its result behind,
+/// so the oldest results beyond this count are dropped.
+const MAX_STORED_RESULTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RealtimeStoredResult {
@@ -18,9 +22,42 @@ pub enum RealtimeStoredResult {
     Failed(TranscriptionFailure),
 }
 
+#[derive(Default)]
+struct StoredResults {
+    entries: HashMap<PathBuf, (u64, RealtimeStoredResult)>,
+    next_sequence: u64,
+}
+
+impl StoredResults {
+    fn insert(&mut self, audio_path: PathBuf, result: RealtimeStoredResult) {
+        self.next_sequence += 1;
+        self.entries
+            .insert(audio_path, (self.next_sequence, result));
+        while self.entries.len() > MAX_STORED_RESULTS {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (sequence, _))| *sequence)
+                .map(|(path, _)| path.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+    }
+
+    fn contains_key(&self, audio_path: &Path) -> bool {
+        self.entries.contains_key(audio_path)
+    }
+
+    fn remove(&mut self, audio_path: &Path) -> Option<RealtimeStoredResult> {
+        self.entries.remove(audio_path).map(|(_, result)| result)
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct RealtimeResultStore {
-    inner: Arc<(Mutex<HashMap<PathBuf, RealtimeStoredResult>>, Condvar)>,
+    inner: Arc<(Mutex<StoredResults>, Condvar)>,
 }
 
 impl RealtimeResultStore {
@@ -194,6 +231,29 @@ mod tests {
             panic!("completed result")
         };
         assert_eq!(result.text, "hello");
+    }
+
+    #[test]
+    fn realtime_result_store_drops_the_oldest_unclaimed_results_beyond_its_cap() {
+        let store = RealtimeResultStore::default();
+        let path = |index: usize| PathBuf::from(format!("/tmp/wakenote-orphan-{index}.wav"));
+        for index in 0..MAX_STORED_RESULTS + 10 {
+            store.publish(
+                path(index),
+                RealtimeStoredResult::Failed(result_store_failure(
+                    FailureCategory::Transport,
+                    "never claimed",
+                )),
+            );
+        }
+
+        assert_eq!(
+            store.inner.0.lock().unwrap().entries.len(),
+            MAX_STORED_RESULTS
+        );
+        assert!(store.try_take(&path(9)).is_none());
+        assert!(store.try_take(&path(10)).is_some());
+        assert!(store.try_take(&path(MAX_STORED_RESULTS + 9)).is_some());
     }
 
     #[test]
