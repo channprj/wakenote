@@ -133,9 +133,10 @@ const captureSeeds: readonly CaptureSeed[] = [
   },
 ];
 
-const summaryReportBody = `# 오전 스탠드업 요약
+function summaryReportBody(day: Date): string {
+  return `# 오전 스탠드업 요약
 
-**대상 기간** 2026-07-27 · **트랜스크립트** 4건
+**대상 기간** ${formatDay(day)} · **트랜스크립트** 4건
 
 ## 한 줄 요약
 
@@ -165,10 +166,12 @@ const summaryReportBody = `# 오전 스탠드업 요약
 
 > pre-roll을 올리면서 늘어난 파일 크기가 장기 보관에 부담이 되는지는 아직 측정하지 않았다.
 `;
+}
 
-const detailedReportBody = `# Reports 화면 개선 상세 보고서
+function detailedReportBody(from: Date, to: Date): string {
+  return `# Reports 화면 개선 상세 보고서
 
-**대상 기간** 2026-07-25 ~ 2026-07-26 · **트랜스크립트** 6건 · **모델** ${fixtureModel}
+**대상 기간** ${formatDay(from)} ~ ${formatDay(to)} · **트랜스크립트** 6건 · **모델** ${fixtureModel}
 
 # Summary
 
@@ -256,12 +259,13 @@ WakeNote의 값은 캡처 → 트랜스크립트 → 요약/상세 보고서 →
 
 이 보고서의 모든 항목은 아래 캡처에 근거한다. 추정이 필요한 곳은 본문에 명시했다.
 
-- \`20260726/140211.m4a\` — 사용성 점검 결과
-- \`20260726/140547.m4a\` — 생성 진입점 결정
-- \`20260726/140903.m4a\` — 빈 상태 논의
-- \`20260725/113019.m4a\` — 고객 인터뷰 요약
-- \`20260725/113455.m4a\` — 보고서 종류 역할 정리
+- \`${dayFolder(to)}/140211.m4a\` — 사용성 점검 결과
+- \`${dayFolder(to)}/140547.m4a\` — 생성 진입점 결정
+- \`${dayFolder(to)}/140903.m4a\` — 빈 상태 논의
+- \`${dayFolder(from)}/113019.m4a\` — 고객 인터뷰 요약
+- \`${dayFolder(from)}/113455.m4a\` — 보고서 종류 역할 정리
 `;
+}
 
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
@@ -345,7 +349,7 @@ function fixtureReports(now: Date): LlmReportHistoryDetail[] {
         usage: usage(3_180, 1_640, 2),
         legacy: false,
       },
-      content: summaryReportBody,
+      content: summaryReportBody(summaryCreated),
     },
     {
       item: {
@@ -366,7 +370,7 @@ function fixtureReports(now: Date): LlmReportHistoryDetail[] {
         usage: usage(11_420, 3_810, 5),
         legacy: false,
       },
-      content: detailedReportBody,
+      content: detailedReportBody(shiftDays(now, 2), shiftDays(now, 1)),
     },
   ];
 }

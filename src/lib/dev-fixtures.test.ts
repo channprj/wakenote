@@ -70,6 +70,16 @@ describe("dev fixtures", () => {
     }
   });
 
+  it("dates each report body from the seeded day", () => {
+    const { reports } = devFixtures(new Date("2026-10-28T21:00:00+09:00"));
+
+    for (const report of reports) {
+      expect(report.content).toContain(
+        `**대상 기간** ${report.item.date_range}`,
+      );
+    }
+  });
+
   it("includes an in-flight run, completed runs, and a failed run", () => {
     const { reports, runs } = devFixtures(now);
 
