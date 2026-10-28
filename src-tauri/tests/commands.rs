@@ -3604,7 +3604,7 @@ fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
     });
     assert_eq!(
         tray_level_title(&backend.settings(), &status).as_deref(),
-        Some("-42 dB")
+        Some("\u{2007}\u{2212}42 dB")
     );
 
     status.live_input_active = false;
@@ -3620,12 +3620,25 @@ fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
 
 #[test]
 fn tray_level_keeps_a_steady_width_and_clamps_to_the_dbfs_range() {
-    assert_eq!(format_tray_level(-41.6), "-42 dB");
-    assert_eq!(format_tray_level(-5.2), "\u{2007}-5 dB");
-    assert_eq!(format_tray_level(-0.2), "\u{2007}\u{2007}0 dB");
-    assert_eq!(format_tray_level(3.0), "\u{2007}\u{2007}0 dB");
-    assert_eq!(format_tray_level(-150.0), "-120 dB");
-    assert_eq!(format_tray_level(f32::NAN), "-120 dB");
+    assert_eq!(format_tray_level(-41.6), "\u{2007}\u{2212}42 dB");
+    assert_eq!(format_tray_level(-5.2), "\u{2007}\u{2007}\u{2212}5 dB");
+    assert_eq!(format_tray_level(-0.2), "\u{2007}\u{2007}\u{2007}0 dB");
+    assert_eq!(format_tray_level(3.0), "\u{2007}\u{2007}\u{2007}0 dB");
+    assert_eq!(format_tray_level(-150.0), "\u{2212}120 dB");
+    assert_eq!(format_tray_level(f32::NAN), "\u{2212}120 dB");
+
+    // Every reading is four digit-wide cells, so 2- and 3-digit levels line up.
+    for dbfs in -120..=0 {
+        let readout = format_tray_level(dbfs as f32);
+        let number = readout.strip_suffix(" dB").expect("unit");
+        assert_eq!(number.chars().count(), 4, "{readout:?}");
+        assert!(
+            number
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || ch == '\u{2007}' || ch == '\u{2212}'),
+            "{readout:?}"
+        );
+    }
 }
 
 #[test]

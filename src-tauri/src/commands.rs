@@ -252,15 +252,22 @@ pub fn tray_level_title(settings: &AppSettings, status: &AppStatus) -> Option<St
         .then(|| format_tray_level(status.level.current_dbfs))
 }
 
-/// Pads with figure spaces to the width of `-99` so the monospaced-digit
-/// readout keeps its width while the level moves.
+/// Right-aligns the level in four cells, a sign and three digits. The menu
+/// bar's monospaced-digit font draws the minus sign (U+2212) and figure spaces
+/// (U+2007) as wide as a digit, so `0` and `-120` take the same width and the
+/// menu bar does not shift while the level moves.
 pub fn format_tray_level(dbfs: f32) -> String {
     let level = if dbfs.is_finite() {
         dbfs.round().clamp(-120.0, 0.0) as i32
     } else {
         -120
     };
-    format!("{level:\u{2007}>3} dB")
+    let number = if level < 0 {
+        format!("\u{2212}{}", level.unsigned_abs())
+    } else {
+        level.to_string()
+    };
+    format!("{number:\u{2007}>4} dB")
 }
 
 fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {
