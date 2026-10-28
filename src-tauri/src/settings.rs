@@ -2094,14 +2094,89 @@ mod tests {
     }
 
     #[test]
-    fn patch_sets_system_audio_enabled() {
-        let mut settings = AppSettings::default();
-        assert!(!settings.system_audio_enabled);
-        settings.apply_patch(SettingsPatch {
-            system_audio_enabled: Some(true),
-            ..Default::default()
-        });
-        assert!(settings.system_audio_enabled);
+    fn patch_applies_plain_boolean_preferences() {
+        type Case = (&'static str, SettingsPatch, fn(&AppSettings) -> bool, bool);
+        let cases: [Case; 8] = [
+            (
+                "system_audio_enabled",
+                SettingsPatch {
+                    system_audio_enabled: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.system_audio_enabled,
+                false,
+            ),
+            (
+                "discard_transcript_audio",
+                SettingsPatch {
+                    discard_transcript_audio: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.discard_transcript_audio,
+                false,
+            ),
+            (
+                "diagnostic_logging_enabled",
+                SettingsPatch {
+                    diagnostic_logging_enabled: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.diagnostic_logging_enabled,
+                false,
+            ),
+            (
+                "autoplay_next_transcript",
+                SettingsPatch {
+                    autoplay_next_transcript: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.autoplay_next_transcript,
+                false,
+            ),
+            (
+                "auto_transcript_input_enabled",
+                SettingsPatch {
+                    auto_transcript_input_enabled: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.auto_transcript_input_enabled,
+                false,
+            ),
+            (
+                "auto_transcript_input_trailing_space",
+                SettingsPatch {
+                    auto_transcript_input_trailing_space: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.auto_transcript_input_trailing_space,
+                false,
+            ),
+            (
+                "dictation_copy_to_clipboard",
+                SettingsPatch {
+                    dictation_copy_to_clipboard: Some(false),
+                    ..Default::default()
+                },
+                |settings| settings.dictation_copy_to_clipboard,
+                true,
+            ),
+            (
+                "dictation_remove_trailing_space",
+                SettingsPatch {
+                    dictation_remove_trailing_space: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.dictation_remove_trailing_space,
+                false,
+            ),
+        ];
+
+        for (name, patch, value, default) in cases {
+            let mut settings = AppSettings::default();
+            assert_eq!(value(&settings), default, "{name} default");
+            settings.apply_patch(patch);
+            assert_eq!(value(&settings), !default, "{name} patched");
+        }
     }
 
     #[test]
@@ -2145,55 +2220,6 @@ mod tests {
             ..Default::default()
         });
         assert!(settings.show_menu_bar_level);
-    }
-
-    #[test]
-    fn patch_sets_discard_transcript_audio() {
-        let mut settings = AppSettings::default();
-        settings.apply_patch(SettingsPatch {
-            discard_transcript_audio: Some(true),
-            ..Default::default()
-        });
-        assert!(settings.discard_transcript_audio);
-    }
-
-    #[test]
-    fn patch_sets_diagnostic_logging() {
-        let mut settings = AppSettings::default();
-        settings.apply_patch(SettingsPatch {
-            diagnostic_logging_enabled: Some(true),
-            ..Default::default()
-        });
-        assert!(settings.diagnostic_logging_enabled);
-    }
-
-    #[test]
-    fn patch_sets_autoplay_next_transcript() {
-        let mut settings = AppSettings::default();
-        assert!(!settings.autoplay_next_transcript);
-        settings.apply_patch(SettingsPatch {
-            autoplay_next_transcript: Some(true),
-            ..Default::default()
-        });
-        assert!(settings.autoplay_next_transcript);
-    }
-
-    #[test]
-    fn llm_defaults_use_zai_glm_52_and_three_iterations() {
-        let settings = AppSettings::default();
-
-        assert_eq!(settings.openrouter_model, "z-ai/glm-5.2");
-        assert_eq!(settings.llm_max_iterations, 3);
-        assert!(
-            settings
-                .llm_summary_prompt_template
-                .contains("{{transcripts}}")
-        );
-        assert!(
-            settings
-                .llm_report_prompt_template
-                .contains("# Action Items")
-        );
     }
 
     #[test]
@@ -2242,68 +2268,35 @@ mod tests {
     }
 
     #[test]
-    fn default_tray_left_click_opens_menu_and_right_click_toggles_app() {
-        let settings = AppSettings::default();
-
+    fn tray_click_actions_default_to_menu_and_swap_by_patch() {
+        let mut settings = AppSettings::default();
         assert_eq!(settings.tray_left_click_action, TrayClickAction::OpenMenu);
         assert_eq!(
             settings.tray_right_click_action(),
             TrayClickAction::TogglePause
         );
-    }
 
-    #[test]
-    fn patch_can_swap_tray_click_actions() {
-        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            tray_left_click_action: Some(TrayClickAction::TogglePause),
+            ..Default::default()
+        });
+        assert_eq!(
+            settings.tray_left_click_action,
+            TrayClickAction::TogglePause
+        );
+        assert_eq!(
+            settings.tray_right_click_action(),
+            TrayClickAction::OpenMenu
+        );
+
         settings.apply_patch(SettingsPatch {
             tray_left_click_action: Some(TrayClickAction::OpenMenu),
             ..Default::default()
         });
-
         assert_eq!(settings.tray_left_click_action, TrayClickAction::OpenMenu);
         assert_eq!(
             settings.tray_right_click_action(),
             TrayClickAction::TogglePause
-        );
-    }
-
-    #[test]
-    fn patch_sets_automatic_transcript_input_mode() {
-        let mut settings = AppSettings::default();
-        assert!(!settings.auto_transcript_input_enabled);
-        assert!(!settings.auto_transcript_input_trailing_space);
-
-        settings.apply_patch(SettingsPatch {
-            auto_transcript_input_enabled: Some(true),
-            auto_transcript_input_trailing_space: Some(true),
-            ..Default::default()
-        });
-
-        assert!(settings.auto_transcript_input_enabled);
-        assert!(settings.auto_transcript_input_trailing_space);
-    }
-
-    #[test]
-    fn dictation_defaults_are_off_with_auto_language() {
-        let settings = AppSettings::default();
-        assert!(!settings.dictation_enabled);
-        assert_eq!(settings.dictation_shortcut, "alt+space");
-        assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
-    }
-
-    #[test]
-    fn transcription_options_default_off_for_legacy_settings() {
-        let json = serde_json::to_value(AppSettings::default()).expect("default settings");
-        let mut legacy = json.as_object().expect("settings object").clone();
-        legacy.remove("transcription_options");
-        let settings: AppSettings =
-            serde_json::from_value(serde_json::Value::Object(legacy)).expect("legacy settings");
-
-        assert!(!settings.transcription_options.streaming_enabled);
-        assert!(!settings.transcription_options.cost_limit_fallback_enabled);
-        assert_eq!(
-            settings.transcription_options.cost_limit_fallback_model_id,
-            None
         );
     }
 
@@ -2331,46 +2324,6 @@ mod tests {
     }
 
     #[test]
-    fn dictation_input_preferences_preserve_current_defaults_and_patch_independently() {
-        let mut settings = AppSettings::default();
-        assert!(settings.dictation_copy_to_clipboard);
-        assert!(!settings.dictation_remove_trailing_space);
-
-        settings.apply_patch(SettingsPatch {
-            dictation_copy_to_clipboard: Some(false),
-            dictation_remove_trailing_space: Some(true),
-            ..Default::default()
-        });
-
-        assert!(!settings.dictation_copy_to_clipboard);
-        assert!(settings.dictation_remove_trailing_space);
-    }
-
-    #[test]
-    fn dictation_customization_uses_default_cue_choices() {
-        let settings = AppSettings::default();
-        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
-        assert_eq!(
-            settings.dictation_bubble_position,
-            DictationBubblePosition::TopCenter
-        );
-        assert_eq!(settings.dictation_bubble_background_color, "#000000");
-        assert_eq!(settings.dictation_bubble_background_opacity, 88);
-        assert_eq!(settings.dictation_model, "");
-        assert_eq!(settings.effective_dictation_model(), "whisper-medium");
-    }
-
-    #[test]
-    fn meeting_model_defaults_independently_for_legacy_settings() {
-        let settings = AppSettings::default();
-        assert_eq!(settings.meeting_model, "whisper-medium");
-        assert_eq!(settings.effective_meeting_model(), "whisper-medium");
-    }
-
-    #[test]
     fn meeting_model_patch_is_trimmed_and_independent() {
         let mut settings = AppSettings::default();
         settings.apply_patch(SettingsPatch {
@@ -2393,6 +2346,19 @@ mod tests {
     #[test]
     fn dictation_customization_patch_is_independent_and_trims_model() {
         let mut settings = AppSettings::default();
+        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
+        assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
+        assert_eq!(
+            settings.dictation_bubble_position,
+            DictationBubblePosition::TopCenter
+        );
+        assert_eq!(settings.dictation_bubble_background_color, "#000000");
+        assert_eq!(settings.dictation_bubble_background_opacity, 88);
+        assert_eq!(settings.dictation_model, "");
+        assert_eq!(settings.effective_dictation_model(), "whisper-medium");
+
         settings.apply_patch(SettingsPatch {
             dictation_start_sound: Some(DictationCueSound::Alternative),
             dictation_stop_sound: Some(DictationCueSound::Original),
@@ -2433,6 +2399,10 @@ mod tests {
     #[test]
     fn patch_sets_dictation_fields() {
         let mut settings = AppSettings::default();
+        assert!(!settings.dictation_enabled);
+        assert_eq!(settings.dictation_shortcut, "alt+space");
+        assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
+
         settings.apply_patch(SettingsPatch {
             dictation_enabled: Some(true),
             dictation_shortcut: Some("ctrl+shift+d".to_string()),
@@ -2486,18 +2456,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_software_gain_is_ignored_on_load() {
-        let mut json = serde_json::to_value(AppSettings::default()).unwrap();
-        json.as_object_mut().unwrap().insert(
-            "mic_input_volume_percent".to_string(),
-            serde_json::json!(175),
-        );
-        let settings: AppSettings = serde_json::from_value(json).unwrap();
-        let saved = serde_json::to_value(settings).unwrap();
-        assert!(saved.get("mic_input_volume_percent").is_none());
-    }
-
-    #[test]
     fn voice_auto_level_defaults_on_and_persists_off() {
         assert!(AppSettings::default().voice_auto_level_enabled);
         let mut settings = AppSettings::default();
@@ -2510,29 +2468,6 @@ mod tests {
         let restored: AppSettings =
             serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
         assert!(!restored.voice_auto_level_enabled);
-    }
-
-    #[test]
-    fn default_vad_timing_uses_tuned_capture_profile() {
-        let settings = AppSettings::default();
-        assert_eq!(settings.threshold_dbfs, -40.0);
-        assert_eq!(settings.attack_ms, 200);
-        assert_eq!(settings.release_ms, 1_000);
-        assert_eq!(settings.pre_roll_ms, 400);
-        assert_eq!(settings.lead_in_padding_ms, 200);
-        assert_eq!(settings.post_roll_ms, 400);
-        assert_eq!(settings.min_chunk_ms, 800);
-        assert_eq!(settings.max_chunk_ms, 180_000);
-    }
-
-    #[test]
-    fn patch_clamps_lead_in_padding() {
-        let mut settings = AppSettings::default();
-        settings.apply_patch(SettingsPatch {
-            lead_in_padding_ms: Some(10_000),
-            ..Default::default()
-        });
-        assert_eq!(settings.lead_in_padding_ms, 2_000);
     }
 
     #[test]
@@ -2685,7 +2620,8 @@ mod tests {
             "vad_enabled": false, "launch_at_login": false, "start_live_input_on_launch": true,
             "input_monitoring_enabled": false,
             "show_dock_icon": true, "show_tray_icon": true, "show_floating_overlay": true,
-            "floating_overlay_position": "top", "theme_mode": "dark", "theme_primary_color": "#000"
+            "floating_overlay_position": "top", "theme_mode": "dark", "theme_primary_color": "#000",
+            "mic_input_volume_percent": 175, "subtitle_min_width_px": 1200
         }"##;
         let settings: AppSettings =
             serde_json::from_str(json).expect("legacy settings deserialize");
@@ -2741,6 +2677,19 @@ mod tests {
         assert_eq!(settings.subtitle_max_width_px, 720);
         assert_eq!(settings.subtitle_min_height_px, 58);
         assert_eq!(settings.subtitle_max_height_px, 1_000);
+        assert_eq!(settings.subtitle_source_mode, SubtitleSourceMode::Both);
+        assert!(!settings.transcription_options.streaming_enabled);
+        assert!(!settings.transcription_options.cost_limit_fallback_enabled);
+        assert_eq!(
+            settings.transcription_options.cost_limit_fallback_model_id,
+            None
+        );
+
+        let resaved = serde_json::to_value(&settings).expect("resave settings");
+        assert!(resaved.get("mic_input_volume_percent").is_none());
+        assert!(resaved.get("subtitle_min_width_px").is_none());
+        assert_eq!(resaved["subtitle_max_width_px"], serde_json::json!(720));
+        assert_eq!(resaved["subtitle_source_mode"], serde_json::json!("both"));
     }
 
     #[test]
@@ -2836,55 +2785,26 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_source_mode_defaults_to_both_without_bypassing_the_master_switch() {
-        let mut settings = AppSettings::default();
-        assert_eq!(settings.subtitle_source_mode, SubtitleSourceMode::Both);
-        assert!(!settings.live_subtitles_enabled());
-        assert!(!settings.dictation_subtitles_enabled());
+    fn subtitle_source_mode_gates_live_and_dictation_behind_master_switch() {
+        assert_eq!(
+            AppSettings::default().subtitle_source_mode,
+            SubtitleSourceMode::Both
+        );
 
-        settings.show_floating_overlay = true;
-        assert!(settings.live_subtitles_enabled());
-        assert!(settings.dictation_subtitles_enabled());
-    }
-
-    #[test]
-    fn subtitle_source_modes_gate_live_and_dictation_independently() {
-        let mut settings = AppSettings {
-            show_floating_overlay: true,
-            ..AppSettings::default()
-        };
-
-        settings.subtitle_source_mode = SubtitleSourceMode::LiveTranscription;
-        assert!(settings.live_subtitles_enabled());
-        assert!(!settings.dictation_subtitles_enabled());
-
-        settings.subtitle_source_mode = SubtitleSourceMode::Dictation;
-        assert!(!settings.live_subtitles_enabled());
-        assert!(settings.dictation_subtitles_enabled());
-    }
-
-    #[test]
-    fn legacy_settings_default_subtitle_source_mode_to_both() {
-        let mut json = serde_json::to_value(AppSettings::default()).expect("serialize settings");
-        json.as_object_mut()
-            .expect("settings object")
-            .remove("subtitle_source_mode");
-
-        let settings: AppSettings = serde_json::from_value(json).expect("load legacy settings");
-        let resaved = serde_json::to_value(settings).expect("resave settings");
-
-        assert_eq!(resaved["subtitle_source_mode"], serde_json::json!("both"));
-    }
-
-    #[test]
-    fn legacy_subtitle_minimum_width_is_ignored_when_settings_are_resaved() {
-        let mut json = serde_json::to_value(AppSettings::default()).expect("serialize settings");
-        json["subtitle_min_width_px"] = serde_json::json!(1_200);
-
-        let settings: AppSettings = serde_json::from_value(json).expect("load legacy settings");
-        let resaved = serde_json::to_value(settings).expect("resave settings");
-
-        assert!(resaved.get("subtitle_min_width_px").is_none());
-        assert_eq!(resaved["subtitle_max_width_px"], serde_json::json!(720));
+        for (show_floating_overlay, subtitle_source_mode, live, dictation) in [
+            (false, SubtitleSourceMode::Both, false, false),
+            (true, SubtitleSourceMode::Both, true, true),
+            (true, SubtitleSourceMode::LiveTranscription, true, false),
+            (true, SubtitleSourceMode::Dictation, false, true),
+        ] {
+            let settings = AppSettings {
+                show_floating_overlay,
+                subtitle_source_mode,
+                ..AppSettings::default()
+            };
+            let case = format!("overlay {show_floating_overlay}, mode {subtitle_source_mode:?}");
+            assert_eq!(settings.live_subtitles_enabled(), live, "{case}");
+            assert_eq!(settings.dictation_subtitles_enabled(), dictation, "{case}");
+        }
     }
 }

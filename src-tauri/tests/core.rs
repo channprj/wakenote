@@ -116,18 +116,40 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
     let dir = local.format("%Y%m%d").to_string();
     let stem = local.format("%y%m%d-%H%M%S").to_string();
 
+    for (format, extension) in [(AudioFormat::M4a, "m4a"), (AudioFormat::Mp3, "mp3")] {
+        let target =
+            next_available_output(tmp.path(), timestamp, format, None).expect("first path");
+        assert_eq!(
+            target.basename,
+            OutputBasename::new(stem.clone()),
+            "{extension}"
+        );
+        assert!(
+            target
+                .audio_path
+                .ends_with(format!("{dir}/{stem}.{extension}")),
+            "{extension}"
+        );
+        assert!(
+            target.metadata_path.ends_with(format!("{dir}/{stem}.json")),
+            "{extension}"
+        );
+        assert!(
+            target
+                .transcript_path
+                .ends_with(format!("{dir}/{stem}.txt")),
+            "{extension}"
+        );
+        assert!(
+            target
+                .error_path
+                .ends_with(format!("{dir}/{stem}.error.txt")),
+            "{extension}"
+        );
+    }
+
     let first =
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("first path");
-    assert_eq!(first.basename, OutputBasename::new(stem.clone()));
-    assert!(first.audio_path.ends_with(format!("{dir}/{stem}.m4a")));
-    assert!(first.metadata_path.ends_with(format!("{dir}/{stem}.json")));
-    assert!(first.transcript_path.ends_with(format!("{dir}/{stem}.txt")));
-    assert!(
-        first
-            .error_path
-            .ends_with(format!("{dir}/{stem}.error.txt"))
-    );
-
     std::fs::create_dir_all(first.audio_path.parent().unwrap()).expect("date dir");
     std::fs::write(&first.audio_path, b"existing").expect("collision file");
 
@@ -145,26 +167,6 @@ fn output_paths_use_date_time_format_and_collision_suffix() {
         next_available_output(tmp.path(), timestamp, AudioFormat::M4a, None).expect("third path");
     assert_eq!(third.basename, OutputBasename::new(format!("{stem}-3")));
     assert!(third.audio_path.ends_with(format!("{dir}/{stem}-3.m4a")));
-}
-
-#[test]
-fn output_paths_support_mp3_recording_format() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let timestamp = Utc.with_ymd_and_hms(2026, 5, 6, 23, 7, 9).unwrap();
-    let local = timestamp.with_timezone(&chrono::Local);
-    let dir = local.format("%Y%m%d").to_string();
-    let stem = local.format("%y%m%d-%H%M%S").to_string();
-
-    let target =
-        next_available_output(tmp.path(), timestamp, AudioFormat::Mp3, None).expect("mp3 path");
-
-    assert!(target.audio_path.ends_with(format!("{dir}/{stem}.mp3")));
-    assert!(target.metadata_path.ends_with(format!("{dir}/{stem}.json")));
-    assert!(
-        target
-            .transcript_path
-            .ends_with(format!("{dir}/{stem}.txt"))
-    );
 }
 
 #[test]
@@ -237,75 +239,57 @@ fn default_settings_match_prd_mvp_defaults() {
 }
 
 #[test]
-fn settings_patch_updates_theme_mode() {
-    let mut settings = AppSettings::default();
+fn settings_patch_applies_simple_preference_fields() {
+    type Case = (&'static str, SettingsPatch, fn(&AppSettings) -> bool);
+    let cases: [Case; 5] = [
+        (
+            "show_dock_icon",
+            SettingsPatch {
+                show_dock_icon: Some(false),
+                ..SettingsPatch::default()
+            },
+            |settings| !settings.show_dock_icon,
+        ),
+        (
+            "start_live_input_on_launch",
+            SettingsPatch {
+                start_live_input_on_launch: Some(false),
+                ..SettingsPatch::default()
+            },
+            |settings| !settings.start_live_input_on_launch,
+        ),
+        (
+            "transcription_language",
+            SettingsPatch {
+                transcription_language: Some(TranscriptionLanguage::En),
+                ..SettingsPatch::default()
+            },
+            |settings| settings.transcription_language == TranscriptionLanguage::En,
+        ),
+        (
+            "suppress_low_confidence_transcripts",
+            SettingsPatch {
+                suppress_low_confidence_transcripts: Some(false),
+                ..SettingsPatch::default()
+            },
+            |settings| !settings.suppress_low_confidence_transcripts,
+        ),
+        (
+            "completed threshold calibration",
+            SettingsPatch {
+                threshold_dbfs: Some(-43.0),
+                calibration_completed: Some(true),
+                ..SettingsPatch::default()
+            },
+            |settings| settings.threshold_dbfs == -43.0 && settings.calibration_completed,
+        ),
+    ];
 
-    settings.apply_patch(SettingsPatch {
-        theme_mode: Some(ThemeMode::Light),
-        ..SettingsPatch::default()
-    });
-
-    assert_eq!(settings.theme_mode, ThemeMode::Light);
-}
-
-#[test]
-fn settings_patch_updates_dock_icon_visibility() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        show_dock_icon: Some(false),
-        ..SettingsPatch::default()
-    });
-
-    assert!(!settings.show_dock_icon);
-}
-
-#[test]
-fn settings_patch_updates_start_live_input_on_launch() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        start_live_input_on_launch: Some(false),
-        ..SettingsPatch::default()
-    });
-
-    assert!(!settings.start_live_input_on_launch);
-}
-
-#[test]
-fn settings_patch_marks_permission_onboarding_seen() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        permission_onboarding_seen: Some(true),
-        ..SettingsPatch::default()
-    });
-
-    assert!(settings.permission_onboarding_seen);
-}
-
-#[test]
-fn settings_patch_updates_transcription_language() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        transcription_language: Some(TranscriptionLanguage::Ko),
-        ..SettingsPatch::default()
-    });
-
-    assert_eq!(settings.transcription_language, TranscriptionLanguage::Ko);
-}
-
-#[test]
-fn settings_patch_updates_low_confidence_transcript_suppression() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        suppress_low_confidence_transcripts: Some(false),
-        ..SettingsPatch::default()
-    });
-
-    assert!(!settings.suppress_low_confidence_transcripts);
+    for (label, patch, applied) in cases {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(patch);
+        assert!(applied(&settings), "{label}");
+    }
 }
 
 #[test]
@@ -724,92 +708,6 @@ fn legacy_selected_microphone_patch_moves_to_top_of_existing_priority() {
 }
 
 #[test]
-fn microphone_priority_reorder_triggers_live_capture_restart() {
-    // Changing priority[0] is functionally a microphone change — the live
-    // capture must restart so the new top device gets opened.
-    let active = AppSettings::default();
-
-    let new_priority = vec![
-        MicrophonePriorityEntry {
-            id: "input-3-usb-mic".to_string(),
-            label: "USB Mic".to_string(),
-        },
-        MicrophonePriorityEntry {
-            id: "default".to_string(),
-            label: "System Default".to_string(),
-        },
-    ];
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &active,
-            &SettingsPatch {
-                microphone_priority: Some(new_priority),
-                ..SettingsPatch::default()
-            },
-        ),
-        LiveCaptureRuntimeAction::Restart,
-    );
-}
-
-#[test]
-fn capture_microphone_patch_reconciles_live_capture_slots() {
-    let active = AppSettings::default();
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &active,
-            &SettingsPatch {
-                capture_microphones: Some(vec![
-                    CaptureMicrophoneEntry {
-                        id: "input-1-wired".to_string(),
-                        label: "Wired".to_string(),
-                        core_audio_uid: None,
-                    },
-                    CaptureMicrophoneEntry {
-                        id: "input-2-wireless".to_string(),
-                        label: "Wireless".to_string(),
-                        core_audio_uid: None,
-                    },
-                ]),
-                ..SettingsPatch::default()
-            },
-        ),
-        LiveCaptureRuntimeAction::Reconcile,
-    );
-}
-
-#[test]
-fn merge_microphone_input_patch_reconciles_live_capture_slots() {
-    let active = AppSettings {
-        capture_microphones: vec![
-            CaptureMicrophoneEntry {
-                id: "input-1-wired".to_string(),
-                label: "Wired".to_string(),
-                core_audio_uid: None,
-            },
-            CaptureMicrophoneEntry {
-                id: "input-2-wireless".to_string(),
-                label: "Wireless".to_string(),
-                core_audio_uid: None,
-            },
-        ],
-        ..AppSettings::default()
-    };
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &active,
-            &SettingsPatch {
-                merge_microphone_inputs: Some(false),
-                ..SettingsPatch::default()
-            },
-        ),
-        LiveCaptureRuntimeAction::Reconcile,
-    );
-}
-
-#[test]
 fn backend_dual_microphone_slots_process_and_stop_independently() {
     let mut backend = AppBackend::default();
     backend.apply_settings_patch_for_test(SettingsPatch {
@@ -873,20 +771,6 @@ fn backend_dual_microphone_slots_process_and_stop_independently() {
 }
 
 #[test]
-fn settings_patch_records_completed_threshold_calibration() {
-    let mut settings = AppSettings::default();
-
-    settings.apply_patch(SettingsPatch {
-        threshold_dbfs: Some(-43.0),
-        calibration_completed: Some(true),
-        ..SettingsPatch::default()
-    });
-
-    assert_eq!(settings.threshold_dbfs, -43.0);
-    assert!(settings.calibration_completed);
-}
-
-#[test]
 fn launch_at_login_action_follows_explicit_settings_patch() {
     let settings = AppSettings::default();
 
@@ -923,107 +807,148 @@ fn launch_at_login_action_follows_explicit_settings_patch() {
 }
 
 #[test]
-fn live_capture_runtime_action_stops_when_recording_is_disabled_or_paused() {
-    let settings = AppSettings::default();
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &settings,
-            &SettingsPatch {
-                recording_enabled: Some(false),
-                ..SettingsPatch::default()
-            }
-        ),
-        LiveCaptureRuntimeAction::Stop
-    );
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &settings,
-            &SettingsPatch {
-                pause_all: Some(true),
-                ..SettingsPatch::default()
-            }
-        ),
-        LiveCaptureRuntimeAction::Stop
-    );
-    assert_eq!(
-        live_capture_runtime_action_for_patch(&settings, &SettingsPatch::default()),
-        LiveCaptureRuntimeAction::Unchanged
-    );
-
-    let already_paused = AppSettings {
-        pause_all: true,
-        ..AppSettings::default()
-    };
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &already_paused,
-            &SettingsPatch {
-                pause_all: Some(true),
-                ..SettingsPatch::default()
-            }
-        ),
-        LiveCaptureRuntimeAction::Unchanged
-    );
-}
-
-#[test]
-fn live_capture_runtime_action_starts_and_restarts_for_active_recording_settings() {
+fn live_capture_runtime_action_for_patch_table() {
+    let active = AppSettings::default();
     let disabled = AppSettings {
         recording_enabled: false,
         ..AppSettings::default()
     };
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
-            &disabled,
-            &SettingsPatch {
-                recording_enabled: Some(true),
-                ..SettingsPatch::default()
-            }
-        ),
-        LiveCaptureRuntimeAction::Start
-    );
-
     let paused = AppSettings {
         pause_all: true,
         ..AppSettings::default()
     };
+    let two_microphones = vec![
+        CaptureMicrophoneEntry {
+            id: "input-1-wired".to_string(),
+            label: "Wired".to_string(),
+            core_audio_uid: None,
+        },
+        CaptureMicrophoneEntry {
+            id: "input-2-wireless".to_string(),
+            label: "Wireless".to_string(),
+            core_audio_uid: None,
+        },
+    ];
+    let dual_microphone = AppSettings {
+        capture_microphones: two_microphones.clone(),
+        ..AppSettings::default()
+    };
 
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
+    for (label, settings, patch, expected) in [
+        (
+            "recording turned off",
+            &active,
+            SettingsPatch {
+                recording_enabled: Some(false),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Stop,
+        ),
+        (
+            "pause all",
+            &active,
+            SettingsPatch {
+                pause_all: Some(true),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Stop,
+        ),
+        (
+            "empty patch",
+            &active,
+            SettingsPatch::default(),
+            LiveCaptureRuntimeAction::Unchanged,
+        ),
+        (
+            "pause while already paused",
             &paused,
-            &SettingsPatch {
+            SettingsPatch {
+                pause_all: Some(true),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Unchanged,
+        ),
+        (
+            "recording turned on",
+            &disabled,
+            SettingsPatch {
+                recording_enabled: Some(true),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Start,
+        ),
+        (
+            "unpause",
+            &paused,
+            SettingsPatch {
                 pause_all: Some(false),
                 ..SettingsPatch::default()
-            }
+            },
+            LiveCaptureRuntimeAction::Start,
         ),
-        LiveCaptureRuntimeAction::Start
-    );
-
-    let active = AppSettings::default();
-
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
+        (
+            "new selected microphone",
             &active,
-            &SettingsPatch {
+            SettingsPatch {
                 selected_microphone: Some("usb-mic".to_string()),
                 ..SettingsPatch::default()
-            }
+            },
+            LiveCaptureRuntimeAction::Restart,
         ),
-        LiveCaptureRuntimeAction::Restart
-    );
-    assert_eq!(
-        live_capture_runtime_action_for_patch(
+        (
+            "same selected microphone",
             &active,
-            &SettingsPatch {
+            SettingsPatch {
                 selected_microphone: Some(active.selected_microphone.clone()),
                 ..SettingsPatch::default()
-            }
+            },
+            LiveCaptureRuntimeAction::Unchanged,
         ),
-        LiveCaptureRuntimeAction::Unchanged
-    );
+        // Changing priority[0] is functionally a microphone change — the live
+        // capture must restart so the new top device gets opened.
+        (
+            "microphone priority reorder",
+            &active,
+            SettingsPatch {
+                microphone_priority: Some(vec![
+                    MicrophonePriorityEntry {
+                        id: "input-3-usb-mic".to_string(),
+                        label: "USB Mic".to_string(),
+                    },
+                    MicrophonePriorityEntry {
+                        id: "default".to_string(),
+                        label: "System Default".to_string(),
+                    },
+                ]),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Restart,
+        ),
+        (
+            "capture microphones changed",
+            &active,
+            SettingsPatch {
+                capture_microphones: Some(two_microphones),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Reconcile,
+        ),
+        (
+            "two-microphone merge turned off",
+            &dual_microphone,
+            SettingsPatch {
+                merge_microphone_inputs: Some(false),
+                ..SettingsPatch::default()
+            },
+            LiveCaptureRuntimeAction::Reconcile,
+        ),
+    ] {
+        assert_eq!(
+            live_capture_runtime_action_for_patch(settings, &patch),
+            expected,
+            "{label}"
+        );
+    }
 }
 
 #[test]

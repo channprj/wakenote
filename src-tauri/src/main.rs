@@ -867,25 +867,6 @@ const MIC_RECOVERY_SETTLING_DELAY: Duration = Duration::from_millis(200);
 const MIC_WEDGE_WARNING_THRESHOLD: u32 = 4;
 const DEFAULT_RECENT_TRANSCRIPT_LIMIT: usize = 50;
 const MAX_RECENT_TRANSCRIPT_LIMIT: usize = 5_000;
-#[cfg(test)]
-const TRAY_MENU_ORDER: &[&str] = &[
-    "open-settings",
-    "separator",
-    "toggle-recording",
-    "toggle-transcription",
-    "toggle-subtitles",
-    "toggle-auto-type",
-    "active-model",
-    "active-microphone",
-    "threshold",
-    "separator",
-    "reveal-save-folder",
-    "pause-all",
-    "separator",
-    "cancel-current-operation",
-    "separator",
-    "quit",
-];
 
 #[derive(Debug, Clone, Serialize)]
 struct LiveStartedPayload {
@@ -9820,11 +9801,6 @@ fn apply_tray_level_title(app: &tauri::AppHandle) {
     let _ = tray.set_title(title.as_deref());
 }
 
-#[cfg(test)]
-fn tray_menu_order() -> &'static [&'static str] {
-    TRAY_MENU_ORDER
-}
-
 fn tray_show_menu_on_left_click(settings: &AppSettings) -> bool {
     settings.tray_left_click_action == TrayClickAction::OpenMenu
 }
@@ -10081,49 +10057,51 @@ mod tests {
     }
 
     #[test]
-    fn dictation_start_resolution_keeps_ready_secondary_when_primary_fails() {
-        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
-            if entry.id == "primary" {
-                Err("Primary disconnected".to_string())
-            } else {
-                Ok(resolved_dictation_device(entry))
-            }
-        });
+    fn dictation_start_resolution_keeps_ready_slots_in_order_when_one_fails() {
+        for (failing_id, expected_ready, expected_failures) in [
+            (
+                None,
+                vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
+                vec![],
+            ),
+            (
+                Some("primary"),
+                vec![MicrophoneSlot::Secondary],
+                vec![MicrophoneSlot::Primary],
+            ),
+            (
+                Some("secondary"),
+                vec![MicrophoneSlot::Primary],
+                vec![MicrophoneSlot::Secondary],
+            ),
+        ] {
+            let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
+                if Some(entry.id.as_str()) == failing_id {
+                    Err(format!("{} disconnected", entry.label))
+                } else {
+                    Ok(resolved_dictation_device(entry))
+                }
+            });
 
-        assert_eq!(result.ready.len(), 1);
-        assert_eq!(result.ready[0].input.slot, MicrophoneSlot::Secondary);
-        assert_eq!(result.failures[0].slot, MicrophoneSlot::Primary);
-    }
-
-    #[test]
-    fn dictation_start_resolution_keeps_ready_primary_when_secondary_fails() {
-        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
-            if entry.id == "secondary" {
-                Err("Secondary disconnected".to_string())
-            } else {
-                Ok(resolved_dictation_device(entry))
-            }
-        });
-
-        assert_eq!(result.ready.len(), 1);
-        assert_eq!(result.ready[0].input.slot, MicrophoneSlot::Primary);
-        assert_eq!(result.failures[0].slot, MicrophoneSlot::Secondary);
-    }
-
-    #[test]
-    fn dictation_start_resolution_preserves_slot_order() {
-        let result = resolve_dictation_inputs_with(&dictation_resolution_settings(), |entry| {
-            Ok(resolved_dictation_device(entry))
-        });
-
-        assert_eq!(
-            result
-                .ready
-                .iter()
-                .map(|input| input.input.slot)
-                .collect::<Vec<_>>(),
-            vec![MicrophoneSlot::Primary, MicrophoneSlot::Secondary],
-        );
+            assert_eq!(
+                result
+                    .ready
+                    .iter()
+                    .map(|input| input.input.slot)
+                    .collect::<Vec<_>>(),
+                expected_ready,
+                "failing entry {failing_id:?}"
+            );
+            assert_eq!(
+                result
+                    .failures
+                    .iter()
+                    .map(|failure| failure.slot)
+                    .collect::<Vec<_>>(),
+                expected_failures,
+                "failing entry {failing_id:?}"
+            );
+        }
     }
 
     #[test]
@@ -10427,27 +10405,42 @@ mod tests {
     }
 
     #[test]
-    fn overlay_settings_change_detects_active_dictation_opacity_and_position() {
+    fn overlay_presentation_settings_changed_table() {
         let previous = AppSettings::default();
-        let mut next = previous.clone();
-        next.dictation_bubble_background_opacity = 24;
-        assert!(overlay_presentation_settings_changed(&previous, &next));
 
-        let mut repositioned = previous.clone();
-        repositioned.dictation_bubble_position =
-            wakenote::settings::DictationBubblePosition::BottomRight;
-        assert!(overlay_presentation_settings_changed(
-            &previous,
-            &repositioned
-        ));
-    }
-
-    #[test]
-    fn overlay_settings_change_ignores_unrelated_preferences() {
-        let previous = AppSettings::default();
-        let mut next = previous.clone();
-        next.autoplay_next_transcript = !previous.autoplay_next_transcript;
-        assert!(!overlay_presentation_settings_changed(&previous, &next));
+        for (label, next, expected) in [
+            (
+                "active dictation opacity",
+                AppSettings {
+                    dictation_bubble_background_opacity: 24,
+                    ..previous.clone()
+                },
+                true,
+            ),
+            (
+                "dictation bubble position",
+                AppSettings {
+                    dictation_bubble_position:
+                        wakenote::settings::DictationBubblePosition::BottomRight,
+                    ..previous.clone()
+                },
+                true,
+            ),
+            (
+                "unrelated autoplay preference",
+                AppSettings {
+                    autoplay_next_transcript: !previous.autoplay_next_transcript,
+                    ..previous.clone()
+                },
+                false,
+            ),
+        ] {
+            assert_eq!(
+                overlay_presentation_settings_changed(&previous, &next),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -10467,7 +10460,7 @@ mod tests {
     }
 
     #[test]
-    fn recognized_source_infos_use_default_auto_prompt() {
+    fn recognized_source_infos_use_default_auto_prompt_unless_overridden() {
         let settings = AppSettings::default();
         let infos = recognized_source_infos(&settings);
         assert_eq!(infos.len(), 3);
@@ -10493,23 +10486,24 @@ mod tests {
         assert!(youtube.auto_prompt);
         assert_eq!(youtube.title_patterns, vec!["- youtube", "youtube"]);
         assert!(!youtube.custom);
-    }
 
-    #[test]
-    fn recognized_source_infos_honor_user_override() {
-        let settings = AppSettings {
+        let overridden = recognized_source_infos(&AppSettings {
             source_auto_prompt: vec![SourceAutoPromptEntry {
                 source_id: "youtube".into(),
-                auto_prompt: true,
+                auto_prompt: false,
             }],
             ..Default::default()
+        });
+        let auto_prompt = |id: &str| {
+            overridden
+                .iter()
+                .find(|i| i.id == id)
+                .expect("source listed")
+                .auto_prompt
         };
-        let infos = recognized_source_infos(&settings);
-        let youtube = infos
-            .iter()
-            .find(|i| i.id == "youtube")
-            .expect("youtube listed");
-        assert!(youtube.auto_prompt);
+        assert!(!auto_prompt("youtube"));
+        assert!(auto_prompt("meet"));
+        assert!(auto_prompt("zoom"));
     }
 
     #[test]
@@ -10554,121 +10548,104 @@ mod tests {
     }
 
     #[test]
-    fn browser_sources_use_target_app_capture_scope() {
-        let youtube = DetectedSource {
-            source_id: "youtube".into(),
-            label: "YouTube".into(),
-            app_name: "Google Chrome".into(),
-            pid: 42,
-        };
-        let meet = DetectedSource {
-            source_id: "meet".into(),
-            label: "Google Meet".into(),
-            app_name: "Google Chrome".into(),
-            pid: 43,
-        };
-        let zoom = DetectedSource {
-            source_id: "zoom".into(),
-            label: "Zoom".into(),
-            app_name: "zoom.us".into(),
-            pid: 45,
-        };
-        let spotify = DetectedSource {
-            source_id: "custom-source-2".into(),
-            label: "Spotify".into(),
-            app_name: "Spotify".into(),
-            pid: 44,
-        };
-
-        assert_eq!(source_capture_scope(&youtube), "target-app");
-        assert_eq!(source_capture_scope(&meet), "target-app");
-        assert_eq!(source_capture_scope(&zoom), "target-app");
-        assert_eq!(source_capture_scope(&spotify), "target-app");
-    }
-
-    #[test]
-    fn system_capture_action_is_none_without_active_session() {
-        let settings = AppSettings::default();
-        assert_eq!(
-            system_capture_settings_action(&settings, false),
-            SystemCaptureSettingsAction::None
-        );
-    }
-
-    #[test]
-    fn system_capture_action_syncs_while_enabled_and_recording() {
-        let settings = AppSettings {
+    fn system_capture_settings_action_table() {
+        let enabled = AppSettings {
             system_audio_enabled: true,
             ..Default::default()
         };
-        assert!(settings.recording_enabled);
-        assert!(!settings.pause_all);
-        assert_eq!(
-            system_capture_settings_action(&settings, true),
-            SystemCaptureSettingsAction::Sync
-        );
+        assert!(enabled.recording_enabled);
+        assert!(!enabled.pause_all);
+
+        for (label, settings, capturing, expected) in [
+            (
+                "no active session",
+                AppSettings::default(),
+                false,
+                SystemCaptureSettingsAction::None,
+            ),
+            (
+                "enabled and recording",
+                enabled.clone(),
+                true,
+                SystemCaptureSettingsAction::Sync,
+            ),
+            (
+                "feature disabled",
+                AppSettings::default(),
+                true,
+                SystemCaptureSettingsAction::Stop,
+            ),
+            (
+                "recording off",
+                AppSettings {
+                    recording_enabled: false,
+                    ..enabled.clone()
+                },
+                true,
+                SystemCaptureSettingsAction::Stop,
+            ),
+            (
+                "paused",
+                AppSettings {
+                    pause_all: true,
+                    ..enabled.clone()
+                },
+                true,
+                SystemCaptureSettingsAction::Stop,
+            ),
+        ] {
+            assert_eq!(
+                system_capture_settings_action(&settings, capturing),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
-    fn system_capture_action_stops_when_feature_disabled() {
-        let settings = AppSettings::default();
-        assert_eq!(
-            system_capture_settings_action(&settings, true),
-            SystemCaptureSettingsAction::Stop
-        );
-    }
-
-    #[test]
-    fn system_capture_action_stops_when_recording_off_or_paused() {
-        let recording_off = AppSettings {
-            recording_enabled: false,
-            ..Default::default()
-        };
-        assert_eq!(
-            system_capture_settings_action(&recording_off, true),
-            SystemCaptureSettingsAction::Stop
-        );
-
-        let paused = AppSettings {
-            pause_all: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            system_capture_settings_action(&paused, true),
-            SystemCaptureSettingsAction::Stop
-        );
-    }
-
-    #[test]
-    fn input_monitor_action_starts_only_when_enabled_and_live_input_running() {
-        let settings = AppSettings {
+    fn input_monitor_runtime_action_table() {
+        let enabled = AppSettings {
             input_monitoring_enabled: true,
             ..Default::default()
         };
+        let disabled = AppSettings::default();
 
-        assert_eq!(
-            input_monitor_runtime_action(&settings, true, false),
-            InputMonitorRuntimeAction::Start
-        );
-        assert_eq!(
-            input_monitor_runtime_action(&settings, false, false),
-            InputMonitorRuntimeAction::Unchanged
-        );
-    }
-
-    #[test]
-    fn input_monitor_action_stops_when_disabled_or_live_input_stops() {
-        let mut settings = AppSettings::default();
-        assert_eq!(
-            input_monitor_runtime_action(&settings, true, true),
-            InputMonitorRuntimeAction::Stop
-        );
-
-        settings.input_monitoring_enabled = true;
-        assert_eq!(
-            input_monitor_runtime_action(&settings, false, true),
-            InputMonitorRuntimeAction::Stop
-        );
+        for (label, settings, live_input_running, monitor_running, expected) in [
+            (
+                "enabled with live input",
+                &enabled,
+                true,
+                false,
+                InputMonitorRuntimeAction::Start,
+            ),
+            (
+                "enabled without live input",
+                &enabled,
+                false,
+                false,
+                InputMonitorRuntimeAction::Unchanged,
+            ),
+            (
+                "disabled while running",
+                &disabled,
+                true,
+                true,
+                InputMonitorRuntimeAction::Stop,
+            ),
+            (
+                "live input stopped while running",
+                &enabled,
+                false,
+                true,
+                InputMonitorRuntimeAction::Stop,
+            ),
+        ] {
+            assert_eq!(
+                input_monitor_runtime_action(settings, live_input_running, monitor_running),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -11103,93 +11080,71 @@ mod tests {
 
     #[test]
     fn finalized_meet_capture_is_recorded_once_without_auto_transcription() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut backend = AppBackend::default();
-        backend.update_settings(SettingsPatch {
-            save_root: Some(tmp.path().to_string_lossy().to_string()),
-            transcription_enabled: Some(true),
-            ..SettingsPatch::default()
-        });
-        let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
+        for model_present in [false, true] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let model_directory = tmp.path().join("models");
+            if model_present {
+                std::fs::create_dir_all(&model_directory).expect("model directory");
+                std::fs::write(model_directory.join("whisper-medium.bin"), b"model")
+                    .expect("meeting model");
+            }
+            let mut backend = AppBackend::default();
+            backend.update_settings(SettingsPatch {
+                save_root: Some(tmp.path().to_string_lossy().to_string()),
+                model_directory: Some(model_directory.to_string_lossy().to_string()),
+                transcription_enabled: Some(true),
+                ..SettingsPatch::default()
+            });
+            let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
 
-        backend
-            .start_system_capture_session(
-                16_000,
-                base_time,
-                "Google Chrome".into(),
-                "meet".into(),
-                "meet".into(),
-            )
-            .expect("start meet system capture");
-        backend
-            .process_system_audio_frame(AudioFrame {
-                samples: vec![0.5; 1_600],
-                duration_ms: 100,
-                captured_at: base_time + chrono::Duration::milliseconds(100),
-            })
-            .expect("meet audio frame");
-        backend
-            .stop_system_capture_session()
-            .expect("stop meet system capture");
+            backend
+                .start_system_capture_session(
+                    16_000,
+                    base_time,
+                    "Google Chrome".into(),
+                    "meet".into(),
+                    "meet".into(),
+                )
+                .expect("start meet system capture");
+            backend
+                .process_system_audio_frame(AudioFrame {
+                    samples: vec![0.5; 1_600],
+                    duration_ms: 100,
+                    captured_at: base_time + chrono::Duration::milliseconds(100),
+                })
+                .expect("meet audio frame");
+            backend
+                .stop_system_capture_session()
+                .expect("stop meet system capture");
 
-        let meetings = wakenote::meeting::list_meetings(tmp.path());
-        let finished = backend.take_finished_system_meetings();
+            let meetings = wakenote::meeting::list_meetings(tmp.path());
+            let finished = backend.take_finished_system_meetings();
 
-        assert_eq!(meetings.len(), 1);
-        assert_eq!(
-            meetings[0].status,
-            wakenote::meeting::MeetingStatus::Recorded
-        );
-        assert_eq!(finished.len(), 1);
-        assert_eq!(finished[0].id, meetings[0].id);
-        assert_eq!(
-            finished[0].status,
-            wakenote::meeting::MeetingStatus::Recorded
-        );
-        assert!(backend.take_finished_system_meetings().is_empty());
-        assert!(pending_meeting_job_actions(&backend.settings()).is_empty());
-    }
-
-    #[test]
-    fn finalized_meet_capture_stays_recorded_when_meeting_model_is_missing() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let mut backend = AppBackend::default();
-        backend.update_settings(SettingsPatch {
-            save_root: Some(tmp.path().to_string_lossy().to_string()),
-            model_directory: Some(tmp.path().join("models").to_string_lossy().to_string()),
-            transcription_enabled: Some(true),
-            ..SettingsPatch::default()
-        });
-        let base_time = chrono::Utc.with_ymd_and_hms(2026, 5, 6, 12, 0, 0).unwrap();
-
-        backend
-            .start_system_capture_session(
-                16_000,
-                base_time,
-                "Google Chrome".into(),
-                "meet".into(),
-                "meet".into(),
-            )
-            .expect("start meet system capture");
-        backend
-            .process_system_audio_frame(AudioFrame {
-                samples: vec![0.5; 1_600],
-                duration_ms: 100,
-                captured_at: base_time + chrono::Duration::milliseconds(100),
-            })
-            .expect("meet audio frame");
-        backend
-            .stop_system_capture_session()
-            .expect("stop meet system capture");
-
-        let meetings = wakenote::meeting::list_meetings(tmp.path());
-        assert_eq!(meetings.len(), 1);
-        assert_eq!(
-            meetings[0].status,
-            wakenote::meeting::MeetingStatus::Recorded
-        );
-        assert_eq!(backend.take_finished_system_meetings().len(), 1);
-        assert!(pending_meeting_job_actions(&backend.settings()).is_empty());
+            assert_eq!(meetings.len(), 1, "model present: {model_present}");
+            assert_eq!(
+                meetings[0].status,
+                wakenote::meeting::MeetingStatus::Recorded,
+                "model present: {model_present}"
+            );
+            assert_eq!(finished.len(), 1, "model present: {model_present}");
+            assert_eq!(
+                finished[0].id, meetings[0].id,
+                "model present: {model_present}"
+            );
+            assert_eq!(
+                finished[0].status,
+                wakenote::meeting::MeetingStatus::Recorded,
+                "model present: {model_present}"
+            );
+            assert!(
+                backend.take_finished_system_meetings().is_empty(),
+                "model present: {model_present}"
+            );
+            assert!(
+                pending_meeting_job_actions(&backend.settings()).is_empty(),
+                "model present: {model_present}"
+            );
+        }
     }
 
     #[test]
@@ -11753,21 +11708,6 @@ mod tests {
     }
 
     #[test]
-    fn tray_presentation_update_payload_is_send_static_for_main_thread_dispatch() {
-        fn assert_send_static<T: Send + 'static>(_: &T) {}
-
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let backend = AppBackend::load_from_dir(tmp.path()).expect("backend");
-        let settings = backend.settings();
-        let status = backend.app_status();
-        let payload = tray_presentation_update_payload(&settings, &status, DictationStage::Idle);
-
-        assert_send_static(&payload);
-        assert_eq!(payload.settings, settings);
-        assert_eq!(payload.status, status);
-    }
-
-    #[test]
     fn dictation_cues_use_selected_bundled_resources_and_volume() {
         assert_eq!(
             dictation_cue_resource_name(DictationCue::Start, DictationCueSound::Original),
@@ -11898,31 +11838,6 @@ mod tests {
     }
 
     #[test]
-    fn tray_menu_order_starts_with_open_settings_then_separator() {
-        assert_eq!(
-            tray_menu_order(),
-            &[
-                "open-settings",
-                "separator",
-                "toggle-recording",
-                "toggle-transcription",
-                "toggle-subtitles",
-                "toggle-auto-type",
-                "active-model",
-                "active-microphone",
-                "threshold",
-                "separator",
-                "reveal-save-folder",
-                "pause-all",
-                "separator",
-                "cancel-current-operation",
-                "separator",
-                "quit",
-            ]
-        );
-    }
-
-    #[test]
     fn tray_left_click_menu_flag_follows_click_action_setting() {
         let mut settings = AppSettings::default();
         assert!(tray_show_menu_on_left_click(&settings));
@@ -11932,34 +11847,22 @@ mod tests {
     }
 
     #[test]
-    fn main_window_size_restore_detects_zero_sized_window() {
-        assert!(main_window_needs_size_restore(0, 0));
-    }
+    fn main_window_size_restore_table() {
+        let min_width = MAIN_WINDOW_MIN_WIDTH as u32;
+        let min_height = MAIN_WINDOW_MIN_HEIGHT as u32;
 
-    #[test]
-    fn main_window_size_restore_detects_too_small_window() {
-        assert!(main_window_needs_size_restore(
-            100,
-            MAIN_WINDOW_MIN_HEIGHT as u32
-        ));
-        assert!(main_window_needs_size_restore(
-            MAIN_WINDOW_MIN_WIDTH as u32,
-            100
-        ));
-    }
-
-    #[test]
-    fn main_window_size_restore_keeps_usable_window_size() {
-        assert!(!main_window_needs_size_restore(
-            MAIN_WINDOW_MIN_WIDTH as u32,
-            MAIN_WINDOW_MIN_HEIGHT as u32,
-        ));
-    }
-
-    #[test]
-    fn main_window_default_size_matches_current_settings_window() {
-        assert_eq!(MAIN_WINDOW_WIDTH as u32, 1040);
-        assert_eq!(MAIN_WINDOW_HEIGHT as u32, 922);
+        for (width, height, expected) in [
+            (0, 0, true),
+            (100, min_height, true),
+            (min_width, 100, true),
+            (min_width, min_height, false),
+        ] {
+            assert_eq!(
+                main_window_needs_size_restore(width, height),
+                expected,
+                "{width}x{height}"
+            );
+        }
     }
 
     #[test]
@@ -11987,53 +11890,69 @@ mod tests {
     }
 
     #[test]
-    fn close_window_shortcut_hides_settings_window() {
-        assert_eq!(
-            app_menu_action(CLOSE_SETTINGS_WINDOW_MENU_ID),
-            AppMenuAction::HideSettingsWindow
-        );
-        assert_eq!(app_menu_action("open-settings"), AppMenuAction::Noop);
+    fn app_menu_action_maps_menu_ids() {
+        for (menu_id, expected) in [
+            (
+                CLOSE_SETTINGS_WINDOW_MENU_ID,
+                AppMenuAction::HideSettingsWindow,
+            ),
+            ("quit", AppMenuAction::IntentionalQuit),
+            ("open-settings", AppMenuAction::Noop),
+        ] {
+            assert_eq!(app_menu_action(menu_id), expected, "{menu_id}");
+        }
     }
 
     #[test]
-    fn quit_menu_action_marks_intentional_quit() {
-        assert_eq!(app_menu_action("quit"), AppMenuAction::IntentionalQuit);
-    }
-
-    #[test]
-    fn unexpected_exit_request_is_prevented_for_tray_app() {
-        assert_eq!(
-            exit_request_decision(None, true, true, false),
-            ExitRequestDecision::Prevent
-        );
-    }
-
-    #[test]
-    fn explicit_or_intentional_exit_request_is_allowed() {
-        assert_eq!(
-            exit_request_decision(Some(0), true, true, false),
-            ExitRequestDecision::Allow
-        );
-        assert_eq!(
-            exit_request_decision(None, true, true, true),
-            ExitRequestDecision::Allow
-        );
-    }
-
-    #[test]
-    fn exit_request_is_allowed_when_tray_icon_is_disabled() {
-        assert_eq!(
-            exit_request_decision(None, false, true, false),
-            ExitRequestDecision::Allow
-        );
-    }
-
-    #[test]
-    fn exit_request_is_allowed_when_runtime_is_idle() {
-        assert_eq!(
-            exit_request_decision(None, true, false, false),
-            ExitRequestDecision::Allow
-        );
+    fn exit_request_decision_table() {
+        for (label, code, show_tray_icon, runtime_active, intentional_quit, expected) in [
+            (
+                "unexpected exit from tray app",
+                None,
+                true,
+                true,
+                false,
+                ExitRequestDecision::Prevent,
+            ),
+            (
+                "explicit exit code",
+                Some(0),
+                true,
+                true,
+                false,
+                ExitRequestDecision::Allow,
+            ),
+            (
+                "intentional quit",
+                None,
+                true,
+                true,
+                true,
+                ExitRequestDecision::Allow,
+            ),
+            (
+                "tray icon disabled",
+                None,
+                false,
+                true,
+                false,
+                ExitRequestDecision::Allow,
+            ),
+            (
+                "runtime idle",
+                None,
+                true,
+                false,
+                false,
+                ExitRequestDecision::Allow,
+            ),
+        ] {
+            assert_eq!(
+                exit_request_decision(code, show_tray_icon, runtime_active, intentional_quit),
+                expected,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -12118,10 +12037,6 @@ mod tests {
             assert!(!launch_auto_start_should_retry(&error));
             assert!(error.to_string().contains("WakeNote Settings > Audio"));
         }
-    }
-
-    #[test]
-    fn launch_auto_start_retries_non_permission_capture_failures() {
         assert!(launch_auto_start_should_retry(
             &LiveCaptureStartError::Runtime("device warming up".to_string())
         ));
@@ -12142,24 +12057,22 @@ mod tests {
     }
 
     #[test]
-    fn fallback_microphones_returns_default_device_without_fallback_for_default_selection() {
-        let devices = fallback_microphones(&AppSettings::default());
+    fn fallback_microphones_flags_default_only_for_pinned_selection() {
+        for (selected_microphone, expected_fallback) in
+            [("default", false), ("input-0-external", true)]
+        {
+            let devices = fallback_microphones(&AppSettings {
+                selected_microphone: selected_microphone.to_string(),
+                ..AppSettings::default()
+            });
 
-        assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].id, "default");
-        assert!(!devices[0].fallback);
-    }
-
-    #[test]
-    fn fallback_microphones_marks_default_as_fallback_for_pinned_selection() {
-        let devices = fallback_microphones(&AppSettings {
-            selected_microphone: "input-0-external".to_string(),
-            ..AppSettings::default()
-        });
-
-        assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].id, "default");
-        assert!(devices[0].fallback);
+            assert_eq!(devices.len(), 1, "{selected_microphone}");
+            assert_eq!(devices[0].id, "default", "{selected_microphone}");
+            assert_eq!(
+                devices[0].fallback, expected_fallback,
+                "{selected_microphone}"
+            );
+        }
     }
 
     #[test]

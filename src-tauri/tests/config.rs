@@ -46,7 +46,7 @@ fn macos_bundle_uses_regular_windowing_policy() {
 }
 
 #[test]
-fn main_window_config_uses_current_default_size() {
+fn main_window_config_uses_default_size_and_starts_hidden() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_path = manifest_dir.join("tauri.conf.json");
     let config: Value =
@@ -55,21 +55,11 @@ fn main_window_config_uses_current_default_size() {
 
     assert_eq!(config["app"]["windows"][0]["width"], 1040);
     assert_eq!(config["app"]["windows"][0]["height"], 922);
-}
-
-#[test]
-fn main_window_config_starts_hidden_for_tray_only_caption_overlay() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let config_path = manifest_dir.join("tauri.conf.json");
-    let config: Value =
-        serde_json::from_str(&std::fs::read_to_string(config_path).expect("tauri config"))
-            .expect("valid tauri config json");
-
     assert_eq!(config["app"]["windows"][0]["visible"], false);
 }
 
 #[test]
-fn main_window_capability_allows_dialog_open_and_markdown_save() {
+fn default_capability_grants_main_and_overlay_window_permissions() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let capability_path = manifest_dir.join("capabilities/default.json");
     let capability: Value = serde_json::from_str(
@@ -78,50 +68,24 @@ fn main_window_capability_allows_dialog_open_and_markdown_save() {
     .expect("valid capability json");
 
     assert_eq!(capability["identifier"], "default");
-    assert!(
-        capability["windows"]
-            .as_array()
-            .expect("capability windows")
-            .iter()
-            .any(|window| window.as_str() == Some("main"))
-    );
-    assert!(
-        capability["permissions"]
-            .as_array()
-            .expect("capability permissions")
-            .iter()
-            .any(|permission| permission.as_str() == Some("dialog:allow-open"))
-    );
-    assert!(
-        capability["permissions"]
-            .as_array()
-            .expect("capability permissions")
-            .iter()
-            .any(|permission| permission.as_str() == Some("dialog:allow-save"))
-    );
-}
-
-#[test]
-fn overlay_window_capability_allows_caption_snapshot_events() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let capability_path = manifest_dir.join("capabilities/default.json");
-    let capability: Value = serde_json::from_str(
-        &std::fs::read_to_string(capability_path).expect("default capability"),
-    )
-    .expect("valid capability json");
-
-    assert!(
-        capability["windows"]
-            .as_array()
-            .expect("capability windows")
-            .iter()
-            .any(|window| window.as_str() == Some("overlay"))
-    );
-    assert!(
-        capability["permissions"]
-            .as_array()
-            .expect("capability permissions")
-            .iter()
-            .any(|permission| permission.as_str() == Some("core:default"))
-    );
+    let windows = capability["windows"]
+        .as_array()
+        .expect("capability windows");
+    for window in ["main", "overlay"] {
+        assert!(
+            windows.iter().any(|value| value.as_str() == Some(window)),
+            "{window}"
+        );
+    }
+    let permissions = capability["permissions"]
+        .as_array()
+        .expect("capability permissions");
+    for permission in ["dialog:allow-open", "dialog:allow-save", "core:default"] {
+        assert!(
+            permissions
+                .iter()
+                .any(|value| value.as_str() == Some(permission)),
+            "{permission}"
+        );
+    }
 }
