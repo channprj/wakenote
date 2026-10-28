@@ -90,6 +90,13 @@ export function GeneralSettings({
           ]}
           onValueChange={(tray_left_click_action) => onPatch({ tray_left_click_action })}
         />
+        <SettingSwitch
+          label="Show input level in menu bar"
+          description="Show the live Primary input level in dBFS beside the menu bar icon while input is running."
+          checked={settings.show_menu_bar_level}
+          disabled={!settings.show_tray_icon}
+          onCheckedChange={(show_menu_bar_level) => onPatch({ show_menu_bar_level })}
+        />
       </SettingsCard>
     </SettingsGrid>
   );

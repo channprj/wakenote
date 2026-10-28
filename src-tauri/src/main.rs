@@ -35,9 +35,9 @@ use wakenote::commands::{
     UploadedAudio, live_preview_model_id, main_window_close_action,
     microphone_devices_from_input_devices, open_containing_folder_request,
     recorded_at_for_audio_path, refresh_transcript_day_index_for_recording_path,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
-    tray_presentation_for_dictation, tray_presentation_for_state, tray_runtime_presentation,
-    validate_audio_playback_file, with_live_runtime_warning,
+    reveal_save_folder_request, tray_icon_image_for_presentation, tray_level_title,
+    tray_menu_presentation, tray_presentation_for_dictation, tray_presentation_for_state,
+    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
 };
 use wakenote::dictation::{
     DICTATION_MAX_RECORDING_DURATION, DICTATION_STATE_EVENT, DictationAction,
@@ -414,6 +414,7 @@ type TranscriptionCostState = Arc<Mutex<TranscriptionCostLedger>>;
 type LlmRunState = Arc<Mutex<LlmRunRuntime>>;
 type MicrophoneLevelState = Arc<MicrophoneLevelService<PlatformVolumeBackend>>;
 type TrayPresentationCache = Mutex<Option<TrayPresentationSnapshot>>;
+type TrayLevelTitleState = Mutex<TrayLevelTitle>;
 
 const EVENT_DICTIONARY_CHANGED: &str = "dictionary-changed";
 const EVENT_DICTIONARY_FILE_ERROR: &str = "dictionary-file-error";
@@ -702,6 +703,34 @@ struct TrayPresentationSnapshot {
     dictation_stage: DictationStage,
 }
 
+/// Menu bar level readout requested by the latest audio status.
+#[derive(Debug, Default)]
+struct TrayLevelTitle {
+    desired: Option<String>,
+    changed_at: Option<Instant>,
+}
+
+impl TrayLevelTitle {
+    /// Records `title` and reports whether the menu bar must be updated.
+    /// Showing and hiding apply at once; level changes are throttled.
+    fn advance(&mut self, title: Option<String>, now: Instant) -> bool {
+        if self.desired == title {
+            return false;
+        }
+        let throttled = self.desired.is_some()
+            && title.is_some()
+            && self.changed_at.is_some_and(|changed_at| {
+                now.duration_since(changed_at) < TRAY_LEVEL_TITLE_INTERVAL
+            });
+        if throttled {
+            return false;
+        }
+        self.desired = title;
+        self.changed_at = Some(now);
+        true
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum SourceCaptureLifecycle {
     #[default]
@@ -817,6 +846,7 @@ const MAIN_WINDOW_MIN_HEIGHT: f64 = 640.0;
 const AUDIO_DEVICE_RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 const LAUNCH_AUTO_START_RETRY_DELAY_SECS: [u64; 6] = [2, 5, 10, 20, 30, 60];
 const OVERLAY_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(50);
+const TRAY_LEVEL_TITLE_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_PARALLEL_TRANSCRIPTIONS: usize = 1;
 const MIC_RECOVERY_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const SOURCE_CAPTURE_RETRY_DELAYS: [Duration; 3] = [
@@ -6147,6 +6177,7 @@ fn stop_live_capture_runtime(
     if queue_idle && let Err(error) = overlay::hide_overlay_on_main_thread(app, "hide") {
         log_error!("[overlay] hide failed: {error}");
     }
+    refresh_tray_from_backend(app);
     Ok(status)
 }
 
@@ -9076,6 +9107,7 @@ fn main() {
                         tray_presentation_snapshot(settings, status, DictationStage::Idle)
                     }),
             ));
+            app.manage(TrayLevelTitleState::default());
             let tray_menu_items =
                 setup_tray(app, initial_settings.as_ref(), initial_status.as_ref())?;
             if let Some(settings) = initial_settings.as_ref() {
@@ -9571,6 +9603,7 @@ fn next_tray_presentation_update(
 }
 
 fn update_tray_presentation(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
+    update_tray_level_title(app, settings, status);
     let app_handle = app.clone();
     let dictation_stage = app
         .try_state::<DictationState>()
@@ -9655,6 +9688,38 @@ fn apply_tray_presentation(
             },
         );
     }
+}
+
+fn update_tray_level_title(app: &tauri::AppHandle, settings: &AppSettings, status: &AppStatus) {
+    let Some(state) = app.try_state::<TrayLevelTitleState>() else {
+        return;
+    };
+    let title = tray_level_title(settings, status);
+    let changed = state
+        .lock()
+        .map(|mut level| level.advance(title, Instant::now()))
+        .unwrap_or(false);
+    if !changed {
+        return;
+    }
+    let app_handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || apply_tray_level_title(&app_handle)) {
+        log_error!("[tray] failed to schedule level update: {error}");
+    }
+}
+
+fn apply_tray_level_title(app: &tauri::AppHandle) {
+    let Some(tray) = app.tray_by_id("wakenote") else {
+        return;
+    };
+    // Updates can arrive out of order; always apply the newest readout.
+    let title = app
+        .try_state::<TrayLevelTitleState>()
+        .and_then(|state| state.lock().ok().and_then(|level| level.desired.clone()));
+    #[cfg(target_os = "macos")]
+    wakenote::menu_bar_icon::set_menu_bar_icon_title(&tray, title.as_deref());
+    #[cfg(not(target_os = "macos"))]
+    let _ = tray.set_title(title.as_deref());
 }
 
 #[cfg(test)]
@@ -11468,6 +11533,22 @@ mod tests {
         );
         worker.join().expect("recovery worker completed");
         caller.join().expect("caller completed");
+    }
+
+    #[test]
+    fn tray_level_title_shows_and_hides_at_once_but_throttles_level_changes() {
+        let start = Instant::now();
+        let mut level = TrayLevelTitle::default();
+
+        assert!(!level.advance(None, start));
+        assert!(level.advance(Some("-42 dB".into()), start));
+        assert!(!level.advance(Some("-42 dB".into()), start));
+        assert!(!level.advance(Some("-41 dB".into()), start + Duration::from_millis(100)));
+        assert_eq!(level.desired.as_deref(), Some("-42 dB"));
+        assert!(level.advance(Some("-40 dB".into()), start + TRAY_LEVEL_TITLE_INTERVAL));
+        assert!(level.advance(None, start + TRAY_LEVEL_TITLE_INTERVAL));
+        assert_eq!(level.desired, None);
+        assert!(level.advance(Some("-39 dB".into()), start + TRAY_LEVEL_TITLE_INTERVAL));
     }
 
     #[test]

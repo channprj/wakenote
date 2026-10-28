@@ -246,6 +246,23 @@ pub fn tray_runtime_presentation(
     }
 }
 
+/// Live input level shown beside the menu bar icon, or `None` for the icon alone.
+pub fn tray_level_title(settings: &AppSettings, status: &AppStatus) -> Option<String> {
+    (settings.show_menu_bar_level && settings.show_tray_icon && status.live_input_active)
+        .then(|| format_tray_level(status.level.current_dbfs))
+}
+
+/// Pads with figure spaces to the width of `-99` so the monospaced-digit
+/// readout keeps its width while the level moves.
+pub fn format_tray_level(dbfs: f32) -> String {
+    let level = if dbfs.is_finite() {
+        dbfs.round().clamp(-120.0, 0.0) as i32
+    } else {
+        -120
+    };
+    format!("{level:\u{2007}>3} dB")
+}
+
 fn tray_status_has_microphone_connection_failure(status: &AppStatus) -> bool {
     !status.live_input_active
         && (status.microphone_warning.is_some()

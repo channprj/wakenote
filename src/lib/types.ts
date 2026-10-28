@@ -234,6 +234,7 @@ export interface AppSettings {
   show_dock_icon: boolean;
   show_tray_icon: boolean;
   tray_left_click_action: TrayClickAction;
+  show_menu_bar_level: boolean;
   show_floating_overlay: boolean;
   subtitle_source_mode: SubtitleSourceMode;
   floating_overlay_position: FloatingOverlayPosition;

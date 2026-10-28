@@ -7,11 +7,12 @@ use chrono::TimeZone;
 use wakenote::audio::input_devices_from_labels;
 use wakenote::commands::{
     AppBackend, AppMode, LiveTranscriptEvent, MainWindowCloseAction, TrayState,
-    audio_playback_content_type, live_preview_model_id, main_window_close_action,
-    microphone_devices_from_input_devices, open_containing_folder_request,
-    reveal_save_folder_request, tray_icon_image_for_presentation, tray_menu_presentation,
-    tray_presentation_for_state, tray_runtime_presentation, validate_audio_playback_file,
-    with_live_runtime_warning, with_runtime_warning,
+    audio_playback_content_type, format_tray_level, live_preview_model_id,
+    main_window_close_action, microphone_devices_from_input_devices,
+    open_containing_folder_request, reveal_save_folder_request, tray_icon_image_for_presentation,
+    tray_level_title, tray_menu_presentation, tray_presentation_for_state,
+    tray_runtime_presentation, validate_audio_playback_file, with_live_runtime_warning,
+    with_runtime_warning,
 };
 use wakenote::debug_log;
 use wakenote::live_capture::AudioFrame;
@@ -3750,6 +3751,45 @@ fn tray_runtime_presentation_respects_show_tray_icon_setting() {
     let hidden = tray_runtime_presentation(&backend.settings(), &backend.app_status());
     assert!(!hidden.visible);
     assert_eq!(hidden.icon.tooltip, "WakeNote: Idle");
+}
+
+#[test]
+fn tray_level_title_appears_only_when_enabled_visible_and_listening() {
+    let mut backend = AppBackend::default();
+    let mut status = backend.app_status();
+    status.live_input_active = true;
+    status.level.current_dbfs = -41.6;
+
+    assert_eq!(tray_level_title(&backend.settings(), &status), None);
+
+    backend.update_settings(SettingsPatch {
+        show_menu_bar_level: Some(true),
+        ..SettingsPatch::default()
+    });
+    assert_eq!(
+        tray_level_title(&backend.settings(), &status).as_deref(),
+        Some("-42 dB")
+    );
+
+    status.live_input_active = false;
+    assert_eq!(tray_level_title(&backend.settings(), &status), None);
+
+    status.live_input_active = true;
+    backend.update_settings(SettingsPatch {
+        show_tray_icon: Some(false),
+        ..SettingsPatch::default()
+    });
+    assert_eq!(tray_level_title(&backend.settings(), &status), None);
+}
+
+#[test]
+fn tray_level_keeps_a_steady_width_and_clamps_to_the_dbfs_range() {
+    assert_eq!(format_tray_level(-41.6), "-42 dB");
+    assert_eq!(format_tray_level(-5.2), "\u{2007}-5 dB");
+    assert_eq!(format_tray_level(-0.2), "\u{2007}\u{2007}0 dB");
+    assert_eq!(format_tray_level(3.0), "\u{2007}\u{2007}0 dB");
+    assert_eq!(format_tray_level(-150.0), "-120 dB");
+    assert_eq!(format_tray_level(f32::NAN), "-120 dB");
 }
 
 #[test]

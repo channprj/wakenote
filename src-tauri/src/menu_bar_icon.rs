@@ -9,6 +9,9 @@
 //! Command-drag is forwarded by letting the status button win hit testing while
 //! Command is held. The position is stored under a stable autosave name, including
 //! after the icon is hidden and created again.
+//!
+//! The optional level readout beside the icon uses monospaced digits, so a
+//! changing level does not shift the status items to its left.
 
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use std::thread;
@@ -16,7 +19,9 @@ use std::thread;
 use crate::log_error;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{ffi, sel};
-use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSEventType};
+use objc2_app_kit::{
+    NSApplication, NSEventModifierFlags, NSEventType, NSFont, NSFontWeightRegular,
+};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
 use tauri::Runtime;
 use tauri::tray::TrayIcon;
@@ -178,6 +183,31 @@ fn persist_menu_bar_icon_position<R: Runtime>(tray: TrayIcon<R>) {
     });
     if let Err(error) = persisted {
         log_error!("[tray] could not persist menu bar icon position: {error}");
+    }
+}
+
+/// Shows `title` beside the menu bar icon, or the icon alone for `None`.
+pub fn set_menu_bar_icon_title<R: Runtime>(tray: &TrayIcon<R>, title: Option<&str>) {
+    if title.is_some() {
+        // Style before the title is set: setting it resizes the click target.
+        let styled = tray.with_inner_tray_icon(|icon| {
+            let (Some(item), Some(marker)) = (icon.ns_status_item(), MainThreadMarker::new())
+            else {
+                return;
+            };
+            if let Some(button) = item.button(marker) {
+                let size = NSFont::menuBarFontOfSize(0.0).pointSize();
+                let weight = unsafe { NSFontWeightRegular };
+                let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, weight);
+                button.setFont(Some(&font));
+            }
+        });
+        if let Err(error) = styled {
+            log_error!("[tray] could not style the menu bar level: {error}");
+        }
+    }
+    if let Err(error) = tray.set_title(title) {
+        log_error!("[tray] could not show the menu bar level: {error}");
     }
 }
 
