@@ -405,7 +405,7 @@ impl CaptureProcessor {
     }
 
     fn rollover_overlap_samples(&self) -> Vec<f32> {
-        if self.config.settings.auto_transcript_input_enabled
+        if self.config.settings.auto_type_streams_partials()
             && self.config.source == ChunkSource::Microphone
         {
             return Vec::new();
@@ -536,7 +536,7 @@ fn offset_from_base_ms(base_time: DateTime<Utc>, captured_at: DateTime<Utc>) -> 
 
 fn processor_config(config: &CaptureControllerConfig) -> CaptureProcessorConfig {
     let mut settings = config.settings.clone();
-    if settings.auto_transcript_input_enabled && config.source == ChunkSource::Microphone {
+    if settings.auto_type_streams_partials() && config.source == ChunkSource::Microphone {
         // Keep each hypothesis inside the ten-second live decoder window, even
         // when the archival chunk setting is several minutes. Settings on disk stay unchanged.
         settings.max_chunk_ms = settings.max_chunk_ms.min(5_000);

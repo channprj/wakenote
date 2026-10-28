@@ -99,3 +99,38 @@ fn disabled_or_unregistered_chunks_never_type_and_corrections_do_not_duplicate()
         .flush(false, |_| panic!("must not type late results"))
         .unwrap();
 }
+
+fn flush_into(session: &mut AutoTypeSession, output: &mut String) {
+    session
+        .flush(true, |text| {
+            output.push_str(text);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn final_only_ignores_partials_and_types_each_final_once_in_chunk_order() {
+    let mut session = AutoTypeSession::default();
+    session.set_final_only(true);
+    session.start(1).unwrap();
+    session.start(2).unwrap();
+    let mut output = String::new();
+
+    // A streaming session would type "내일 회의는 세 " here and then stop at the revised final.
+    session.partial(1, "내일 회의는 세 시에 해");
+    session.partial(1, "내일 회의는 세 시에 해요 그리고");
+    flush_into(&mut session, &mut output);
+    assert!(output.is_empty());
+
+    session.finish(2, "Second.");
+    flush_into(&mut session, &mut output);
+    assert!(output.is_empty());
+
+    session.finish(1, "내일 회의는 3시에 해요.");
+    flush_into(&mut session, &mut output);
+    assert_eq!(output, "내일 회의는 3시에 해요. Second. ");
+
+    flush_into(&mut session, &mut output);
+    assert_eq!(output, "내일 회의는 3시에 해요. Second. ");
+}

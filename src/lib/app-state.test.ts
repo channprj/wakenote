@@ -438,6 +438,8 @@ describe("app state derivation", () => {
       // Input monitoring and the floating overlay are off by default.
       input_monitoring_enabled: false,
       show_floating_overlay: false,
+      // Auto-type streams partials unless final-only typing is turned on.
+      auto_transcript_input_final_only: false,
       // The existing subtitle geometry stays as editable pixel defaults.
       subtitle_source_mode: "both",
       subtitle_padding_horizontal_px: 18,

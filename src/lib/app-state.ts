@@ -211,6 +211,7 @@ export function defaultSettings(): AppSettings {
     auto_transcript_input_enabled: false,
     auto_transcript_input_trailing_space: false,
     auto_transcript_input_model: "",
+    auto_transcript_input_final_only: false,
     live_transcription_webhook: {
       enabled: false,
       endpoint_url: "",

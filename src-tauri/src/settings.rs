@@ -582,6 +582,10 @@ pub struct AppSettings {
     pub auto_transcript_input_trailing_space: bool,
     #[serde(default)]
     pub auto_transcript_input_model: String,
+    /// Type only finished Capture transcripts. Capture then keeps its normal
+    /// chunking and transcription model instead of the streaming auto-type ones.
+    #[serde(default)]
+    pub auto_transcript_input_final_only: bool,
     #[serde(default)]
     pub text_transform_model: String,
     #[serde(default)]
@@ -746,6 +750,7 @@ pub struct SettingsPatch {
     pub auto_transcript_input_enabled: Option<bool>,
     pub auto_transcript_input_trailing_space: Option<bool>,
     pub auto_transcript_input_model: Option<String>,
+    pub auto_transcript_input_final_only: Option<bool>,
     pub text_transform_model: Option<String>,
     pub subtitle_translation_enabled: Option<bool>,
     pub subtitle_translation_language: Option<TranscriptionLanguage>,
@@ -1554,6 +1559,9 @@ impl AppSettings {
         if let Some(value) = patch.auto_transcript_input_model {
             self.auto_transcript_input_model = value.trim().to_string();
         }
+        if let Some(value) = patch.auto_transcript_input_final_only {
+            self.auto_transcript_input_final_only = value;
+        }
         if let Some(value) = patch.dictation_enabled {
             self.dictation_enabled = value;
         }
@@ -1785,6 +1793,7 @@ impl Default for AppSettings {
             auto_transcript_input_enabled: false,
             auto_transcript_input_trailing_space: false,
             auto_transcript_input_model: String::new(),
+            auto_transcript_input_final_only: false,
             text_transform_model: String::new(),
             subtitle_translation_enabled: false,
             subtitle_translation_language: default_translation_language(),
@@ -1872,8 +1881,14 @@ impl AppSettings {
         }
     }
 
+    /// Streaming auto-type types stable partials, so it shortens microphone
+    /// chunks and may switch their model. Final-only auto-type leaves both alone.
+    pub fn auto_type_streams_partials(&self) -> bool {
+        self.auto_transcript_input_enabled && !self.auto_transcript_input_final_only
+    }
+
     pub fn effective_auto_type_model(&self) -> &str {
-        if self.auto_transcript_input_enabled && !self.auto_transcript_input_model.trim().is_empty()
+        if self.auto_type_streams_partials() && !self.auto_transcript_input_model.trim().is_empty()
         {
             self.auto_transcript_input_model.trim()
         } else {
@@ -2096,7 +2111,7 @@ mod tests {
     #[test]
     fn patch_applies_plain_boolean_preferences() {
         type Case = (&'static str, SettingsPatch, fn(&AppSettings) -> bool, bool);
-        let cases: [Case; 8] = [
+        let cases: [Case; 9] = [
             (
                 "system_audio_enabled",
                 SettingsPatch {
@@ -2149,6 +2164,15 @@ mod tests {
                     ..Default::default()
                 },
                 |settings| settings.auto_transcript_input_trailing_space,
+                false,
+            ),
+            (
+                "auto_transcript_input_final_only",
+                SettingsPatch {
+                    auto_transcript_input_final_only: Some(true),
+                    ..Default::default()
+                },
+                |settings| settings.auto_transcript_input_final_only,
                 false,
             ),
             (
@@ -2633,6 +2657,7 @@ mod tests {
         assert!(!settings.discard_transcript_audio);
         assert!(!settings.show_menu_bar_level);
         assert!(!settings.auto_transcript_input_trailing_space);
+        assert!(!settings.auto_transcript_input_final_only);
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "ctrl+shift");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);

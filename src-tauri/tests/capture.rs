@@ -29,9 +29,9 @@ fn auto_type_bounds_microphone_chunks_and_snapshots_its_model_without_changing_a
     configured.auto_transcript_input_enabled = true;
     configured.auto_transcript_input_model = "whisper-small".into();
     configured.transcription_enabled = true;
-    let config = |source| CaptureControllerConfig {
+    let config = |source, settings: &AppSettings| CaptureControllerConfig {
         save_root: tmp.path().to_path_buf(),
-        settings: configured.clone(),
+        settings: settings.clone(),
         sample_rate: 10,
         device_id: "mic".into(),
         device_name: "Mic".into(),
@@ -41,8 +41,8 @@ fn auto_type_bounds_microphone_chunks_and_snapshots_its_model_without_changing_a
         source,
         source_label: (source == ChunkSource::System).then(|| "system".into()),
     };
-    let mut mic = CaptureController::new(config(ChunkSource::Microphone));
-    let mut system = CaptureController::new(config(ChunkSource::System));
+    let mut mic = CaptureController::new(config(ChunkSource::Microphone, &configured));
+    let mut system = CaptureController::new(config(ChunkSource::System, &configured));
     for _ in 0..65 {
         mic.process_samples(&[0.8], 100).unwrap();
         system.process_samples(&[0.8], 100).unwrap();
@@ -55,6 +55,21 @@ fn auto_type_bounds_microphone_chunks_and_snapshots_its_model_without_changing_a
     assert_eq!(metadata.model_id, "whisper-small");
     assert_eq!(metadata.max_chunk_ms, 5_000);
     assert_eq!(configured.max_chunk_ms, 30_000);
+
+    // Final-only auto-type types what Capture shows, so it keeps the archival chunking and model.
+    configured.auto_transcript_input_final_only = true;
+    let mut final_only = CaptureController::new(config(ChunkSource::Microphone, &configured));
+    for _ in 0..65 {
+        final_only.process_samples(&[0.8], 100).unwrap();
+    }
+    assert!(final_only.completed_chunks().is_empty());
+    final_only.flush().unwrap();
+    let metadata: ChunkMetadata = serde_json::from_slice(
+        &std::fs::read(&final_only.completed_chunks()[0].metadata_path).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.model_id, configured.selected_model);
+    assert_eq!(metadata.max_chunk_ms, 30_000);
 }
 
 fn wav_sample_count(path: &std::path::Path) -> usize {

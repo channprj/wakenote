@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub struct AutoTypeSession {
     chunks: BTreeMap<u64, Chunk>,
+    final_only: bool,
 }
 
 #[derive(Default)]
@@ -27,7 +28,15 @@ impl AutoTypeSession {
         self.chunks.clear();
     }
 
+    /// Final-only sessions ignore partials and type each chunk's final text once.
+    pub fn set_final_only(&mut self, final_only: bool) {
+        self.final_only = final_only;
+    }
+
     pub fn partial(&mut self, id: u64, text: &str) {
+        if self.final_only {
+            return;
+        }
         let Some(chunk) = self.chunks.get_mut(&id) else {
             return;
         };

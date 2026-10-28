@@ -347,6 +347,7 @@ fn dispatch_auto_type(
             session.clear();
             return;
         }
+        session.set_final_only(settings.auto_transcript_input_final_only);
         let observed = match update {
             AutoTypeUpdate::Started => session.start(chunk_id),
             AutoTypeUpdate::Partial(text) => {
@@ -363,12 +364,22 @@ fn dispatch_auto_type(
             }
         };
         let result = observed.and_then(|()| {
-            session.flush(settings.auto_transcript_input_trailing_space, |text| {
-                wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
-                    text,
-                    wakenote::text_input::ClipboardAfterInput::PreservePrevious,
-                )
-            })
+            session
+                .flush(settings.auto_transcript_input_trailing_space, |text| {
+                    wakenote::text_input::type_text_into_focused_cursor_with_clipboard(
+                        text,
+                        wakenote::text_input::ClipboardAfterInput::PreservePrevious,
+                    )
+                })
+                .map_err(|error| {
+                    if settings.auto_transcript_input_final_only {
+                        format!(
+                            "Auto-type could not type the final transcript ({error}). The transcript is saved in Transcripts."
+                        )
+                    } else {
+                        error
+                    }
+                })
         });
         if let Err(error) = result {
             session.clear();
@@ -3492,6 +3503,8 @@ fn update_settings(
     };
     if previous_settings.auto_transcript_input_enabled != settings.auto_transcript_input_enabled
         || previous_settings.auto_transcript_input_model != settings.auto_transcript_input_model
+        || previous_settings.auto_transcript_input_final_only
+            != settings.auto_transcript_input_final_only
         || settings.pause_all
         || !settings.transcription_enabled
         || !settings.recording_enabled
@@ -3524,7 +3537,7 @@ fn update_settings(
         service.update_model_directory(&settings.model_directory);
     }
     preload_dictation_model(&app, &settings);
-    if settings.auto_transcript_input_enabled
+    if settings.auto_type_streams_partials()
         && let Ok(slot) = live_transcriber_state.lock()
         && let Some(service) = slot.as_ref()
         && model_supports_live_partials(
