@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
@@ -3947,40 +3947,138 @@ fn overlay_level_emit_due(last_emit: &Mutex<Instant>) -> bool {
     true
 }
 
+/// The UI polls microphones every 100 ms while input runs. A recent scan is
+/// reused, and only one scan thread runs at a time, so a stalled Core Audio
+/// call cannot pile up threads.
+const MICROPHONE_SCAN_REUSE: Duration = Duration::from_secs(1);
+const MICROPHONE_SCAN_WAIT: Duration = Duration::from_millis(600);
+/// A scan still running after this long is abandoned and a new one may start.
+const MICROPHONE_SCAN_STALL: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Default)]
+struct MicrophoneScans {
+    latest: Option<(Instant, Vec<MicrophoneDevice>)>,
+    running: Option<(u64, Instant)>,
+    next_id: u64,
+}
+
+#[derive(Debug, PartialEq)]
+enum MicrophoneScanStep {
+    Reuse(Vec<MicrophoneDevice>),
+    Start(u64),
+    Wait,
+}
+
+impl MicrophoneScans {
+    const fn new() -> Self {
+        Self {
+            latest: None,
+            running: None,
+            next_id: 0,
+        }
+    }
+
+    fn step(&mut self, now: Instant) -> MicrophoneScanStep {
+        if let Some((scanned_at, devices)) = &self.latest
+            && now.duration_since(*scanned_at) < MICROPHONE_SCAN_REUSE
+        {
+            return MicrophoneScanStep::Reuse(devices.clone());
+        }
+        if self
+            .running
+            .is_some_and(|(_, started_at)| now.duration_since(started_at) < MICROPHONE_SCAN_STALL)
+        {
+            return MicrophoneScanStep::Wait;
+        }
+        self.next_id += 1;
+        self.running = Some((self.next_id, now));
+        MicrophoneScanStep::Start(self.next_id)
+    }
+
+    fn finish(&mut self, id: u64, devices: Vec<MicrophoneDevice>, now: Instant) {
+        self.latest = Some((now, devices));
+        if self.running.is_some_and(|(running, _)| running == id) {
+            self.running = None;
+        }
+    }
+}
+
+struct MicrophoneScanState {
+    scans: Mutex<MicrophoneScans>,
+    finished: Condvar,
+}
+
+static MICROPHONE_SCANS: MicrophoneScanState = MicrophoneScanState {
+    scans: Mutex::new(MicrophoneScans::new()),
+    finished: Condvar::new(),
+};
+
 async fn resolve_microphones_for_ui(settings: AppSettings) -> Vec<MicrophoneDevice> {
     let fallback_settings = settings.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let (sender, receiver) = mpsc::channel();
-        let selected_for_worker = settings.selected_microphone.clone();
-        thread::spawn(move || {
-            let mut devices =
-                microphone_devices_from_input_devices(&selected_for_worker, list_input_devices());
-            let volume_backend = PlatformVolumeBackend::new();
-            let system_devices = volume_backend.input_devices().unwrap_or_default();
-            let default_uid = volume_backend.default_input_uid().ok().flatten();
-            for device in &mut devices {
-                device.core_audio_uid = if device.id == "default" {
-                    default_uid.clone()
-                } else {
-                    system_devices
-                        .iter()
-                        .find(|candidate| {
-                            candidate.legacy_cpal_id.as_deref() == Some(device.id.as_str())
-                                && candidate.label == device.label
-                        })
-                        .map(|candidate| candidate.uid.clone())
-                };
-            }
-            let _ = sender.send(devices);
-        });
-
-        match receiver.recv_timeout(Duration::from_millis(600)) {
-            Ok(devices) => stable_microphone_options(&settings, devices),
-            Err(_) => fallback_microphones(&settings),
+    tauri::async_runtime::spawn_blocking(move || match scanned_microphones() {
+        Some(devices) => {
+            stable_microphone_options(&settings, with_fallback_flags(&settings, devices))
         }
+        None => fallback_microphones(&settings),
     })
     .await
     .unwrap_or_else(|_| fallback_microphones(&fallback_settings))
+}
+
+/// Latest scanned devices, waiting briefly for a scan when none is recent.
+/// Falls back to the last known list when the scan does not finish in time.
+fn scanned_microphones() -> Option<Vec<MicrophoneDevice>> {
+    let mut scans = MICROPHONE_SCANS.scans.lock().ok()?;
+    match scans.step(Instant::now()) {
+        MicrophoneScanStep::Reuse(devices) => return Some(devices),
+        MicrophoneScanStep::Start(id) => {
+            thread::spawn(move || {
+                let devices = scan_microphones();
+                if let Ok(mut scans) = MICROPHONE_SCANS.scans.lock() {
+                    scans.finish(id, devices, Instant::now());
+                }
+                MICROPHONE_SCANS.finished.notify_all();
+            });
+        }
+        MicrophoneScanStep::Wait => {}
+    }
+    let (scans, _) = MICROPHONE_SCANS
+        .finished
+        .wait_timeout_while(scans, MICROPHONE_SCAN_WAIT, |scans| scans.running.is_some())
+        .ok()?;
+    scans.latest.as_ref().map(|(_, devices)| devices.clone())
+}
+
+fn scan_microphones() -> Vec<MicrophoneDevice> {
+    let mut devices = microphone_devices_from_input_devices("default", list_input_devices());
+    let volume_backend = PlatformVolumeBackend::new();
+    let system_devices = volume_backend.input_devices().unwrap_or_default();
+    let default_uid = volume_backend.default_input_uid().ok().flatten();
+    for device in &mut devices {
+        device.core_audio_uid = if device.id == "default" {
+            default_uid.clone()
+        } else {
+            system_devices
+                .iter()
+                .find(|candidate| {
+                    candidate.legacy_cpal_id.as_deref() == Some(device.id.as_str())
+                        && candidate.label == device.label
+                })
+                .map(|candidate| candidate.uid.clone())
+        };
+    }
+    devices
+}
+
+/// Scans are shared across settings, so mark System Default as a fallback here.
+fn with_fallback_flags(
+    settings: &AppSettings,
+    mut devices: Vec<MicrophoneDevice>,
+) -> Vec<MicrophoneDevice> {
+    for device in &mut devices {
+        device.fallback = device.id == "default" && settings.selected_microphone != "default";
+    }
+    devices
 }
 
 fn stable_microphone_options(
@@ -11533,6 +11631,75 @@ mod tests {
         );
         worker.join().expect("recovery worker completed");
         caller.join().expect("caller completed");
+    }
+
+    fn scanned_device(id: &str) -> MicrophoneDevice {
+        MicrophoneDevice {
+            id: id.to_string(),
+            label: id.to_string(),
+            core_audio_uid: None,
+            available: true,
+            fallback: false,
+        }
+    }
+
+    #[test]
+    fn microphone_scans_run_one_at_a_time_and_reuse_recent_results() {
+        let start = Instant::now();
+        let mut scans = MicrophoneScans::new();
+
+        assert_eq!(scans.step(start), MicrophoneScanStep::Start(1));
+        assert_eq!(
+            scans.step(start + Duration::from_millis(100)),
+            MicrophoneScanStep::Wait
+        );
+        scans.finish(
+            1,
+            vec![scanned_device("usb")],
+            start + Duration::from_millis(200),
+        );
+        assert_eq!(scans.running, None);
+        assert_eq!(
+            scans.step(start + Duration::from_millis(300)),
+            MicrophoneScanStep::Reuse(vec![scanned_device("usb")])
+        );
+        assert_eq!(
+            scans.step(start + Duration::from_millis(200) + MICROPHONE_SCAN_REUSE),
+            MicrophoneScanStep::Start(2)
+        );
+    }
+
+    #[test]
+    fn a_stalled_microphone_scan_is_replaced_and_its_late_result_kept() {
+        let start = Instant::now();
+        let mut scans = MicrophoneScans::new();
+
+        assert_eq!(scans.step(start), MicrophoneScanStep::Start(1));
+        assert_eq!(
+            scans.step(start + MICROPHONE_SCAN_STALL),
+            MicrophoneScanStep::Start(2)
+        );
+        let late = start + MICROPHONE_SCAN_STALL + Duration::from_millis(50);
+        scans.finish(1, vec![scanned_device("late")], late);
+        assert!(scans.running.is_some_and(|(id, _)| id == 2));
+        assert_eq!(
+            scans.latest.as_ref().map(|(_, devices)| devices.clone()),
+            Some(vec![scanned_device("late")])
+        );
+    }
+
+    #[test]
+    fn scanned_microphones_mark_system_default_as_fallback_per_settings() {
+        let mut settings = AppSettings::default();
+        let devices = vec![scanned_device("default"), scanned_device("usb")];
+
+        let flagged = with_fallback_flags(&settings, devices.clone());
+        assert!(flagged.iter().all(|device| !device.fallback));
+
+        settings.selected_microphone = "usb".to_string();
+        let flagged = with_fallback_flags(&settings, devices);
+        assert!(flagged[0].fallback);
+        assert!(!flagged[1].fallback);
     }
 
     #[test]
