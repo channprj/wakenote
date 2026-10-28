@@ -2,13 +2,64 @@
 
 [English README](README.en.md)
 
+![WakeNote — macOS를 위한 로컬 우선 음성 기록·전사 앱](assets/readme/featured.ko.jpg)
+
 **macOS를 위한 로컬 우선 음성 캡처 및 전사 앱입니다.**
 
 WakeNote는 마이크 한두 개, 지원되는 시스템 오디오 소스, 가져온 녹음 파일, 누르고 말하거나 토글 단축키로 시작·종료하는 받아쓰기를 다루는 메뉴 막대 녹음 앱입니다. 음성을 오래 보존할 수 있는 오디오·메타데이터·전사·보고서 파일로 만들며, 온디바이스 ASR과 명시적으로 설정한 클라우드 provider 중에서 선택할 수 있습니다.
 
 데스크톱 앱은 캡처·영속성·전사를 위해 Tauri 2와 Rust를 사용하고, Capture·Meetings·Transcripts·Reports·Activity·Settings 작업 공간은 React 19와 TypeScript로 구성합니다.
 
-## 주요 기능
+## 핵심 기능
+
+WakeNote는 음성을 세 가지 방식으로 기록합니다. 켜 두면 소리가 임계값을 넘을 때만 녹음해 노트로 남기는 **VOR AI 노트**, 단축키를 누르고 말하면 커서 위치에 글이 입력되는 **받아쓰기**, 긴 회의를 통째로 녹음하고 전사하는 **회의**입니다. 아래 앱 화면은 `pnpm dev` 브라우저 미리보기에서 샘플 데이터로 찍었습니다.
+
+### VOR AI 노트
+
+![VOR AI 노트: 임계값을 넘는 소리만 녹음하고 전사한 뒤 AI 요약으로 정리하는 흐름](assets/readme/vor-note-taking.ko.jpg)
+
+VOR(Voice-Operated Recording)은 소리가 임계값을 넘을 때만 녹음하는 방식입니다. WakeNote를 켜 두면 소리가 난 구간은 짧은 녹음 파일로 저장되고, 긴 무음 구간은 파일로 남지 않습니다.
+
+- **무음은 건너뛰고 녹음** — dBFS 임계값과 attack·release 시간으로 소리가 임계값을 넘는 구간만 녹음하고, pre-roll·lead-in·post-roll로 첫 단어와 마지막 단어가 잘리지 않게 합니다. **Calibration**으로 주변 소음보다 높은 임계값을 찾을 수 있습니다.
+- **자동 전사** — 녹음이 끝난 구간은 바로 전사 대기열에 들어갑니다. Whisper, sherpa-onnx, Qwen3-ASR로 Mac 안에서 처리하거나, API key를 저장한 클라우드 provider를 고를 수 있습니다.
+- **날짜별 기록** — 결과는 **Transcripts**에 날짜별로 쌓이며, 여기서 오디오를 재생하거나 하루치 기록을 한꺼번에 내보낼 수 있습니다.
+- **AI 노트** — **Transcripts**에서 기록을 골라 **Summary**나 **Report**를 누르거나 **Reports › New report**에서 만들면, 핵심 내용, 결정 사항, 할 일, 남은 질문을 정리한 Markdown 노트가 생깁니다. 보고서는 OpenRouter API key를 저장한 뒤 직접 실행할 때만 만들어집니다.
+- **메뉴 막대 레벨** — **Settings › General**에서 **Show input level in menu bar**를 켜면 메뉴 막대 아이콘 옆에 현재 입력 레벨이 dB로 표시됩니다. 기본적으로 꺼져 있습니다.
+
+<p align="center">
+  <img src="assets/readme/screen-transcripts.ko.png" alt="Transcripts 화면: 날짜별로 쌓인 전사 기록" width="49%">
+  <img src="assets/readme/screen-reports.ko.png" alt="Reports 화면: 전사 기록으로 만든 AI 요약" width="49%">
+</p>
+
+### 받아쓰기
+
+![받아쓰기: Option+Space를 누른 채로 말하면 커서 위치에 글이 입력되는 흐름](assets/readme/dictation.ko.jpg)
+
+어느 앱에서든 단축키를 누르고 말하면, 전사한 글이 지금 커서가 있는 곳에 바로 입력됩니다.
+
+- **두 가지 단축키** — 기본 단축키 **Option+Space**를 누르고 있는 동안 녹음하고, 손을 떼면 전사해 입력합니다. 한 번 눌러 시작하고 다시 눌러 끝내는 토글 단축키도 따로 정할 수 있습니다. 취소하려면 WakeNote 창에서 **Escape**를 누르거나, 전사 중에 받아쓰기 단축키를 다시 누르거나, 메뉴 막대의 **Cancel Current Operation**을 고르세요.
+- **더 깨끗한 마이크 선택** — Primary와 Secondary 마이크 중 신호가 더 깨끗한 쪽을 자동으로 씁니다. 받아쓰기 중에도 VOR 녹음은 이어지지만, 겹친 구간은 한 번만 전사합니다.
+- **최근 기록** — **Recent Dictations**에서 최근 10개 결과를 다시 읽고 복사할 수 있고, **Transcripts**에서는 받아쓰기만 골라 볼 수 있습니다.
+- **번역과 Enhanced Prompt(선택)** — 받아쓴 내용을 번역해 입력하거나, 별도 단축키(기본값 **Control+Option+Space**)로 말한 초안을 정리된 프롬프트로 바꿔 입력합니다. 둘 다 OpenRouter를 쓰며 기본적으로 꺼져 있습니다.
+
+받아쓰기는 **Settings › Dictation**에서 켜야 동작하고, 커서 위치에 글을 입력하려면 손쉬운 사용(Accessibility) 권한이 필요합니다.
+
+![Settings › Dictation 화면: 받아쓰기 단축키와 Recent Dictations](assets/readme/screen-dictation.png)
+
+### 회의
+
+![회의: 마이크와 시스템 오디오를 함께 녹음해 화자별로 전사하는 흐름](assets/readme/meetings.ko.jpg)
+
+긴 회의는 **Meetings**에서 따로 녹음하고 전사합니다. 온라인 회의라면 내 목소리와 상대방 목소리를 한 파일에 함께 남길 수 있습니다.
+
+- **마이크와 시스템 오디오 함께 녹음** — **Start recording**을 누르면 마이크와 시스템 오디오를 함께 녹음해 `audio.m4a` 하나로 저장합니다. 한 번에 최대 5시간까지 녹음할 수 있습니다. 회의 녹음에는 마이크 권한과 화면 및 시스템 오디오 녹음 권한이 모두 필요하며, 둘 중 하나라도 없으면 녹음이 시작되지 않습니다.
+- **원할 때 전사, 중단돼도 이어서** — 녹음을 마친 뒤 원하는 모델을 골라 전사합니다. 구간마다 진행 상황을 `meeting.json`에 저장하므로, 중간에 멈춘 전사는 **Resume**으로 이어서 처리할 수 있습니다.
+- **기존 녹음 가져오기** — `mp3`, `m4a`, `wav` 파일을 가져와 같은 방식으로 전사합니다.
+- **화자 분리(선택)** — 화자 분리를 지원하는 모델(현재는 OpenAI GPT-4o Transcribe Diarize뿐)을 고르고 전사를 시작할 때 **Speaker separation**을 켜면 전사 결과를 화자별로 나눕니다. 기본적으로 꺼져 있습니다.
+
+![Meetings 화면: 회의 녹음과 전사 진행 상황](assets/readme/screen-meetings.png)
+
+## 기능 요약
 
 - **자동 캡처** — 보정 가능한 dBFS gate와 attack/release timing, pre-roll, lead-in, post-roll로 긴 무음 구간을 계속 저장하지 않으면서 발화를 보존합니다.
 - **유연한 듀얼 마이크** — Primary와 Secondary를 따로 저장하거나 적응형 동기화 후 합칠 수 있으며, Priority Audio로 두 입력을 섞지 않고 현재 가장 깨끗한 입력만 녹음할 수도 있습니다.
