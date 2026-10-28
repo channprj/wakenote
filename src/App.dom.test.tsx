@@ -476,3 +476,26 @@ describe("transcript event privacy", () => {
     },
   );
 });
+
+describe("snapshot polling", () => {
+  it("keeps one snapshot load in flight while the backend is busy", async () => {
+    const snapshot = mockSnapshot();
+    snapshot.settings.permission_onboarding_seen = true;
+    snapshot.settings.start_live_input_on_launch = false;
+    snapshot.status.live_input_active = true;
+    snapshot.status.tray_state = "listening";
+    let answered = 0;
+    // The first loads answer; every later one hangs like a backend holding its lock.
+    mocks.loadSnapshot.mockImplementation(() =>
+      answered++ < 2 ? Promise.resolve(snapshot) : new Promise<AppSnapshot>(() => {}),
+    );
+    render(<App />);
+    await waitFor(() => expect(mocks.loadSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3));
+
+    const stalledAt = mocks.loadSnapshot.mock.calls.length;
+    // Ten 100 ms poll ticks pass while the backend stays busy.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_000)));
+
+    expect(mocks.loadSnapshot.mock.calls.length).toBe(stalledAt);
+  });
+});
