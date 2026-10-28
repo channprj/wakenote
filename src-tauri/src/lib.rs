@@ -20,6 +20,8 @@ pub mod llm;
 pub mod llm_runs;
 pub mod manual_meeting_capture;
 pub mod meeting;
+#[cfg(target_os = "macos")]
+pub mod menu_bar_icon;
 pub mod microphone_level;
 pub mod models;
 pub mod multi_capture;

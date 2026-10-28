@@ -9507,6 +9507,11 @@ fn setup_tray(
         })
         .build(app)?;
     tray.set_visible(presentation.visible)?;
+    #[cfg(target_os = "macos")]
+    {
+        wakenote::menu_bar_icon::enable_menu_bar_icon_repositioning();
+        wakenote::menu_bar_icon::remember_menu_bar_icon_position(&tray, presentation.visible);
+    }
 
     Ok(TrayMenuItems {
         recording,
@@ -9623,6 +9628,8 @@ fn apply_tray_presentation(
     )));
     let _ = tray.set_tooltip(Some(icon.tooltip));
     let _ = tray.set_visible(presentation.visible);
+    #[cfg(target_os = "macos")]
+    wakenote::menu_bar_icon::remember_menu_bar_icon_position(&tray, presentation.visible);
     let _ = tray.set_show_menu_on_left_click(tray_show_menu_on_left_click(settings));
 
     if let Some(items) = app.try_state::<TrayMenuItems>() {
