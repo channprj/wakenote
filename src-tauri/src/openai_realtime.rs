@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +28,10 @@ const FINAL_QUIET_PERIOD: Duration = Duration::from_millis(350);
 const PARTIAL_COMPLETION_WAIT: Duration = Duration::from_secs(5);
 const COMMIT_COMPLETION_WAIT: Duration = Duration::from_secs(15);
 const RECORDED_FRAME_MS: usize = 250;
+/// Matches the saved recording's default lead-in. Sent once per session so the
+/// model hears a short onset before the first real samples.
+const LEAD_IN_MS: u64 = 200;
+const SESSION_READY_WAIT: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 pub struct OpenAiRealtimeManager {
     tx: mpsc::UnboundedSender<ManagerCommand>,
@@ -293,23 +297,46 @@ async fn run_connected_session<S>(
     let mut committed_audio_duration_ms = 0;
     let mut final_deadline: Option<Instant> = None;
     let mut command_channel_open = true;
+    // OpenAI drops audio that arrives before session.updated. Hold appends and
+    // commit until then, then send one 200 ms silence ahead of the first samples.
+    let mut session_ready = false;
+    let mut lead_in_sent = false;
+    let mut queued_audio: VecDeque<String> = VecDeque::new();
+    let mut queued_commit: Option<(PathBuf, u64)> = None;
+    let setup_deadline = Instant::now() + SESSION_READY_WAIT;
     loop {
-        let deadline = final_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+        let waiting_for_session = !session_ready;
+        let deadline = if waiting_for_session {
+            setup_deadline
+        } else {
+            final_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(3600))
+        };
         tokio::select! {
             command = commands.recv(), if command_channel_open => match command {
                 Some(ConnectionCommand::Append(audio)) => {
-                    let event = json!({ "type": "input_audio_buffer.append", "audio": audio });
-                    if writer.send(Message::Text(event.to_string().into())).await.is_err() {
-                        store_shared_failure(&shared_failure, transport_failure());
-                        return;
+                    if session_ready {
+                        if !append_with_lead_in(&mut writer, &mut lead_in_sent, &audio).await {
+                            store_shared_failure(&shared_failure, transport_failure());
+                            return;
+                        }
+                    } else {
+                        queued_audio.push_back(audio);
                     }
                 }
                 Some(ConnectionCommand::Commit { audio_path, audio_duration_ms }) => {
-                    committed_path = Some(audio_path);
-                    committed_audio_duration_ms = audio_duration_ms;
-                    final_deadline = Some(Instant::now() + COMMIT_COMPLETION_WAIT);
-                    let event = json!({ "type": "input_audio_buffer.commit" });
-                    let _ = writer.send(Message::Text(event.to_string().into())).await;
+                    if session_ready {
+                        begin_commit(
+                            &mut writer,
+                            &mut committed_path,
+                            &mut committed_audio_duration_ms,
+                            &mut final_deadline,
+                            audio_path,
+                            audio_duration_ms,
+                        )
+                        .await;
+                    } else {
+                        queued_commit = Some((audio_path, audio_duration_ms));
+                    }
                 }
                 // A close after commit means "no more audio", not "drop the
                 // result": the transcription worker is already waiting for this
@@ -318,7 +345,7 @@ async fn run_connected_session<S>(
                 // soon as the next chunk's samples arrive, which races completion.
                 Some(ConnectionCommand::Close) | None => {
                     command_channel_open = false;
-                    if committed_path.is_none() {
+                    if committed_path.is_none() && queued_commit.is_none() {
                         let _ = writer.close().await;
                         return;
                     }
@@ -326,7 +353,10 @@ async fn run_connected_session<S>(
             },
             message = reader.next() => {
                 let Some(Ok(Message::Text(message))) = message else {
-                    if let Some(path) = committed_path.take() {
+                    let path = committed_path
+                        .take()
+                        .or_else(|| queued_commit.take().map(|(path, _)| path));
+                    if let Some(path) = path {
                         realtime_result_store().publish(path, RealtimeStoredResult::Failed(transport_failure()));
                     } else {
                         store_shared_failure(&shared_failure, transport_failure());
@@ -378,10 +408,37 @@ async fn run_connected_session<S>(
                         }
                         return;
                     }
+                    ServerEvent::SessionUpdated => {
+                        if !session_ready {
+                            session_ready = true;
+                            if !flush_queued_audio(&mut writer, &mut lead_in_sent, &mut queued_audio)
+                                .await
+                            {
+                                store_shared_failure(&shared_failure, transport_failure());
+                                return;
+                            }
+                            if let Some((audio_path, audio_duration_ms)) = queued_commit.take() {
+                                begin_commit(
+                                    &mut writer,
+                                    &mut committed_path,
+                                    &mut committed_audio_duration_ms,
+                                    &mut final_deadline,
+                                    audio_path,
+                                    audio_duration_ms,
+                                )
+                                .await;
+                            }
+                        }
+                    }
                     ServerEvent::Ignore => {}
                 }
             },
-            _ = sleep_until(deadline), if final_deadline.is_some() => {
+            _ = sleep_until(deadline), if waiting_for_session || final_deadline.is_some() => {
+                if waiting_for_session {
+                    fail_session_not_ready(&shared_failure, &mut queued_commit);
+                    let _ = writer.close().await;
+                    return;
+                }
                 let Some(path) = committed_path.take() else { continue; };
                 let text = transcript.text();
                 publish_completed_result(
@@ -394,6 +451,90 @@ async fn run_connected_session<S>(
                 return;
             }
         }
+    }
+}
+
+fn lead_in_audio() -> String {
+    let samples = (u64::from(REALTIME_SAMPLE_RATE) * LEAD_IN_MS / 1_000) as usize;
+    base64::engine::general_purpose::STANDARD.encode(vec![0u8; samples.saturating_mul(2)])
+}
+
+async fn send_append<S>(
+    writer: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    audio: &str,
+) -> bool
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let event = json!({ "type": "input_audio_buffer.append", "audio": audio });
+    writer
+        .send(Message::Text(event.to_string().into()))
+        .await
+        .is_ok()
+}
+
+async fn append_with_lead_in<S>(
+    writer: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    lead_in_sent: &mut bool,
+    audio: &str,
+) -> bool
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if !*lead_in_sent {
+        if !send_append(writer, &lead_in_audio()).await {
+            return false;
+        }
+        *lead_in_sent = true;
+    }
+    send_append(writer, audio).await
+}
+
+async fn flush_queued_audio<S>(
+    writer: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    lead_in_sent: &mut bool,
+    queued_audio: &mut VecDeque<String>,
+) -> bool
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    while let Some(audio) = queued_audio.pop_front() {
+        if !append_with_lead_in(writer, lead_in_sent, &audio).await {
+            return false;
+        }
+    }
+    true
+}
+
+async fn begin_commit<S>(
+    writer: &mut futures_util::stream::SplitSink<WebSocketStream<S>, Message>,
+    committed_path: &mut Option<PathBuf>,
+    committed_audio_duration_ms: &mut u64,
+    final_deadline: &mut Option<Instant>,
+    audio_path: PathBuf,
+    audio_duration_ms: u64,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    *committed_path = Some(audio_path);
+    *committed_audio_duration_ms = audio_duration_ms;
+    *final_deadline = Some(Instant::now() + COMMIT_COMPLETION_WAIT);
+    let event = json!({ "type": "input_audio_buffer.commit" });
+    let _ = writer.send(Message::Text(event.to_string().into())).await;
+}
+
+fn fail_session_not_ready(
+    shared_failure: &Arc<Mutex<Option<TranscriptionFailure>>>,
+    queued_commit: &mut Option<(PathBuf, u64)>,
+) {
+    let failure = local_failure(
+        FailureCategory::Transport,
+        "OpenAI live transcription session was not ready",
+    );
+    if let Some((path, _)) = queued_commit.take() {
+        realtime_result_store().publish(path, RealtimeStoredResult::Failed(failure));
+    } else {
+        store_shared_failure(shared_failure, failure);
     }
 }
 
@@ -440,6 +581,7 @@ enum ServerEvent {
     },
     Failed(TranscriptionFailure),
     CommitEmpty,
+    SessionUpdated,
     Ignore,
 }
 
@@ -471,6 +613,7 @@ fn parse_server_event(event: &Value) -> ServerEvent {
                 ServerEvent::Completed { item_id, text }
             })
         }
+        Some("session.updated") => ServerEvent::SessionUpdated,
         Some("conversation.item.input_audio_transcription.failed") | Some("error") => {
             let error = event.get("error").unwrap_or(event);
             let code = error.get("code").and_then(Value::as_str);
@@ -819,6 +962,10 @@ mod tests {
             })),
             ServerEvent::CommitEmpty
         );
+        assert_eq!(
+            parse_server_event(&json!({ "type": "session.updated" })),
+            ServerEvent::SessionUpdated
+        );
     }
 
     #[tokio::test]
@@ -867,17 +1014,44 @@ mod tests {
             shared_failure,
         ));
         let server_task = tokio::spawn(async move {
-            for expected in [
-                "session.update",
-                "input_audio_buffer.append",
-                "input_audio_buffer.commit",
-            ] {
-                let Some(Ok(Message::Text(message))) = server.next().await else {
-                    panic!("expected {expected} event")
-                };
-                let event = serde_json::from_str::<Value>(&message).expect("client event");
-                assert_eq!(event["type"], expected);
-            }
+            let Some(Ok(Message::Text(message))) = server.next().await else {
+                panic!("expected session.update")
+            };
+            let event = serde_json::from_str::<Value>(&message).expect("client event");
+            assert_eq!(event["type"], "session.update");
+            let early = tokio::time::timeout(Duration::from_millis(100), server.next()).await;
+            assert!(early.is_err(), "audio must wait for session.updated");
+            server
+                .send(Message::Text(
+                    json!({ "type": "session.updated" }).to_string().into(),
+                ))
+                .await
+                .expect("session.updated");
+
+            let Some(Ok(Message::Text(message))) = server.next().await else {
+                panic!("expected lead-in append")
+            };
+            let event = serde_json::from_str::<Value>(&message).expect("lead-in event");
+            assert_eq!(event["type"], "input_audio_buffer.append");
+            assert_eq!(event["audio"], lead_in_audio());
+            let silence = base64::engine::general_purpose::STANDARD
+                .decode(event["audio"].as_str().expect("lead-in audio"))
+                .expect("lead-in bytes");
+            assert_eq!(silence.len(), 9_600);
+            assert!(silence.iter().all(|byte| *byte == 0));
+
+            let Some(Ok(Message::Text(message))) = server.next().await else {
+                panic!("expected audio append")
+            };
+            let event = serde_json::from_str::<Value>(&message).expect("audio event");
+            assert_eq!(event["type"], "input_audio_buffer.append");
+            assert_eq!(event["audio"], "AAA=");
+
+            let Some(Ok(Message::Text(message))) = server.next().await else {
+                panic!("expected commit")
+            };
+            let event = serde_json::from_str::<Value>(&message).expect("commit event");
+            assert_eq!(event["type"], "input_audio_buffer.commit");
             for event in [
                 json!({ "type": "conversation.item.created", "item": { "id": "item-1" } }),
                 json!({
