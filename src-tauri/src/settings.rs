@@ -844,7 +844,7 @@ pub const fn default_merge_microphone_inputs() -> bool {
 }
 
 pub fn default_dictation_shortcut() -> String {
-    "alt+space".to_string()
+    "ctrl+shift".to_string()
 }
 
 pub fn default_meeting_model() -> String {
@@ -2400,7 +2400,7 @@ mod tests {
     fn patch_sets_dictation_fields() {
         let mut settings = AppSettings::default();
         assert!(!settings.dictation_enabled);
-        assert_eq!(settings.dictation_shortcut, "alt+space");
+        assert_eq!(settings.dictation_shortcut, "ctrl+shift");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
 
         settings.apply_patch(SettingsPatch {
@@ -2634,7 +2634,7 @@ mod tests {
         assert!(!settings.show_menu_bar_level);
         assert!(!settings.auto_transcript_input_trailing_space);
         assert!(!settings.dictation_enabled);
-        assert_eq!(settings.dictation_shortcut, "alt+space");
+        assert_eq!(settings.dictation_shortcut, "ctrl+shift");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
         assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
         assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);

@@ -120,11 +120,11 @@ fn toggle_preferences_migrate_validate_collisions_and_can_be_cleared() {
         .unwrap()
         .remove("dictation_toggle_shortcut");
     let mut settings: AppSettings = serde_json::from_value(legacy).unwrap();
-    assert_eq!(settings.dictation_shortcut, "alt+space");
+    assert_eq!(settings.dictation_shortcut, "ctrl+shift");
     assert!(settings.dictation_toggle_shortcut.is_empty());
     settings.dictation_enabled = true;
     assert_eq!(active_dictation_shortcuts(&settings).len(), 1);
-    for shortcut in ["alt+space", "leftalt"] {
+    for shortcut in ["ctrl+shift", "ctrl+shift+d", "leftctrl"] {
         assert!(
             candidate_dictation_settings(
                 &settings,
@@ -181,7 +181,7 @@ fn enhanced_prompt_shortcut_is_distinct_and_does_not_overlap_a_modifier_trigger(
         ..Default::default()
     };
     assert!(candidate_dictation_settings(&settings, &SettingsPatch::default()).is_ok());
-    for shortcut in ["alt+space", "leftalt", "ctrl+alt"] {
+    for shortcut in ["ctrl+shift+space", "leftalt", "ctrl+alt"] {
         assert!(
             candidate_dictation_settings(
                 &settings,
@@ -1606,7 +1606,7 @@ fn dictation_settings_candidate_rejects_invalid_shortcuts_before_apply() {
         .is_err()
     );
     assert!(!previous.dictation_enabled);
-    assert_eq!(previous.dictation_shortcut, "alt+space");
+    assert_eq!(previous.dictation_shortcut, "ctrl+shift");
 
     let candidate = candidate_dictation_settings(
         &previous,

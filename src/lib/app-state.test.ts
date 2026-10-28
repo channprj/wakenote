@@ -450,7 +450,7 @@ describe("app state derivation", () => {
       subtitle_max_height_px: 1_000,
       // Dictation ships off with the product shortcut and auto-detect language.
       dictation_enabled: false,
-      dictation_shortcut: "alt+space",
+      dictation_shortcut: "ctrl+shift",
       dictation_language: "auto",
       dictation_start_sound: "original",
       dictation_stop_sound: "original",

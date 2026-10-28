@@ -686,7 +686,7 @@ describe("SettingsPage interactions", () => {
     expect(
       screen.getByRole("button", { name: "Hold-to-dictate hotkey" })
         .textContent,
-    ).toBe("Option + Space");
+    ).toBe("Control + Shift");
     snapshot.settings.dictation_toggle_shortcut = "ctrl+alt+d";
     view.rerender(
       <SettingsPage
