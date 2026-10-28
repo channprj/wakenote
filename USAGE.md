@@ -185,6 +185,8 @@ With two configured microphones, **Microphone processing** offers three modes. *
 
 Recording, Transcription, and Pause are independent controls. You can retain audio without creating new transcription jobs, process an existing backlog without recording, or pause both.
 
+To watch the input without opening WakeNote, turn on **Settings › General › Show input level in menu bar**. While input is running, the Primary input level appears in dBFS beside the menu bar icon and refreshes about four times a second. It is off by default and unavailable while the menu bar icon is hidden. To move the icon, hold Command and drag it along the menu bar; WakeNote keeps that position after relaunch.
+
 ### Output layout
 
 The default save root is `~/Documents/WakeNote`.
