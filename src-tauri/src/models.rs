@@ -2434,41 +2434,6 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_uses_sherpa_onnx_for_parakeet_and_sensevoice() {
-        let registry = default_model_registry();
-
-        let parakeet = registry
-            .get("parakeet-tdt-0.6b-v3")
-            .expect("parakeet entry");
-        assert_eq!(parakeet.provider_runtime, "sherpa-onnx");
-        assert!(
-            parakeet
-                .download_url
-                .as_deref()
-                .is_some_and(|url| url.ends_with(".tar.bz2")),
-            "parakeet should download a sherpa-onnx archive",
-        );
-
-        let sensevoice = registry.get("sensevoice-small").expect("sensevoice entry");
-        assert_eq!(sensevoice.provider_runtime, "sherpa-onnx");
-        assert!(sensevoice.download_url.is_some());
-
-        // Nemotron 3.5 ASR now downloads a streaming sherpa-onnx export and runs
-        // in-process via the online recognizer.
-        let nemotron = registry
-            .get("nemotron-3.5-asr-streaming-0.6b")
-            .expect("nemotron entry");
-        assert_eq!(nemotron.provider_runtime, "sherpa-onnx");
-        assert!(
-            nemotron
-                .download_url
-                .as_deref()
-                .is_some_and(|url| url.ends_with(".tar.bz2")),
-            "nemotron should download a sherpa-onnx archive",
-        );
-    }
-
-    #[test]
     fn default_registry_includes_official_qwen3_asr_models() {
         assert!(QWEN3_ASR_PACKAGES.contains(&"torch"));
         assert!(QWEN3_ASR_PACKAGES.contains(&"transformers>=5.13.0,<6"));

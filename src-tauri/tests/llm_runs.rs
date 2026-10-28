@@ -154,7 +154,7 @@ fn run_store_rejects_path_traversal_ids() {
 }
 
 #[test]
-fn stale_progress_cannot_overwrite_a_cancelled_run() {
+fn cancelled_run_rejects_late_progress_and_completion() {
     let temp = tempfile::tempdir().unwrap();
     let store = LlmRunStore::new(temp.path());
     let mut runtime = LlmRunRuntime::default();
@@ -192,6 +192,21 @@ fn stale_progress_cannot_overwrite_a_cancelled_run() {
         .unwrap();
 
     assert!(ignored.is_none());
+    assert_eq!(
+        store.load(&started.run_id).unwrap().snapshot.status,
+        LlmReportRunStatus::Cancelled
+    );
+
+    let accepted = runtime
+        .complete(
+            &store,
+            &started.run_id,
+            &successful_response(&started.run_id),
+            "2026-07-18T00:00:02Z",
+        )
+        .unwrap();
+
+    assert!(accepted.is_none());
     assert_eq!(
         store.load(&started.run_id).unwrap().snapshot.status,
         LlmReportRunStatus::Cancelled
@@ -323,44 +338,6 @@ fn retry_clones_exact_input_under_a_new_linked_run() {
     assert_eq!(
         retry_record.request.run_id.as_deref(),
         Some(retry.run_id.as_str())
-    );
-}
-
-#[test]
-fn cancelled_run_rejects_late_completion() {
-    let temp = tempfile::tempdir().unwrap();
-    let store = LlmRunStore::new(temp.path());
-    let mut runtime = LlmRunRuntime::default();
-    let started = runtime
-        .start(
-            &store,
-            request(),
-            None,
-            "z-ai/glm-5.2",
-            3,
-            "2026-07-18T00:00:00Z",
-        )
-        .unwrap();
-    runtime
-        .request_cancel(&store, &started.run_id, "2026-07-18T00:00:01Z")
-        .unwrap();
-    runtime
-        .finish_cancelled(&store, &started.run_id, "2026-07-18T00:00:01Z")
-        .unwrap();
-
-    let accepted = runtime
-        .complete(
-            &store,
-            &started.run_id,
-            &successful_response(&started.run_id),
-            "2026-07-18T00:00:02Z",
-        )
-        .unwrap();
-
-    assert!(accepted.is_none());
-    assert_eq!(
-        store.load(&started.run_id).unwrap().snapshot.status,
-        LlmReportRunStatus::Cancelled
     );
 }
 

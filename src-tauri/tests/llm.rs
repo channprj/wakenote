@@ -7,12 +7,12 @@ use tokio_util::sync::CancellationToken;
 use wakenote::commands::RecentTranscript;
 use wakenote::llm::{
     LlmCompletionReason, LlmGenerateError, LlmGenerateRequest, LlmProgressStage,
-    LlmReportHistoryItem, LlmReportKind, OpenRouterClient, build_openrouter_request_body,
+    LlmReportHistoryItem, LlmReportKind, OpenRouterClient,
     build_openrouter_request_body_with_system, export_llm_report, format_transcripts_for_llm,
     generate_transcript_report_with_client_and_progress,
     generate_transcript_report_with_client_progress_and_cancel, list_llm_report_history,
-    load_llm_report_history_detail, parse_openrouter_chat_content, parse_openrouter_chat_response,
-    parse_quality_evaluation, render_prompt_template,
+    load_llm_report_history_detail, parse_openrouter_chat_response, parse_quality_evaluation,
+    render_prompt_template,
 };
 use wakenote::recorder::ChunkSource;
 use wakenote::settings::{AppSettings, SettingsPatch};
@@ -75,15 +75,6 @@ fn transcript_context_formats_entries_with_date_range() {
 }
 
 #[test]
-fn openrouter_request_body_uses_selected_model_and_prompt() {
-    let body = build_openrouter_request_body("z-ai/glm-5.2", "summarize this");
-
-    assert_eq!(body["model"], "z-ai/glm-5.2");
-    assert_eq!(body["messages"][0]["role"], "user");
-    assert_eq!(body["messages"][0]["content"], "summarize this");
-}
-
-#[test]
 fn openrouter_evaluation_request_separates_system_rules_from_untrusted_report_data() {
     let body = build_openrouter_request_body_with_system(
         "z-ai/glm-5.2",
@@ -101,17 +92,6 @@ fn openrouter_evaluation_request_separates_system_rules_from_untrusted_report_da
         body["messages"][1]["content"],
         "Transcript and candidate report"
     );
-}
-
-#[test]
-fn openrouter_response_parser_extracts_assistant_content() {
-    let body = r#"{
-      "choices": [
-        { "message": { "role": "assistant", "content": "report body" } }
-      ]
-    }"#;
-
-    assert_eq!(parse_openrouter_chat_content(body).unwrap(), "report body");
 }
 
 #[test]
@@ -374,9 +354,14 @@ fn generation_request(kind: LlmReportKind) -> LlmGenerateRequest {
 async fn generation_stops_after_the_first_successful_quality_evaluation() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 30);
-    let client = ScriptedClient::new([
-        "first complete draft",
-        r#"{"success":true,"feedback":"All requested sections are complete and grounded."}"#,
+    let client = ScriptedClient::from_raw([
+        openrouter_response_with_usage("first complete draft", 100, 40, 0.001),
+        openrouter_response_with_usage(
+            r#"{"success":true,"feedback":"All requested sections are complete and grounded."}"#,
+            80,
+            20,
+            0.0005,
+        ),
     ]);
     let progress = Arc::new(Mutex::new(Vec::new()));
     let progress_events = progress.clone();
@@ -415,32 +400,6 @@ async fn generation_stops_after_the_first_successful_quality_evaluation() {
             LlmProgressStage::Completed,
         ]
     );
-}
-
-#[tokio::test]
-async fn generation_aggregates_usage_and_cost_across_drafting_and_evaluation_calls() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let settings = generation_settings(tmp.path(), 30);
-    let client = ScriptedClient::from_raw([
-        openrouter_response_with_usage("complete draft", 100, 40, 0.001),
-        openrouter_response_with_usage(
-            r#"{"success":true,"feedback":"Complete."}"#,
-            80,
-            20,
-            0.0005,
-        ),
-    ]);
-
-    let result = generate_transcript_report_with_client_and_progress(
-        &settings,
-        "sk-or-test",
-        generation_request(LlmReportKind::Summary),
-        &client,
-        |_| {},
-    )
-    .await
-    .unwrap();
-
     assert_eq!(result.usage.request_count, 2);
     assert_eq!(result.usage.prompt_tokens, Some(180));
     assert_eq!(result.usage.completion_tokens, Some(60));
@@ -575,29 +534,7 @@ async fn malformed_quality_evaluation_fails_the_active_iteration_without_saving_
 }
 
 #[tokio::test]
-async fn generation_persists_markdown_report_under_save_root() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let settings = generation_settings(tmp.path(), 1);
-    let client = ScriptedClient::new(["persist me", r#"{"success":true,"feedback":"Complete."}"#]);
-
-    let result = generate_transcript_report_with_client_and_progress(
-        &settings,
-        "sk-or-test",
-        generation_request(LlmReportKind::DetailedReport),
-        &client,
-        |_| {},
-    )
-    .await
-    .unwrap();
-    let report_path = result.report_path.expect("report path");
-
-    assert!(report_path.contains("/reports/"));
-    assert!(report_path.ends_with("-detailed-report.md"));
-    assert_eq!(std::fs::read_to_string(report_path).unwrap(), "persist me");
-}
-
-#[tokio::test]
-async fn generated_report_is_available_as_history_detail_with_metadata() {
+async fn generated_report_is_persisted_and_available_as_history_detail() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let settings = generation_settings(tmp.path(), 1);
     let client = ScriptedClient::from_raw([
@@ -619,6 +556,11 @@ async fn generated_report_is_available_as_history_detail_with_metadata() {
     )
     .await
     .unwrap();
+    let report_path = result.report_path.as_deref().expect("report path");
+
+    assert!(report_path.contains("/reports/"));
+    assert!(report_path.ends_with("-detailed-report.md"));
+    assert_eq!(std::fs::read_to_string(report_path).unwrap(), "persist me");
 
     let history = list_llm_report_history(tmp.path().to_str().unwrap()).unwrap();
     assert_eq!(history.len(), 1);

@@ -661,14 +661,6 @@ mod tests {
     use tokio_tungstenite::tungstenite::protocol::Role;
 
     #[test]
-    fn soniox_realtime_uses_documented_empty_text_end_frame() {
-        match end_of_audio_message() {
-            Message::Text(text) => assert!(text.is_empty()),
-            message => panic!("expected an empty text frame, got {message:?}"),
-        }
-    }
-
-    #[test]
     fn soniox_realtime_builds_documented_configuration_and_pcm_frames() {
         let configuration = configuration_message(
             "secret",

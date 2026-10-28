@@ -429,24 +429,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_canonical_term_with_exact_line() {
-        let error = parse_dictionary_text("WakeNote\nwakenote\n", &[]).unwrap_err();
-        assert_eq!(error.line(), Some(2));
-        assert!(error.to_string().contains("line 2"));
-    }
-
-    #[test]
-    fn rejects_missing_canonical_term_with_exact_line() {
-        let error = parse_dictionary_text("WakeNote\n = wake note\n", &[]).unwrap_err();
-        assert_eq!(error.line(), Some(2));
-        assert!(error.to_string().contains("line 2"));
-    }
-
-    #[test]
-    fn rejects_empty_alias_token_with_exact_line() {
-        let error = parse_dictionary_text("WakeNote = wake note, , wake-note\n", &[]).unwrap_err();
-        assert_eq!(error.line(), Some(1));
-        assert!(error.to_string().contains("line 1"));
+    fn rejects_invalid_lines_with_exact_line_number() {
+        for (input, line) in [
+            // Duplicate canonical term.
+            ("WakeNote\nwakenote\n", 2),
+            // Missing canonical term.
+            ("WakeNote\n = wake note\n", 2),
+            // Empty alias token.
+            ("WakeNote = wake note, , wake-note\n", 1),
+        ] {
+            let error = parse_dictionary_text(input, &[]).unwrap_err();
+            assert_eq!(error.line(), Some(line), "{input:?}");
+            assert!(
+                error.to_string().contains(&format!("line {line}")),
+                "{input:?}"
+            );
+        }
     }
 
     #[test]

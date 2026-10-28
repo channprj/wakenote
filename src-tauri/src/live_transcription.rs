@@ -491,34 +491,4 @@ mod tests {
         assert_eq!(second.source_key, "microphone:wireless");
         assert_eq!(first.chunk_id, second.chunk_id);
     }
-
-    #[test]
-    fn live_partial_request_keeps_its_dictionary_snapshot() {
-        let mut partial = request("microphone:wired", 2);
-        partial.dictionary = DictionaryContext::compile(
-            true,
-            &[crate::settings::DictionaryEntry {
-                id: "wake".into(),
-                term: "WakeNote".into(),
-                aliases: vec!["wake note".into()],
-                enabled: true,
-            }],
-        );
-        let mut state = LiveTranscriptionState {
-            pending: BTreeMap::new(),
-            ready_sources: VecDeque::new(),
-            in_flight_source_key: None,
-            closed: false,
-            model_directory: PathBuf::new(),
-            loaded_model: None,
-            preload_model_id: None,
-        };
-
-        enqueue_latest_request(&mut state, partial);
-
-        assert_eq!(
-            state.pending["microphone:wired"].dictionary.prompt(),
-            Some("WakeNote")
-        );
-    }
 }

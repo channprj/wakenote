@@ -347,10 +347,9 @@ mod tests {
                 replay.transcribe_execution(request),
                 Err(TranscriptionError::Wav(_))
             ));
-            assert_eq!(
-                runtime.transcribe_execution(request).unwrap().text,
-                "live result"
-            );
+            let result = runtime.transcribe_execution(request).unwrap();
+            assert_eq!(result.text, "live result");
+            assert_eq!(result.effective_model_id, model_id);
         }
     }
 }

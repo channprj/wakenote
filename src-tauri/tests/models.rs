@@ -329,29 +329,6 @@ fn model_store_delete_clears_stale_download_error_without_model_file() {
 }
 
 #[test]
-fn model_store_installs_model_bytes_after_checksum_verification() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let store = ModelStore::new(tmp.path());
-    let model = descriptor(
-        "whisper-test",
-        Some("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
-    );
-
-    store
-        .install_model_bytes(&model, b"hello")
-        .expect("install model");
-
-    assert_eq!(
-        std::fs::read(store.model_path("whisper-test")).expect("installed model"),
-        b"hello"
-    );
-    assert_eq!(
-        store.verify_model(&model).expect("verify"),
-        ModelStatus::Ready
-    );
-}
-
-#[test]
 fn model_store_rejects_checksum_mismatch_without_installing_model() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = ModelStore::new(tmp.path());

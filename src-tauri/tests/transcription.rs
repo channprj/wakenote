@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use wakenote::cloud_realtime::{RealtimeStoredResult, realtime_result_store};
 use wakenote::cloud_transcription::FailureCategory;
 use wakenote::dictionary::DictionaryContext;
 use wakenote::queue::{QueueIssueCode, QueueIssueSeverity, QueueJobStatus, TranscriptionQueue};
@@ -154,40 +153,6 @@ fn finalized_callback_runs_once_with_dictionary_corrections_and_never_for_empty_
 }
 
 #[test]
-fn transcription_worker_writes_dictionary_corrected_text() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230710.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut queue = TranscriptionQueue::new();
-    queue.enqueue_file(&audio_path, "whisper-medium");
-    let dictionary = DictionaryContext::compile(
-        true,
-        &[DictionaryEntry {
-            id: "wake".into(),
-            term: "WakeNote".into(),
-            aliases: vec!["wake note".into()],
-            enabled: true,
-        }],
-    );
-    let worker = TranscriptionWorker::with_options_and_dictionary(
-        StaticTranscriber::success("wake note is ready"),
-        TranscriptionWorkerOptions {
-            language: TranscriptionLanguage::Auto,
-            suppress_low_confidence_transcripts: true,
-        },
-        dictionary,
-    );
-
-    worker.process_next(&mut queue).expect("process");
-
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
-        "WakeNote is ready\n"
-    );
-}
-
-#[test]
 fn transcription_worker_discards_empty_output_from_activity_without_blank_txt() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let audio_path = tmp.path().join("20260506").join("230708.wav");
@@ -255,368 +220,301 @@ fn transcription_worker_discards_empty_output_from_activity_without_blank_txt() 
 
 #[test]
 fn transcription_worker_preserves_bracketed_artifact_transcripts_in_txt() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230710.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut queue = TranscriptionQueue::new();
-    let id = queue.enqueue_file(&audio_path, "whisper-medium");
-    let worker = TranscriptionWorker::with_options(
-        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
-        TranscriptionWorkerOptions {
-            language: TranscriptionLanguage::Ko,
-            suppress_low_confidence_transcripts: true,
-        },
-    );
-
-    worker
-        .process_next(&mut queue)
-        .expect("process")
-        .expect("processed job");
-
-    assert_eq!(
-        queue.job(id).expect("job").status,
-        QueueJobStatus::Completed
-    );
-    assert_eq!(
-        queue
-            .job(id)
-            .expect("job")
-            .issue
-            .as_ref()
-            .map(|issue| (issue.severity, issue.code)),
-        Some((
-            QueueIssueSeverity::Warning,
-            QueueIssueCode::TranscriptArtifact,
-        )),
-    );
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("preserved transcript"),
-        "[감사합니다]\n"
-    );
-}
-
-#[test]
-fn transcription_worker_preserves_degenerate_repetition_in_txt() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230713.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut queue = TranscriptionQueue::new();
-    let id = queue.enqueue_file(&audio_path, "whisper-medium");
-    let transcript = format!("{} MBC 뉴스 김수근입니다.", "[끝] ".repeat(6));
-    let worker = TranscriptionWorker::with_options(
-        StaticTranscriber::success(&transcript).expecting_language(TranscriptionLanguage::Ko),
-        TranscriptionWorkerOptions {
-            language: TranscriptionLanguage::Ko,
-            suppress_low_confidence_transcripts: true,
-        },
-    );
-
-    worker
-        .process_next(&mut queue)
-        .expect("process")
-        .expect("processed job");
-
-    assert_eq!(
-        queue.job(id).expect("job").status,
-        QueueJobStatus::Completed
-    );
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("preserved transcript"),
-        format!("{transcript}\n")
-    );
-}
-
-#[test]
-fn transcription_worker_can_keep_bracketed_text_when_suppression_is_disabled() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230711.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut queue = TranscriptionQueue::new();
-    queue.enqueue_file(&audio_path, "whisper-medium");
-    let worker = TranscriptionWorker::with_options(
-        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
-        TranscriptionWorkerOptions {
-            language: TranscriptionLanguage::Ko,
-            suppress_low_confidence_transcripts: false,
-        },
-    );
-
-    worker
-        .process_next(&mut queue)
-        .expect("process")
-        .expect("processed job");
-
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
-        "[감사합니다]\n"
-    );
-}
-
-#[test]
-fn transcription_worker_keeps_system_audio_text_when_suppression_is_enabled() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230712-spotify.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let now = chrono::Utc::now();
-    let metadata = ChunkMetadata {
-        model_id: "whisper-medium".into(),
-        requested_model_id: None,
-        effective_model_id: None,
-        fallback_from_model_id: None,
-        device_id: "custom-source-2".into(),
-        device_name: "Spotify".into(),
-        sample_rate: 16_000,
-        threshold_dbfs: -42.0,
-        attack_ms: 100,
-        release_ms: 1_000,
-        pre_roll_ms: 1_000,
-        lead_in_padding_ms: 300,
-        post_roll_ms: 300,
-        min_chunk_ms: 600,
-        max_chunk_ms: 120_000,
-        started_at: now,
-        ended_at: now,
-        duration_ms: 1000,
-        transcription_status: TranscriptionStatus::Queued,
-        transcribed_at: None,
-        transcript_text: None,
-        app_version: "0.0.0".into(),
-        used_fallback_device: false,
-        live_capture_chunk_id: None,
-        source: ChunkSource::System,
-        source_label: Some("Spotify".into()),
-        microphone_slot: None,
-        microphone_inputs: Vec::new(),
-    };
-    std::fs::write(
-        audio_path.with_extension("json"),
-        serde_json::to_vec_pretty(&metadata).expect("metadata json"),
-    )
-    .expect("metadata");
-    let mut queue = TranscriptionQueue::new();
-    queue.enqueue_file(&audio_path, "whisper-medium");
-    let worker = TranscriptionWorker::with_options(
-        StaticTranscriber::success("[감사합니다]").expecting_language(TranscriptionLanguage::Ko),
-        TranscriptionWorkerOptions {
-            language: TranscriptionLanguage::Ko,
-            suppress_low_confidence_transcripts: true,
-        },
-    );
-
-    worker
-        .process_next(&mut queue)
-        .expect("process")
-        .expect("processed job");
-
-    assert_eq!(
-        std::fs::read_to_string(audio_path.with_extension("txt")).expect("transcript"),
-        "[감사합니다]\n"
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_preserves_plain_speech() {
-    assert!(should_suppress_transcript_artifact("(웃음)"));
-    assert!(should_suppress_transcript_artifact("[감사합니다]"));
-    assert!(!should_suppress_transcript_artifact("감사합니다"));
-    assert!(!should_suppress_transcript_artifact(
-        "오늘 회의 내용을 정리하겠습니다."
+    let artifact_warning = Some((
+        QueueIssueSeverity::Warning,
+        QueueIssueCode::TranscriptArtifact,
     ));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_broadcast_news_signoffs() {
-    assert!(should_suppress_transcript_artifact(
-        "MBC 뉴스 김수근입니다."
-    ));
-    assert!(should_suppress_transcript_artifact("KBS 뉴스 이지연입니다"));
-    assert!(!should_suppress_transcript_artifact(
-        "오늘 MBC 뉴스 사례를 회의에서 검토했습니다."
-    ));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_repeated_wrapped_signoff() {
-    let transcript = format!("{} MBC 뉴스 김수근입니다.", "[끝] ".repeat(6));
-
-    assert!(should_suppress_transcript_artifact(&transcript));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_repeated_sentence_signoff() {
-    let transcript = format!(
-        "{} MBC 뉴스 김수근입니다.",
-        "[오늘은 퇴근하기로 했어요] ".repeat(6)
-    );
-
-    assert!(should_suppress_transcript_artifact(&transcript));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_repeated_wrapped_phrase_flood() {
-    let transcript = "[머리가 너무 예뻐서] ".repeat(60);
-
-    assert!(should_suppress_transcript_artifact(&transcript));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_replacement_character_and_token_loop() {
-    let transcript = format!("해� vor {}", "그리고 ".repeat(40));
-
-    assert!(should_suppress_transcript_artifact(&transcript));
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_repeated_microphone_test_signoff() {
-    let transcript = format!(
-        "{} MBC 뉴스 김수근입니다.",
-        "마이크 테스트 하나 둘 셋 ".repeat(6)
-    );
-
-    assert!(should_suppress_transcript_artifact(&transcript));
-}
-
-#[test]
-fn transcript_artifact_filter_preserves_natural_repetition_and_structured_speech() {
-    for transcript in [
-        "네 네, 확인했습니다.",
-        "아니 아니, 그게 아니라 오늘 MBC 뉴스 사례를 회의에서 검토했습니다.",
-        "회의는 Zoom Zoom 연결 상태를 확인한 뒤 시작하겠습니다.",
-        "[1단계] 요구사항을 검토했고 [2단계] 구현을 마쳤으며 [3단계] 테스트를 실행하고 [4단계] 배포 여부를 확인합니다.",
+    for (label, transcript, suppress, system_audio, expected_issue) in [
+        (
+            "bracketed artifact",
+            "[감사합니다]".to_string(),
+            true,
+            false,
+            artifact_warning,
+        ),
+        (
+            "degenerate repetition",
+            format!("{} MBC 뉴스 김수근입니다.", "[끝] ".repeat(6)),
+            true,
+            false,
+            artifact_warning,
+        ),
+        (
+            "suppression disabled",
+            "[감사합니다]".to_string(),
+            false,
+            false,
+            None,
+        ),
+        (
+            "system audio with suppression enabled",
+            "[감사합니다]".to_string(),
+            true,
+            true,
+            None,
+        ),
     ] {
-        assert!(
-            !should_suppress_transcript_artifact(transcript),
-            "natural transcript should be preserved: {transcript}"
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let audio_path = tmp.path().join("20260506").join("230710.wav");
+        std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
+        std::fs::write(&audio_path, b"wav bytes").expect("audio");
+        if system_audio {
+            let now = chrono::Utc::now();
+            let metadata = ChunkMetadata {
+                model_id: "whisper-medium".into(),
+                requested_model_id: None,
+                effective_model_id: None,
+                fallback_from_model_id: None,
+                device_id: "custom-source-2".into(),
+                device_name: "Spotify".into(),
+                sample_rate: 16_000,
+                threshold_dbfs: -42.0,
+                attack_ms: 100,
+                release_ms: 1_000,
+                pre_roll_ms: 1_000,
+                lead_in_padding_ms: 300,
+                post_roll_ms: 300,
+                min_chunk_ms: 600,
+                max_chunk_ms: 120_000,
+                started_at: now,
+                ended_at: now,
+                duration_ms: 1000,
+                transcription_status: TranscriptionStatus::Queued,
+                transcribed_at: None,
+                transcript_text: None,
+                app_version: "0.0.0".into(),
+                used_fallback_device: false,
+                live_capture_chunk_id: None,
+                source: ChunkSource::System,
+                source_label: Some("Spotify".into()),
+                microphone_slot: None,
+                microphone_inputs: Vec::new(),
+            };
+            std::fs::write(
+                audio_path.with_extension("json"),
+                serde_json::to_vec_pretty(&metadata).expect("metadata json"),
+            )
+            .expect("metadata");
+        }
+        let mut queue = TranscriptionQueue::new();
+        let id = queue.enqueue_file(&audio_path, "whisper-medium");
+        let worker = TranscriptionWorker::with_options(
+            StaticTranscriber::success(&transcript).expecting_language(TranscriptionLanguage::Ko),
+            TranscriptionWorkerOptions {
+                language: TranscriptionLanguage::Ko,
+                suppress_low_confidence_transcripts: suppress,
+            },
+        );
+
+        worker
+            .process_next(&mut queue)
+            .expect("process")
+            .expect("processed job");
+
+        let job = queue.job(id).expect("job");
+        assert_eq!(job.status, QueueJobStatus::Completed, "{label}");
+        assert_eq!(
+            job.issue.as_ref().map(|issue| (issue.severity, issue.code)),
+            expected_issue,
+            "{label}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(audio_path.with_extension("txt"))
+                .expect("preserved transcript"),
+            format!("{transcript}\n"),
+            "{label}"
         );
     }
 }
 
 #[test]
-fn transcript_artifact_filter_preserves_five_identical_tokens() {
-    let transcript = format!("{}하나 둘 셋 넷 다섯 여섯 일곱", "반복 ".repeat(5));
-
-    assert_eq!(transcript_artifact_reason(&transcript), None);
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_six_identical_tokens_as_a_run() {
-    assert_eq!(
-        transcript_artifact_reason(&"반복 ".repeat(6)),
-        Some(TranscriptArtifactReason::RepeatedTokenRun)
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_suppresses_three_non_overlapping_phrase_occurrences() {
-    let transcript = format!("{}오늘 회의 종료", "하나 둘 셋 ".repeat(3));
-
-    assert_eq!(
-        transcript_artifact_reason(&transcript),
-        Some(TranscriptArtifactReason::DominantRepeatedNgram)
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_preserves_replacement_character_with_newsletter() {
-    assert_eq!(
-        transcript_artifact_reason("해� 뉴스레터 내용을 오늘 회의에서 검토했습니다."),
-        None
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_preserves_replacement_character_with_news_agency() {
-    assert_eq!(
-        transcript_artifact_reason("해� 연합뉴스 기사를 오늘 회의에서 검토했습니다."),
-        None
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_combines_replacement_character_with_broadcaster_news() {
-    assert_eq!(
-        transcript_artifact_reason("해� 오늘 MBC 뉴스 김수근입니다. 내용을 검토했습니다."),
-        Some(TranscriptArtifactReason::CompoundSignals)
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_requires_four_dominant_bracket_groups() {
-    assert_eq!(transcript_artifact_reason("말 [하나] [둘] [셋] 완료"), None);
-    assert_eq!(
-        transcript_artifact_reason("말 [하나] [둘] [셋] [넷] 완료"),
-        Some(TranscriptArtifactReason::BracketFlood)
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_preserves_nested_bracket_spans_as_one_group() {
-    assert_eq!(
-        transcript_artifact_reason(
-            "([one] [two] [three] We discussed a sufficiently long ordinary project timeline and release plan in detail.)"
+fn transcript_artifact_filter_suppresses_artifacts_and_preserves_speech() {
+    for (label, transcript, expected_suppressed) in [
+        ("parenthesized aside", "(웃음)".to_string(), true),
+        ("bracketed thanks", "[감사합니다]".to_string(), true),
+        ("plain thanks", "감사합니다".to_string(), false),
+        (
+            "plain meeting sentence",
+            "오늘 회의 내용을 정리하겠습니다.".to_string(),
+            false,
         ),
-        None
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_counts_adjacent_bracket_groups_separately() {
-    assert_eq!(
-        transcript_artifact_reason("말 [끝][끝][끝][끝] 완료"),
-        Some(TranscriptArtifactReason::BracketFlood)
-    );
-}
-
-#[test]
-fn transcript_artifact_filter_requires_two_weak_signals() {
-    assert_eq!(
-        transcript_artifact_reason("해� 오늘 회의 내용을 검토했습니다."),
-        None
-    );
-    assert_eq!(
-        transcript_artifact_reason("하 a b 하 c a 하 b c b a c"),
-        None
-    );
-    assert_eq!(
-        transcript_artifact_reason("해� 오늘 MBC 뉴스 내용을 검토했습니다."),
-        Some(TranscriptArtifactReason::CompoundSignals)
-    );
+        (
+            "MBC news signoff",
+            "MBC 뉴스 김수근입니다.".to_string(),
+            true,
+        ),
+        (
+            "KBS news signoff",
+            "KBS 뉴스 이지연입니다".to_string(),
+            true,
+        ),
+        (
+            "in-sentence news mention",
+            "오늘 MBC 뉴스 사례를 회의에서 검토했습니다.".to_string(),
+            false,
+        ),
+        (
+            "repeated wrapped signoff",
+            format!("{} MBC 뉴스 김수근입니다.", "[끝] ".repeat(6)),
+            true,
+        ),
+        (
+            "repeated sentence signoff",
+            format!(
+                "{} MBC 뉴스 김수근입니다.",
+                "[오늘은 퇴근하기로 했어요] ".repeat(6)
+            ),
+            true,
+        ),
+        (
+            "repeated wrapped phrase flood",
+            "[머리가 너무 예뻐서] ".repeat(60),
+            true,
+        ),
+        (
+            "replacement character and token loop",
+            format!("해� vor {}", "그리고 ".repeat(40)),
+            true,
+        ),
+        (
+            "repeated microphone test signoff",
+            format!(
+                "{} MBC 뉴스 김수근입니다.",
+                "마이크 테스트 하나 둘 셋 ".repeat(6)
+            ),
+            true,
+        ),
+        (
+            "natural repetition",
+            "네 네, 확인했습니다.".to_string(),
+            false,
+        ),
+        (
+            "natural repetition with news mention",
+            "아니 아니, 그게 아니라 오늘 MBC 뉴스 사례를 회의에서 검토했습니다.".to_string(),
+            false,
+        ),
+        (
+            "repeated product name",
+            "회의는 Zoom Zoom 연결 상태를 확인한 뒤 시작하겠습니다.".to_string(),
+            false,
+        ),
+        (
+            "structured bracketed speech",
+            "[1단계] 요구사항을 검토했고 [2단계] 구현을 마쳤으며 [3단계] 테스트를 실행하고 [4단계] 배포 여부를 확인합니다.".to_string(),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            should_suppress_transcript_artifact(&transcript),
+            expected_suppressed,
+            "{label}: {transcript}"
+        );
+    }
 }
 
 #[test]
 fn transcript_artifact_filter_reports_stable_reasons() {
-    assert_eq!(
-        transcript_artifact_reason("(웃음)"),
-        Some(TranscriptArtifactReason::WrappedPhrase)
-    );
-    assert_eq!(
-        transcript_artifact_reason("MBC 뉴스 김수근입니다."),
-        Some(TranscriptArtifactReason::BroadcastNewsSignoff)
-    );
-    assert_eq!(
-        transcript_artifact_reason("thanks for watching"),
-        Some(TranscriptArtifactReason::CommonHallucination)
-    );
-    assert_eq!(
-        transcript_artifact_reason(&"그리고 ".repeat(6)),
-        Some(TranscriptArtifactReason::RepeatedTokenRun)
-    );
-    assert_eq!(
-        transcript_artifact_reason(&"하나 둘 셋 ".repeat(4)),
-        Some(TranscriptArtifactReason::DominantRepeatedNgram)
-    );
-    assert_eq!(
-        transcript_artifact_reason("말 [하나] [둘] [셋] [넷] 완료"),
-        Some(TranscriptArtifactReason::BracketFlood)
-    );
-    assert_eq!(
-        transcript_artifact_reason("해� a b 해 c a 해 b c b a c"),
-        Some(TranscriptArtifactReason::CompoundSignals)
-    );
+    use TranscriptArtifactReason::*;
+    for (label, transcript, expected) in [
+        ("wrapped phrase", "(웃음)".to_string(), Some(WrappedPhrase)),
+        (
+            "broadcast news signoff",
+            "MBC 뉴스 김수근입니다.".to_string(),
+            Some(BroadcastNewsSignoff),
+        ),
+        (
+            "common hallucination",
+            "thanks for watching".to_string(),
+            Some(CommonHallucination),
+        ),
+        (
+            "six repeated conjunctions",
+            "그리고 ".repeat(6),
+            Some(RepeatedTokenRun),
+        ),
+        (
+            "five identical tokens",
+            format!("{}하나 둘 셋 넷 다섯 여섯 일곱", "반복 ".repeat(5)),
+            None,
+        ),
+        (
+            "six identical tokens as a run",
+            "반복 ".repeat(6),
+            Some(RepeatedTokenRun),
+        ),
+        (
+            "four repeated phrases",
+            "하나 둘 셋 ".repeat(4),
+            Some(DominantRepeatedNgram),
+        ),
+        (
+            "three non-overlapping phrase occurrences",
+            format!("{}오늘 회의 종료", "하나 둘 셋 ".repeat(3)),
+            Some(DominantRepeatedNgram),
+        ),
+        (
+            "three bracket groups",
+            "말 [하나] [둘] [셋] 완료".to_string(),
+            None,
+        ),
+        (
+            "four bracket groups",
+            "말 [하나] [둘] [셋] [넷] 완료".to_string(),
+            Some(BracketFlood),
+        ),
+        (
+            "nested bracket spans as one group",
+            "([one] [two] [three] We discussed a sufficiently long ordinary project timeline and release plan in detail.)".to_string(),
+            None,
+        ),
+        (
+            "adjacent bracket groups counted separately",
+            "말 [끝][끝][끝][끝] 완료".to_string(),
+            Some(BracketFlood),
+        ),
+        (
+            "replacement character with newsletter",
+            "해� 뉴스레터 내용을 오늘 회의에서 검토했습니다.".to_string(),
+            None,
+        ),
+        (
+            "replacement character with news agency",
+            "해� 연합뉴스 기사를 오늘 회의에서 검토했습니다.".to_string(),
+            None,
+        ),
+        (
+            "replacement character with broadcaster news signoff",
+            "해� 오늘 MBC 뉴스 김수근입니다. 내용을 검토했습니다.".to_string(),
+            Some(CompoundSignals),
+        ),
+        (
+            "replacement character alone",
+            "해� 오늘 회의 내용을 검토했습니다.".to_string(),
+            None,
+        ),
+        (
+            "scattered short token alone",
+            "하 a b 하 c a 하 b c b a c".to_string(),
+            None,
+        ),
+        (
+            "replacement character with broadcaster news",
+            "해� 오늘 MBC 뉴스 내용을 검토했습니다.".to_string(),
+            Some(CompoundSignals),
+        ),
+        (
+            "replacement character with scattered tokens",
+            "해� a b 해 c a 해 b c b a c".to_string(),
+            Some(CompoundSignals),
+        ),
+    ] {
+        assert_eq!(
+            transcript_artifact_reason(&transcript),
+            expected,
+            "{label}: {transcript}"
+        );
+    }
 }
 
 #[test]
@@ -657,25 +555,6 @@ fn low_confidence_decode_gate_suppresses_no_speech_or_low_token_probability() {
         "오늘 회의 내용을 정리하겠습니다.",
         &confident_speech
     ));
-}
-
-#[test]
-fn transcription_worker_passes_configured_language_to_transcriber() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("20260506").join("230812.wav");
-    std::fs::create_dir_all(audio_path.parent().unwrap()).expect("audio dir");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let mut queue = TranscriptionQueue::new();
-    queue.enqueue_file(&audio_path, "whisper-medium");
-    let worker = TranscriptionWorker::with_language(
-        StaticTranscriber::success("안녕하세요").expecting_language(TranscriptionLanguage::Ko),
-        TranscriptionLanguage::Ko,
-    );
-
-    worker
-        .process_next(&mut queue)
-        .expect("process")
-        .expect("processed job");
 }
 
 #[test]
@@ -781,52 +660,46 @@ fn applying_an_actionable_outcome_stamps_the_issue_at_the_terminal_boundary() {
 }
 
 #[test]
-fn whisper_transcriber_reports_missing_model_before_running_inference() {
+fn whisper_transcriber_reports_missing_model_with_resolved_path() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let audio_path = tmp.path().join("sample.wav");
-    std::fs::write(&audio_path, b"wav bytes").expect("audio");
-    let transcriber = WhisperTranscriber::new(tmp.path().join("models"));
-
-    let error = transcriber
-        .transcribe(TranscriptionRequest {
-            language_hints: &[],
-            audio_path: &audio_path,
-            model_id: "whisper-medium",
-            language: TranscriptionLanguage::Auto,
-            dictionary: &DictionaryContext::default(),
-        })
-        .expect_err("missing model should fail");
-
-    assert_eq!(
-        error,
-        TranscriptionError::ModelMissing(tmp.path().join("models/whisper-medium.bin"))
-    );
-}
-
-#[test]
-fn whisper_transcriber_expands_tilde_model_directory() {
+    // An existing but undecodable file pins the model check ahead of decoding.
+    let invalid_audio_path = tmp.path().join("sample.wav");
+    std::fs::write(&invalid_audio_path, b"wav bytes").expect("audio");
     let home = std::env::var_os("HOME").expect("HOME should be set");
-    let audio_path = PathBuf::from("/tmp/wakenote-unused-audio.wav");
-    let transcriber = WhisperTranscriber::new("~/Library/Application Support/WakeNote/models");
 
-    let error = transcriber
-        .transcribe(TranscriptionRequest {
-            language_hints: &[],
-            audio_path: &audio_path,
-            model_id: "missing-model-for-tilde-expansion",
-            language: TranscriptionLanguage::Auto,
-            dictionary: &DictionaryContext::default(),
-        })
-        .expect_err("missing model should fail");
-
-    assert_eq!(
-        error,
-        TranscriptionError::ModelMissing(
+    for (model_directory, audio_path, model_id, expected_path) in [
+        (
+            tmp.path().join("models"),
+            invalid_audio_path,
+            "whisper-medium",
+            tmp.path().join("models/whisper-medium.bin"),
+        ),
+        (
+            PathBuf::from("~/Library/Application Support/WakeNote/models"),
+            PathBuf::from("/tmp/wakenote-unused-audio.wav"),
+            "missing-model-for-tilde-expansion",
             PathBuf::from(home)
                 .join("Library/Application Support/WakeNote/models")
-                .join("missing-model-for-tilde-expansion.bin")
-        )
-    );
+                .join("missing-model-for-tilde-expansion.bin"),
+        ),
+    ] {
+        let error = WhisperTranscriber::new(&model_directory)
+            .transcribe(TranscriptionRequest {
+                language_hints: &[],
+                audio_path: &audio_path,
+                model_id,
+                language: TranscriptionLanguage::Auto,
+                dictionary: &DictionaryContext::default(),
+            })
+            .expect_err("missing model should fail");
+
+        assert_eq!(
+            error,
+            TranscriptionError::ModelMissing(expected_path),
+            "{}",
+            model_directory.display()
+        );
+    }
 }
 
 #[test]
@@ -922,41 +795,6 @@ fn runtime_transcriber_routes_cloud_models_and_never_falls_back_without_keys() {
 }
 
 #[test]
-fn runtime_transcriber_consumes_the_realtime_result_without_reuploading_audio() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let transcriber = RuntimeTranscriber::new(tmp.path());
-    for model_id in ["openai-gpt-live-transcribe", "soniox-realtime-v5"] {
-        let audio_path = tmp.path().join(format!("{model_id}.wav"));
-        std::fs::write(&audio_path, b"recorded audio").expect("audio");
-        realtime_result_store().publish(
-            audio_path.clone(),
-            RealtimeStoredResult::Completed(wakenote::transcription::TranscriptionExecution {
-                text: "live transcript".into(),
-                speaker_turns: Vec::new(),
-                requested_model_id: model_id.into(),
-                effective_model_id: model_id.into(),
-                fallback_from_model_id: None,
-                usage: None,
-                issue: None,
-            }),
-        );
-
-        let result = transcriber
-            .transcribe_execution(TranscriptionRequest {
-                language_hints: &[],
-                audio_path: &audio_path,
-                model_id,
-                language: TranscriptionLanguage::Auto,
-                dictionary: &DictionaryContext::default(),
-            })
-            .expect("realtime result");
-
-        assert_eq!(result.text, "live transcript");
-        assert_eq!(result.effective_model_id, model_id);
-    }
-}
-
-#[test]
 fn live_partial_support_is_limited_to_whisper_runtimes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::write(
@@ -1019,24 +857,13 @@ fn whisper_context_parameters_prefer_gpu_on_macos_builds() {
 }
 
 #[test]
-fn m4a_audio_is_decoded_through_codec_bridge_for_whisper() {
+fn compressed_audio_is_decoded_through_codec_bridge_for_whisper() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let wav_path = tmp.path().join("source.wav");
     let m4a_path = tmp.path().join("source.m4a");
-    write_test_wav(&wav_path);
-    encode_wav_to_m4a(&wav_path, &m4a_path, 96).expect("M4A fixture");
-
-    let decoded = decode_audio_for_whisper(&m4a_path).expect("decode m4a");
-
-    assert!(!decoded.is_empty());
-}
-
-#[test]
-fn mp3_audio_is_decoded_through_codec_bridge_for_whisper() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let wav_path = tmp.path().join("source.wav");
     let mp3_path = tmp.path().join("source.mp3");
     write_test_wav(&wav_path);
+    encode_wav_to_m4a(&wav_path, &m4a_path, 96).expect("M4A fixture");
     let output = std::process::Command::new("ffmpeg")
         .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(&wav_path)
@@ -1050,9 +877,12 @@ fn mp3_audio_is_decoded_through_codec_bridge_for_whisper() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let decoded = decode_audio_for_whisper(&mp3_path).expect("decode mp3");
+    for (extension, path) in [("m4a", &m4a_path), ("mp3", &mp3_path)] {
+        let decoded = decode_audio_for_whisper(path)
+            .unwrap_or_else(|error| panic!("decode {extension}: {error:?}"));
 
-    assert!(!decoded.is_empty());
+        assert!(!decoded.is_empty(), "{extension} decoded no samples");
+    }
 }
 
 fn write_test_wav(path: &std::path::Path) {
