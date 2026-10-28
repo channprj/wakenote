@@ -334,6 +334,8 @@ Settings patches are clamped or normalized by the Rust backend.
 | Hide low-confidence transcripts | `on` | `on` / `off` |
 | Start live input on launch | `on` | `on` / `off` |
 | Input monitoring | `off` | `on` / `off`; Primary only |
+| Auto-type transcripts into cursor | `off` | `on` / `off`; Primary or merged microphones only |
+| Type final transcripts only | `off` | `on` / `off`; available while auto-type is on |
 | Shortcut dictation | `off` | `on` / `off` |
 | Hold-to-dictate hotkey | `Control+Shift` | supported key, key chord, or physical modifier combination |
 | Toggle dictation hotkey | not set | optional separate hotkey; press to start, press again to finish |
@@ -503,11 +505,11 @@ age. Changing automatic deletion does not interrupt delivery.
 
 ### Realtime auto-type
 
-Enable **Settings › Advanced › Auto-type transcripts into cursor** and select an **Auto-type model** independently from archival transcription. Choose an installed Whisper model or a configured compatible realtime cloud model; leaving the selection at the default follows the transcription model.
+Enable **Settings › Advanced › Auto-type transcripts into cursor** to type microphone transcripts at the focused cursor. Imports, system/app audio, and a separate Secondary stream never type into the cursor. Dictation temporarily suppresses auto-type to avoid duplicate input. Keep the destination focused and grant Accessibility permission before enabling auto-type.
 
-Auto-type appends the stable shared prefix of successive partial results, then the remaining final text. While enabled, microphone chunks roll over within five seconds so final-only recognition does not wait for a long recording. Actual latency depends on the selected model and provider. Imports, system/app audio, and a separate Secondary stream never type into the cursor. Dictation temporarily suppresses auto-type to avoid duplicate input.
+By default, auto-type streams partial results: it appends the stable shared prefix of successive partials, then the remaining final text. To keep that fast, microphone chunks roll over within five seconds, release after at most 750 ms, skip the pre-roll overlap between chunks, and are transcribed with the **Auto-type model**: an installed Whisper model or a configured compatible realtime cloud model, where the default follows the transcription model. These limits also apply to the saved recordings, so **Capture › Live transcript** can show different text than the same speech produces with auto-type off. Actual latency depends on the selected model and provider. WakeNote does not backspace over text already inserted. If a model revises that prefix or native typing fails, an error is shown and the corrected source remains available in Activity/Transcripts.
 
-WakeNote does not backspace over text already inserted. If a model revises that prefix or native typing fails, an error is shown and the corrected source remains available in Activity/Transcripts. Keep the destination focused and grant Accessibility permission before enabling auto-type.
+Turn on **Type final transcripts only** to type exactly the final text that **Capture › Live transcript** shows. Partial results are not typed, and Capture keeps its usual chunk length, release, pre-roll overlap, and transcription model, so recordings and transcripts match auto-type off and the **Auto-type model** is not used. Each chunk's final text is typed once, in recording order: a later chunk waits until the earlier chunk's text is typed, or until its transcription fails or comes back empty. Typing starts only after a chunk is transcribed, so long chunks take longer to appear. If typing fails, an error is shown and phrases still waiting are skipped; every transcript stays in Transcripts.
 
 ### Translation and Enhanced Prompt
 
