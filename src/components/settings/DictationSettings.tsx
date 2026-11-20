@@ -48,18 +48,18 @@ const DICTATION_LANGUAGES = [
 ] as const satisfies ReadonlyArray<SelectOption<TranscriptionLanguage>>;
 
 const DICTATION_START_CUE_SOUNDS = [
-  { value: "original", label: "Default" },
   { value: "alternative", label: "Ding" },
+  { value: "original", label: "Beep" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
 
 const DICTATION_STOP_CUE_SOUNDS = [
-  { value: "original", label: "Default" },
   { value: "alternative", label: "Ding" },
+  { value: "original", label: "Beep" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
 
 const DICTATION_END_CUE_SOUNDS = [
-  { value: "original", label: "Default" },
   { value: "alternative", label: "Stapling" },
+  { value: "original", label: "Beep" },
 ] as const satisfies ReadonlyArray<SelectOption<DictationCueSound>>;
 
 const DICTATION_CUE_VOLUMES = [

@@ -325,8 +325,8 @@ pub enum TranscriptionLanguage {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DictationCueSound {
-    #[default]
     Original,
+    #[default]
     Alternative,
 }
 
@@ -2401,9 +2401,15 @@ mod tests {
     #[test]
     fn dictation_customization_patch_is_independent_and_trims_model() {
         let mut settings = AppSettings::default();
-        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
+        assert_eq!(
+            settings.dictation_start_sound,
+            DictationCueSound::Alternative
+        );
+        assert_eq!(
+            settings.dictation_stop_sound,
+            DictationCueSound::Alternative
+        );
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Alternative);
         assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
         assert_eq!(
             settings.dictation_bubble_position,
@@ -2710,9 +2716,15 @@ mod tests {
         assert!(!settings.dictation_enabled);
         assert_eq!(settings.dictation_shortcut, "ctrl+shift");
         assert_eq!(settings.dictation_language, TranscriptionLanguage::Auto);
-        assert_eq!(settings.dictation_start_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_stop_sound, DictationCueSound::Original);
-        assert_eq!(settings.dictation_end_sound, DictationCueSound::Original);
+        assert_eq!(
+            settings.dictation_start_sound,
+            DictationCueSound::Alternative
+        );
+        assert_eq!(
+            settings.dictation_stop_sound,
+            DictationCueSound::Alternative
+        );
+        assert_eq!(settings.dictation_end_sound, DictationCueSound::Alternative);
         assert_eq!(settings.dictation_cue_volume, DictationCueVolume::Medium);
         assert_eq!(
             settings.dictation_bubble_position,
