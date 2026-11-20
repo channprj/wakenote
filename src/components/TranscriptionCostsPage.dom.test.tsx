@@ -93,6 +93,11 @@ describe("transcription cost details page", () => {
     expect(
       screen.getByText("Includes duration-based reference estimates"),
     ).toBeTruthy();
+    expect(screen.getByText(/async ≈ \$0\.10\/hour/)).toBeTruthy();
+    expect(screen.getByText(/realtime ≈ \$0\.12\/hour/)).toBeTruthy();
+    expect(screen.getByText(/checked November 21,\s+2026/)).toBeTruthy();
+    expect(screen.queryByText(/missing v5 costs/i)).toBeNull();
+    expect(screen.queryByText(/September 11/)).toBeNull();
     fireEvent.click(
       screen.getByRole("switch", {
         name: "Include Soniox reference estimates",

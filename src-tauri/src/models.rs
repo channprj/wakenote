@@ -216,7 +216,10 @@ pub fn model_supports_context(
 pub fn model_supports_reprocessing(model: &ModelDescriptor) -> bool {
     model_supports_context(model, TranscriptionContext::File, false)
         || (model.capabilities.realtime
-            && matches!(model.id.as_str(), "openai-gpt-live-transcribe" | "soniox-realtime-v5"))
+            && matches!(
+                model.id.as_str(),
+                "openai-gpt-live-transcribe" | "soniox-realtime-v5"
+            ))
 }
 
 pub fn validate_model_options(
@@ -1991,14 +1994,14 @@ pub fn default_model_registry() -> BTreeMap<String, ModelDescriptor> {
         ),
         (
             "soniox-async-v5",
-            "Soniox · Async V5",
+            "Soniox · Async V6",
             "Soniox",
             "soniox-async-stt",
             9,
         ),
         (
             "soniox-realtime-v5",
-            "Soniox · Real-time V5",
+            "Soniox · Real-time V6",
             "Soniox",
             "soniox-realtime",
             9,
@@ -2063,6 +2066,7 @@ mod tests {
         let soniox_realtime = registry
             .get("soniox-realtime-v5")
             .expect("Soniox realtime descriptor");
+        assert_eq!(soniox_realtime.display_name, "Soniox · Real-time V6");
         assert_eq!(soniox_realtime.provider_runtime, "soniox-realtime");
         assert!(!soniox_realtime.capabilities.file_transcription);
         assert!(soniox_realtime.capabilities.realtime);
@@ -2082,6 +2086,7 @@ mod tests {
         let soniox_async = registry
             .get("soniox-async-v5")
             .expect("Soniox async descriptor");
+        assert_eq!(soniox_async.display_name, "Soniox · Async V6");
         assert_eq!(soniox_async.provider_runtime, "soniox-async-stt");
         assert!(soniox_async.capabilities.file_transcription);
         assert!(!soniox_async.capabilities.realtime);
@@ -2686,8 +2691,15 @@ mod tests {
         let store = ModelStore::new(temp.path());
         let mut model = default_model_registry().remove("sensevoice-small").unwrap();
         let expected = model.checksum_sha256.take();
-        std::fs::write(store.registry_path(), serde_json::to_vec(&vec![model]).unwrap()).unwrap();
-        assert_eq!(store.load_model_registry().unwrap()["sensevoice-small"].checksum_sha256, expected);
+        std::fs::write(
+            store.registry_path(),
+            serde_json::to_vec(&vec![model]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store.load_model_registry().unwrap()["sensevoice-small"].checksum_sha256,
+            expected
+        );
     }
 
     #[cfg(unix)]

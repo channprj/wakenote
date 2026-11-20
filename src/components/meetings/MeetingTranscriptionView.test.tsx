@@ -187,7 +187,7 @@ describe("MeetingTranscriptionView", () => {
       screen.getByRole("option", { name: /Soniox.*Real-time/ }),
     ).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("option", { name: "Soniox · Async V5" }),
+      screen.getByRole("option", { name: "Soniox · Async V6" }),
     );
     expect(onMeetingModelChange).toHaveBeenCalledWith("soniox-async-v5");
   });

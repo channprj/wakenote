@@ -307,7 +307,7 @@ export function TranscriptionCostsView({
                 Include Soniox reference estimates
               </FieldLabel>
               <FieldDescription>
-                Estimate missing v5 costs from saved audio: async ≈ $0.10/hour,
+                Estimate missing Soniox costs from saved audio: async ≈ $0.10/hour,
                 realtime ≈ $0.12/hour. Turn off to see recorded costs only.
               </FieldDescription>
             </FieldContent>
@@ -399,7 +399,7 @@ export function TranscriptionCostsView({
               </AlertTitle>
               <AlertDescription>
                 {result.total.referenceRequests.toLocaleString()} Soniox
-                requests use published hourly equivalents, checked September 11,
+                requests use published hourly equivalents, checked November 21,
                 2026. Soniox bills by audio and text tokens; context, session
                 duration and historical rates can change actual charges.
                 Original records are preserved. Source: soniox.com/pricing.

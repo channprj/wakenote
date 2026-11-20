@@ -622,7 +622,7 @@ export function mockModels(): ModelDescriptor[] {
     },
     {
       id: "soniox-async-v5",
-      display_name: "Soniox · Async V5",
+      display_name: "Soniox · Async V6",
       engine: "Soniox",
       provider_runtime: "soniox-async-stt",
       download_url: null,
@@ -638,7 +638,7 @@ export function mockModels(): ModelDescriptor[] {
     },
     {
       id: "soniox-realtime-v5",
-      display_name: "Soniox · Real-time V5",
+      display_name: "Soniox · Real-time V6",
       engine: "Soniox",
       provider_runtime: "soniox-realtime",
       download_url: null,

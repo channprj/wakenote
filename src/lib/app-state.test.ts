@@ -154,6 +154,7 @@ describe("app state derivation", () => {
     expect(
       models.find((model) => model.id === "soniox-async-v5"),
     ).toMatchObject({
+      display_name: "Soniox · Async V6",
       provider_runtime: "soniox-async-stt",
       capabilities: {
         file_transcription: true,
@@ -165,6 +166,7 @@ describe("app state derivation", () => {
     expect(
       models.find((model) => model.id === "soniox-realtime-v5"),
     ).toMatchObject({
+      display_name: "Soniox · Real-time V6",
       provider_runtime: "soniox-realtime",
       capabilities: {
         file_transcription: false,

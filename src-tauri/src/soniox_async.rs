@@ -16,7 +16,7 @@ use crate::settings::TranscriptionLanguage;
 
 const PROVIDER: &str = "Soniox";
 const SONIOX_API_BASE_URL: &str = "https://api.soniox.com/v1";
-const SONIOX_ASYNC_MODEL: &str = "stt-async-v5";
+const SONIOX_ASYNC_MODEL: &str = "stt-async-v6";
 const SONIOX_REQUEST_TIMEOUT: Duration = Duration::from_secs(55);
 const SONIOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SONIOX_MAX_POLLS: usize = 1_800;
@@ -340,8 +340,14 @@ fn soniox_failure_from_value(status: Option<u16>, value: &Value) -> Transcriptio
         .map(str::to_string);
     let request_id = value.get("request_id").and_then(Value::as_str);
     let category = if status == Some(402)
-        || provider_code.as_deref() == Some("organization_balance_exhausted")
-    {
+        || matches!(
+            provider_code.as_deref(),
+            Some(
+                "organization_balance_exhausted"
+                    | "organization_monthly_budget_exhausted"
+                    | "project_monthly_budget_exhausted"
+            )
+        ) {
         FailureCategory::BillingLimit
     } else if status == Some(429) || provider_code.as_deref() == Some("limit_exceeded") {
         FailureCategory::RateLimit
@@ -526,7 +532,8 @@ mod tests {
         else {
             panic!("create request")
         };
-        assert_eq!(body["model"], "stt-async-v5");
+        assert_eq!(body["model"], "stt-async-v6");
+        assert_eq!(SONIOX_ASYNC_MODEL, "stt-async-v6");
         assert_eq!(body["file_id"], "file-1");
         assert_eq!(body["language_hints"], json!(["en", "ko"]));
         assert_eq!(body["context"]["terms"], json!(["WakeNote"]));
@@ -610,35 +617,39 @@ mod tests {
             );
         }
 
-        let (_directory, audio_path) = audio_fixture();
-        let transport = ScriptedTransport::new([
-            Ok(response(200, json!({ "id": "file-1" }))),
-            Ok(response(200, json!({ "id": "transcription-1" }))),
-            Ok(response(
-                200,
-                json!({
-                    "status": "error",
-                    "error_type": "organization_balance_exhausted",
-                    "error_message": "private soniox provider prose",
-                    "request_id": "request-1"
-                }),
-            )),
-            Ok(empty_response(204)),
-            Ok(empty_response(204)),
-        ]);
-        let error = client(transport, Some("key"))
-            .transcribe(&audio_path, &[], &DictionaryContext::default())
-            .expect_err("provider error");
-        let CloudTranscriptionError::Failure(failure) = error else {
-            panic!("typed failure")
-        };
-        assert_eq!(failure.category, FailureCategory::BillingLimit);
-        assert_eq!(
-            failure.provider_code.as_deref(),
-            Some("organization_balance_exhausted")
-        );
-        assert!(failure.safe_message.contains("request-1"));
-        assert!(!failure.safe_message.contains("private"));
+        for error_type in [
+            "organization_balance_exhausted",
+            "organization_monthly_budget_exhausted",
+            "project_monthly_budget_exhausted",
+        ] {
+            let (_directory, audio_path) = audio_fixture();
+            let transport = ScriptedTransport::new([
+                Ok(response(200, json!({ "id": "file-1" }))),
+                Ok(response(200, json!({ "id": "transcription-1" }))),
+                Ok(response(
+                    200,
+                    json!({
+                        "status": "error",
+                        "error_type": error_type,
+                        "error_message": "private soniox provider prose",
+                        "request_id": "request-1"
+                    }),
+                )),
+                Ok(empty_response(204)),
+                Ok(empty_response(204)),
+            ]);
+            let error = client(transport, Some("key"))
+                .transcribe(&audio_path, &[], &DictionaryContext::default())
+                .expect_err("provider error");
+            let CloudTranscriptionError::Failure(failure) = error else {
+                panic!("typed failure")
+            };
+            assert_eq!(failure.http_status, None);
+            assert_eq!(failure.category, FailureCategory::BillingLimit);
+            assert_eq!(failure.provider_code.as_deref(), Some(error_type));
+            assert!(failure.safe_message.contains("request-1"));
+            assert!(!failure.safe_message.contains("private"));
+        }
     }
 
     #[test]

@@ -82,7 +82,7 @@ const nonnegative = (value: number) =>
   Number.isFinite(value) ? Math.max(0, value) : 0;
 // Soniox publishes approximate audio-hour equivalents for token-based billing.
 // These are comparison estimates, never recorded charges or ledger mutations.
-// Source: https://soniox.com/pricing, checked 2026-09-11 (Asia/Seoul).
+// Source: https://soniox.com/pricing, checked 2026-11-21 (Asia/Seoul).
 export const SONIOX_REFERENCE_RATES = { async: 0.1, realtime: 0.12 } as const;
 export function sonioxReferenceCost(
   entry: TranscriptionCostEntry,

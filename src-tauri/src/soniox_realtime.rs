@@ -9,6 +9,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, header::AUTHORIZATION};
 use tokio_tungstenite::{WebSocketStream, connect_async};
 
 use crate::cloud_realtime::{
@@ -20,7 +22,7 @@ use crate::transcription::{TranscriptionExecution, TranscriptionUsage};
 
 const PROVIDER: &str = "Soniox";
 const SONIOX_REALTIME_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
-const SONIOX_REALTIME_MODEL: &str = "stt-rt-v5";
+const SONIOX_REALTIME_MODEL: &str = "stt-rt-v6";
 const SONIOX_REALTIME_MODEL_ID: &str = "soniox-realtime-v5";
 const COMMIT_COMPLETION_WAIT: Duration = Duration::from_secs(15);
 const RECORDED_FRAME_MS: usize = 250;
@@ -238,19 +240,15 @@ async fn connection_loop(
         );
         return;
     };
-    let Ok((socket, _)) = connect_async(SONIOX_REALTIME_URL).await else {
+    let Ok(websocket_request) = realtime_handshake_request(&api_key) else {
         store_shared_failure(&shared_failure, transport_failure());
         return;
     };
-    run_connected_session(
-        socket,
-        request,
-        commands,
-        on_partial,
-        shared_failure,
-        &api_key,
-    )
-    .await;
+    let Ok((socket, _)) = connect_async(websocket_request).await else {
+        store_shared_failure(&shared_failure, transport_failure());
+        return;
+    };
+    run_connected_session(socket, request, commands, on_partial, shared_failure).await;
 }
 
 async fn run_connected_session<S>(
@@ -259,13 +257,11 @@ async fn run_connected_session<S>(
     mut commands: mpsc::UnboundedReceiver<ConnectionCommand>,
     on_partial: RealtimePartialCallback,
     shared_failure: Arc<Mutex<Option<TranscriptionFailure>>>,
-    api_key: &str,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (mut writer, mut reader) = socket.split();
     let configuration = configuration_message(
-        api_key,
         request.sample_rate,
         &request.language_hints,
         request.dictionary.canonical_terms().to_vec(),
@@ -387,14 +383,21 @@ fn end_of_audio_message() -> Message {
     Message::Text(String::new().into())
 }
 
-fn configuration_message(
+fn realtime_handshake_request(
     api_key: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, ()> {
+    let mut request = SONIOX_REALTIME_URL.into_client_request().map_err(|_| ())?;
+    let authorization = HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|_| ())?;
+    request.headers_mut().insert(AUTHORIZATION, authorization);
+    Ok(request)
+}
+
+fn configuration_message(
     sample_rate: u32,
     language_hints: &[crate::settings::TranscriptionLanguage],
     terms: Vec<String>,
 ) -> Value {
     let mut configuration = json!({
-        "api_key": api_key,
         "model": SONIOX_REALTIME_MODEL,
         "audio_format": "pcm_s16le",
         "num_channels": 1,
@@ -663,7 +666,6 @@ mod tests {
     #[test]
     fn soniox_realtime_builds_documented_configuration_and_pcm_frames() {
         let configuration = configuration_message(
-            "secret",
             16_000,
             &[
                 crate::settings::TranscriptionLanguage::En,
@@ -671,15 +673,28 @@ mod tests {
             ],
             vec!["WakeNote".into()],
         );
-        assert_eq!(configuration["api_key"], "secret");
-        assert_eq!(configuration["model"], "stt-rt-v5");
+        assert_eq!(SONIOX_REALTIME_MODEL_ID, "soniox-realtime-v5");
+        assert_eq!(configuration["model"], "stt-rt-v6");
+        assert!(configuration.get("api_key").is_none());
+        let handshake = realtime_handshake_request("secret").expect("handshake");
+        assert_eq!(
+            handshake
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer secret")
+        );
+        assert_eq!(
+            handshake.uri().to_string(),
+            "wss://stt-rt.soniox.com/transcribe-websocket"
+        );
         assert_eq!(configuration["audio_format"], "pcm_s16le");
         assert_eq!(configuration["num_channels"], 1);
         assert_eq!(configuration["sample_rate"], 16_000);
         assert_eq!(configuration["language_hints"], json!(["en", "ko"]));
         assert_eq!(configuration["context"]["terms"], json!(["WakeNote"]));
 
-        let automatic = configuration_message("secret", 48_000, &[], Vec::new());
+        let automatic = configuration_message(48_000, &[], Vec::new());
         assert!(automatic.get("language_hints").is_none());
         assert!(automatic.get("context").is_none());
 
@@ -860,20 +875,16 @@ mod tests {
             command_rx,
             Arc::new(|_| {}),
             shared_failure,
-            "secret",
         ));
         let server_task = tokio::spawn(async move {
             let Some(Ok(Message::Text(configuration))) = server.next().await else {
                 panic!("configuration message")
             };
-            assert_eq!(
-                serde_json::from_str::<Value>(&configuration).expect("configuration")["model"],
-                SONIOX_REALTIME_MODEL
-            );
-            assert_eq!(
-                serde_json::from_str::<Value>(&configuration).expect("configuration")["language_hints"],
-                json!(["en", "ko"])
-            );
+            let configuration =
+                serde_json::from_str::<Value>(&configuration).expect("configuration");
+            assert_eq!(configuration["model"], SONIOX_REALTIME_MODEL);
+            assert!(configuration.get("api_key").is_none());
+            assert_eq!(configuration["language_hints"], json!(["en", "ko"]));
             assert!(matches!(server.next().await, Some(Ok(Message::Binary(_)))));
             assert!(matches!(
                 server.next().await,
@@ -946,7 +957,6 @@ mod tests {
             command_rx,
             Arc::new(|_| {}),
             shared_failure,
-            "secret",
         ));
         let server_task = tokio::spawn(async move {
             assert!(matches!(server.next().await, Some(Ok(Message::Text(_)))));

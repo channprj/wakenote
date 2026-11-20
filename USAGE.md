@@ -374,8 +374,8 @@ The model picker filters by context. A model that is valid for a saved file is n
 | OpenAI · GPT Transcribe | `gpt-transcribe` | File, Realtime, Dictation, Meeting | OpenAI key |
 | OpenAI · GPT Live Transcribe | `gpt-live-transcribe` | Realtime, Dictation | OpenAI key; streaming required |
 | OpenAI · GPT-4o Transcribe Diarize | `gpt-4o-transcribe-diarize` | File, Meeting | OpenAI key; supports speaker separation |
-| Soniox · Async V5 | `stt-async-v5` | File, Dictation, Meeting | Soniox key |
-| Soniox · Real-time V5 | `stt-rt-v5` | Realtime, Dictation | Soniox key; streaming required |
+| Soniox · Async V6 | `stt-async-v6` | File, Dictation, Meeting | Soniox key |
+| Soniox · Real-time V6 | `stt-rt-v6` | Realtime, Dictation | Soniox key; streaming required |
 
 Plain `cargo test` leaves the optional `asr-sherpa` feature disabled to keep local Rust iteration lighter. The repository packaging path enables and bundles it automatically.
 
@@ -387,7 +387,7 @@ Save or delete keys in **Settings › Integrations › External AI API keys**:
 | --- | --- |
 | OpenRouter | Qwen3 ASR Flash, transcript summaries, and detailed reports |
 | OpenAI | GPT file, realtime, and diarization transcription |
-| Soniox | Async V5 and Real-time V5 transcription |
+| Soniox | Async V6 and Real-time V6 transcription |
 
 Selecting a cloud model sends audio and supported context to that provider. Connectivity, retention, rate limits, privacy, and billing follow the provider account. Missing keys and classified provider failures remain visible on the selected job; WakeNote does not silently switch cloud providers.
 
@@ -407,8 +407,8 @@ requests, audio time, estimated USD, cost per audio hour, and unpriced requests
 for each API/model. The paginated period table exposes exact chart values.
 
 **Include Soniox reference estimates** starts on in Details. It estimates missing
-Soniox V5 prices from saved duration using the published approximate equivalents
-of $0.10/hour for async and $0.12/hour for realtime, checked September 11, 2026.
+Soniox prices from saved duration using the published approximate equivalents
+of $0.10/hour for async and $0.12/hour for realtime, checked November 21, 2026.
 Soniox bills by tokens, so these are comparison estimates rather than invoices.
 Turn it off to match recorded-only costs in the compact Settings card. Original
 usage records are never rewritten. Unsupported or missing prices remain **Not

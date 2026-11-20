@@ -150,6 +150,10 @@ describe("SettingsPage ownership", () => {
     expect(integrations).toContain("External AI API keys");
     expect(integrations).toContain("OpenAI");
     expect(integrations).toContain("Soniox");
+    expect(integrations).toContain(
+      "Async V6 and Real-time V6 speech recognition.",
+    );
+    expect(integrations).not.toContain("V5");
     expect(integrations).toContain("OpenRouter reports");
     expect(integrations).not.toContain("Show subtitles");
     expect(integrations).not.toContain("Text output");

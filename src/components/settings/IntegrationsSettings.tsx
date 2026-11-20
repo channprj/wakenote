@@ -61,7 +61,7 @@ export function IntegrationsSettings({
         />
         <ApiCredentialRow
           provider="Soniox"
-          description="Async V5 and Real-time V5 speech recognition."
+          description="Async V6 and Real-time V6 speech recognition."
           value={sonioxApiKey}
           configured={snapshot.soniox_key_configured}
           onChange={setSonioxApiKey}
